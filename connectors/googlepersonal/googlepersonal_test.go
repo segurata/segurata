@@ -1,0 +1,253 @@
+package googlepersonal
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
+)
+
+// fakeBrowser serves canned page values by URL and records what was opened.
+type fakeBrowser struct {
+	mu     sync.Mutex
+	pages  map[string]any
+	fail   map[string]error
+	opened []string
+}
+
+func (b *fakeBrowser) load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.opened = append(b.opened, url)
+	if err := b.fail[url]; err != nil {
+		return nil, err
+	}
+	v, ok := b.pages[url]
+	if !ok {
+		v = map[string]any{"mail": "", "text": "", "apps": []any{}}
+	}
+	raw, _ := json.Marshal(v)
+	ready(raw) // exercised for coverage of the readiness predicates
+	return raw, nil
+}
+
+type recorder struct {
+	findings []finding.Finding
+	statuses []finding.Status
+	logs     []string
+}
+
+func (r *recorder) Finding(f finding.Finding) { r.findings = append(r.findings, f) }
+func (r *recorder) Status(s finding.Status)   { r.statuses = append(r.statuses, s) }
+func (r *recorder) Log(m string)              { r.logs = append(r.logs, m) }
+
+const base = "https://myaccount.google.com/u/0/linkedapps/"
+
+func conns(mail, text string, apps ...appLink) map[string]any {
+	return map[string]any{"mail": mail, "text": text, "apps": apps}
+}
+
+func page(text string, details ...string) map[string]any {
+	return map[string]any{"text": text, "details": details}
+}
+
+var now = time.Date(2026, 11, 23, 21, 0, 0, 0, time.UTC)
+
+func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{
+		connectionsURL(0): conns("a@example.test", "Third-party apps",
+			appLink{Name: "Acme Sync\nSign in with Google", Href: base + "overview/ACME?hl=en"},
+			appLink{Name: "example.test", Href: base + "overview/EXAMPLE"},
+		),
+		base + "overview/ACME?hl=en": page(overviewENAccess, base+"details/X/oauth/1", base+"details/X/siwg/2"),
+		base + "details/X/oauth/1":   page(detailENOAuth),
+		base + "details/X/siwg/2":    page(detailENSignIn),
+		base + "overview/EXAMPLE":    page(overviewENSignIn, base+"details/Y/siwg/3"),
+		base + "details/Y/siwg/3":    page(strings.Replace(detailENSignIn, "May 15, 7:37 PM", "sometime", 1)),
+		connectionsURL(1):            conns("b@example.test", reauthES),
+		connectionsURL(2):            conns("a@example.test", "Third-party apps"), // fallback to the default account
+		connectionsURL(3):            conns("never@example.test", "must not be reached"),
+	}}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, u := range b.opened {
+		if u == connectionsURL(3) {
+			t.Fatal("kept going after the email repeated")
+		}
+	}
+	if len(rec.findings) != 2 {
+		t.Fatalf("%d findings, want 2", len(rec.findings))
+	}
+
+	acme := rec.findings[0]
+	if acme.Account != "a@example.test" || acme.Kind != finding.KindGrant || acme.Severity != finding.SevHigh {
+		t.Errorf("acme: %+v", acme)
+	}
+	if acme.Resource != (finding.Resource{Type: "oauth_grant", ID: "ACME", Name: "Acme Sync"}) {
+		t.Errorf("acme resource %+v", acme.Resource)
+	}
+	if acme.Title != "Acme Sync can read and send email from your Gmail" {
+		t.Errorf("acme title %q", acme.Title)
+	}
+	if acme.CreatedAt == nil || !acme.CreatedAt.Equal(time.Date(2020, 3, 24, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("acme created_at %v, want the earliest details date", acme.CreatedAt)
+	}
+	if acme.LastUsedAt != nil {
+		t.Error("last_used_at must stay nil: Google does not show it")
+	}
+	scopes := acme.Evidence["scopes"].([]string)
+	if len(scopes) != 4 || scopes[3] != "Allow this application to run when you are not present" {
+		t.Errorf("scopes should merge overview and details: %q", scopes)
+	}
+	if acme.Evidence["cross_account_protection"] != true || len(acme.Evidence["detail_urls"].([]string)) != 2 {
+		t.Errorf("acme evidence %+v", acme.Evidence)
+	}
+	if acme.Remediation.URL != base+"overview/ACME?hl=en" || acme.Remediation.Automatable ||
+		!strings.Contains(acme.Remediation.Summary, "also removes the app's Sign in with Google link") {
+		t.Errorf("acme remediation %+v", acme.Remediation)
+	}
+
+	ex := rec.findings[1]
+	if ex.Resource.Type != "sign_in_with_google" || ex.Severity != finding.SevInfo || ex.CreatedAt != nil {
+		t.Errorf("sign-in app: %+v", ex)
+	}
+	if ex.Title != "example.test can sign you in with your Google account" {
+		t.Errorf("sign-in title %q", ex.Title)
+	}
+	if len(rec.logs) != 1 || !strings.Contains(rec.logs[0], `unparsed access date "sometime"`) {
+		t.Errorf("logs %q", rec.logs)
+	}
+
+	wantStates := []finding.State{finding.StateOK, finding.StateReauth}
+	if len(rec.statuses) != len(wantStates) {
+		t.Fatalf("statuses %+v", rec.statuses)
+	}
+	for i, s := range rec.statuses {
+		if s.State != wantStates[i] {
+			t.Errorf("status %d = %+v, want %s", i, s, wantStates[i])
+		}
+	}
+	if rec.statuses[1].Account != "b@example.test" {
+		t.Errorf("reauth account %q", rec.statuses[1].Account)
+	}
+}
+
+func TestInventoryReportsSignedOutBrowser(t *testing.T) {
+	rec := &recorder{}
+	if err := inventory(context.Background(), &fakeBrowser{}, rec, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateSignedOut || len(rec.findings) != 0 {
+		t.Fatalf("got %+v %+v", rec.statuses, rec.findings)
+	}
+}
+
+func TestInventoryReportsUnreadableAppsAndKeepsTheRest(t *testing.T) {
+	b := &fakeBrowser{
+		pages: map[string]any{
+			connectionsURL(0): conns("a@example.test", "",
+				appLink{Name: "Broken", Href: base + "overview/BROKEN"},
+				appLink{Name: "Walled", Href: base + "overview/WALLED"},
+				appLink{Name: "example.test", Href: base + "overview/EXAMPLE"},
+			),
+			base + "overview/WALLED":  page(reauthEN),
+			base + "overview/EXAMPLE": page(overviewENSignIn, base+"details/gone"),
+		},
+		fail: map[string]error{
+			base + "overview/BROKEN": errors.New("target crashed"),
+			base + "details/gone":    errors.New("timeout"),
+			connectionsURL(1):        errors.New("connection closed"),
+		},
+	}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.findings) != 1 || rec.findings[0].Resource.ID != "EXAMPLE" {
+		t.Fatalf("findings %+v", rec.findings)
+	}
+	var details []string
+	for _, s := range rec.statuses {
+		details = append(details, string(s.State)+": "+s.Detail)
+	}
+	got := strings.Join(details, "\n")
+	for _, want := range []string{"error: Broken: target crashed", "error: Walled: Google asked to verify", "ok: 1 linked apps, 2 unreadable", "error: connection closed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("statuses missing %q:\n%s", want, got)
+		}
+	}
+	if len(rec.logs) != 1 || !strings.Contains(rec.logs[0], "details page: timeout") {
+		t.Errorf("logs %q", rec.logs)
+	}
+}
+
+func TestFindingIDIgnoresGoogleTokensAndSeparatesRepeatedNames(t *testing.T) {
+	run := func(token string) []string {
+		b := &fakeBrowser{pages: map[string]any{
+			connectionsURL(0): conns("a@example.test", "",
+				appLink{Name: "example.test", Href: base + "overview/" + token + "1"},
+				appLink{Name: "example.test", Href: base + "overview/" + token + "2"},
+				appLink{Name: "Acme Sync", Href: base + "overview/" + token + "3"},
+			),
+			base + "overview/" + token + "1": page(overviewENSignIn),
+			base + "overview/" + token + "2": page(overviewENSignIn),
+			base + "overview/" + token + "3": page(overviewENAccess),
+		}}
+		rec := &recorder{}
+		inventory(context.Background(), b, rec, now)
+		var ids []string
+		for _, f := range rec.findings {
+			ids = append(ids, f.ID)
+		}
+		return ids
+	}
+	first, second := run("tokenA"), run("tokenB")
+	if strings.Join(first, ",") != strings.Join(second, ",") {
+		t.Fatalf("ids changed with Google's tokens: %v vs %v", first, second)
+	}
+	if len(first) != 3 || first[0] == first[1] || first[1] == first[2] {
+		t.Fatalf("ids must be distinct: %v", first)
+	}
+}
+
+func TestOverviewID(t *testing.T) {
+	cases := map[string]string{
+		base + "overview/AbC-1_x":        "AbC-1_x",
+		base + "overview/AbC?hl=es":      "AbC",
+		base + "overview/AbC/extra#frag": "AbC",
+		"https://elsewhere.test/":        "https://elsewhere.test/",
+	}
+	for in, want := range cases {
+		if got := overviewID(in); got != want {
+			t.Errorf("overviewID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRegisteredAsBuiltin(t *testing.T) {
+	for _, c := range connector.Builtins() {
+		if d := c.Describe(); d.Name == "google-personal" {
+			if len(d.Needs) != 1 || d.Needs[0] != "cdp" || d.Protocol != connector.ProtocolVersion {
+				t.Fatalf("describe %+v", d)
+			}
+			return
+		}
+	}
+	t.Fatal("google-personal not registered")
+}
+
+func TestInventoryFailsToStartWithoutBrowser(t *testing.T) {
+	err := GooglePersonal{}.Inventory(context.Background(), connector.Request{CDPURL: "http://127.0.0.1:1"}, &recorder{})
+	if err == nil {
+		t.Fatal("expected an error when CDP is unreachable")
+	}
+}

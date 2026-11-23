@@ -1,0 +1,262 @@
+// Package cdp is a minimal Chrome DevTools Protocol client for the user's own running browser
+// (Brave or Chrome started with --remote-debugging-port). Pages open as background targets, so
+// the user's tabs and focus are never touched. Standard library only.
+package cdp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+// DefaultTimeout bounds a single CDP command when the caller's context has no deadline.
+const DefaultTimeout = 30 * time.Second
+
+// pollInterval is how long WaitFor sleeps between evaluations. A variable so tests run fast.
+var pollInterval = 500 * time.Millisecond
+
+// Client is one browser-level CDP connection. Safe for concurrent use.
+type Client struct {
+	ws      *wsConn
+	mu      sync.Mutex
+	nextID  int64
+	pending map[int64]chan message
+	done    chan struct{}
+	err     error // why the read loop stopped; valid once done is closed
+}
+
+type message struct {
+	ID        int64           `json:"id,omitempty"`
+	Method    string          `json:"method,omitempty"`
+	Params    any             `json:"params,omitempty"`
+	SessionID string          `json:"sessionId,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+// Connect reads <cdpURL>/json/version and opens its browser WebSocket.
+func Connect(ctx context.Context, cdpURL string) (*Client, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cdpURL, "/")+"/json/version", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cdp: browser not reachable at %s: %w", cdpURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cdp: %s/json/version: %s", cdpURL, resp.Status)
+	}
+	var v struct {
+		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return nil, fmt.Errorf("cdp: /json/version: %w", err)
+	}
+	if v.WebSocketDebuggerURL == "" {
+		return nil, errors.New("cdp: /json/version has no webSocketDebuggerUrl")
+	}
+	ws, err := dialWS(ctx, v.WebSocketDebuggerURL)
+	if err != nil {
+		return nil, err
+	}
+	c := &Client{ws: ws, pending: map[int64]chan message{}, done: make(chan struct{})}
+	go c.readLoop()
+	return c, nil
+}
+
+func (c *Client) readLoop() {
+	var err error
+	for {
+		var raw []byte
+		if _, raw, err = c.ws.ReadMessage(); err != nil {
+			break
+		}
+		var m message
+		if json.Unmarshal(raw, &m) != nil || m.ID == 0 {
+			continue // events are not used by this client
+		}
+		c.mu.Lock()
+		ch := c.pending[m.ID]
+		delete(c.pending, m.ID)
+		c.mu.Unlock()
+		if ch != nil {
+			ch <- m
+		}
+	}
+	c.err = err // published to readers by close(c.done)
+	close(c.done)
+}
+
+// Close shuts the connection; pending calls fail.
+func (c *Client) Close() error { return c.ws.Close() }
+
+// Send issues one CDP command and waits for its reply, the context, or DefaultTimeout.
+// sessionID is empty for browser-level commands.
+func (c *Client) Send(ctx context.Context, method string, params any, sessionID string) (json.RawMessage, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultTimeout)
+		defer cancel()
+	}
+	if params == nil {
+		params = struct{}{}
+	}
+	ch := make(chan message, 1)
+	c.mu.Lock()
+	c.nextID++
+	id := c.nextID
+	c.pending[id] = ch
+	c.mu.Unlock()
+	forget := func() {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+	}
+
+	raw, err := json.Marshal(message{ID: id, Method: method, Params: params, SessionID: sessionID})
+	if err != nil {
+		forget()
+		return nil, err
+	}
+	if err := c.ws.WriteText(raw); err != nil {
+		forget()
+		return nil, fmt.Errorf("cdp: %s: %w", method, err)
+	}
+	select {
+	case m := <-ch:
+		if m.Error != nil {
+			return nil, fmt.Errorf("cdp: %s: %s (%d)", method, m.Error.Message, m.Error.Code)
+		}
+		return m.Result, nil
+	case <-ctx.Done():
+		forget()
+		return nil, fmt.Errorf("cdp: %s: %w", method, ctx.Err())
+	case <-c.done:
+		return nil, fmt.Errorf("cdp: %s: connection closed: %v", method, c.err)
+	}
+}
+
+// Page is one background target attached with a flat session.
+type Page struct {
+	c         *Client
+	sessionID string
+}
+
+// Send issues a CDP command on this page's session.
+func (p *Page) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	return p.c.Send(ctx, method, params, p.sessionID)
+}
+
+// EvalError is a JavaScript exception thrown by an evaluated expression.
+type EvalError struct{ Text string }
+
+func (e *EvalError) Error() string { return "cdp: evaluate: " + e.Text }
+
+// Evaluate runs expr in the page (awaiting promises) and returns its value as JSON.
+// A JavaScript exception becomes an error.
+func (p *Page) Evaluate(ctx context.Context, expr string) (json.RawMessage, error) {
+	raw, err := p.Send(ctx, "Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true})
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Result struct {
+			Value json.RawMessage `json:"value"`
+		} `json:"result"`
+		ExceptionDetails *struct {
+			Text string `json:"text"`
+		} `json:"exceptionDetails"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, err
+	}
+	if r.ExceptionDetails != nil {
+		return nil, &EvalError{Text: r.ExceptionDetails.Text}
+	}
+	return r.Result.Value, nil
+}
+
+// WaitFor evaluates expr every pollInterval until ready accepts the value or tries run out.
+// It returns the last value either way, so the caller can still inspect a page that never got
+// ready (a sign-in wall, an empty list). A JavaScript exception counts as "not ready yet"
+// (document.body is null while the page loads); it is returned only if no try ever succeeded.
+func (p *Page) WaitFor(ctx context.Context, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
+	var last json.RawMessage
+	var evalErr *EvalError
+	for i := 0; i < tries; i++ {
+		select {
+		case <-ctx.Done():
+			return last, ctx.Err()
+		case <-time.After(pollInterval):
+		}
+		v, err := p.Evaluate(ctx, expr)
+		if errors.As(err, &evalErr) {
+			continue
+		}
+		if err != nil {
+			return last, err
+		}
+		last, evalErr = v, nil
+		if ready(v) {
+			break
+		}
+	}
+	if last == nil && evalErr != nil {
+		return nil, evalErr
+	}
+	return last, nil
+}
+
+// WithPage opens url in a new background target, hands fn the attached page and always closes
+// the target afterwards, even when ctx is already cancelled.
+func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error) (err error) {
+	raw, err := c.Send(ctx, "Target.createTarget", map[string]any{"url": "about:blank", "background": true}, "")
+	if err != nil {
+		return err
+	}
+	var t struct {
+		TargetID string `json:"targetId"`
+	}
+	if err := json.Unmarshal(raw, &t); err != nil {
+		return err
+	}
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DefaultTimeout)
+		defer cancel()
+		if _, cerr := c.Send(cctx, "Target.closeTarget", map[string]any{"targetId": t.TargetID}, ""); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+
+	raw, err = c.Send(ctx, "Target.attachToTarget", map[string]any{"targetId": t.TargetID, "flatten": true}, "")
+	if err != nil {
+		return err
+	}
+	var a struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return err
+	}
+	p := &Page{c: c, sessionID: a.SessionID}
+	if _, err := p.Send(ctx, "Runtime.enable", nil); err != nil {
+		return err
+	}
+	if _, err := p.Send(ctx, "Emulation.setFocusEmulationEnabled", map[string]any{"enabled": true}); err != nil {
+		return err
+	}
+	if _, err := p.Send(ctx, "Page.navigate", map[string]any{"url": url}); err != nil {
+		return err
+	}
+	return fn(p)
+}
