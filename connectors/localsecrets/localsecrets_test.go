@@ -74,6 +74,9 @@ func TestJudgeRejectsPlaceholdersAndLowEntropy(t *testing.T) {
 	if _, ok := judge(p, "sk-ant-"+strings.Repeat("x", 40), "", now); ok {
 		t.Error("placeholder accepted")
 	}
+	if _, ok := judge(p, "sk-ant-abcdefghijklmnopqrstuvwxyz0123456789ABCD", "", now); ok {
+		t.Error("sequential fixture accepted")
+	}
 	if _, ok := judge(p, "sk-ant-"+strings.Repeat("ab", 20), "", now); ok {
 		t.Error("low-entropy value accepted")
 	}

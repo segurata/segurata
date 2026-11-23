@@ -126,7 +126,9 @@ func classifyValue(v string) *pattern {
 	return nil
 }
 
-var placeholder = regexp.MustCompile(`(?i)x{5,}|0{8,}|\.{3}|…|\*{3,}|example|your[_-]|placeholder|dummy|redacted|changeme|replace|<[^>]*>|\$\{|\$\(|%s|\{\{`)
+// placeholder catches sample values: runs of x or 0, ellipses, template syntax, and the sequential
+// alphabet or digits that test fixtures use ("sk_live_abcdefghijkl…", "…123456789").
+var placeholder = regexp.MustCompile(`(?i)abcdefgh|123456789|x{5,}|0{8,}|\.{3}|…|\*{3,}|example|your[_-]|placeholder|dummy|redacted|changeme|replace|<[^>]*>|\$\{|\$\(|%s|\{\{`)
 
 var (
 	notSecretValue  = regexp.MustCompile(`(?i)^(true|false|null|none|nil)$|^[a-z_]+$|^\d+$|^(https?:|/|\./|~)`)
