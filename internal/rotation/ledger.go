@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/statefile"
 )
 
 type Status string
@@ -131,31 +132,7 @@ func Load(path string) (*Ledger, error) {
 // Save writes the ledger atomically with mode 0600, in a 0700 directory.
 func (l *Ledger) Save(path string) error {
 	sort.Slice(l.Items, func(i, j int) bool { return l.Items[i].ID < l.Items[j].ID })
-	raw, err := json.MarshalIndent(l, "", "  ")
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".rotations-*.json")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return statefile.WriteJSON(path, l)
 }
 
 // Find resolves an id, or a unique prefix of an id or a fingerprint.

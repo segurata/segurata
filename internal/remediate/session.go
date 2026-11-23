@@ -183,11 +183,19 @@ func printSection[T any](w io.Writer, title, bullet string, items []T) {
 	}
 }
 
-// List prints the automatable findings of a run, one per line.
+// List prints the automatable findings of a run, one per line, leaving out accepted ones.
 func List(w io.Writer, all []finding.Finding) {
-	auto := Automatable(all)
-	for _, f := range auto {
-		fmt.Fprintf(w, "%s  [%-8s] %-32s %-16s %s\n", f.ID, f.Severity, f.Remediation.Action, Selector(f), f.Title)
+	shown, accepted := 0, 0
+	for _, f := range Automatable(all) {
+		if f.Hidden() {
+			accepted++
+			continue
+		}
+		shown++
+		fmt.Fprintf(w, "%s  [%-8s] %-32s %-16s %s\n", f.ID, f.Severity, f.Remediation.Action, Selector(f), f.DisplayTitle())
 	}
-	fmt.Fprintf(w, "\n%d automatable findings. Show a plan with: securizame remediate <id>\n", len(auto))
+	fmt.Fprintf(w, "\n%d automatable findings. Show a plan with: securizame remediate <id>\n", shown)
+	if note := finding.HiddenNote(accepted); note != "" {
+		fmt.Fprintln(w, note)
+	}
 }

@@ -185,20 +185,52 @@ unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture
 
 Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
 update settings and pending updates (`softwareupdate -l`, capped at 120 s), screen lock, automatic
-login and guest account, TCP ports listening outside loopback (instead of
-`systemsetup -getremotelogin`, which needs admin; for SMB it names the shared folders and flags guest
-access), login and background items (`sfltool dumpbtm`, flagging those without a developer
-signature), Brave extensions per profile with their permissions (flags access to all sites and APIs
-such as `cookies`, `debugger` or `nativeMessaging`), and whether Brave runs with
-`--remote-debugging-port`.
+login and guest account, whether other accounts can read your home folder, TCP ports listening
+outside loopback (instead of `systemsetup -getremotelogin`, which needs admin), each SMB share
+point behind port 445 (from `sharing -l -f json`), login and background items (`sfltool dumpbtm`,
+flagging those without a developer signature), and whether Brave runs with
+`--remote-debugging-port`. Browser extensions are the `browser-extensions` connector, below.
 
 - A passing check emits no finding (only a log line with `--verbose`); a check that cannot run here
   is an `unsupported` status. Findings are kind `setting`.
 - The remote debugging port is a `high` finding even though the google-personal and connected-apps
   connectors need it: while the port is open, any local process can drive the browser with every
   signed-in session. Start Brave with the flag only for those connectors.
+- File Sharing gives a medium finding for port 445 and one `share_point` finding per share point,
+  with its name, path, whether the path exists, guest access and read-only. A share open to guests
+  is `high`; so is an orphaned record whose folder no longer exists (Migration Assistant leaves
+  these behind for users that were never recreated); any other shared folder is `medium`.
 - Every command it runs is on an exact allowlist in `connectors/macos`. Takes about half a minute
   because of `softwareupdate` and `sfltool`.
+
+## Browser extensions (`browser-extensions`)
+
+```bash
+./securizame inventory browser-extensions
+```
+
+Reads every Brave and Chrome profile (Preferences, Secure Preferences, Local State, and the
+manifest of unpacked extensions) and emits one `grant` finding per extension and browser, with:
+name, id, the profiles it is in, and per profile its version, install date (`first_install_time`),
+last update (`last_update_time`) and source (web store, unpacked in developer mode, or sideloaded);
+its permissions as risk capabilities (read and change all sites, debugger, cookies, webRequest,
+nativeMessaging, clipboard read, history, downloads, management); a category hint (password
+manager, crypto wallet, AI assistant, shopping, dev tool) from a short list of ids and name words in
+`connectors/browserext/triage.go`; and a verdict with its reasons.
+
+| Verdict | When | Severity |
+|---|---|---|
+| `remove` | Unpacked developer extension not updated in over a year; a second password manager in the same profile that is not the primary one; `debugger` permission on anything that is not a dev tool | `high` with access to all sites, `debugger`, `cookies` or `nativeMessaging`, else `medium` |
+| `review` | Access to all sites plus a sensitive API; a crypto wallet in a profile used in the last 30 days; a store extension not updated in over a year; unpacked or sideloaded; disabled; two password managers installed the same day with no primary configured | `medium` for all sites plus a sensitive API or a wallet in a daily profile, else `low` |
+| `keep` | None of the above | `info` |
+
+- The primary password manager is the one named in the config, otherwise the one installed on a
+  later day. Name it with `"browser-extensions": {"config": {"primary": ["<extension id>"]}}`.
+- Not automatable: changing profile files while the browser runs is unsafe. Each finding links
+  `brave://extensions/?id=<id>` (or `chrome://`) and names the profiles to open it in.
+- No network calls. Checking the Web Store (an extension pulled from the store, a change of owner)
+  is a future enhancement.
+- To keep an extension the verdict disagrees with: `securizame accept <id> --reason "..."`.
 
 ## Remediation
 
@@ -218,11 +250,30 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 |---|---|---|
 | `macos.firewall.enable` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on` | `--setglobalstate off` |
 | `macos.firewall.stealth` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on` | `--setstealthmode off` |
+| `macos.smb.share-remove` | `sudo /usr/sbin/sharing -r <name>` (orphaned records and shared folders without guest access) | `sudo /usr/sbin/sharing -a <path> -n <name> -S <smb name> -s <flag> -g <flag> -R <0/1>` with the record's current flags; not applicable for an orphan, whose folder no longer exists |
+| `macos.smb.guest-off` | `sudo /usr/sbin/sharing -e <name> -g 000` (live shares open to guests) | `sudo /usr/sbin/sharing -e <name> -g 001` |
+| `macos.home.private` | `/bin/chmod 700 <home>`, no sudo, when group or others can read the home folder (every user is in `staff`, so 750 is as open as 755; 711 passes, as CIS allows) | `/bin/chmod <old mode> <home>` |
 | `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
 
-Manual, with the System Settings path in the finding: File Sharing (SMB, port 445; turning off the
-`smbd` launchd service by hand is not a supported way), AirPlay Receiver (ports 5000 and 7000), Remote Login, Screen Sharing, FileVault,
-Gatekeeper, SIP, update settings, screen lock, login items and Brave extensions.
+The home folder path comes from the OS (`os.UserHomeDir`), never from the finding, and the octal
+`chmod` leaves its ACL entries (macOS's `group:everyone deny delete`) in place; the finding's
+evidence lists them.
+
+The share point name comes from a fresh `sharing -l -f json` read at plan and at apply time, never
+from the finding alone: a name that matches no record exactly is refused, and the apply-time
+allowlist holds only the records that exist then. The name is one argument to `sharing`, never
+passed through a shell, so spaces and quotes in it are safe. Turning guest access off changes the
+finding's id (`smb-share-guest:<name>` becomes `smb-share:<name>`), which is how the re-check sees
+the fix; the share itself stays reported as a medium finding.
+
+Port 445 stays manual. `launchd` owns that socket (netstat shows pid 1) and hands connections to
+`smbd` on demand, so it listens while File Sharing is on, with or without share points. After the
+last share point is removed, the port finding says "with no shared folders" and points to System
+Settings > General > Sharing > File Sharing. Turning off the `smbd` launchd service by hand is not a
+supported way.
+
+Manual, with the System Settings path in the finding: File Sharing itself (SMB, port 445), AirPlay Receiver (ports 5000 and 7000), Remote Login, Screen Sharing, FileVault,
+Gatekeeper, SIP, update settings, screen lock, login items and browser extensions.
 
 AirPlay Receiver is manual because the Terminal remediation the CIS benchmarks give (`defaults
 -currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool false`, then restarting
@@ -230,6 +281,20 @@ ControlCenter) left ports 5000 and 7000 open on macOS 15.6 (tried 2026-11-23).
 
 After `--apply`, the check waits 5 seconds and needs the finding gone in two inventories in a row:
 a restarted process can drop its ports for a moment and open them again.
+
+## Accepted risks
+
+```bash
+./securizame accept <id> --reason "AI agents drive Brave over CDP" [--until 2027-03-31]
+./securizame accept --list
+./securizame unaccept <id>
+```
+
+A finding you keep on purpose stays in `out/<date>/*.jsonl` with an `accepted` field, but leaves
+the summary and `remediate --list`, which print how many were hidden. With `--until`, it shows
+again after that day, marked "(acceptance expired)". State: `~/.config/securizame/accepted.json`
+(mode 0600; `SECURIZAME_ACCEPTED` names another file). Details:
+[docs/architecture.md](docs/architecture.md#accepted-risks).
 
 ## Plan
 

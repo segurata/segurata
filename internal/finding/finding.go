@@ -76,6 +76,35 @@ type Finding struct {
 	LastUsedAt  *time.Time     `json:"last_used_at"` // nil when the provider does not say
 	Remediation Remediation    `json:"remediation"`
 	ObservedAt  time.Time      `json:"observed_at"`
+	Accepted    *Acceptance    `json:"accepted,omitempty"` // set by the core from the accepted-risks file
+}
+
+// Acceptance records that the owner keeps this risk on purpose. An expired one no longer hides
+// the finding.
+type Acceptance struct {
+	Reason     string    `json:"reason"`
+	AcceptedAt time.Time `json:"accepted_at"`
+	Until      string    `json:"until,omitempty"` // YYYY-MM-DD, last day it applies
+	Expired    bool      `json:"expired,omitempty"`
+}
+
+// Hidden reports whether an acceptance in force keeps the finding out of summaries and lists.
+func (f Finding) Hidden() bool { return f.Accepted != nil && !f.Accepted.Expired }
+
+// DisplayTitle is the title as summaries print it: an expired acceptance says so.
+func (f Finding) DisplayTitle() string {
+	if f.Accepted != nil && f.Accepted.Expired {
+		return f.Title + " (acceptance expired)"
+	}
+	return f.Title
+}
+
+// HiddenNote is the line printed under a list that left out accepted findings, or "" for none.
+func HiddenNote(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d accepted findings hidden; see securizame accept --list", n)
 }
 
 // Fill sets the fields a connector should not have to compute: type, stable id, observation time

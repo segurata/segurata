@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -173,7 +175,7 @@ func (c *Connector) pendingUpdates(ctx context.Context) check {
 // Ports of sharing services and what turns each off.
 var knownPorts = map[string]struct{ label, fix string }{
 	"22":   {"SSH (Remote Login)", "Turn off System Settings > General > Sharing > Remote Login."},
-	"445":  {"SMB (File Sharing)", "Turn off System Settings > General > Sharing > File Sharing (or remove the shared folders you do not need in its (i) panel)."},
+	"445":  {"SMB (File Sharing)", "Turn off System Settings > General > Sharing > File Sharing if you do not share folders with other devices. Each shared folder is its own finding."},
 	"548":  {"AFP (File Sharing)", "Turn off System Settings > General > Sharing > File Sharing."},
 	"3283": {"Apple Remote Desktop", "Turn off System Settings > General > Sharing > Remote Management."},
 	"5900": {"Screen Sharing/VNC", "Turn off System Settings > General > Sharing > Screen Sharing and Remote Management."},
@@ -198,11 +200,35 @@ func (c *Connector) listeningPorts(ctx context.Context, r *reporter) {
 		return
 	}
 	for _, l := range ls {
-		r.report(c.listenerCheck(ctx, l))
+		ch := listenerCheck(l)
+		if l.port == "445" {
+			c.smbChecks(ctx, r, &ch)
+		}
+		r.report(ch)
 	}
 }
 
-func (c *Connector) listenerCheck(ctx context.Context, l listener) check {
+// smbChecks reports one finding per share point behind port 445 and names them on the port's
+// finding. With no share points left, File Sharing still listens until it is turned off.
+func (c *Connector) smbChecks(ctx context.Context, r *reporter, port *check) {
+	shares, err := c.sharePoints(ctx)
+	if err != nil {
+		r.report(check{id: "smb-shares", skip: err.Error()})
+		return
+	}
+	if len(shares) == 0 {
+		port.title += ", with no shared folders"
+		port.detail += "; no share points"
+		port.rem = manual("File Sharing is on but shares nothing: turn it off in System Settings > General > Sharing > File Sharing.")
+		return
+	}
+	port.evidence["share_points"] = slices.Sorted(maps.Keys(shares))
+	for _, ch := range shareChecks(shares) {
+		r.report(ch)
+	}
+}
+
+func listenerCheck(l listener) check {
 	where := fmt.Sprintf("%s (%s)", strings.Join(l.addrs, ", "), l.proc)
 	ch := check{id: "listen-" + l.port, resource: "listening_port", name: "TCP " + l.port,
 		evidence: map[string]any{"port": l.port, "addresses": l.addrs, "process": l.proc}}
@@ -218,9 +244,6 @@ func (c *Connector) listenerCheck(ctx context.Context, l listener) check {
 		ch.sev, ch.detail = finding.SevMedium, where+" "+known.label+", reachable from the network"
 		ch.title = fmt.Sprintf("%s listens on port %s for any device on the network", known.label, l.port)
 		ch.rem = manual(known.fix)
-		if l.port == "445" {
-			c.addSharePoints(ctx, &ch)
-		}
 	case l.proc == "sshd" || l.proc == "launchd":
 		ch.sev, ch.detail = finding.SevMedium, where+" system service, reachable from the network"
 		ch.title = fmt.Sprintf("A system service (%s) listens on port %s for any device on the network", l.proc, l.port)
@@ -231,43 +254,6 @@ func (c *Connector) listenerCheck(ctx context.Context, l listener) check {
 		ch.rem = manual("If you do not need " + l.proc + " reachable from other devices, turn off its network feature; with the firewall on, macOS asks before it accepts connections.")
 	}
 	return ch
-}
-
-// addSharePoints names the shared folders behind File Sharing, and flags guest access.
-func (c *Connector) addSharePoints(ctx context.Context, ch *check) {
-	out, ok := c.text(ctx, "/usr/sbin/sharing", "-l")
-	if !ok {
-		return
-	}
-	shares, guest := parseSharePoints(out)
-	if len(shares) == 0 {
-		return
-	}
-	ch.evidence["share_points"] = shares
-	if len(guest) > 0 {
-		ch.evidence["guest_access"] = guest
-		ch.sev = finding.SevHigh
-		ch.title += ", with guest access to " + strings.Join(guest, ", ")
-	}
-}
-
-// parseSharePoints reads `sharing -l`: each share starts with an unindented "name:" line, and
-// "guest access: 1" inside it means anyone on the network can open it without a password.
-func parseSharePoints(out string) (shares, guest []string) {
-	cur := ""
-	for _, line := range strings.Split(out, "\n") {
-		if v, ok := strings.CutPrefix(line, "name:"); ok {
-			cur = strings.TrimSpace(v)
-			shares = append(shares, cur)
-			continue
-		}
-		if k, v, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && k == "guest access" && strings.TrimSpace(v) == "1" && cur != "" {
-			if len(guest) == 0 || guest[len(guest)-1] != cur {
-				guest = append(guest, cur)
-			}
-		}
-	}
-	return shares, guest
 }
 
 func parseProcs(ps string) map[string]string {
@@ -425,4 +411,9 @@ func (c *Connector) launchItems(ctx context.Context, r *reporter) {
 		r.report(check{id: "launchctl:" + f[2], resource: "background_item", sev: finding.SevInfo, detail: f[2],
 			title: "launchd job " + f[2], rem: manual("Check you recognise it.")})
 	}
+}
+
+func plists(dir string) []string {
+	m, _ := filepath.Glob(filepath.Join(dir, "*.plist"))
+	return m
 }

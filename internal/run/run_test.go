@@ -54,7 +54,7 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 		"fake": {Secrets: map[string]string{"OK": "env:SECURIZAME_TEST_SECRET", "BAD": "env:SECURIZAME_TEST_UNSET"}},
 	}}
 	fk := &fake{}
-	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, fk), t.TempDir(), nil)
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, fk), t.TempDir(), nil, nil)
 	if err != nil || len(res) != 1 || res[0].Err != nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
@@ -117,7 +117,7 @@ esac
 	if ext == nil {
 		t.Fatal("external connector not discovered")
 	}
-	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, ext), t.TempDir(), nil)
+	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, ext), t.TempDir(), nil, nil)
 	if err != nil || res[0].Err != nil {
 		t.Fatalf("err=%v resErr=%v", err, res[0].Err)
 	}
@@ -154,7 +154,7 @@ func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
 	if err != nil || len(ts) != 2 || ts[0].Label() != "fake:personal" || ts[1].Label() != "fake:work" {
 		t.Fatalf("targets %v, %v", ts, err)
 	}
-	res, err := Inventory(context.Background(), cfg, ts, t.TempDir(), nil)
+	res, err := Inventory(context.Background(), cfg, ts, t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

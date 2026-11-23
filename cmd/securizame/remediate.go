@@ -43,6 +43,14 @@ func remediateCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	annotate, err := acceptedAnnotator()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	for i := range findings {
+		annotate(&findings[i])
+	}
 	if *list {
 		fmt.Printf("Latest run of each connector:\n  %s\n\n", strings.Join(files, "\n  "))
 		remediate.List(os.Stdout, findings)
@@ -71,7 +79,7 @@ func remediateCmd(args []string) int {
 		if err != nil {
 			return nil, err
 		}
-		return run.Inventory(ctx, cfg, targets, *out, nil)
+		return run.Inventory(ctx, cfg, targets, *out, nil, annotate)
 	}
 	opt := remediate.Options{Apply: *apply, Yes: *yes, TTY: remediate.IsTerminal(os.Stdin),
 		IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}}

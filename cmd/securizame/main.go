@@ -6,6 +6,8 @@
 //	securizame remediate --list               automatable findings of the latest run
 //	securizame remediate <finding-id>         show the plan; --apply [--yes] to apply it
 //	securizame rotations sync|list|show|done|snooze|ignore|reopen   ledger of secrets to rotate
+//	securizame accept <finding-id> --reason text [--until YYYY-MM-DD]   keep a risk on purpose
+//	securizame accept --list | securizame unaccept <finding-id>
 package main
 
 import (
@@ -46,6 +48,10 @@ func main() {
 		os.Exit(remediateCmd(os.Args[2:]))
 	case "rotations":
 		os.Exit(rotationsCmd(os.Args[2:]))
+	case "accept":
+		os.Exit(acceptCLI().Accept(os.Args[2:]))
+	case "unaccept":
+		os.Exit(acceptCLI().Unaccept(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -53,7 +59,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|show|done|snooze|ignore|reopen>")
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|show|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id>")
 }
 
 func all() []connector.Connector {
@@ -81,6 +87,11 @@ func inventory(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	annotate, err := acceptedAnnotator()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "accepted risks:", err)
+		return 1
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -88,7 +99,7 @@ func inventory(args []string) int {
 	if *verbose {
 		logw = os.Stderr
 	}
-	results, err := run.Inventory(ctx, cfg, targets, *out, logw)
+	results, err := run.Inventory(ctx, cfg, targets, *out, logw, annotate)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
