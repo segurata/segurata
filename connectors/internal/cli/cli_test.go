@@ -53,6 +53,30 @@ func TestExecFailureKeepsStderr(t *testing.T) {
 	}
 }
 
+func TestExecFailureKeepsPartialStdout(t *testing.T) {
+	out, err := Exec{Path: shell(t), Timeout: 10 * time.Second}.Run(context.Background(), "-c", "printf partial; exit 2")
+	var ce *Error
+	if !errors.As(err, &ce) || string(out) != "partial" {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
+func TestCheckFuncGuard(t *testing.T) {
+	refuse := CheckFunc(func(args []string) error {
+		if len(args) > 0 && args[0] == "--pre" {
+			return ErrRefused
+		}
+		return nil
+	})
+	inner := RunnerFunc(func(_ context.Context, args ...string) ([]byte, error) { return []byte("ran"), nil })
+	if _, err := Guard(refuse, inner).Run(context.Background(), "--pre", "sh"); !errors.Is(err, ErrRefused) {
+		t.Fatalf("want refusal, got %v", err)
+	}
+	if out, err := Guard(refuse, inner).Run(context.Background(), "-e", "x"); err != nil || string(out) != "ran" {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
 func TestErrorMessageNamesTheCommandPath(t *testing.T) {
 	if got := commandLabel("/opt/sdk/bin/gcloud", []string{"projects", "list"}); got != "gcloud projects list" {
 		t.Errorf("label %q", got)

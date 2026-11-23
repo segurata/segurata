@@ -1,5 +1,6 @@
-// Package cli runs the cloud CLIs (gcloud, aws, az) the cloud connectors are built on, and guards
-// them with a read-only allowlist so a bug can never run a mutating command. Standard library only.
+// Package cli runs the CLIs connectors are built on (gcloud, aws, az, rg, gitleaks, git,
+// ssh-keygen), and guards them with a read-only check so a bug can never run a mutating command.
+// Standard library only.
 package cli
 
 import (
@@ -50,7 +51,8 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Err }
 
 // Run runs the command. A missing binary keeps exec.ErrNotFound in the chain, a timeout keeps
-// context.DeadlineExceeded, and any other failure is an *Error.
+// context.DeadlineExceeded, and any other failure is an *Error. On an *Error the stdout printed so
+// far is returned too, for tools such as rg that exit non-zero after a partial success.
 func (e Exec) Run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.Timeout)
 	defer cancel()
@@ -68,7 +70,7 @@ func (e Exec) Run(ctx context.Context, args ...string) ([]byte, error) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("%s timed out after %s: %w", label, e.Timeout, context.DeadlineExceeded)
 	}
-	return nil, &Error{Cmd: label, Stderr: stderr.String(), Err: err}
+	return out, &Error{Cmd: label, Stderr: stderr.String(), Err: err}
 }
 
 // commandLabel names a command by its binary's name and the arguments before the first flag.
@@ -127,9 +129,23 @@ func hasPath(args, path []string) bool {
 }
 
 // Guard returns a Runner that checks every command against the allowlist before r sees it.
-func (a Allowlist) Guard(r Runner) Runner {
+func (a Allowlist) Guard(r Runner) Runner { return Guard(a, r) }
+
+// Checker decides whether a command line may run. Allowlist fits CLIs with subcommands; CheckFunc
+// fits flag-driven tools (rg, ssh-keygen) whose read-only shapes are easier to state as code.
+type Checker interface {
+	Check(args []string) error
+}
+
+// CheckFunc adapts a function to Checker. It should wrap ErrRefused when it refuses.
+type CheckFunc func(args []string) error
+
+func (f CheckFunc) Check(args []string) error { return f(args) }
+
+// Guard returns a Runner that checks every command with c before r sees it.
+func Guard(c Checker, r Runner) Runner {
 	return RunnerFunc(func(ctx context.Context, args ...string) ([]byte, error) {
-		if err := a.Check(args); err != nil {
+		if err := c.Check(args); err != nil {
 			return nil, err
 		}
 		return r.Run(ctx, args...)

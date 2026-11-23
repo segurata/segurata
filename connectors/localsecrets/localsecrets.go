@@ -1,0 +1,441 @@
+// Package localsecrets inventories plaintext secrets on this machine: .env and credential files,
+// shell and agent config, shell histories, logs, agent transcripts, git history (gitleaks) and SSH
+// keys without a passphrase. Read-only. See docs/secrets.md for what to do with each finding and
+// docs/architecture.md, "Rotation ledger", for how findings become rotation items.
+//
+// No secret value ever leaves the process: findings carry a redacted hint and an HMAC fingerprint
+// (fingerprint.go), and each one is checked not to contain the value before it is emitted.
+package localsecrets
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/secretrisk"
+)
+
+const (
+	name           = "local-secrets"
+	localAccount   = "local"
+	fixDoc         = "docs/secrets.md"
+	defaultWorkers = 6
+	defaultTimeout = 10 * time.Minute
+)
+
+type Connector struct {
+	// The tools this connector runs, each behind its own read-only guard (guards.go). Tests
+	// replace them with canned output.
+	RG, Gitleaks, Git, SSHKeygen cli.Runner
+	LookPath                     func(string) (string, error)
+	Home                         func() (string, error)
+	// KeyPath is the fingerprint key file for a home directory.
+	KeyPath func(home string) string
+	Now     func() time.Time
+}
+
+func New() *Connector {
+	return &Connector{
+		RG:        cli.Exec{Path: "rg", Timeout: time.Hour},
+		Gitleaks:  cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour}, // bounded per repo by the context
+		Git:       cli.Exec{Path: "git", Timeout: 2 * time.Minute},
+		SSHKeygen: cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
+		LookPath:  exec.LookPath,
+		Home:      os.UserHomeDir,
+		KeyPath:   DefaultKeyPath,
+		Now:       time.Now,
+	}
+}
+
+func init() { connector.Register(New()) }
+
+// DefaultKeyPath is ~/.config/securizame/fingerprint.key.
+func DefaultKeyPath(home string) string {
+	return filepath.Join(home, ".config", "securizame", "fingerprint.key")
+}
+
+func (c *Connector) Describe() connector.Description {
+	return connector.Description{
+		Name:     name,
+		Version:  "0.1.0",
+		Protocol: connector.ProtocolVersion,
+		Summary:  "Plaintext secrets in config, .env files, histories, logs, agent transcripts, git history; SSH keys without a passphrase",
+		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen"},
+	}
+}
+
+// settings is the connector's config block.
+type settings struct {
+	reposRoot   string        // repos_root, default ~/src
+	skipHistory bool          // skip_git_history
+	workers     int           // gitleaks_workers
+	timeout     time.Duration // gitleaks_timeout, per repository
+}
+
+func parseSettings(cfg map[string]any, home string) (settings, error) {
+	s := settings{reposRoot: filepath.Join(home, "src"), workers: defaultWorkers, timeout: defaultTimeout}
+	if v, ok := cfg["repos_root"].(string); ok && v != "" {
+		s.reposRoot = expandHome(v, home)
+	}
+	if v, ok := cfg["skip_git_history"].(bool); ok {
+		s.skipHistory = v
+	}
+	if v, ok := cfg["gitleaks_workers"].(float64); ok && v >= 1 {
+		s.workers = int(v)
+	}
+	if v, ok := cfg["gitleaks_timeout"].(string); ok && v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return s, fmt.Errorf("gitleaks_timeout %q is not a duration such as \"10m\"", v)
+		}
+		s.timeout = d
+	}
+	return s, nil
+}
+
+func expandHome(p, home string) string {
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
+	home, err := c.Home()
+	if err != nil {
+		return err
+	}
+	cfg, err := parseSettings(req.Config, home)
+	if err != nil {
+		return err
+	}
+	fp, err := loadKey(c.KeyPath(home))
+	if err != nil {
+		return fmt.Errorf("fingerprint key: %w", err)
+	}
+	if _, err := c.LookPath("rg"); err != nil {
+		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported,
+			Detail: "rg (ripgrep) is required: install it, respecting the 4-day quarantine"})
+		return nil
+	}
+	_, glErr := c.LookPath("gitleaks")
+	history := !cfg.skipHistory && glErr == nil
+
+	s := newScan(ctx, c, home, cfg, fp, emit)
+	var wg sync.WaitGroup
+	for _, pass := range s.passes(history) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.rg(pass)
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.byName()
+	}()
+	var repos, failed int
+	if history {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			repos, failed = s.gitleaksAll()
+		}()
+	}
+	wg.Wait()
+	s.sshKeys()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	findings := s.findings()
+	for _, f := range findings {
+		emit.Finding(f)
+	}
+	detail := fmt.Sprintf("%d findings", len(findings))
+	switch {
+	case history:
+		detail += fmt.Sprintf("; gitleaks: %d repositories, %d failed", repos, failed)
+	case cfg.skipHistory:
+		detail += "; git history skipped (skip_git_history)"
+	default:
+		detail += "; gitleaks is not installed: no git history scan, the whole working tree under repos_root was scanned instead"
+	}
+	if s.omitted > 0 {
+		detail += fmt.Sprintf("; %d omitted because the value appeared in the path or note", s.omitted)
+	}
+	emit.Status(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
+	return nil
+}
+
+// row is one secret at one location, aggregated over repeated matches.
+type row struct{ ev secretrisk.Evidence }
+
+// scan holds the state of one inventory run.
+type scan struct {
+	ctx  context.Context
+	c    *Connector
+	home string
+	src  string
+	cfg  settings
+	fp   fingerprinter
+	now  time.Time
+	emit connector.Emitter
+
+	mu      sync.Mutex
+	rows    map[string]*row
+	omitted int
+
+	git gitCache
+}
+
+func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprinter, emit connector.Emitter) *scan {
+	return &scan{ctx: ctx, c: c, home: home, src: cfg.reposRoot, cfg: cfg, fp: fp, now: c.Now(), emit: emit,
+		rows: map[string]*row{}, git: gitCache{roots: map[string]string{}, files: map[string]map[string]bool{}, remote: map[string]bool{}}}
+}
+
+func (s *scan) h(p string) string { return filepath.Join(s.home, p) }
+
+func (s *scan) tilde(p string) string {
+	if p == s.home || strings.HasPrefix(p, s.home+string(filepath.Separator)) {
+		return "~" + p[len(s.home):]
+	}
+	return p
+}
+
+var transcriptDirs = []string{".claude/projects", ".claude/history.jsonl", ".codex/sessions", ".codex/history.jsonl", ".cursor/projects", ".gemini/tmp"}
+var historyFiles = []string{".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".node_repl_history", ".psql_history", ".mysql_history", ".irb_history", ".sqlite_history", ".lesshst"}
+
+func (s *scan) under(p string, rels []string) bool {
+	for _, r := range rels {
+		if strings.HasPrefix(p, s.h(r)) {
+			return true
+		}
+	}
+	return false
+}
+
+// kindOf classifies a path: agent transcript, shell history, log, file in a repository, or config.
+func (s *scan) kindOf(p string) string {
+	switch {
+	case s.under(p, transcriptDirs):
+		return "transcript"
+	case s.under(p, historyFiles):
+		return "history"
+	case strings.HasSuffix(p, ".log") || s.under(p, []string{"Library/Logs", ".local/log"}):
+		return "log"
+	case strings.HasPrefix(p, s.src+string(filepath.Separator)):
+		return "repo"
+	}
+	return "config"
+}
+
+func modeOf(p string) string {
+	st, err := os.Stat(p)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%o", st.Mode().Perm())
+}
+
+func bucketOf(ev secretrisk.Evidence) string {
+	switch {
+	case ev.Source == "ssh" && ev.Encrypted:
+		return "ok"
+	case ev.Tracked:
+		return "0-git"
+	case ev.Kind == "transcript" || ev.Kind == "log" || ev.Kind == "history":
+		return "2-trail"
+	case secretrisk.Where("", "", ev.Mode, false, false).Level == secretrisk.Shared:
+		return "1-readable"
+	}
+	return "3-local"
+}
+
+var shellRC = []string{".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile"}
+
+// fixFor is the docs/secrets.md anchor with the recommended fix.
+func fixFor(ev secretrisk.Evidence) string {
+	t, p := ev.Type, ev.Path
+	hasAny := func(subs ...string) bool {
+		for _, x := range subs {
+			if strings.Contains(p, x) {
+				return true
+			}
+		}
+		return false
+	}
+	pre := func(prefixes ...string) bool {
+		for _, x := range prefixes {
+			if strings.HasPrefix(t, x) {
+				return true
+			}
+		}
+		return false
+	}
+	rc := false
+	for _, f := range shellRC {
+		rc = rc || strings.HasSuffix(p, "/"+f)
+	}
+	var a string
+	switch {
+	case ev.Tracked:
+		a = "in-git-always-rotate"
+	case ev.Kind == "transcript":
+		a = "agent-transcripts"
+	case ev.Kind == "history":
+		a = "shell-history"
+	case ev.Kind == "log":
+		a = "logs"
+	case t == "ssh-key":
+		a = "ssh-keys"
+	case pre("aws") || hasAny("/.aws/"):
+		a = "aws"
+	case hasAny("gcloud", ".gemini") || pre("google", "oauth", "gcp"):
+		a = "google-cloud-and-oauth"
+	case pre("github", "gitlab") || strings.HasSuffix(p, ".netrc") || hasAny("/gh/"):
+		a = "github-and-git"
+	case pre("npm", "pypi", "rubygems", "docker") || strings.HasSuffix(p, ".npmrc") || hasAny(".docker/"):
+		a = "package-registries-and-docker"
+	case rc:
+		a = "shell-variables-from-the-keychain"
+	case hasAny(".claude", ".mcp", ".codex", ".cursor", ".config/opencode"):
+		a = "mcp-servers-and-agents"
+	case t == privateKeyType || t == "keystore" || t == "rails-master-key":
+		a = "files-that-must-live-in-the-repo"
+	default:
+		a = "env-files"
+	}
+	return fixDoc + "#" + a
+}
+
+// add records one secret at one location. value is what gets fingerprinted (the raw secret, or the
+// body of a PEM key); it never leaves this function.
+func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
+	if ev.Kind == "" {
+		ev.Kind = s.kindOf(abs)
+	}
+	if ev.Source != "gitleaks" {
+		ev.Mode = modeOf(abs)
+		if !strings.Contains(abs, "/.git/") {
+			ev.Tracked, ev.Remote = s.trackedFile(abs)
+		}
+	}
+	ev.Path = s.tilde(abs)
+	ev.Fingerprint = s.fp.ofString(value)
+	ev.Bucket = bucketOf(ev)
+	ev.Fix = fixFor(ev)
+	if len(value) >= 6 {
+		raw, _ := json.Marshal(ev)
+		if strings.Contains(string(raw), value) {
+			s.mu.Lock()
+			s.omitted++
+			s.mu.Unlock()
+			return
+		}
+	}
+	key := strings.Join([]string{ev.Source, ev.Path, ev.Type, ev.Fingerprint}, "\x00")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.rows[key]; ok {
+		r.ev.Count++
+		return
+	}
+	ev.Count = 1
+	s.rows[key] = &row{ev: ev}
+}
+
+// findings turns the aggregated rows into findings, sorted by path. A private-key row is dropped
+// when the same key in the same file was already reported as a GCP service account key.
+func (s *scan) findings() []finding.Finding {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sa := map[string]bool{}
+	for _, r := range s.rows {
+		if r.ev.Type == "gcp-service-account" {
+			sa[r.ev.Path+"\x00"+r.ev.Fingerprint] = true
+		}
+	}
+	var out []finding.Finding
+	for _, r := range s.rows {
+		if r.ev.Type == privateKeyType && sa[r.ev.Path+"\x00"+r.ev.Fingerprint] {
+			continue
+		}
+		out = append(out, toFinding(r.ev))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Resource.ID < out[j].Resource.ID })
+	return out
+}
+
+func toFinding(ev secretrisk.Evidence) finding.Finding {
+	t := secretrisk.Lookup(ev.Type)
+	spot := secretrisk.WhereEvidence(ev)
+	prio := secretrisk.PriorityOf(secretrisk.ImpactOf(ev), spot.Level)
+	where := ev.Path
+	if ev.Line > 0 {
+		where = fmt.Sprintf("%s:%d", ev.Path, ev.Line)
+	}
+	title := fmt.Sprintf("%s in %s", t.Label, where)
+	if ev.Source == "gitleaks" {
+		title = fmt.Sprintf("%s in the git history of %s (%s)", t.Label, ev.Repo, strings.TrimPrefix(ev.Path, ev.Repo+"/"))
+	}
+	kind := finding.KindExposure
+	summary := remediation(prio, spot, ev)
+	if ev.Source == "ssh" {
+		if ev.Encrypted {
+			kind, title = finding.KindSetting, fmt.Sprintf("SSH key %s has a passphrase", ev.Path)
+		}
+		summary = fmt.Sprintf("Add a passphrase (ssh-keygen -p -f %s) or replace the key with one that has it; see %s.", ev.Path, ev.Fix)
+	}
+	var evidence map[string]any
+	raw, _ := json.Marshal(ev)
+	_ = json.Unmarshal(raw, &evidence)
+	return finding.Finding{
+		Account:     localAccount,
+		Resource:    finding.Resource{Type: "secret", ID: ev.Source + ":" + ev.Path + "#" + ev.Fingerprint, Name: t.Label},
+		Kind:        kind,
+		Severity:    secretrisk.SeverityOf(prio),
+		Title:       title,
+		Evidence:    evidence,
+		Remediation: finding.Remediation{Summary: summary, URL: t.RotateURL, Action: action(ev)},
+	}
+}
+
+// action offers `securizame remediate` a chmod 600 for a working file other users can read. It
+// closes the file; it does not make rotation unnecessary.
+func action(ev secretrisk.Evidence) string {
+	if ev.Source == "gitleaks" || ev.Mode == "" {
+		return ""
+	}
+	if secretrisk.Where("", "", ev.Mode, false, false).Level != secretrisk.Shared {
+		return ""
+	}
+	return remediate.ActionChmod600
+}
+
+func remediation(p secretrisk.Priority, spot secretrisk.Spot, ev secretrisk.Evidence) string {
+	switch {
+	case p == "":
+		return fmt.Sprintf("Probably not a usable secret (generic match, public, expired or encrypted). If it is one, see %s.", ev.Fix)
+	case spot.Level == secretrisk.Remote:
+		return fmt.Sprintf("It left this machine: rotate it at the provider, then keep the new value out of plain files (%s).", ev.Fix)
+	case spot.Level == secretrisk.Shared:
+		return fmt.Sprintf("Rotate it, then move the new value to the Keychain or 1Password (%s). `securizame remediate` can close the file (chmod 600) meanwhile.", ev.Fix)
+	}
+	return fmt.Sprintf("Move it to the Keychain or 1Password and delete the plaintext copy (%s).", ev.Fix)
+}
