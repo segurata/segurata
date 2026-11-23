@@ -186,8 +186,8 @@ unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture
 Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
 update settings and pending updates (`softwareupdate -l`, capped at 120 s), screen lock, automatic
 login and guest account, TCP ports listening outside loopback (instead of
-`systemsetup -getremotelogin`, which needs admin; for SMB it names the shared folders and flags guest
-access), login and background items (`sfltool dumpbtm`, flagging those without a developer
+`systemsetup -getremotelogin`, which needs admin), each SMB share point behind port 445 (from
+`sharing -l -f json`), login and background items (`sfltool dumpbtm`, flagging those without a developer
 signature), Brave extensions per profile with their permissions (flags access to all sites and APIs
 such as `cookies`, `debugger` or `nativeMessaging`), and whether Brave runs with
 `--remote-debugging-port`.
@@ -197,6 +197,10 @@ such as `cookies`, `debugger` or `nativeMessaging`), and whether Brave runs with
 - The remote debugging port is a `high` finding even though the google-personal and connected-apps
   connectors need it: while the port is open, any local process can drive the browser with every
   signed-in session. Start Brave with the flag only for those connectors.
+- File Sharing gives a medium finding for port 445 and one `share_point` finding per share point,
+  with its name, path, whether the path exists, guest access and read-only. A share open to guests
+  is `high`; so is an orphaned record whose folder no longer exists (Migration Assistant leaves
+  these behind for users that were never recreated); any other shared folder is `medium`.
 - Every command it runs is on an exact allowlist in `connectors/macos`. Takes about half a minute
   because of `softwareupdate` and `sfltool`.
 
@@ -218,10 +222,24 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 |---|---|---|
 | `macos.firewall.enable` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on` | `--setglobalstate off` |
 | `macos.firewall.stealth` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on` | `--setstealthmode off` |
+| `macos.smb.share-remove` | `sudo /usr/sbin/sharing -r <name>` (orphaned records and shared folders without guest access) | `sudo /usr/sbin/sharing -a <path> -n <name> -S <smb name> -s <flag> -g <flag> -R <0/1>` with the record's current flags; not applicable for an orphan, whose folder no longer exists |
+| `macos.smb.guest-off` | `sudo /usr/sbin/sharing -e <name> -g 000` (live shares open to guests) | `sudo /usr/sbin/sharing -e <name> -g 001` |
 | `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
 
-Manual, with the System Settings path in the finding: File Sharing (SMB, port 445; turning off the
-`smbd` launchd service by hand is not a supported way), AirPlay Receiver (ports 5000 and 7000), Remote Login, Screen Sharing, FileVault,
+The share point name comes from a fresh `sharing -l -f json` read at plan and at apply time, never
+from the finding alone: a name that matches no record exactly is refused, and the apply-time
+allowlist holds only the records that exist then. The name is one argument to `sharing`, never
+passed through a shell, so spaces and quotes in it are safe. Turning guest access off changes the
+finding's id (`smb-share-guest:<name>` becomes `smb-share:<name>`), which is how the re-check sees
+the fix; the share itself stays reported as a medium finding.
+
+Port 445 stays manual. `launchd` owns that socket (netstat shows pid 1) and hands connections to
+`smbd` on demand, so it listens while File Sharing is on, with or without share points. After the
+last share point is removed, the port finding says "with no shared folders" and points to System
+Settings > General > Sharing > File Sharing. Turning off the `smbd` launchd service by hand is not a
+supported way.
+
+Manual, with the System Settings path in the finding: File Sharing itself (SMB, port 445), AirPlay Receiver (ports 5000 and 7000), Remote Login, Screen Sharing, FileVault,
 Gatekeeper, SIP, update settings, screen lock, login items and Brave extensions.
 
 AirPlay Receiver is manual because the Terminal remediation the CIS benchmarks give (`defaults

@@ -40,9 +40,6 @@ const (
 	loginWindowPrefs    = "/Library/Preferences/com.apple.loginwindow"
 )
 
-// The per-host AirPlay Receiver preference. Apple spells the key "Reciever".
-const ()
-
 var updateKeys = []string{"AutomaticCheckEnabled", "AutomaticDownload", "CriticalUpdateInstall", "ConfigDataInstall", "AutomaticallyInstallMacOSUpdates"}
 
 // readOnly is every command line inventory may run, exactly. None of them changes anything; a
@@ -67,7 +64,7 @@ var readOnly = func() map[string]bool {
 		{netstatBin, "-anv", "-p", "tcp"},
 		{psBin, "-axo", "pid=,comm="},
 		{psBin, "-axo", "command="},
-		{"/usr/sbin/sharing", "-l"},
+		listShares,
 		{"/usr/bin/sfltool", "dumpbtm"},
 		{"/bin/launchctl", "list"},
 	}

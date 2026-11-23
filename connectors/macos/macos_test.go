@@ -136,7 +136,7 @@ func exposed() map[string]string {
 		nsLine("tcp4", "*.57621", "LISTEN", "77") +
 		nsLine("tcp4", "127.0.0.1.9222", "LISTEN", "88")
 	r[psBin+" -axo pid=,comm="] = "    1 /sbin/launchd\n  664 /System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter\n   77 /Applications/Spotify.app/Contents/MacOS/Spotify\n"
-	r["/usr/sbin/sharing -l"] = "\n\t\t\tList of Share Points\nname:\t\tPublic of Pat\npath:\t\t/Users/pat/Public\n\tsmb:\t{\n\t\tname:\tPublic of Pat\n\t\tshared:\t1\n\t\tguest access:\t1\n\t}\n"
+	r[sharingKey] = sharesJSON(sharePoint{Name: "Public of Pat", Path: "/nonexistent/pat/Public", SMBName: "Public of Pat", Shared: 1, Guest: 1})
 	r[psBin+" -axo command="] = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser --remote-debugging-port=9222 --flag\n" +
 		"/Applications/Brave Browser.app/Contents/Frameworks/Helper --remote-debugging-port=1\n"
 	r["/usr/bin/sfltool dumpbtm"] = btmSigned + ` #2:
@@ -177,7 +177,8 @@ func TestExposedMacGradesEachCheckAndAttachesActions(t *testing.T) {
 		"updates-pending":                {"macos_setting", finding.SevMedium, ""},
 		"listen-5000":                    {"listening_port", finding.SevMedium, ""},
 		"listen-7000":                    {"listening_port", finding.SevMedium, ""},
-		"listen-445":                     {"listening_port", finding.SevHigh, ""},
+		"listen-445":                     {"listening_port", finding.SevMedium, ""},
+		"smb-share:Public of Pat":        {"share_point", finding.SevHigh, ActionShareRemove},
 		"listen-57621":                   {"listening_port", finding.SevInfo, ""},
 		"brave-remote-debugging":         {"macos_setting", finding.SevHigh, ""},
 		"btm:8.com.example.job":          {"background_item", finding.SevLow, ""},
@@ -195,8 +196,12 @@ func TestExposedMacGradesEachCheckAndAttachesActions(t *testing.T) {
 		}
 	}
 	smb := rec.ByResource(t, "listening_port", "listen-445")
-	if got := smb.Evidence["guest_access"]; fmt.Sprint(got) != "[Public of Pat]" || !strings.Contains(smb.Title, "guest access") {
-		t.Errorf("445 evidence %v title %q", got, smb.Title)
+	if got := smb.Evidence["share_points"]; fmt.Sprint(got) != "[Public of Pat]" {
+		t.Errorf("445 evidence %v", got)
+	}
+	orphan := rec.ByResource(t, "share_point", "smb-share:Public of Pat")
+	if !strings.Contains(orphan.Title, "Orphaned") || orphan.Evidence["path_exists"] != false || orphan.Evidence["guest"] != true {
+		t.Errorf("orphaned share: %q %v", orphan.Title, orphan.Evidence)
 	}
 	if a := rec.ByResource(t, "listening_port", "listen-5000").Evidence["addresses"]; fmt.Sprint(a) != "[*.5000]" {
 		t.Errorf("tcp4 and tcp6 on one address should merge: %v", a)
@@ -381,12 +386,5 @@ func TestApplyRunsThePlanAndRefusesAnythingElse(t *testing.T) {
 	crossed := connector.Plan{Action: ActionFirewallStealth, Commands: []connector.Step{firewallStep("--setglobalstate", "off")}}
 	if err := remediate.Run(context.Background(), crossed, allowed, ex, termIO()); !errors.Is(err, remediate.ErrRefused) {
 		t.Fatalf("undo command allowed as a forward step: %v", err)
-	}
-}
-
-func TestParseSharePointsWithoutGuests(t *testing.T) {
-	shares, guest := parseSharePoints("name:\t\tProjects\npath:\t\t/Users/a/Projects\n\tsmb:\t{\n\t\tguest access:\t0\n\t}\nname:\t\tMedia\n")
-	if fmt.Sprint(shares) != "[Projects Media]" || len(guest) != 0 {
-		t.Fatalf("shares %v guest %v", shares, guest)
 	}
 }
