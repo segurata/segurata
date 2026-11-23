@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
@@ -94,6 +95,15 @@ func (s *scan) run() {
 		s.fail(err)
 		return
 	}
+	// The admin key listing also returns the organization's project keys, and it is the only
+	// listing that carries their last_used_at. Split it: admin keys get their own findings,
+	// project keys only lend their last use to the per-project listing below.
+	listed, err := list[adminKey](s, "/organization/admin_api_keys", nil)
+	if err != nil {
+		s.fail(err)
+	}
+	admins, lastUsed := splitAdminListing(listed)
+
 	orgLimit := s.spendLimit("/organization/spend_limit")
 	orgAlerts := s.alerts("/organization/spend_alerts")
 	costs, costErr := s.costs()
@@ -122,14 +132,13 @@ func (s *scan) run() {
 		}
 		capped := limitCover{known: orgLimit.known && projLimit.known, set: orgLimit.set || projLimit.set}
 		for _, k := range keys {
+			if k.LastUsedAt == nil {
+				k.LastUsedAt = lastUsed[k.ID]
+			}
 			s.emit.Finding(projectKeyFinding(k, p, capped, s.now))
 		}
 	}
 
-	admins, err := list[adminKey](s, "/organization/admin_api_keys", nil)
-	if err != nil {
-		s.fail(err)
-	}
 	for _, k := range admins {
 		s.emit.Finding(adminKeyFinding(k, s.now))
 	}
@@ -228,6 +237,27 @@ type adminKey struct {
 	Owner         struct {
 		Name string `json:"name"`
 	} `json:"owner"`
+}
+
+// adminKeyPrefix marks real admin keys in redacted_value; everything else in the admin listing
+// is a project key.
+const adminKeyPrefix = "sk-admin"
+
+// splitAdminListing separates real admin keys from the project keys the admin listing also
+// returns, keeping the project keys' last use by key id.
+func splitAdminListing(listed []adminKey) ([]adminKey, map[string]*int64) {
+	var admins []adminKey
+	lastUsed := map[string]*int64{}
+	for _, k := range listed {
+		if strings.HasPrefix(k.RedactedValue, adminKeyPrefix) {
+			admins = append(admins, k)
+			continue
+		}
+		if k.LastUsedAt != nil {
+			lastUsed[k.ID] = k.LastUsedAt
+		}
+	}
+	return admins, lastUsed
 }
 
 // limitState is what GET .../spend_limit said: a 404 means no hard limit is configured.
@@ -424,7 +454,7 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 		Resource:   finding.Resource{Type: "api_key", ID: k.ID, Name: k.Name},
 		Kind:       finding.KindCredential,
 		Severity:   a.Severity,
-		Title:      fmt.Sprintf("API key %q in project %q: %s", k.Name, p.label(), a.Reasons[0]),
+		Title:      fmt.Sprintf("API key %q in project %q: %s", k.Name, p.label(), strings.Join(a.Reasons, "; ")),
 		Evidence:   ev,
 		CreatedAt:  created,
 		LastUsedAt: lastUsed,
@@ -452,7 +482,7 @@ func adminKeyFinding(k adminKey, now time.Time) finding.Finding {
 		Resource:   finding.Resource{Type: "admin_api_key", ID: k.ID, Name: n},
 		Kind:       finding.KindCredential,
 		Severity:   a.Severity,
-		Title:      fmt.Sprintf("Admin API key %q: %s", n, a.Reasons[0]),
+		Title:      fmt.Sprintf("Admin API key %q: %s", n, strings.Join(a.Reasons, "; ")),
 		Evidence:   ev,
 		CreatedAt:  created,
 		LastUsedAt: lastUsed,

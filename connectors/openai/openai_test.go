@@ -217,3 +217,46 @@ func TestKeyAssessment(t *testing.T) {
 		}
 	}
 }
+
+// The live admin listing also returns project keys (sk-proj-…), and it is the only place their
+// last use shows up. They must not be reported as admin keys, and must lend their last use.
+func TestAdminListingProjectKeysAreNotAdminKeysButLendLastUse(t *testing.T) {
+	adminEntry := func(id, redacted string, lastUsed any) map[string]any {
+		return map[string]any{"object": "organization.admin_api_key", "id": id, "name": id,
+			"redacted_value": redacted, "created_at": ago(400), "last_used_at": lastUsed,
+			"owner": map[string]any{"name": "Owner"}}
+	}
+	srv := httpxtest.NewServer(t, http.Header{"Authorization": {"Bearer " + testKey}}, map[string]httpxtest.Route{
+		"/organization/projects":                     httpxtest.Static(listOf(map[string]any{"id": "proj_a", "name": "a"})),
+		"/organization/spend_limit":                  httpxtest.Fail(http.StatusNotFound, "no spend limit"),
+		"/organization/spend_alerts":                 httpxtest.Static(listOf()),
+		"/organization/projects/proj_a/spend_limit":  httpxtest.Fail(http.StatusNotFound, "no spend limit"),
+		"/organization/projects/proj_a/spend_alerts": httpxtest.Static(listOf()),
+		"/organization/projects/proj_a/api_keys":     httpxtest.Static(listOf(key("key_p", "p", nil, "active"))),
+		"/organization/admin_api_keys": httpxtest.Static(listOf(
+			adminEntry("key_p", "sk-proj-****abcd", ago(3)),
+			adminEntry("key_admin", "sk-admin****wxyz", nil),
+		)),
+		"/organization/costs": httpxtest.Static(map[string]any{"data": []any{}, "has_more": false, "next_page": nil}),
+	})
+	rec := &httpxtest.Recorder{}
+	c := &Connector{BaseURL: srv.URL, Now: func() time.Time { return now }}
+	if err := c.Inventory(context.Background(), connector.Request{Secrets: map[string]string{secretName: testKey}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	var admins, projectKeys []finding.Finding
+	for _, f := range rec.Findings {
+		switch f.Resource.Type {
+		case "admin_api_key":
+			admins = append(admins, f)
+		case "api_key":
+			projectKeys = append(projectKeys, f)
+		}
+	}
+	if len(admins) != 1 || admins[0].Resource.ID != "key_admin" {
+		t.Fatalf("admin findings = %+v, want only key_admin", admins)
+	}
+	if len(projectKeys) != 1 || projectKeys[0].LastUsedAt == nil || projectKeys[0].LastUsedAt.Unix() != ago(3) {
+		t.Fatalf("project key should take last use from the admin listing: %+v", projectKeys)
+	}
+}

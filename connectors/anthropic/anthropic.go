@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
@@ -378,7 +379,7 @@ func (s *scan) keyFinding(k apiKey, wsName map[string]string, members map[string
 		Resource:  finding.Resource{Type: "api_key", ID: k.ID, Name: k.Name},
 		Kind:      finding.KindCredential,
 		Severity:  a.Severity,
-		Title:     fmt.Sprintf("API key %q in %s: %s", k.Name, where, a.Reasons[0]),
+		Title:     fmt.Sprintf("API key %q in %s: %s", k.Name, where, strings.Join(a.Reasons, "; ")),
 		Evidence:  ev,
 		CreatedAt: created,
 		Remediation: finding.Remediation{
