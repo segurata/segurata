@@ -103,6 +103,37 @@ Credentials, once per tenant. The script never signs in and never creates servic
 - Output: `out/workspace-<domain>-<date>.jsonl`, with `user`, `grant`, `app` and
   `token-activity` lines, plus the summary on screen.
 
+## Plaintext secrets on disk
+
+```bash
+node secrets/local-secrets-scan.mjs
+```
+
+Looks for tokens, API keys and private keys in plain files and reports, for each finding, the path,
+line, type, file permissions and whether git tracks the file. **Never the value**: at most the
+known prefix and length (`sk-ant-…(108)`) and a fingerprint `fp` (12 hex of SHA-256) to see where
+the same secret repeats.
+
+- Where it looks: `.env*`, `*.pem`, `*.key`, `credentials*`, `secrets*`, `*.secret.exs` and
+  `config/master.key` under `~/src` (skipping `node_modules`, `deps`, `_build`, `vendor`); known
+  credential files (`~/.aws`, `~/.config/**`, `~/.npmrc`, `~/.netrc`, `~/.docker`, `~/.mcp`,
+  `~/.claude.json`, `~/.claude/**/*.json`, `~/.codex`, `~/.cursor`, `~/.gemini`, `~/.zshrc` and
+  friends); shell histories; logs (`*.log` under `~/src`, `~/Library/Logs`, `~/.local/log`); agent
+  transcripts (`~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects`).
+- Git history: with `gitleaks` installed, `gitleaks git --redact` on every repo under `~/src` and on
+  `~/.claude`. Without it, the script scans the whole `~/src` working tree with its own patterns,
+  but not history; to enable history scanning, install gitleaks respecting the 4-day quarantine
+  (`~/.claude/scripts/safe-update.sh`, or check the release date before `brew install gitleaks`).
+- SSH keys in `~/.ssh`: type, permissions and whether they have a passphrase (`ssh-keygen -y -P ""`).
+- Requirements: `rg` (ripgrep) and Node. It takes several minutes: transcripts weigh tens of GB
+  and gitleaks walks hundreds of repos.
+- Output: `out/local-secrets-<date>.jsonl` (mode 600) and a summary by severity: P0 in git, P1 in
+  files readable by group or others, P2 in transcripts, logs and histories, P3 in closed local
+  files. Rows with `public: true` are not secrets on their own (AWS key IDs, Sentry DSNs, test
+  keys, anon or expired JWTs).
+- What to do with each finding: [docs/secrets.md](docs/secrets.md); each row's `fix` field links
+  the section.
+
 ## Plan
 
 Actions by area and priority, with verified sources and what a script can audit: [docs/plan.md](docs/plan.md).
