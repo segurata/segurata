@@ -3,5 +3,8 @@
 package connectors
 
 import (
+	_ "github.com/segurata/segurata/connectors/anthropic"
 	_ "github.com/segurata/segurata/connectors/googlepersonal"
+	_ "github.com/segurata/segurata/connectors/openai"
+	_ "github.com/segurata/segurata/connectors/openrouter"
 )
