@@ -105,13 +105,17 @@ func (s *scan) run() {
 		s.account = org.ID
 	}
 
-	workspaces, err := list[workspace](s, "/v1/organizations/workspaces", nil)
+	// Archived workspaces still hold keys, so list them too, or those keys show a bare id.
+	workspaces, err := list[workspace](s, "/v1/organizations/workspaces", url.Values{"include_archived": {"true"}})
 	if err != nil {
 		s.fail(err)
 	}
 	wsName := map[string]string{}
 	for _, w := range workspaces {
 		wsName[w.ID] = w.Name
+		if w.ArchivedAt != nil {
+			wsName[w.ID] = w.Name + " (archived)"
+		}
 	}
 	users, err := list[struct {
 		ID string `json:"id"`

@@ -46,6 +46,9 @@ func TestInventoryFindsOrphanAndUnusedKeysAndCost(t *testing.T) {
 	srv := httpxtest.NewServer(t, http.Header{"X-Api-Key": {testKey}, "Anthropic-Version": {apiVersion}}, map[string]httpxtest.Route{
 		"/v1/organizations/me": httpxtest.Static(map[string]any{"id": "org_1", "type": "organization", "name": "Acme Test"}),
 		"/v1/organizations/workspaces": func(q url.Values) (int, any) {
+			if q.Get("include_archived") != "true" {
+				t.Errorf("workspaces must include archived ones (their keys would show a bare id): %v", q)
+			}
 			if q.Get("after_id") == "" {
 				return 200, map[string]any{"data": []any{map[string]any{"id": "wrkspc_prod", "name": "prod"}}, "has_more": true, "last_id": "wrkspc_prod"}
 			}
