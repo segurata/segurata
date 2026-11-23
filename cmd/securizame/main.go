@@ -5,6 +5,7 @@
 //	    --min-severity=low  --out=out  --verbose
 //	securizame remediate --list               automatable findings of the latest run
 //	securizame remediate <finding-id>         show the plan; --apply [--yes] to apply it
+//	securizame rotations sync|list|show|done|snooze|ignore|reopen   ledger of secrets to rotate
 package main
 
 import (
@@ -43,6 +44,8 @@ func main() {
 		os.Exit(inventory(os.Args[2:]))
 	case "remediate":
 		os.Exit(remediateCmd(os.Args[2:]))
+	case "rotations":
+		os.Exit(rotationsCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -50,7 +53,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes]")
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|show|done|snooze|ignore|reopen>")
 }
 
 func all() []connector.Connector {
