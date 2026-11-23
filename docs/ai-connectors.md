@@ -89,6 +89,26 @@ What the API does not give:
 - The usage and cost endpoints used are the legacy ones, still supported. The newer Usage and Cost
   Analytics API is beta.
 
+### Ephemeral Anthropic admin keys
+
+Anthropic admin keys have full access (create and revoke keys, manage members) and cannot be made
+read-only or set to expire. Rather than keeping one around, create it for the audit and delete it
+right after:
+
+```json
+"anthropic:personal": {"secrets": {"ANTHROPIC_ADMIN_KEY": "env:ANTHROPIC_ADMIN_KEY"}}
+```
+
+```bash
+# copy the new admin key, then:
+ANTHROPIC_ADMIN_KEY="$(pbpaste)" securizame inventory anthropic; pbcopy </dev/null
+# delete the key at https://platform.claude.com/settings/admin-keys
+```
+
+A Keychain item with no trusted apps (`-T ""`) asks on every read, but answering "Always Allow"
+once trusts `/usr/bin/security`, which any process can call, so it does not protect the key in
+practice.
+
 ## OpenRouter (`openrouter`)
 
 Secret `OPENROUTER_MANAGEMENT_KEY`, a Management API key, sent as
