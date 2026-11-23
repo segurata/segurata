@@ -41,10 +41,7 @@ const (
 )
 
 // The per-host AirPlay Receiver preference. Apple spells the key "Reciever".
-const (
-	controlCenterPrefs = "com.apple.controlcenter"
-	airPlayReceiverKey = "AirplayRecieverEnabled"
-)
+const ()
 
 var updateKeys = []string{"AutomaticCheckEnabled", "AutomaticDownload", "CriticalUpdateInstall", "ConfigDataInstall", "AutomaticallyInstallMacOSUpdates"}
 
@@ -71,7 +68,6 @@ var readOnly = func() map[string]bool {
 		{psBin, "-axo", "pid=,comm="},
 		{psBin, "-axo", "command="},
 		{"/usr/sbin/sharing", "-l"},
-		{defaultsBin, "-currentHost", "read", controlCenterPrefs, airPlayReceiverKey},
 		{"/usr/bin/sfltool", "dumpbtm"},
 		{"/bin/launchctl", "list"},
 	}

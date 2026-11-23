@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -53,7 +54,20 @@ type Options struct {
 	Yes   bool // skip the confirmation prompt
 	TTY   bool // stdin is a terminal
 	IO    connector.IO
+	// Sleep waits between checks; nil means time.Sleep.
+	Sleep func(time.Duration)
 }
+
+// A fix often takes a moment to settle: a restarted process can drop its ports for a second and
+// open them again. So the check waits first, then requires the finding to be absent in several
+// consecutive inventories. Verified 2026-11-23: an AirPlay Receiver change looked fixed on an
+// immediate check while ControlCenter restarted, and the ports were back seconds later.
+var defaultSleep = time.Sleep
+
+const (
+	settleWait   = 5 * time.Second
+	settleChecks = 2
+)
 
 // Reinventory runs the finding's connector again, read-only, to check the result.
 type Reinventory func(ctx context.Context) ([]*run.Result, error)
@@ -81,17 +95,25 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 	if err := r.Apply(ctx, f, p, opt.IO); err != nil {
 		return fmt.Errorf("apply %s: %w", p.Action, err)
 	}
-	fmt.Fprintf(opt.IO.Out, "Applied %s. Checking with a fresh %s inventory...\n", p.Action, Selector(f))
-	results, err := reinventory(ctx)
-	if err != nil {
-		return fmt.Errorf("applied, but the check could not run: %w", err)
+	sleep := opt.Sleep
+	if sleep == nil {
+		sleep = defaultSleep
 	}
-	present, err := StillPresent(results, f.ID)
-	if err != nil {
-		return fmt.Errorf("applied, but the check failed: %w", err)
-	}
-	if present {
-		return ErrStillPresent
+	fmt.Fprintf(opt.IO.Out, "Applied %s. Checking %d times with a fresh %s inventory, %s apart...\n",
+		p.Action, settleChecks, Selector(f), settleWait)
+	for i := 0; i < settleChecks; i++ {
+		sleep(settleWait)
+		results, err := reinventory(ctx)
+		if err != nil {
+			return fmt.Errorf("applied, but the check could not run: %w", err)
+		}
+		present, err := StillPresent(results, f.ID)
+		if err != nil {
+			return fmt.Errorf("applied, but the check failed: %w", err)
+		}
+		if present {
+			return ErrStillPresent
+		}
 	}
 	fmt.Fprintf(opt.IO.Out, "Fixed: %s no longer reports finding %s.\n", Selector(f), f.ID)
 	return nil

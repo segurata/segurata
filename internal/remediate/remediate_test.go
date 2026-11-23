@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -148,14 +149,35 @@ func TestApplyAsksAndOnlyAcceptsYes(t *testing.T) {
 	}
 }
 
+func TestMain(m *testing.M) {
+	defaultSleep = func(time.Duration) {} // no real waiting in tests
+	os.Exit(m.Run())
+}
+
 func TestVerifyAfterApply(t *testing.T) {
 	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
-	opt := Options{Apply: true, Yes: true, IO: quietIO()}
+	var slept []time.Duration
+	opt := Options{Apply: true, Yes: true, IO: quietIO(), Sleep: func(d time.Duration) { slept = append(slept, d) }}
 	if err := Execute(context.Background(), target, r, opt, results("other")); err != nil {
 		t.Fatalf("finding gone should pass: %v", err)
 	}
 	if err := Execute(context.Background(), target, r, opt, results("other", target.ID)); !errors.Is(err, ErrStillPresent) {
 		t.Fatalf("finding still there: want ErrStillPresent, got %v", err)
+	}
+	if len(slept) == 0 || slept[0] < time.Second {
+		t.Fatalf("the check must wait for the fix to settle before looking, slept %v", slept)
+	}
+	// Gone on the first look, back on the second: a restart dropped the ports for a moment.
+	looks := 0
+	flapping := func(ctx context.Context) ([]*run.Result, error) {
+		looks++
+		if looks == 1 {
+			return results("other")(ctx)
+		}
+		return results("other", target.ID)(ctx)
+	}
+	if err := Execute(context.Background(), target, r, opt, flapping); !errors.Is(err, ErrStillPresent) {
+		t.Fatalf("a finding that comes back on a later check is not fixed: got %v", err)
 	}
 	failed := func(context.Context) ([]*run.Result, error) {
 		return []*run.Result{{Name: "macos", Err: errors.New("could not start")}}, nil

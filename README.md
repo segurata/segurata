@@ -103,36 +103,77 @@ Credentials, once per tenant. The script never signs in and never creates servic
 - Output: `out/workspace-<domain>-<date>.jsonl`, with `user`, `grant`, `app` and
   `token-activity` lines, plus the summary on screen.
 
-## Plaintext secrets on disk
+## Plaintext secrets on disk (`local-secrets`)
 
 ```bash
-node secrets/local-secrets-scan.mjs
+./securizame inventory local-secrets
 ```
 
-Looks for tokens, API keys and private keys in plain files and reports, for each finding, the path,
-line, type, file permissions and whether git tracks the file. **Never the value**: at most the
-known prefix and length (`sk-ant-…(108)`) and a fingerprint `fp` (12 hex of SHA-256) to see where
-the same secret repeats.
+Looks for tokens, API keys and private keys in plain files and reports, for each one, the path,
+line, type, file permissions, whether git tracks the file (and whether that repository has a
+remote) and an exposure bucket. **Never the value**: at most the known prefix, the last four
+characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a fingerprint.
 
-- Where it looks: `.env*`, `*.pem`, `*.key`, `credentials*`, `secrets*`, `*.secret.exs` and
-  `config/master.key` under `~/src` (skipping `node_modules`, `deps`, `_build`, `vendor`); known
-  credential files (`~/.aws`, `~/.config/**`, `~/.npmrc`, `~/.netrc`, `~/.docker`, `~/.mcp`,
-  `~/.claude.json`, `~/.claude/**/*.json`, `~/.codex`, `~/.cursor`, `~/.gemini`, `~/.zshrc` and
-  friends); shell histories; logs (`*.log` under `~/src`, `~/Library/Logs`, `~/.local/log`); agent
-  transcripts (`~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects`).
-- Git history: with `gitleaks` installed, `gitleaks git --redact` on every repo under `~/src` and on
-  `~/.claude`. Without it, the script scans the whole `~/src` working tree with its own patterns,
-  but not history; to enable history scanning, install gitleaks respecting the 4-day quarantine
-  (`~/.claude/scripts/safe-update.sh`, or check the release date before `brew install gitleaks`).
-- SSH keys in `~/.ssh`: type, permissions and whether they have a passphrase (`ssh-keygen -y -P ""`).
-- Requirements: `rg` (ripgrep) and Node. It takes several minutes: transcripts weigh tens of GB
-  and gitleaks walks hundreds of repos.
-- Output: `out/local-secrets-<date>.jsonl` (mode 600) and a summary by severity: P0 in git, P1 in
-  files readable by group or others, P2 in transcripts, logs and histories, P3 in closed local
-  files. Rows with `public: true` are not secrets on their own (AWS key IDs, Sentry DSNs, test
-  keys, anon or expired JWTs).
-- What to do with each finding: [docs/secrets.md](docs/secrets.md); each row's `fix` field links
-  the section.
+- Where it looks: `.env*`, `*.pem`, `*.key`, `*.p8`, `credentials*`, `secrets*`, `*.secret.exs`,
+  `config/master.key` and keystores under `repos_root` (default `~/src`, skipping `node_modules`,
+  `deps`, `_build`, `vendor`); known credential files (`~/.aws`, `~/.config/**`, `~/.npmrc`,
+  `~/.netrc`, `~/.docker`, `~/.mcp`, `~/.claude.json`, `~/.claude/**/*.json`, `~/.codex`,
+  `~/.cursor`, `~/.gemini`, `~/.zshrc` and friends); shell histories; logs (`*.log` under
+  `repos_root`, `~/Library/Logs`, `~/.local/log`); agent transcripts (`~/.claude/projects`,
+  `~/.codex/sessions`, `~/.cursor/projects`, `~/.gemini/tmp`).
+- Git history: `gitleaks git` over every repository under `repos_root` and over `~/.claude`, six
+  at a time, each with a 10-minute timeout. Without gitleaks it scans the whole working tree under
+  `repos_root` with its own patterns instead, but not history; install gitleaks respecting the
+  4-day quarantine (`~/.claude/scripts/safe-update.sh`).
+- SSH keys in `~/.ssh`: type, permissions and whether they have a passphrase
+  (`ssh-keygen -y -P ""`). A key without one is an `exposure` finding; a key with one, an `info`
+  `setting`.
+- Severity is the rotation priority of that one copy (P0 `critical` … P3 `low`, see
+  [Rotation ledger](docs/architecture.md#rotation-ledger)). Generic matches (`assignment`,
+  gitleaks `generic-api-key`), anon or expired JWTs and encrypted private keys are `info`.
+- A finding in a working file that group or others can read carries the `file.chmod600` action:
+  `securizame remediate <finding-id>` closes the file. The secret still has to be rotated.
+- Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history. The disk scan takes
+  about a minute; the history scan of ~330 repositories takes most of the run.
+- Config (`connectors.local-secrets.config`): `repos_root`, `skip_git_history` (true skips
+  gitleaks and keeps the fast scan), `gitleaks_workers` (default 6), `gitleaks_timeout` (per
+  repository, default `"10m"`).
+- What to do with each finding: [docs/secrets.md](docs/secrets.md); each finding's `evidence.fix`
+  links the section.
+
+### Fingerprints
+
+Every secret gets `evidence.fingerprint`: HMAC-SHA256 of the raw value under a random per-machine
+key, truncated to 16 hex characters, so the same secret is recognised wherever it appears (a
+`.env`, a transcript, git history) while the output stays useless to anyone without the key. A
+private key is fingerprinted by its base64 body, so a `.pem` file, the same key escaped inside a
+service-account JSON or a transcript, and its copy in git history all match. gitleaks runs with
+its JSON report on stdout, read through a pipe: the raw values exist only in the process memory,
+long enough to compute the HMAC.
+
+The key lives at `~/.config/securizame/fingerprint.key` (32 random bytes in hex, created with mode
+0600 on first use). Keep it: with a new key every fingerprint changes and the rotation ledger sees
+every secret as new.
+
+### Rotation ledger
+
+```bash
+./securizame rotations sync                    # from the latest out/<date>/local-secrets.jsonl
+./securizame rotations list --priority P0,P1   # what to rotate first
+./securizame rotations show <id>               # locations, where the new value goes, rotate URL
+./securizame rotations done <id> --note "rolled in the dashboard"
+./securizame rotations snooze <id> --until 2027-01-15
+./securizame rotations ignore <id> --reason "test fixture"
+./securizame rotations reopen <id>
+```
+
+One item per secret fingerprint, with its priority (P0 to P3), the reasons in plain words, every
+location, `used_in` (the config, `.env` and rc files that hold it, where the new value must go)
+and the provider page where it is rotated. State lives outside the repository, at
+`~/.local/state/securizame/rotations.json` (mode 0600; `SECURIZAME_STATE` names another
+directory), and holds no secret values. A secret marked done that the next sync still finds with
+the same fingerprint is reopened: the old value is still somewhere. Generic matches are left out
+unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture.md#rotation-ledger).
 
 ## macOS and Brave posture (`macos`)
 
@@ -176,16 +217,18 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 |---|---|---|
 | `macos.firewall.enable` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on` | `--setglobalstate off` |
 | `macos.firewall.stealth` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on` | `--setstealthmode off` |
-| `macos.airplay-receiver.disable` | `defaults -currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool false`, then `killall ControlCenter` (no sudo) | the same with `true` |
 | `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
 
 Manual, with the System Settings path in the finding: File Sharing (SMB, port 445; turning off the
-`smbd` launchd service by hand is not a supported way), Remote Login, Screen Sharing, FileVault,
+`smbd` launchd service by hand is not a supported way), AirPlay Receiver (ports 5000 and 7000), Remote Login, Screen Sharing, FileVault,
 Gatekeeper, SIP, update settings, screen lock, login items and Brave extensions.
 
-AirPlay Receiver: the `defaults` key is the Terminal remediation in the CIS macOS benchmarks, and
-Control Center restarts so it reads it again. If the check after `--apply` still sees ports 5000 or
-7000 open, turn it off in System Settings > General > AirDrop & Handoff > AirPlay Receiver.
+AirPlay Receiver is manual because the Terminal remediation the CIS benchmarks give (`defaults
+-currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool false`, then restarting
+ControlCenter) left ports 5000 and 7000 open on macOS 15.6 (tried 2026-11-23).
+
+After `--apply`, the check waits 5 seconds and needs the finding gone in two inventories in a row:
+a restarted process can drop its ports for a moment and open them again.
 
 ## Plan
 

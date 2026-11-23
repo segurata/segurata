@@ -175,8 +175,8 @@ func TestExposedMacGradesEachCheckAndAttachesActions(t *testing.T) {
 		"auto-login":                     {"macos_setting", finding.SevHigh, ""},
 		"screen-lock":                    {"macos_setting", finding.SevMedium, ""},
 		"updates-pending":                {"macos_setting", finding.SevMedium, ""},
-		"listen-5000":                    {"listening_port", finding.SevMedium, ActionAirPlayDisable},
-		"listen-7000":                    {"listening_port", finding.SevMedium, ActionAirPlayDisable},
+		"listen-5000":                    {"listening_port", finding.SevMedium, ""},
+		"listen-7000":                    {"listening_port", finding.SevMedium, ""},
 		"listen-445":                     {"listening_port", finding.SevHigh, ""},
 		"listen-57621":                   {"listening_port", finding.SevInfo, ""},
 		"brave-remote-debugging":         {"macos_setting", finding.SevHigh, ""},
@@ -322,10 +322,6 @@ func TestPlansAreExact(t *testing.T) {
 			do:   []string{"sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on"},
 			undo: []string{"sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode off"},
 		},
-		ActionAirPlayDisable: {
-			do:   []string{"/usr/bin/defaults -currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool false", "/usr/bin/killall ControlCenter"},
-			undo: []string{"/usr/bin/defaults -currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool true", "/usr/bin/killall ControlCenter"},
-		},
 	}
 	for action, w := range cases {
 		p, err := c.Plan(context.Background(), withAction(action))
@@ -338,7 +334,7 @@ func TestPlansAreExact(t *testing.T) {
 		if got := stepStrings(p.Undo); fmt.Sprint(got) != fmt.Sprint(w.undo) {
 			t.Errorf("%s undo %q", action, got)
 		}
-		if p.Action != action || p.Summary == "" || len(p.SideEffects) == 0 || p.NeedsSudo() != (action != ActionAirPlayDisable) {
+		if p.Action != action || p.Summary == "" || len(p.SideEffects) == 0 || !p.NeedsSudo() {
 			t.Errorf("%s plan %+v", action, p)
 		}
 		// Every planned command is on the allowlist, so the plan and the allowlist agree.

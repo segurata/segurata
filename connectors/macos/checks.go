@@ -211,9 +211,9 @@ func (c *Connector) listenerCheck(ctx context.Context, l listener) check {
 	case isKnown && known.label == "AirPlay Receiver":
 		ch.sev, ch.detail = finding.SevMedium, where+" AirPlay Receiver, reachable from the network"
 		ch.title = fmt.Sprintf("AirPlay Receiver listens on port %s for any device on the network", l.port)
-		ch.evidence["airplay_receiver_pref"] = orUnset(c.pref(ctx, defaultsBin, "-currentHost", "read", controlCenterPrefs, airPlayReceiverKey))
-		ch.rem = finding.Remediation{Action: ActionAirPlayDisable,
-			Summary: "Turn off System Settings > General > AirDrop & Handoff > AirPlay Receiver, or run `securizame remediate <id> --apply`."}
+		// Not automatable: on macOS 15.6 writing com.apple.controlcenter AirplayRecieverEnabled and
+		// restarting ControlCenter leaves ports 5000 and 7000 open (tried 2026-11-23).
+		ch.rem = manual("Turn off System Settings > General > AirDrop & Handoff > AirPlay Receiver.")
 	case isKnown:
 		ch.sev, ch.detail = finding.SevMedium, where+" "+known.label+", reachable from the network"
 		ch.title = fmt.Sprintf("%s listens on port %s for any device on the network", known.label, l.port)

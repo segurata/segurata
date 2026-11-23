@@ -169,6 +169,7 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | Connector | How it looks | What it looks for |
 |---|---|---|
 | `google-personal` | CDP over the signed-in browser | Linked apps, scopes, dates, accounts that need a fresh sign-in |
+| `local-secrets` | `rg`, `gitleaks`, `git`, `ssh-keygen` | Plaintext secrets in config and `.env` files, shell histories, logs, agent transcripts and git history; SSH keys without a passphrase; HMAC fingerprints so one secret is recognised in every place it appears |
 | `gcp` | `gcloud` CLI | Unrestricted API keys, service-account keys and their age, service accounts with broad roles, billing budgets and alerts, local ADC credentials and their scopes |
 | `aws` | `aws` CLI | Root keys or no root MFA, old or unused access keys, budgets |
 | `azure` | `az` CLI | Budgets, app registration secrets that never expire or expire soon |
@@ -177,10 +178,55 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | `openrouter` | API | Keys, per-key credit limit, spend |
 | `vercel` | API | Tokens, spend management |
 | `supabase` | Management API | Projects, service keys, spend cap |
-| `macos` | macOS tools, read-only and without sudo; Brave profile files | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, TCP ports reachable from the network (with File Sharing guest access), login and background items, Brave extensions and their permissions, Brave's remote debugging port. Remediates the firewall, stealth mode and AirPlay Receiver |
+| `macos` | macOS tools, read-only and without sudo; Brave profile files | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, TCP ports reachable from the network (with File Sharing guest access), login and background items, Brave extensions and their permissions, Brave's remote debugging port. Remediates the firewall and stealth mode |
 
-The Node scripts in `connected-apps/`, `workspace/` and `secrets/` are the
+The Node scripts in `connected-apps/` and `workspace/` are the
 prototypes. They keep working until their Go connector replaces them, and then they are deleted.
+
+## Rotation ledger
+
+`securizame rotations` turns `local-secrets` findings into a list of secrets to rotate, one item per
+fingerprint (`internal/rotation`). The risk model it shares with the connector lives in
+`internal/secretrisk`, so a finding's severity and an item's priority never disagree.
+
+State: `~/.local/state/securizame/rotations.json`, mode 0600, outside the repository
+(`SECURIZAME_STATE` names another directory). It holds redacted hints and fingerprints, never
+values.
+
+```json
+{"id": "3f9a12c4", "fingerprint": "3f9a12c4…(16 hex)", "service": "stripe", "type": "stripe-live",
+ "redacted": "sk_live_…a1b2(107)", "impact": "high", "priority": "P0",
+ "reasons": ["Stripe live secret key; pasted into an agent transcript, so it reached the model provider"],
+ "status": "open", "first_seen": "…", "last_seen": "…",
+ "locations": [{"path": "~/src/shop/.env", "line": 3, "bucket": "3-local", "tracked": false, "mode": "600",
+                "source": "scan", "kind": "repo", "last_seen": "…"}],
+ "used_in": ["~/src/shop/.env"], "rotate_url": "https://dashboard.stripe.com/apikeys",
+ "history": [{"at": "…", "action": "found", "note": "found in 2 places"}]}
+```
+
+Priority is impact × exposure, both table-driven:
+
+| Impact | Local (0600 file, history, log) | Shared (readable by others, local repo history) | Remote (pushed git history, agent transcript) |
+|---|---|---|---|
+| High: Stripe live keys, AWS keys, GCP service-account keys, private and SSH keys, GitHub/GitLab tokens, Google refresh tokens and OAuth client secrets, Cloudflare tokens | P2 | P1 | P0 |
+| Medium: AI provider keys (Anthropic, OpenAI, xAI, OpenRouter…), Notion, Slack, SendGrid, npm, Telegram, Stripe webhook secrets, passwords in URLs | P3 | P2 | P1 |
+| Low: Sentry DSNs, Google API keys, Stripe test keys, JWTs of unknown origin | P3 | P3 | P2 |
+
+- Exposure is the worst location of the secret. An agent transcript counts as remote: whatever
+  was pasted there was sent to the model provider.
+- Noise is left out by default: generic `NAME=value` matches, gitleaks `generic-api-key`, anon or
+  expired JWTs, encrypted private keys. `sync --include-noise` tracks them without a priority.
+- `sync` merges locations (never drops one: git history and transcripts do not forget), refreshes
+  `last_seen` only for secrets it saw, and reopens a `rotated` item found again with the same
+  fingerprint, with the reason "still present after rotation (old value not removed)". Expired
+  snoozes go back to `open`.
+- `used_in` lists the working files (config, `.env`, rc files) that hold the secret: where the new
+  value has to go once it is rotated.
+- `rotate_url` is the provider console page for that kind of secret, checked against each
+  provider's documentation. Types without a stable, account-independent page (npm tokens, Shopify,
+  private keys) have none.
+- `id` is the first 8 characters of the fingerprint, longer on collision. Commands accept any
+  unique prefix of an id or a fingerprint.
 
 ## Why Go, and why so few dependencies
 
