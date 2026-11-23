@@ -227,6 +227,9 @@ Priority is impact × exposure, both table-driven:
   private keys) have none.
 - `id` is the first 8 characters of the fingerprint, longer on collision. Commands accept any
   unique prefix of an id or a fingerprint.
+- `done`, `snooze`, `ignore` and `reopen` also take `--path <prefix>` instead of an id: every item
+  whose locations all lie under that path. A test log or a data file full of fixtures goes away in
+  one command, while a secret that also appears elsewhere stays.
 
 ## Why Go, and why so few dependencies
 

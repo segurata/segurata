@@ -165,6 +165,7 @@ every secret as new.
 ./securizame rotations snooze <id> --until 2027-01-15
 ./securizame rotations ignore <id> --reason "test fixture"
 ./securizame rotations reopen <id>
+./securizame rotations ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
 ```
 
 One item per secret fingerprint, with its priority (P0 to P3), the reasons in plain words, every

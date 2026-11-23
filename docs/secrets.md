@@ -1,11 +1,14 @@
 # Secrets out of plaintext files
 
-What to do with each finding of `secrets/local-secrets-scan.mjs`. The `fix` field of every jsonl
-row points to the section that applies.
+What to do with each finding of the `local-secrets` connector (`securizame inventory
+local-secrets`). The `evidence.fix` field of every finding points to the section that applies.
 
 Order of work: first **rotate** whatever has left the machine (git, agent transcripts), then move
 the rest to an encrypted store, and only then delete the plaintext copies. Deleting without
-rotating does nothing: the value is still valid wherever it was copied.
+rotating does nothing: the value is still valid wherever it was copied. `securizame rotations
+sync` and `securizame rotations list --priority P0,P1` keep that order for you: one item per
+secret, its locations, the files where the new value goes and the provider page where it is
+rotated; `securizame rotations done <id>` once it is rotated.
 
 Tools on this machine (2026-11-23): macOS Keychain (`security`), 1Password CLI (`op` 2.41, signed
 in), `age`, `gitleaks`, `git-credential-osxkeychain` already configured, `gh` with its token in the
@@ -42,8 +45,9 @@ backups.
 4. So it does not happen again: a pre-commit hook running `gitleaks git --pre-commit --staged`, and
    GitHub push protection in every organisation.
 
-If the finding is a false positive (test fixture, sample key), add its `Fingerprint` to
-`.gitleaksignore` in that repo.
+If the finding is a false positive (test fixture, sample key), add the gitleaks `Fingerprint`
+(`commit:file:rule:line`, printed by `gitleaks git` in that repo) to `.gitleaksignore`, and mark the
+item with `securizame rotations ignore <id> --reason …`.
 
 ## .env files
 
@@ -258,8 +262,10 @@ model provider. Treat it as leaked: **rotate**.
 Then delete the transcripts that contain it (the list comes from the jsonl, without values):
 
 ```bash
-jq -r 'select(.kind=="transcript") | .path' out/local-secrets-*.jsonl | sort -u
+jq -r 'select(.evidence.kind=="transcript") | .evidence.path' out/*/local-secrets.jsonl | sort -u
 ```
+
+or, for one secret, `securizame rotations show <id>` lists every transcript that holds it.
 
 To keep them from piling up:
 
