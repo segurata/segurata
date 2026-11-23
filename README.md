@@ -6,23 +6,33 @@ clouds, AI providers and secrets on disk. Design: [docs/architecture.md](docs/ar
 House rule: every connector **inventories first, read-only**. Removing access is a separate step,
 by hand or with an explicit remediation, after reviewing the list.
 
-## Google: linked apps
+## Build
 
 ```bash
-node google/linked-apps-inventory.mjs
+go build -o securizame ./cmd/securizame
+./securizame connectors            # built-in and external connectors
+./securizame inventory [name ...]  # all connectors when none is given
 ```
 
-Walks every Google account signed in to the browser and, for each one, lists the apps with data
-access (`access`, with their scopes) and those that only use Sign in with Google (`signin`).
-Accounts where Google asks for a fresh sign-in show up as `reauth`.
+Output goes to `out/<date>/<connector>.jsonl` (mode 0600; `out/` is gitignored because it holds
+email addresses and each account's services), with a summary sorted by severity.
 
-- Requires Brave or Chrome started with `--remote-debugging-port=9222` (another port via
-  `SECURIZAME_CDP`). Pages open in the background and close on their own, without touching your tabs.
-- Output: `out/google-linked-apps-<date>.jsonl`. `out/` is gitignored because it holds email
-  addresses and each account's list of services.
-- To remove access: <https://myaccount.google.com/connections> on the right account, or the `href`
-  field of each row, which goes straight to the app's page. "Remove all access" there also removes
-  that app's Sign in with Google link.
+## Google: linked apps (`google-personal`)
+
+```bash
+./securizame inventory google-personal
+```
+
+Walks every Google account signed in to the browser and reports each linked app with its scopes,
+the date access was given and a severity: `high` for full Gmail, Drive, Sheets, Cloud data or Google
+Ads; `info` for Sign in with Google only. Accounts where Google asks for a fresh sign-in show up as
+`reauth` statuses.
+
+- Requires Brave or Chrome started with `--remote-debugging-port=9222` (another address via
+  `cdp_url` in the config or `SECURIZAME_CDP`). Pages open in the background and always close,
+  without touching your tabs.
+- To remove access: the finding's remediation URL. On Google, "Remove all access" there also
+  removes that app's Sign in with Google link.
 
 ## Connected apps outside Google
 

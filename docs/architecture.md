@@ -133,7 +133,7 @@ Config at `~/.config/securizame/config.json` (override with `SECURIZAME_CONFIG`)
 | `vercel` | API | Tokens, spend management |
 | `supabase` | Management API | Projects, service keys, spend cap |
 
-The Node scripts in `google/`, `connected-apps/`, `workspace/`, `secrets/` and `macos/` are the
+The Node scripts in `connected-apps/`, `workspace/`, `secrets/` and `macos/` are the
 prototypes. They keep working until their Go connector replaces them, and then they are deleted.
 
 ## Why Go, and why so few dependencies
