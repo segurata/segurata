@@ -1,0 +1,4 @@
+# Inventories hold account emails and app lists: never commit them.
+out/
+*.jsonl
+.DS_Store
