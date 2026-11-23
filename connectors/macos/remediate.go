@@ -15,12 +15,13 @@ const (
 	ActionFirewallStealth = "macos.firewall.stealth"
 	ActionShareRemove     = "macos.smb.share-remove"
 	ActionShareGuestOff   = "macos.smb.guest-off"
+	ActionHomePrivate     = "macos.home.private"
 )
 
 // allowed is every fixed command line a remediation may run, exactly, sudo included. It is written
 // out by hand rather than derived from the plans, so a wrong plan is refused instead of run. The
-// share point actions take a share name, so their entries are added at apply time from a fresh
-// read of the share points (shareAllowlist), never from the finding.
+// share point and home folder actions take a path or a name, so their allowlists are built at
+// apply time from what exists then (shareAllowlist, homeAllowlist), never from the finding.
 var allowed = remediate.Allowlist{
 	ActionFirewallEnable: {
 		{Argv: []string{socketfilterfw, "--setglobalstate", "on"}, Sudo: true},
@@ -38,6 +39,8 @@ func (c *Connector) Plan(ctx context.Context, f finding.Finding) (connector.Plan
 	switch f.Remediation.Action {
 	case ActionShareRemove, ActionShareGuestOff:
 		return c.sharePlan(ctx, f)
+	case ActionHomePrivate:
+		return c.homePlan()
 	case ActionFirewallEnable:
 		return connector.Plan{
 			Action:   ActionFirewallEnable,
@@ -72,11 +75,21 @@ func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Pl
 	if err := remediate.SamePlan(want, p); err != nil {
 		return err
 	}
-	allow := allowed
-	if p.Action == ActionShareRemove || p.Action == ActionShareGuestOff {
-		if allow, err = c.shareAllowlist(ctx); err != nil {
-			return err
-		}
+	allow, err := c.allowlistFor(ctx, p.Action)
+	if err != nil {
+		return err
 	}
 	return remediate.Run(ctx, p, allow, c.Exec, io)
+}
+
+// allowlistFor is the allowlist an action is checked against: the fixed one, or for actions that
+// name a live object, one built now from what exists.
+func (c *Connector) allowlistFor(ctx context.Context, action string) (remediate.Allowlist, error) {
+	switch action {
+	case ActionShareRemove, ActionShareGuestOff:
+		return c.shareAllowlist(ctx)
+	case ActionHomePrivate:
+		return c.homeAllowlist()
+	}
+	return allowed, nil
 }

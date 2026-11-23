@@ -184,6 +184,7 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	for _, ch := range c.systemChecks(ctx) {
 		r.report(ch)
 	}
+	r.report(c.homeCheck(ctx))
 	c.listeningPorts(ctx, r)
 	c.backgroundItems(ctx, r)
 	r.report(c.braveDebugging(ctx))

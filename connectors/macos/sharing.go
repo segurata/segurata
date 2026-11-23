@@ -178,7 +178,7 @@ func (c *Connector) shareAllowlist(ctx context.Context) (remediate.Allowlist, er
 	if err != nil {
 		return nil, err
 	}
-	allow := maps.Clone(allowed)
+	allow := remediate.Allowlist{}
 	for _, name := range slices.Sorted(maps.Keys(shares)) {
 		allow[ActionShareRemove] = append(allow[ActionShareRemove], sharingStep("-r", name))
 		allow[ActionShareGuestOff] = append(allow[ActionShareGuestOff], sharingStep("-e", name, "-g", "000"))

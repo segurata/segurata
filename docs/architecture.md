@@ -93,7 +93,7 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   (`Plan`, `Apply`). `Apply` recomputes the plan and refuses one that differs from what was shown.
 - Every command an action may run is on a per-action allowlist of exact argument lists, written by
   hand (`remediate.Allowlist`). There is no pattern matching; anything else is refused before the
-  first command runs. An action whose argument names a live object (an SMB share point) gets its
+  first command runs. An action whose argument names a live object (an SMB share point, the home folder) gets its
   entries at apply time from a fresh read of what exists, never from the finding: the finding only
   says which object, and a name that matches nothing exactly is refused.
 - sudo: a command that needs root runs as `/usr/bin/sudo <argv>` with the terminal's stdin, stdout
@@ -211,7 +211,7 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | `openrouter` | API | Keys, per-key credit limit, spend |
 | `vercel` | API | Tokens, spend management |
 | `supabase` | Management API | Projects, service keys, spend cap |
-| `macos` | macOS tools, read-only and without sudo; Brave profile files | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave extensions and their permissions, Brave's remote debugging port. Remediates the firewall, stealth mode and share points (remove a record, turn guest access off) |
+| `macos` | macOS tools, read-only and without sudo; Brave profile files | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave extensions and their permissions, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
 
 The Node scripts in `connected-apps/` and `workspace/` are the
 prototypes. They keep working until their Go connector replaces them, and then they are deleted.

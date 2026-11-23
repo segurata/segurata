@@ -82,6 +82,9 @@ func newTest(t *testing.T, replies map[string]string) (*Connector, *fakeRunner, 
 	fr := &fakeRunner{replies: replies}
 	ex := &recordingExec{}
 	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil { // a private home folder, as on a healthy Mac
+		t.Fatal(err)
+	}
 	return &Connector{Run: fr, Exec: ex, Home: func() (string, error) { return home, nil }, OS: "darwin"}, fr, ex
 }
 

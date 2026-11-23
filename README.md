@@ -185,7 +185,7 @@ unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture
 
 Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
 update settings and pending updates (`softwareupdate -l`, capped at 120 s), screen lock, automatic
-login and guest account, TCP ports listening outside loopback (instead of
+login and guest account, whether other accounts can read your home folder, TCP ports listening outside loopback (instead of
 `systemsetup -getremotelogin`, which needs admin), each SMB share point behind port 445 (from
 `sharing -l -f json`), login and background items (`sfltool dumpbtm`, flagging those without a developer
 signature), Brave extensions per profile with their permissions (flags access to all sites and APIs
@@ -224,7 +224,12 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 | `macos.firewall.stealth` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on` | `--setstealthmode off` |
 | `macos.smb.share-remove` | `sudo /usr/sbin/sharing -r <name>` (orphaned records and shared folders without guest access) | `sudo /usr/sbin/sharing -a <path> -n <name> -S <smb name> -s <flag> -g <flag> -R <0/1>` with the record's current flags; not applicable for an orphan, whose folder no longer exists |
 | `macos.smb.guest-off` | `sudo /usr/sbin/sharing -e <name> -g 000` (live shares open to guests) | `sudo /usr/sbin/sharing -e <name> -g 001` |
+| `macos.home.private` | `/bin/chmod 700 <home>`, no sudo, when group or others can read the home folder (every user is in `staff`, so 750 is as open as 755; 711 passes, as CIS allows) | `/bin/chmod <old mode> <home>` |
 | `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
+
+The home folder path comes from the OS (`os.UserHomeDir`), never from the finding, and the octal
+`chmod` leaves its ACL entries (macOS's `group:everyone deny delete`) in place; the finding's
+evidence lists them.
 
 The share point name comes from a fresh `sharing -l -f json` read at plan and at apply time, never
 from the finding alone: a name that matches no record exactly is refused, and the apply-time
