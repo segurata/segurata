@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -110,14 +109,14 @@ func TestHealthyMacEmitsOnlyInformationalFindings(t *testing.T) {
 	}
 	rec.ByResource(t, "macos_setting", "screensaver")
 	rec.ByResource(t, "background_item", "btm:16.com.example.helper")
-	// systemsetup needs admin and Brave has no profile here: both are reported as skipped checks.
+	// systemsetup needs admin: it is reported as a skipped check.
 	var skipped []string
 	for _, s := range rec.Statuses {
 		if s.State == finding.StateUnsupported {
 			skipped = append(skipped, s.Detail)
 		}
 	}
-	if len(skipped) != 2 || !strings.HasPrefix(skipped[0], "remote-login:") || !strings.HasPrefix(skipped[1], "brave-extensions:") {
+	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], "remote-login:") {
 		t.Fatalf("skipped %v", skipped)
 	}
 }
@@ -251,56 +250,6 @@ func TestSoftwareUpdateTimeoutIsSkippedNotPassed(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("timeout not reported: %v", rec.Statuses)
-	}
-}
-
-func TestBraveExtensionsFromProfiles(t *testing.T) {
-	c, _, _ := newTest(t, healthy())
-	home, _ := c.Home()
-	prof := filepath.Join(home, braveDir, "Profile 1")
-	ext := filepath.Join(prof, "Extensions", "wallet", "1.0")
-	mustWrite(t, filepath.Join(ext, "manifest.json"), `{"name":"__MSG_appName__","version":"1.0","default_locale":"en"}`)
-	mustWrite(t, filepath.Join(ext, "_locales", "en", "messages.json"), `{"APPNAME":{"message":"Wallet"}}`)
-	mustWrite(t, filepath.Join(prof, "Preferences"), `{"profile":{"name":"Work"},"extensions":{"settings":{
-		"walletid":{"location":1,"path":"wallet/1.0","from_webstore":true,"active_permissions":{"api":["storage"],"explicit_host":["<all_urls>"]}},
-		"builtin":{"location":5,"manifest":{"name":"Brave internal"}},
-		"quiet":{"location":1,"from_webstore":true,"manifest":{"name":"Docs","version":"2"},"active_permissions":{"api":["storage"],"explicit_host":["https://docs.google.com/*"]}},
-		"onclick":{"location":1,"from_webstore":true,"withholding_permissions":true,"manifest":{"name":"Clicker"},"active_permissions":{"api":[],"explicit_host":["<all_urls>"]}}}}}`)
-	mustWrite(t, filepath.Join(prof, "Secure Preferences"), `{"extensions":{"settings":{
-		"dev":{"location":4,"path":"/tmp/dev-ext","manifest":{"name":"Dev tool","version":"0.1"},"active_permissions":{"api":["debugger"]}},
-		"off":{"location":1,"from_webstore":true,"state":0,"manifest":{"name":"Off"},"active_permissions":{"api":["cookies"],"explicit_host":["<all_urls>"]}}}}}`)
-	rec := inventory(t, c)
-	cases := map[string]finding.Severity{
-		"walletid": finding.SevMedium, // all sites
-		"dev":      finding.SevMedium, // unpacked, debugger
-		"quiet":    finding.SevInfo,
-		"onclick":  finding.SevInfo, // all sites, but on click only
-		"off":      finding.SevInfo, // risky, but disabled
-	}
-	for id, sev := range cases {
-		f := rec.ByResource(t, "browser_extension", "brave-extension:Profile 1/"+id)
-		if f.Severity != sev {
-			t.Errorf("%s: %s, want %s (%v)", id, f.Severity, sev, f.Evidence["detail"])
-		}
-	}
-	w := rec.ByResource(t, "browser_extension", "brave-extension:Profile 1/walletid")
-	if w.Resource.Name != "Wallet" || !strings.Contains(w.Evidence["detail"].(string), "[Work] Wallet (walletid) enabled, v1.0; hosts: <all_urls>; access to all sites (<all_urls>)") {
-		t.Errorf("wallet: %q %v", w.Resource.Name, w.Evidence["detail"])
-	}
-	for _, f := range rec.Findings {
-		if strings.HasSuffix(f.Resource.ID, "/builtin") {
-			t.Error("component extensions shipped with Brave should be skipped")
-		}
-	}
-}
-
-func mustWrite(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
 	}
 }
 

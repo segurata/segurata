@@ -6,6 +6,7 @@ import (
 	_ "github.com/segurata/segurata/connectors/anthropic"
 	_ "github.com/segurata/segurata/connectors/aws"
 	_ "github.com/segurata/segurata/connectors/azure"
+	_ "github.com/segurata/segurata/connectors/browserext"
 	_ "github.com/segurata/segurata/connectors/gcp"
 	_ "github.com/segurata/segurata/connectors/googlepersonal"
 	_ "github.com/segurata/segurata/connectors/localsecrets"

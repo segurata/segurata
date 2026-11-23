@@ -1,6 +1,7 @@
 // Package macos checks the security posture of this Mac and of the Brave browser on it: disk
 // encryption, SIP, Gatekeeper, firewall, updates, screen lock, login options, ports reachable from
-// the network, login and background items, Brave extensions and Brave's remote debugging port.
+// the network, SMB share points, the home folder mode, login and background items and Brave's
+// remote debugging port. Browser extensions are the browser-extensions connector.
 // Inventory is read-only and never uses sudo. A few findings can be fixed with
 // `securizame remediate` (remediate.go).
 package macos
@@ -113,7 +114,7 @@ func (c *Connector) Describe() connector.Description {
 		Name:     "macos",
 		Version:  "0.1.0",
 		Protocol: connector.ProtocolVersion,
-		Summary:  "FileVault, SIP, Gatekeeper, firewall, updates, screen lock, network ports, login items, Brave extensions and debugging port",
+		Summary:  "FileVault, SIP, Gatekeeper, firewall, updates, screen lock, network ports, login items, home folder, SMB shares, Brave debugging port",
 		Needs:    []string{"os:darwin"},
 	}
 }
@@ -188,7 +189,6 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	c.listeningPorts(ctx, r)
 	c.backgroundItems(ctx, r)
 	r.report(c.braveDebugging(ctx))
-	c.braveExtensions(r)
 	r.report(<-pending)
 
 	if len(r.skipped) == 0 {

@@ -211,7 +211,12 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | `openrouter` | API | Keys, per-key credit limit, spend |
 | `vercel` | API | Tokens, spend management |
 | `supabase` | Management API | Projects, service keys, spend cap |
-| `macos` | macOS tools, read-only and without sudo; Brave profile files | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave extensions and their permissions, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
+| `macos` | macOS tools, read-only and without sudo | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
+| `browser-extensions` | Brave and Chrome profile files, read-only, no network | Every extension in every profile: capabilities, source, install and update dates, category hint, and a `remove`/`review`/`keep` verdict with reasons (README, "Browser extensions"). Not automatable; each finding links the extension's page in the browser. Web Store lookups (pulled extensions, new owners) are a future enhancement |
+
+`browser-extensions` is its own connector rather than part of `macos`: it reads browser data, not
+OS settings, the same files exist on Linux, and the triage compares extensions across all profiles
+of a browser at once (duplicates, one finding per extension).
 
 The Node scripts in `connected-apps/` and `workspace/` are the
 prototypes. They keep working until their Go connector replaces them, and then they are deleted.

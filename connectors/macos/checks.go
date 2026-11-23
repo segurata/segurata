@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -410,4 +411,9 @@ func (c *Connector) launchItems(ctx context.Context, r *reporter) {
 		r.report(check{id: "launchctl:" + f[2], resource: "background_item", sev: finding.SevInfo, detail: f[2],
 			title: "launchd job " + f[2], rem: manual("Check you recognise it.")})
 	}
+}
+
+func plists(dir string) []string {
+	m, _ := filepath.Glob(filepath.Join(dir, "*.plist"))
+	return m
 }

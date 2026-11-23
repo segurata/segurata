@@ -185,12 +185,11 @@ unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture
 
 Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
 update settings and pending updates (`softwareupdate -l`, capped at 120 s), screen lock, automatic
-login and guest account, whether other accounts can read your home folder, TCP ports listening outside loopback (instead of
-`systemsetup -getremotelogin`, which needs admin), each SMB share point behind port 445 (from
-`sharing -l -f json`), login and background items (`sfltool dumpbtm`, flagging those without a developer
-signature), Brave extensions per profile with their permissions (flags access to all sites and APIs
-such as `cookies`, `debugger` or `nativeMessaging`), and whether Brave runs with
-`--remote-debugging-port`.
+login and guest account, whether other accounts can read your home folder, TCP ports listening
+outside loopback (instead of `systemsetup -getremotelogin`, which needs admin), each SMB share
+point behind port 445 (from `sharing -l -f json`), login and background items (`sfltool dumpbtm`,
+flagging those without a developer signature), and whether Brave runs with
+`--remote-debugging-port`. Browser extensions are the `browser-extensions` connector, below.
 
 - A passing check emits no finding (only a log line with `--verbose`); a check that cannot run here
   is an `unsupported` status. Findings are kind `setting`.
@@ -203,6 +202,35 @@ such as `cookies`, `debugger` or `nativeMessaging`), and whether Brave runs with
   these behind for users that were never recreated); any other shared folder is `medium`.
 - Every command it runs is on an exact allowlist in `connectors/macos`. Takes about half a minute
   because of `softwareupdate` and `sfltool`.
+
+## Browser extensions (`browser-extensions`)
+
+```bash
+./securizame inventory browser-extensions
+```
+
+Reads every Brave and Chrome profile (Preferences, Secure Preferences, Local State, and the
+manifest of unpacked extensions) and emits one `grant` finding per extension and browser, with:
+name, id, the profiles it is in, and per profile its version, install date (`first_install_time`),
+last update (`last_update_time`) and source (web store, unpacked in developer mode, or sideloaded);
+its permissions as risk capabilities (read and change all sites, debugger, cookies, webRequest,
+nativeMessaging, clipboard read, history, downloads, management); a category hint (password
+manager, crypto wallet, AI assistant, shopping, dev tool) from a short list of ids and name words in
+`connectors/browserext/triage.go`; and a verdict with its reasons.
+
+| Verdict | When | Severity |
+|---|---|---|
+| `remove` | Unpacked developer extension not updated in over a year; a second password manager in the same profile that is not the primary one; `debugger` permission on anything that is not a dev tool | `high` with access to all sites, `debugger`, `cookies` or `nativeMessaging`, else `medium` |
+| `review` | Access to all sites plus a sensitive API; a crypto wallet in a profile used in the last 30 days; a store extension not updated in over a year; unpacked or sideloaded; disabled; two password managers installed the same day with no primary configured | `medium` for all sites plus a sensitive API or a wallet in a daily profile, else `low` |
+| `keep` | None of the above | `info` |
+
+- The primary password manager is the one named in the config, otherwise the one installed on a
+  later day. Name it with `"browser-extensions": {"config": {"primary": ["<extension id>"]}}`.
+- Not automatable: changing profile files while the browser runs is unsafe. Each finding links
+  `brave://extensions/?id=<id>` (or `chrome://`) and names the profiles to open it in.
+- No network calls. Checking the Web Store (an extension pulled from the store, a change of owner)
+  is a future enhancement.
+- To keep an extension the verdict disagrees with: `securizame accept <id> --reason "..."`.
 
 ## Remediation
 
@@ -245,7 +273,7 @@ Settings > General > Sharing > File Sharing. Turning off the `smbd` launchd serv
 supported way.
 
 Manual, with the System Settings path in the finding: File Sharing itself (SMB, port 445), AirPlay Receiver (ports 5000 and 7000), Remote Login, Screen Sharing, FileVault,
-Gatekeeper, SIP, update settings, screen lock, login items and Brave extensions.
+Gatekeeper, SIP, update settings, screen lock, login items and browser extensions.
 
 AirPlay Receiver is manual because the Terminal remediation the CIS benchmarks give (`defaults
 -currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool false`, then restarting
