@@ -319,7 +319,7 @@ func impactByName(name string) secretrisk.Impact {
 
 // refresh recomputes everything derived: priority, reasons, used_in, rotate_url.
 func (it *Item) refresh() {
-	t := secretrisk.Lookup(it.Type)
+	t := secretrisk.TypeFor(it.Type, it.Redacted)
 	it.Service, it.RotateURL = t.Service, t.RotateURL
 	worst, ok := it.worst()
 	it.Priority = ""

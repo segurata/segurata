@@ -93,9 +93,9 @@ func (l *Ledger) Sync(sightings []Sighting, now time.Time, includeNoise bool) Re
 		} else {
 			rep.Updated++
 		}
-		if !ok || impact >= impactByName(it.Impact) {
-			it.Type, it.Redacted, it.Impact = best.Evidence.Type, best.Evidence.Redacted, impact.String()
-		}
+		// Impact comes from the best current sighting, so a corrected rule (or a sighting that turns
+		// out to be a temporary credential) can lower it as well as raise it.
+		it.Type, it.Redacted, it.Impact = best.Evidence.Type, best.Evidence.Redacted, impact.String()
 		it.LastSeen = seen.UTC()
 		for _, s := range g {
 			it.merge(s.Evidence, seen)

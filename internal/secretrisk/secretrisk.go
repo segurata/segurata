@@ -241,6 +241,19 @@ func Lookup(typ string) Type {
 	return Type{Service: service, Label: typ + " (gitleaks rule)", Impact: Medium}
 }
 
+// temporaryAWS is the entry for AWS key ids starting with ASIA: temporary STS credentials (from
+// an assumed role or a pre-signed URL) that expire within 36 hours at most. A copy found later
+// is almost always dead, so it is low impact instead of a long-lived AKIA key.
+var temporaryAWS = Type{Service: "aws", Label: "Temporary AWS credential (STS, expires within 36 hours)", Impact: Low, RotateURL: urlAWS}
+
+// TypeFor is Lookup refined by the redacted hint, for types whose prefix changes what they are.
+func TypeFor(typ, redacted string) Type {
+	if strings.HasPrefix(typ, "aws-access") && strings.HasPrefix(redacted, "ASIA") {
+		return temporaryAWS
+	}
+	return Lookup(typ)
+}
+
 // Known returns the catalog entry and whether the type is in the catalog.
 func Known(typ string) (Type, bool) {
 	t, ok := catalog[typ]
@@ -252,7 +265,7 @@ func ImpactOf(e Evidence) Impact {
 	if e.Public || e.Encrypted {
 		return Noise
 	}
-	return Lookup(e.Type).Impact
+	return TypeFor(e.Type, e.Redacted).Impact
 }
 
 // Spot is how far one location exposed the secret, with a short label for tables and the plain

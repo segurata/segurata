@@ -318,3 +318,20 @@ func TestLoadRejectsNewerVersion(t *testing.T) {
 		t.Error("newer ledger accepted")
 	}
 }
+
+// A rule fix that lowers a secret's impact must reach existing items on the next sync.
+func TestSyncLowersImpactWhenTheCurrentSightingIsLess(t *testing.T) {
+	l := &Ledger{}
+	high := ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", "~/src/r/data.json", "gitleaks", "repo", "", true, true)
+	high.Redacted = "AKIA…(20)"
+	l.Sync([]Sighting{sight(high)}, t0, false)
+	if p := l.Items[0].Priority; p != "P0" {
+		t.Fatalf("pushed long-lived AWS key should be P0, got %s", p)
+	}
+	temp := high
+	temp.Redacted = "ASIA…(20)"
+	l.Sync([]Sighting{sight(temp)}, t0.Add(time.Hour), false)
+	if it := l.Items[0]; it.Impact != "low" || it.Priority == "P0" {
+		t.Fatalf("the same item seen as a temporary credential must drop: impact=%s priority=%s", it.Impact, it.Priority)
+	}
+}

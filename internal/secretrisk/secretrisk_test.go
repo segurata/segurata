@@ -98,3 +98,17 @@ func TestReasonInPlainWords(t *testing.T) {
 		t.Errorf("reason %q", got)
 	}
 }
+
+func TestTemporaryAWSCredentialsAreLowImpact(t *testing.T) {
+	temp := Evidence{Type: "aws-access-key-id", Redacted: "ASIA…(20)"}
+	long := Evidence{Type: "aws-access-key-id", Redacted: "AKIA…(20)"}
+	if ImpactOf(temp) != Low || ImpactOf(long) != High {
+		t.Fatalf("ASIA (STS, expires) must be low and AKIA high: %v %v", ImpactOf(temp), ImpactOf(long))
+	}
+	if PriorityOf(ImpactOf(temp), Remote) == PriorityOf(ImpactOf(long), Remote) {
+		t.Fatal("a pushed temporary credential must rank below a pushed long-lived key")
+	}
+	if !strings.Contains(TypeFor(temp.Type, temp.Redacted).Label, "Temporary") {
+		t.Fatal("the reason must say it is temporary")
+	}
+}

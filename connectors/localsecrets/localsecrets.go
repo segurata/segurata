@@ -383,7 +383,7 @@ func (s *scan) findings() []finding.Finding {
 }
 
 func toFinding(ev secretrisk.Evidence) finding.Finding {
-	t := secretrisk.Lookup(ev.Type)
+	t := secretrisk.TypeFor(ev.Type, ev.Redacted)
 	spot := secretrisk.WhereEvidence(ev)
 	prio := secretrisk.PriorityOf(secretrisk.ImpactOf(ev), spot.Level)
 	where := ev.Path
