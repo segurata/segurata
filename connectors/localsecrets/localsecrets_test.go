@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/segurata/segurata/internal/secretrisk"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -563,5 +564,17 @@ func TestWorktreeRemoteIsReadFromTheCommonDir(t *testing.T) {
 	}
 	if configHasRemote(gitConfigPath(filepath.Join(dir, "none"))) {
 		t.Error("remote reported for a missing repository")
+	}
+}
+
+func TestNoChmodFixForNoise(t *testing.T) {
+	readable := secretrisk.Evidence{Source: "scan", Kind: "config", Mode: "644"}
+	readable.Type = "assignment" // generic match: noise
+	if a := action(readable); a != "" {
+		t.Fatalf("noise in a readable file must not offer a fix, got %q", a)
+	}
+	readable.Type = "anthropic"
+	if a := action(readable); a != "file.chmod600" {
+		t.Fatalf("a real key in a readable file should offer chmod 600, got %q", a)
 	}
 }

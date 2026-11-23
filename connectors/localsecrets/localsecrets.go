@@ -419,7 +419,9 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 // action offers `securizame remediate` a chmod 600 for a working file other users can read. It
 // closes the file; it does not make rotation unnecessary.
 func action(ev secretrisk.Evidence) string {
-	if ev.Source == "gitleaks" || ev.Mode == "" {
+	// Noise (generic matches, public or encrypted values) gets no fix: closing a third-party
+	// source file because it contains `password=` buys nothing.
+	if ev.Source == "gitleaks" || ev.Mode == "" || secretrisk.ImpactOf(ev) == secretrisk.Noise {
 		return ""
 	}
 	if secretrisk.Where("", "", ev.Mode, false, false).Level != secretrisk.Shared {
