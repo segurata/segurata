@@ -1,26 +1,28 @@
 # securizame
 
-Scripts y listas para revisar y limpiar la seguridad de mis cuentas.
+Inventory, assess and clean up a personal digital footprint: Google and other consumer accounts,
+clouds, AI providers and secrets on disk. Design: [docs/architecture.md](docs/architecture.md).
 
-Regla de la casa: cada script **inventaría primero y en solo lectura**. Quitar accesos es otro paso,
-a mano o con un script aparte, después de revisar la lista.
+House rule: every connector **inventories first, read-only**. Removing access is a separate step,
+by hand or with an explicit remediation, after reviewing the list.
 
-## Google: aplicaciones vinculadas
+## Google: linked apps
 
 ```bash
 node google/linked-apps-inventory.mjs
 ```
 
-Recorre todas las cuentas de Google con sesión abierta en el navegador y, para cada una, saca las
-apps con acceso a datos (`access`, con sus permisos) y las que solo usan «Iniciar sesión con Google»
-(`signin`). Las cuentas en las que Google pide volver a entrar salen como `reauth`.
+Walks every Google account signed in to the browser and, for each one, lists the apps with data
+access (`access`, with their scopes) and those that only use Sign in with Google (`signin`).
+Accounts where Google asks for a fresh sign-in show up as `reauth`.
 
-- Requisito: Brave o Chrome arrancado con `--remote-debugging-port=9222` (otro puerto con
-  `SECURIZAME_CDP`). Las páginas se abren en segundo plano y se cierran solas, sin tocar tus pestañas.
-- Salida: `out/google-linked-apps-<fecha>.jsonl`. `out/` está en `.gitignore`, porque contiene
-  correos y la lista de servicios de cada cuenta.
-- Para quitar un acceso: <https://myaccount.google.com/connections> en la cuenta que toque, o el
-  campo `href` de cada fila, que lleva directo a la ficha de la app.
+- Requires Brave or Chrome started with `--remote-debugging-port=9222` (another port via
+  `SECURIZAME_CDP`). Pages open in the background and close on their own, without touching your tabs.
+- Output: `out/google-linked-apps-<date>.jsonl`. `out/` is gitignored because it holds email
+  addresses and each account's list of services.
+- To remove access: <https://myaccount.google.com/connections> on the right account, or the `href`
+  field of each row, which goes straight to the app's page. "Remove all access" there also removes
+  that app's Sign in with Google link.
 
 ## Connected apps outside Google
 
@@ -93,4 +95,4 @@ Credentials, once per tenant. The script never signs in and never creates servic
 
 ## Plan
 
-Acciones por área y prioridad, con fuentes comprobadas y qué se puede auditar por script: [docs/plan.md](docs/plan.md).
+Actions by area and priority, with verified sources and what a script can audit: [docs/plan.md](docs/plan.md).
