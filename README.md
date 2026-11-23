@@ -134,6 +134,26 @@ the same secret repeats.
 - What to do with each finding: [docs/secrets.md](docs/secrets.md); each row's `fix` field links
   the section.
 
+## macOS and Brave posture
+
+```bash
+macos/posture.sh
+```
+
+Read-only checks without `sudo`, each `OK`, `WARN`, `INFO` or `SKIP`: FileVault, SIP, Gatekeeper,
+firewall and stealth mode, automatic update settings and pending updates (`softwareupdate -l`,
+capped at 120 s), screen lock, automatic login and guest account, TCP ports listening outside
+loopback (instead of `systemsetup -getremotelogin`, which needs admin), login and background items
+(`sfltool dumpbtm`, flagging those without a developer signature), Brave extensions per profile with
+their permissions (flags access to all sites and APIs such as `cookies`, `debugger` or
+`nativeMessaging`), and whether Brave runs with `--remote-debugging-port`.
+
+- That last one is a `WARN` even though the google-personal and connected-apps connectors need it: while the
+  port is open, any local process can drive the browser with every signed-in session. Start Brave
+  with the flag only for those connectors.
+- Output: `out/macos-posture-<date>.jsonl` with `{check, status, detail}`. Takes about a minute
+  because of `softwareupdate` and `sfltool`.
+
 ## Plan
 
 Actions by area and priority, with verified sources and what a script can audit: [docs/plan.md](docs/plan.md).
