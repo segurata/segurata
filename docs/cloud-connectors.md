@@ -7,7 +7,11 @@ appears at most as the identifier or hint the provider itself returns, redacted 
 `finding.Redact` when it is a key id.
 
 `aws` and `azure` call the CLIs that are already signed in on the machine (`aws`, `az`) with JSON
-output. `vercel` and `supabase` call the providers' REST APIs with a token the core resolves from
+output, through the runner they share with `gcp` (`connectors/internal/cli`). Each keeps an
+allowlist of exactly the commands in its table below; anything else is refused before it reaches
+the CLI, so a bug cannot run `aws iam delete-access-key` or `az ad app credential reset`. Tests
+check both that every command the connector runs is on the list and that mutating ones are
+refused. Each `aws` command has a 2 minute timeout, each `az` one 3 minutes. `vercel` and `supabase` call the providers' REST APIs with a token the core resolves from
 the config (`env:`, `keychain:` or `op://`, see [secrets.md](secrets.md)). Neither reads a token
 from another tool's config files: the `vercel` CLI's stored login is never touched.
 

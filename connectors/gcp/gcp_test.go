@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -45,7 +46,7 @@ func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 		f.plays[key] = queue[1:]
 	}
 	if o.stderr != "" {
-		return nil, &cliError{stderr: fixture(f.t, o.stderr), err: errors.New("exit status 1")}
+		return nil, &cli.Error{Cmd: "gcloud", Stderr: fixture(f.t, o.stderr), Err: errors.New("exit status 1")}
 	}
 	if o.stdout == "" {
 		return nil, nil // gcloud printed nothing
@@ -280,7 +281,7 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 	}
 
 	for _, call := range runner.calls {
-		if !allowed(strings.Fields(call)) {
+		if readOnly.Check(strings.Fields(call)) != nil {
 			t.Errorf("non read-only call reached gcloud: %s", call)
 		}
 		if strings.Contains(call, "demo-old") {
@@ -336,21 +337,21 @@ func TestReadOnlyGuard(t *testing.T) {
 		"auth list", "projects list --account=a", "projects get-iam-policy p --account=a",
 		"iam service-accounts keys list --iam-account=x --managed-by=user", "billing budgets list --billing-account=b",
 	} {
-		if !allowed(strings.Fields(ok)) {
+		if readOnly.Check(strings.Fields(ok)) != nil {
 			t.Errorf("read-only command refused: %s", ok)
 		}
 	}
 	for _, bad := range []string{
 		"services api-keys get-key-string k", "services api-keys delete k", "iam service-accounts keys create f --iam-account=x",
 		"config set account a", "services disable x", "auth application-default print-access-token", "auth revoke a",
-		"projects delete p", "billing budgets create", "--account=a projects list",
+		"projects delete p", "billing budgets create", "--account a projects list",
 	} {
-		if allowed(strings.Fields(bad)) {
+		if readOnly.Check(strings.Fields(bad)) == nil {
 			t.Errorf("mutating or secret-revealing command allowed: %s", bad)
 		}
 	}
 	g := &gcloud{run: &fakeRunner{t: t}}
-	if err := g.json(context.Background(), &[]any{}, "services", "api-keys", "get-key-string", "k"); err == nil || !strings.Contains(err.Error(), "refused") {
+	if err := g.json(context.Background(), &[]any{}, "services", "api-keys", "get-key-string", "k"); !errors.Is(err, cli.ErrRefused) {
 		t.Fatalf("guard must refuse before running: %v", err)
 	}
 }
@@ -434,5 +435,36 @@ func TestLocalCredentialsHonourCloudsdkConfig(t *testing.T) {
 	}, home)
 	if len(fs) != 0 {
 		t.Fatalf("CLOUDSDK_CONFIG points to an empty folder, got %d findings", len(fs))
+	}
+}
+
+func TestFindGcloud(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	home := t.TempDir()
+	put := func(p string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := parseSettings(map[string]any{"gcloud_path": "/configured/gcloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := findGcloud(s.gcloudPath, home); err != nil || p != "/configured/gcloud" {
+		t.Fatalf("configured gcloud_path must win: %q %v", p, err)
+	}
+	machineSpecific := filepath.Join(home, "src", "utils", "google-cloud-sdk", "bin", "gcloud")
+	put(machineSpecific)
+	if p, _ := findGcloud("", home); p == machineSpecific {
+		t.Fatalf("a machine-specific folder must not be searched: %q", p)
+	}
+	installed := filepath.Join(home, "google-cloud-sdk", "bin", "gcloud")
+	put(installed)
+	if p, err := findGcloud("", home); err != nil || p != installed {
+		t.Fatalf("standard install folder: %q %v", p, err)
 	}
 }

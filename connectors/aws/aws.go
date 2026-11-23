@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -22,32 +23,34 @@ import (
 // staleAfter is the age or idle time past which an access key is a liability.
 const staleAfter = 90 * 24 * time.Hour
 
-// Runner runs a CLI and returns its stdout. Tests replace it with canned output.
-type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
-// execRunner runs the real binary with a timeout, folding stderr into the error.
-func execRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args[:min(2, len(args))], " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return out, nil
+// readOnly lists every aws command this connector runs. Anything else is refused before it reaches
+// the CLI, so a bug cannot create, delete or change anything in the account.
+var readOnly = cli.Allowlist{
+	"configure list-profiles",
+	"sts get-caller-identity",
+	"iam list-account-aliases",
+	"iam get-account-summary",
+	"iam list-users",
+	"iam list-access-keys",
+	"iam get-access-key-last-used",
+	"iam get-login-profile",
+	"iam list-mfa-devices",
+	"budgets describe-budgets",
+	"budgets describe-notifications-for-budget",
+	"ce get-cost-and-usage",
+	"ce get-anomaly-monitors",
 }
 
 type Connector struct {
-	Run Runner
+	// Run executes aws commands after the read-only guard. Tests replace it with canned output.
+	Run cli.Runner
 	Now func() time.Time
 	// CredentialsFile returns the shared credentials file path to scan for long-lived keys.
 	CredentialsFile func() string
 }
 
 func New() *Connector {
-	return &Connector{Run: execRunner, Now: time.Now, CredentialsFile: defaultCredentialsFile}
+	return &Connector{Run: cli.Exec{Path: "aws", Timeout: 2 * time.Minute}, Now: time.Now, CredentialsFile: defaultCredentialsFile}
 }
 
 func init() { connector.Register(New()) }
@@ -106,7 +109,7 @@ func (c *Connector) profiles(ctx context.Context, cfg map[string]any) ([]string,
 		}
 		return out, nil
 	}
-	out, err := c.Run(ctx, "aws", "configure", "list-profiles")
+	out, err := c.aws(ctx, "configure", "list-profiles")
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +120,7 @@ func (c *Connector) profiles(ctx context.Context, cfg map[string]any) ([]string,
 // us-east-1 hosts the global IAM, STS, Budgets and Cost Explorer endpoints of the aws partition.
 func (c *Connector) call(ctx context.Context, profile string, out any, args ...string) error {
 	args = append(args, "--profile", profile, "--region", "us-east-1", "--output", "json", "--no-cli-pager")
-	raw, err := c.Run(ctx, "aws", args...)
+	raw, err := c.aws(ctx, args...)
 	if err != nil {
 		return err
 	}
@@ -125,6 +128,11 @@ func (c *Connector) call(ctx context.Context, profile string, out any, args ...s
 		return nil
 	}
 	return json.Unmarshal(raw, out)
+}
+
+// aws runs one command through the read-only guard.
+func (c *Connector) aws(ctx context.Context, args ...string) ([]byte, error) {
+	return readOnly.Guard(c.Run).Run(ctx, args...)
 }
 
 // classify maps an aws CLI failure to the status the owner has to act on.

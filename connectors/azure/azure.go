@@ -13,33 +13,29 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Runner runs a CLI and returns its stdout. Tests replace it with canned output.
-type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
-// execRunner runs the real binary with a timeout, folding stderr into the error.
-func execRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args[:min(3, len(args))], " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return out, nil
+// readOnly lists every az command this connector runs. Anything else is refused before it reaches
+// the CLI, so a bug cannot reset a credential, delete an app or change a subscription.
+var readOnly = cli.Allowlist{
+	"account show",
+	"account list",
+	"consumption budget list",
+	"ad app list",
 }
 
 type Connector struct {
-	Run Runner
+	// Run executes az commands after the read-only guard. Tests replace it with canned output.
+	Run cli.Runner
 	Now func() time.Time
 }
 
-func New() *Connector { return &Connector{Run: execRunner, Now: time.Now} }
+func New() *Connector {
+	return &Connector{Run: cli.Exec{Path: "az", Timeout: 3 * time.Minute}, Now: time.Now}
+}
 
 func init() { connector.Register(New()) }
 
@@ -54,7 +50,7 @@ func (c *Connector) Describe() connector.Description {
 }
 
 func (c *Connector) call(ctx context.Context, out any, args ...string) error {
-	raw, err := c.Run(ctx, "az", append(args, "--output", "json", "--only-show-errors")...)
+	raw, err := readOnly.Guard(c.Run).Run(ctx, append(args, "--output", "json", "--only-show-errors")...)
 	if err != nil {
 		return err
 	}

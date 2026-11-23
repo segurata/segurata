@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -16,13 +17,16 @@ import (
 
 var now = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
+// fakeRunner answers by command (the args before the common output flags) and records every call.
 type fakeRunner struct {
 	replies map[string]string
 	errs    map[string]error
+	calls   []string
 }
 
-func (f *fakeRunner) run(_ context.Context, _ string, args ...string) ([]byte, error) {
+func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 	cmd := strings.TrimSuffix(strings.Join(args, " "), " --output json --only-show-errors")
+	f.calls = append(f.calls, cmd)
 	if err, ok := f.errs[cmd]; ok {
 		return nil, err
 	}
@@ -51,7 +55,7 @@ func fixture() *fakeRunner {
 
 func TestInventory(t *testing.T) {
 	rec := &httpxtest.Recorder{}
-	c := &Connector{Run: fixture().run, Now: func() time.Time { return now }}
+	c := &Connector{Run: fixture(), Now: func() time.Time { return now }}
 	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +96,7 @@ func TestInventoryTurnsFailuresIntoStatuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &httpxtest.Recorder{}
 			fr := &fakeRunner{errs: map[string]error{"account show": tc.err}}
-			if err := (&Connector{Run: fr.run, Now: time.Now}).Inventory(context.Background(), connector.Request{}, rec); err != nil {
+			if err := (&Connector{Run: fr, Now: time.Now}).Inventory(context.Background(), connector.Request{}, rec); err != nil {
 				t.Fatal(err)
 			}
 			if len(rec.Statuses) != 1 || rec.Statuses[0].State != tc.want {
@@ -106,7 +110,7 @@ func TestBudgetErrorIsPerSubscription(t *testing.T) {
 	fr := fixture()
 	fr.errs = map[string]error{"consumption budget list --subscription 00000000-0000-0000-0000-000000000001": errors.New("(422) Cost management data is unavailable for this offer")}
 	rec := &httpxtest.Recorder{}
-	if err := (&Connector{Run: fr.run, Now: func() time.Time { return now }}).Inventory(context.Background(), connector.Request{}, rec); err != nil {
+	if err := (&Connector{Run: fr, Now: func() time.Time { return now }}).Inventory(context.Background(), connector.Request{}, rec); err != nil {
 		t.Fatal(err)
 	}
 	if rec.Statuses[0].State != finding.StateError || !strings.HasPrefix(rec.Statuses[0].Detail, "budgets:") {
@@ -147,5 +151,38 @@ func TestBudgetWithoutEnabledAlerts(t *testing.T) {
 	}{"x": {Enabled: false}}}
 	if f := budgetFindings("s", []budget{b}); f[0].Severity != finding.SevMedium {
 		t.Fatalf("got %+v", f)
+	}
+}
+
+func TestEveryCommandRunIsReadOnly(t *testing.T) {
+	fr := fixture()
+	if err := (&Connector{Run: fr, Now: func() time.Time { return now }}).Inventory(context.Background(), connector.Request{}, &httpxtest.Recorder{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.calls) != 5 { // account show, account list, two enabled subscriptions, app list
+		t.Fatalf("calls: %v", fr.calls)
+	}
+	for _, call := range fr.calls {
+		if err := readOnly.Check(strings.Fields(call)); err != nil {
+			t.Errorf("call outside the allowlist: %v", err)
+		}
+	}
+}
+
+func TestMutatingCommandIsRefusedBeforeTheCLI(t *testing.T) {
+	for _, args := range [][]string{
+		{"ad", "app", "credential", "reset", "--id", "11111111-1111-1111-1111-111111111111"},
+		{"ad", "app", "delete", "--id", "x"},
+		{"account", "set", "--subscription", "x"},
+		{"consumption", "budget", "delete", "--budget-name", "monthly"},
+	} {
+		fr := &fakeRunner{}
+		err := (&Connector{Run: fr, Now: time.Now}).call(context.Background(), &struct{}{}, args...)
+		if !errors.Is(err, cli.ErrRefused) {
+			t.Errorf("%v: want refusal, got %v", args, err)
+		}
+		if len(fr.calls) != 0 {
+			t.Errorf("%v reached the CLI", args)
+		}
 	}
 }

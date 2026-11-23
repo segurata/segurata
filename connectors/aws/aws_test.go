@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -37,7 +38,7 @@ type fakeRunner struct {
 	calls   []string
 }
 
-func (f *fakeRunner) run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 	cmd := strings.Join(args, " ")
 	if i := strings.Index(cmd, " --profile "); i >= 0 {
 		cmd = cmd[:i]
@@ -49,11 +50,11 @@ func (f *fakeRunner) run(_ context.Context, name string, args ...string) ([]byte
 	if out, ok := f.replies[cmd]; ok {
 		return []byte(out), nil
 	}
-	return nil, fmt.Errorf("%s %s: unexpected command", name, cmd)
+	return nil, fmt.Errorf("aws %s: unexpected command", cmd)
 }
 
 func newTest(fr *fakeRunner, credFile string) *Connector {
-	return &Connector{Run: fr.run, Now: func() time.Time { return now }, CredentialsFile: func() string { return credFile }}
+	return &Connector{Run: fr, Now: func() time.Time { return now }, CredentialsFile: func() string { return credFile }}
 }
 
 func healthyAccount() *fakeRunner {
@@ -289,5 +290,39 @@ func TestCredentialsFileReportsLongLivedKeysWithoutSecrets(t *testing.T) {
 				t.Fatalf("missing CLI should be a status: %+v", rec.Statuses)
 			}
 		})
+	}
+}
+
+func TestEveryCommandRunIsReadOnly(t *testing.T) {
+	fr := healthyAccount()
+	if err := newTest(fr, "").Inventory(context.Background(), connector.Request{Config: map[string]any{"cost_explorer": true}}, &httpxtest.Recorder{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.calls) == 0 {
+		t.Fatal("no aws command ran")
+	}
+	for _, call := range fr.calls {
+		if err := readOnly.Check(strings.Fields(call)); err != nil {
+			t.Errorf("call outside the allowlist: %v", err)
+		}
+	}
+}
+
+func TestMutatingCommandIsRefusedBeforeTheCLI(t *testing.T) {
+	for _, args := range [][]string{
+		{"iam", "delete-access-key", "--access-key-id", "AKIAEXAMPLE"},
+		{"iam", "create-access-key"},
+		{"budgets", "delete-budget", "--account-id", "1"},
+		{"configure", "set", "region", "eu-west-1"},
+		{"--profile", "p", "iam", "list-users"},
+	} {
+		fr := &fakeRunner{}
+		_, err := newTest(fr, "").aws(context.Background(), args...)
+		if !errors.Is(err, cli.ErrRefused) {
+			t.Errorf("%v: want refusal, got %v", args, err)
+		}
+		if len(fr.calls) != 0 {
+			t.Errorf("%v reached the CLI", args)
+		}
 	}
 }

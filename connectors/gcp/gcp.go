@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -26,7 +27,7 @@ func init() { connector.Register(New()) }
 
 // Connector is the built-in gcp connector. Its fields are injectable for tests.
 type Connector struct {
-	runner  Runner // nil: run the real gcloud
+	runner  cli.Runner // nil: run the real gcloud
 	getenv  func(string) string
 	home    string
 	now     func() time.Time
@@ -66,7 +67,7 @@ func parseSettings(m map[string]any) (settings, error) {
 		return s, err
 	}
 	s.billingProject, _ = m["billing_project"].(string)
-	s.gcloudPath, _ = m["gcloud"].(string)
+	s.gcloudPath, _ = m["gcloud_path"].(string)
 	return s, nil
 }
 
@@ -110,7 +111,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 			emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
 			return nil
 		}
-		r = execRunner{path: path, timeout: c.timeout}
+		r = cli.Exec{Path: path, Timeout: c.timeout, Env: []string{"CLOUDSDK_CORE_DISABLE_PROMPTS=1"}}
 	}
 	g := &gcloud{run: r, backoff: c.backoff}
 

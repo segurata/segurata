@@ -9,60 +9,39 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/finding"
 )
-
-// Runner executes one gcloud command and returns its stdout. Tests inject a fake.
-type Runner interface {
-	Run(ctx context.Context, args ...string) ([]byte, error)
-}
 
 // readOnly lists the only gcloud command paths this connector may run. Anything else is refused
 // before it reaches the CLI, so a bug cannot create, delete, disable, print a key string or change
 // gcloud config.
-var readOnly = [][]string{
-	{"auth", "list"},
-	{"projects", "list"},
-	{"projects", "get-iam-policy"},
-	{"iam", "service-accounts", "list"},
-	{"iam", "service-accounts", "keys", "list"},
-	{"services", "api-keys", "list"},
-	{"billing", "accounts", "list"},
-	{"billing", "projects", "describe"},
-	{"billing", "budgets", "list"},
-}
-
-func allowed(args []string) bool {
-	var path []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			break
-		}
-		path = append(path, a)
-	}
-	for _, cmd := range readOnly {
-		if len(path) >= len(cmd) && slices.Equal(path[:len(cmd)], cmd) {
-			return true
-		}
-	}
-	return false
+var readOnly = cli.Allowlist{
+	"auth list",
+	"projects list",
+	"projects get-iam-policy",
+	"iam service-accounts list",
+	"iam service-accounts keys list",
+	"services api-keys list",
+	"billing accounts list",
+	"billing projects describe",
+	"billing budgets list",
 }
 
 // gcloud wraps a Runner with the read-only guard, JSON output and retries on rate limits.
 type gcloud struct {
-	run     Runner
+	run     cli.Runner
 	backoff time.Duration // first retry delay; doubles each attempt
 }
 
 const attempts = 3
 
 func (g *gcloud) json(ctx context.Context, into any, args ...string) error {
-	if !allowed(args) {
-		return fmt.Errorf("refused non read-only gcloud command: %s", strings.Join(args, " "))
+	if err := readOnly.Check(args); err != nil {
+		return fmt.Errorf("gcloud: %w", err)
 	}
 	args = append(args, "--format=json")
 	delay := g.backoff
@@ -88,22 +67,15 @@ func (g *gcloud) json(ctx context.Context, into any, args ...string) error {
 	return err
 }
 
-// cliError carries gcloud's stderr, which is where it explains failures.
-type cliError struct {
-	stderr string
-	err    error
-}
-
-func (e *cliError) Error() string { return summarize(e.stderr, e.err) }
-
 func rateLimited(err error) bool {
 	return containsAny(errText(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
 }
 
+// errText is gcloud's stderr when the CLI ran and failed, which is where it explains failures.
 func errText(err error) string {
-	var ce *cliError
+	var ce *cli.Error
 	if errors.As(err, &ce) {
-		return ce.stderr
+		return ce.Stderr
 	}
 	return err.Error()
 }
@@ -142,9 +114,9 @@ func summarize(stderr string, err error) string {
 		line = line[:i]
 	}
 	if line == "" && err != nil {
-		var ce *cliError
-		if errors.As(err, &ce) && ce.err != nil {
-			return ce.err.Error()
+		var ce *cli.Error
+		if errors.As(err, &ce) && ce.Err != nil {
+			return ce.Err.Error()
 		}
 		return err.Error()
 	}
@@ -165,30 +137,7 @@ func summarize(stderr string, err error) string {
 	return strings.TrimSpace(line)
 }
 
-// execRunner runs the real gcloud binary with prompts disabled and a timeout per command.
-type execRunner struct {
-	path    string
-	timeout time.Duration
-}
-
-func (e execRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, e.timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, e.path, args...)
-	cmd.Env = append(os.Environ(), "CLOUDSDK_CORE_DISABLE_PROMPTS=1")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("gcloud %s timed out after %s", strings.Join(args[:min(3, len(args))], " "), e.timeout)
-		}
-		return nil, &cliError{stderr: stderr.String(), err: err}
-	}
-	return out, nil
-}
-
-// findGcloud resolves the CLI: explicit config, then PATH, then the usual SDK install folders.
+// findGcloud resolves the CLI: explicit config, then PATH, then the SDK's standard install folders.
 func findGcloud(configured, home string) (string, error) {
 	if configured != "" {
 		return configured, nil
@@ -196,13 +145,21 @@ func findGcloud(configured, home string) (string, error) {
 	if p, err := exec.LookPath("gcloud"); err == nil {
 		return p, nil
 	}
-	for _, p := range []string{
-		filepath.Join(home, "src", "utils", "google-cloud-sdk", "bin", "gcloud"),
-		filepath.Join(home, "google-cloud-sdk", "bin", "gcloud"),
-	} {
+	for _, p := range gcloudInstallPaths(home) {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return p, nil
 		}
 	}
-	return "", errors.New("gcloud CLI not found in PATH or the usual install folders")
+	return "", errors.New("gcloud CLI not found in PATH or the standard install folders: set gcloud_path in the gcp connector config")
+}
+
+// gcloudInstallPaths are where the interactive installer, the Linux packages and Homebrew put
+// gcloud, for when PATH lacks it (non-interactive shells often do).
+func gcloudInstallPaths(home string) []string {
+	return []string{
+		filepath.Join(home, "google-cloud-sdk", "bin", "gcloud"),
+		"/usr/lib/google-cloud-sdk/bin/gcloud",
+		"/opt/homebrew/share/google-cloud-sdk/bin/gcloud",
+		"/usr/local/share/google-cloud-sdk/bin/gcloud",
+	}
 }
