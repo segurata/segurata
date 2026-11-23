@@ -26,6 +26,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `inventory` | Lists what exists: grants, keys, settings, spend | Never |
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
+| `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `accepted.json` |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
@@ -103,6 +104,36 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   mode in-process; the undo is `chmod <old mode> <path>`.
 - External connectors cannot remediate yet. A later protocol version will add a
   `securizame-<name> remediate` subcommand with the same plan and apply steps.
+
+## Accepted risks
+
+```
+securizame accept <finding-id> --reason "..." [--until YYYY-MM-DD]
+securizame accept --list
+securizame unaccept <finding-id>
+```
+
+Some findings describe a risk the owner keeps on purpose (Brave's remote debugging port, which
+local AI agents drive). `accept` looks the finding up in the latest run (a unique id prefix is
+enough) and stores it in `~/.config/securizame/accepted.json`, mode 0600 (`SECURIZAME_ACCEPTED`
+names another file, `internal/accept`):
+
+```json
+{"version": 1, "entries": [{"id": "5c7ae3818002130e", "connector": "macos",
+  "title": "Brave runs with a remote debugging port: …", "reason": "AI agents drive Brave",
+  "accepted_at": "2026-11-24T00:39:00Z", "until": "2027-03-31"}]}
+```
+
+- The core stamps every finding of an inventory with `"accepted": {"reason", "accepted_at",
+  "until", "expired"}` when the file holds its id. The finding stays in the JSONL; the summary
+  and `remediate --list` leave it out and say "N accepted findings hidden; see securizame accept
+  --list". `remediate` re-reads the file, so an acceptance made after the run counts.
+- `until` is the last day it applies. After it the finding shows again, its title followed by
+  "(acceptance expired)".
+- This only works with stable ids: a finding id hashes connector, account, resource type and
+  resource id, so a resource id must not hold anything that changes between runs (a pid, a port).
+  The debugging-port finding's resource id is `brave-remote-debugging`, whatever port Brave uses.
+- A broken file is an error, never an empty list: a typo must not unhide or hide anything silently.
 
 ## External connector protocol (v1)
 

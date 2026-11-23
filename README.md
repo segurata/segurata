@@ -249,6 +249,20 @@ ControlCenter) left ports 5000 and 7000 open on macOS 15.6 (tried 2026-11-23).
 After `--apply`, the check waits 5 seconds and needs the finding gone in two inventories in a row:
 a restarted process can drop its ports for a moment and open them again.
 
+## Accepted risks
+
+```bash
+./securizame accept <id> --reason "AI agents drive Brave over CDP" [--until 2027-03-31]
+./securizame accept --list
+./securizame unaccept <id>
+```
+
+A finding you keep on purpose stays in `out/<date>/*.jsonl` with an `accepted` field, but leaves
+the summary and `remediate --list`, which print how many were hidden. With `--until`, it shows
+again after that day, marked "(acceptance expired)". State: `~/.config/securizame/accepted.json`
+(mode 0600; `SECURIZAME_ACCEPTED` names another file). Details:
+[docs/architecture.md](docs/architecture.md#accepted-risks).
+
 ## Plan
 
 Actions by area and priority, with verified sources and what a script can audit: [docs/plan.md](docs/plan.md).

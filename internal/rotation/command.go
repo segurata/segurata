@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -68,21 +69,6 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// parse parses flags wherever they appear, so `done <id> --note x` works, and returns positionals.
-func parse(fs *flag.FlagSet, args []string) ([]string, error) {
-	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if fs.NArg() == 0 {
-			return pos, nil
-		}
-		pos = append(pos, fs.Arg(0))
-		args = fs.Args()[1:]
-	}
-}
-
 func newFlags(name string, errw io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet("rotations "+name, flag.ContinueOnError)
 	fs.SetOutput(errw)
@@ -94,7 +80,7 @@ func (c CLI) sync(l *Ledger, path string, args []string, now time.Time) int {
 	from := fs.String("from", "", "local-secrets JSONL to read (default: the latest under --out)")
 	out := fs.String("out", "out", "inventory output directory")
 	noise := fs.Bool("include-noise", false, "also track generic matches, public, expired and encrypted values")
-	if _, err := parse(fs, args); err != nil {
+	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
 	src := *from
@@ -139,7 +125,7 @@ func (c CLI) list(l *Ledger, args []string, now time.Time) int {
 	all := fs.Bool("all", false, "include rotated, snoozed and ignored items")
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0,P1")
 	service := fs.String("service", "", "comma-separated services, e.g. stripe,aws")
-	if _, err := parse(fs, args); err != nil {
+	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
 	prios, services := splitList(*prio), splitList(*service)
@@ -242,7 +228,7 @@ func (c CLI) change(l *Ledger, path, cmd string, args []string, now time.Time) i
 		reason = fs.String("reason", "", "why this is not a secret to rotate")
 	}
 	under := fs.String("path", "", "instead of an id: every item whose locations all lie under this path")
-	pos, err := parse(fs, args)
+	pos, err := cliflag.Parse(fs, args)
 	if err != nil {
 		return 2
 	}

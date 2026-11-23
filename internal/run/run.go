@@ -72,13 +72,14 @@ type Result struct {
 
 // sink is the Emitter for one connector: it fills derived fields and appends to the JSONL file.
 type sink struct {
-	mu      sync.Mutex
-	name    string
-	label   string
-	inst    string
-	enc     *json.Encoder
-	verbose io.Writer
-	res     *Result
+	mu       sync.Mutex
+	name     string
+	label    string
+	inst     string
+	enc      *json.Encoder
+	verbose  io.Writer
+	annotate func(*finding.Finding)
+	res      *Result
 }
 
 func (s *sink) Finding(f finding.Finding) {
@@ -86,6 +87,9 @@ func (s *sink) Finding(f finding.Finding) {
 	defer s.mu.Unlock()
 	f.Connector, f.Instance = s.name, s.inst
 	f.Fill(time.Now())
+	if s.annotate != nil {
+		s.annotate(&f)
+	}
 	s.res.Findings = append(s.res.Findings, f)
 	_ = s.enc.Encode(f)
 }
@@ -104,8 +108,9 @@ func (s *sink) Log(msg string) {
 	}
 }
 
-// Inventory runs the given targets concurrently and returns their results in input order.
-func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer) ([]*Result, error) {
+// Inventory runs the given targets concurrently and returns their results in input order. annotate,
+// when set, stamps each finding before it is written (accepted risks).
+func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer, annotate func(*finding.Finding)) ([]*Result, error) {
 	dir := filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -116,14 +121,14 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 		wg.Add(1)
 		go func(i int, t Target) {
 			defer wg.Done()
-			results[i] = runOne(ctx, cfg, t, dir, verbose)
+			results[i] = runOne(ctx, cfg, t, dir, verbose, annotate)
 		}(i, t)
 	}
 	wg.Wait()
 	return results, nil
 }
 
-func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer) *Result {
+func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, annotate func(*finding.Finding)) *Result {
 	name, label := t.Connector.Describe().Name, t.Label()
 	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
 	// 0600: the output names accounts, apps and services.
@@ -133,7 +138,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		return res
 	}
 	defer f.Close()
-	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, res: res}
+	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, res: res}
 
 	resolved, errs := secrets.ResolveAll(t.Instance.Secrets)
 	for _, e := range errs {
@@ -159,8 +164,12 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 		all = append(all, r.Findings...)
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Severity.Rank() > all[j].Severity.Rank() })
-	hidden := 0
+	hidden, accepted := 0, 0
 	for _, f := range all {
+		if f.Hidden() {
+			accepted++
+			continue
+		}
 		if f.Severity.Rank() < minSev.Rank() {
 			hidden++
 			continue
@@ -169,11 +178,14 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 		if f.Instance != "" {
 			who += ":" + f.Instance
 		}
-		fmt.Fprintf(w, "[%-8s] %-20s %s · %s\n", f.Severity, who, f.Account, f.Title)
+		fmt.Fprintf(w, "[%-8s] %-20s %s · %s\n", f.Severity, who, f.Account, f.DisplayTitle())
 	}
 	fmt.Fprintf(w, "\n%d findings (%d below %s hidden).", len(all), hidden, minSev)
 	for _, r := range results {
 		fmt.Fprintf(w, " %s: %s", r.Name, r.File)
 	}
 	fmt.Fprintln(w)
+	if note := finding.HiddenNote(accepted); note != "" {
+		fmt.Fprintln(w, note)
+	}
 }
