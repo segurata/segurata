@@ -8,6 +8,7 @@ import (
 	_ "github.com/segurata/segurata/connectors/azure"
 	_ "github.com/segurata/segurata/connectors/gcp"
 	_ "github.com/segurata/segurata/connectors/googlepersonal"
+	_ "github.com/segurata/segurata/connectors/macos"
 	_ "github.com/segurata/segurata/connectors/openai"
 	_ "github.com/segurata/segurata/connectors/openrouter"
 	_ "github.com/segurata/segurata/connectors/supabase"

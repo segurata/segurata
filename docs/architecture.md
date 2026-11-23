@@ -25,7 +25,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 |---|---|---|
 | `inventory` | Lists what exists: grants, keys, settings, spend | Never |
 | `assess` | Assigns severity and remediation to each finding | Never |
-| `remediate` | Applies one remediation to one finding | Yes, one item at a time, `--dry-run` by default, explicit confirmation |
+| `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
@@ -49,7 +49,7 @@ One JSON line per finding (`internal/finding`):
   "evidence": {"scopes": ["…"]},
   "created_at": "2020-03-24T00:00:00Z",
   "last_used_at": null,
-  "remediation": {"summary": "…", "url": "https://…", "automatable": false},
+  "remediation": {"summary": "…", "url": "https://…", "action": "", "automatable": false},
   "observed_at": "2026-11-23T21:00:00Z"
 }
 ```
@@ -59,6 +59,8 @@ One JSON line per finding (`internal/finding`):
 - `severity`: `info`, `low`, `medium`, `high`, `critical`.
 - `last_used_at`: whatever the provider reports. If it reports nothing, `null`, never a made-up date.
 - `evidence` never holds a secret. At most a redacted prefix and the length (`finding.Redact`).
+- `remediation.action`: id of a built-in remediation (`macos.firewall.enable`, `file.chmod600`),
+  empty when the fix is manual. `automatable` is true exactly when `action` is set.
 
 Besides findings, a connector emits per-account status records saying why something could not be
 inspected:
@@ -68,6 +70,37 @@ inspected:
 ```
 
 `state`: `ok`, `reauth`, `signedout`, `missing_credentials`, `unsupported`, `error`.
+
+## Remediation
+
+```
+securizame remediate --list                      automatable findings of the latest run
+securizame remediate <finding-id>                print the plan; changes nothing
+securizame remediate <finding-id> --apply        print the plan, ask "Apply? [y/N]", apply, check
+securizame remediate <finding-id> --apply --yes  same without asking
+```
+
+The finding comes from the latest `out/<date>/*.jsonl` (a unique id prefix is enough). The plan
+(`connector.Plan`) states the whole scope before anything runs: a summary, the exact commands, the
+file changes, whether it needs sudo, the side effects and the exact commands that undo it.
+
+- One finding per run. Without `--apply` it stops after the plan. With `--apply` it asks on the
+  terminal and refuses when stdin is not a terminal, unless `--yes`.
+- After applying, the core runs that connector instance's inventory again and reports whether the
+  finding is gone. A finding still reported, or a check that could not run, is an error.
+- A built-in connector remediates by implementing the optional `connector.Remediator` interface
+  (`Plan`, `Apply`). `Apply` recomputes the plan and refuses one that differs from what was shown.
+- Every command an action may run is on a per-action allowlist of exact argument lists, written by
+  hand (`remediate.Allowlist`). There is no pattern matching; anything else is refused before the
+  first command runs.
+- sudo: a command that needs root runs as `/usr/bin/sudo <argv>` with the terminal's stdin, stdout
+  and stderr attached, so sudo asks for the password itself. securizame never reads, stores or
+  pipes a password.
+- Generic actions belong to the core, so any connector can attach them. `file.chmod600` takes the
+  file in `evidence.path` (absolute or `~/`), refuses symlinks and non-regular files, and changes the
+  mode in-process; the undo is `chmod <old mode> <path>`.
+- External connectors cannot remediate yet. A later protocol version will add a
+  `securizame-<name> remediate` subcommand with the same plan and apply steps.
 
 ## External connector protocol (v1)
 
@@ -144,8 +177,9 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | `openrouter` | API | Keys, per-key credit limit, spend |
 | `vercel` | API | Tokens, spend management |
 | `supabase` | Management API | Projects, service keys, spend cap |
+| `macos` | macOS tools, read-only and without sudo; Brave profile files | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, TCP ports reachable from the network (with File Sharing guest access), login and background items, Brave extensions and their permissions, Brave's remote debugging port. Remediates the firewall, stealth mode and AirPlay Receiver |
 
-The Node scripts in `connected-apps/`, `workspace/`, `secrets/` and `macos/` are the
+The Node scripts in `connected-apps/`, `workspace/` and `secrets/` are the
 prototypes. They keep working until their Go connector replaces them, and then they are deleted.
 
 ## Why Go, and why so few dependencies
