@@ -50,9 +50,13 @@ type Resource struct {
 	Name string `json:"name"`
 }
 
+// Remediation says how to fix a finding. Action names a built-in remediation (such as
+// "macos.firewall.enable") that `securizame remediate` can apply; it is empty when the fix is
+// manual. Automatable is derived from Action by Fill.
 type Remediation struct {
 	Summary     string `json:"summary"`
 	URL         string `json:"url,omitempty"`
+	Action      string `json:"action,omitempty"`
 	Automatable bool   `json:"automatable"`
 }
 
@@ -74,9 +78,11 @@ type Finding struct {
 	ObservedAt  time.Time      `json:"observed_at"`
 }
 
-// Fill sets the fields a connector should not have to compute: type, stable id and observation time.
+// Fill sets the fields a connector should not have to compute: type, stable id, observation time
+// and whether the remediation is automatable.
 func (f *Finding) Fill(now time.Time) {
 	f.Type = "finding"
+	f.Remediation.Automatable = f.Remediation.Action != ""
 	if f.ID == "" {
 		parts := []string{f.Connector, f.Account, f.Resource.Type, f.Resource.ID}
 		if f.Instance != "" {

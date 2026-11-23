@@ -1,0 +1,329 @@
+package remediate
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/run"
+)
+
+var enable = connector.Step{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "on"}, Sudo: true}
+
+type recordingExec struct{ ran []connector.Step }
+
+func (r *recordingExec) Run(_ context.Context, s connector.Step, _ connector.IO) error {
+	r.ran = append(r.ran, s)
+	return nil
+}
+
+func quietIO() connector.IO {
+	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+}
+
+func TestAllowlistMatchesExactArgvAndSudo(t *testing.T) {
+	allow := Allowlist{"a": {enable}}
+	if err := allow.Check("a", enable); err != nil {
+		t.Fatal(err)
+	}
+	refused := []connector.Step{
+		{Argv: enable.Argv},                          // same argv without sudo
+		{Argv: append(enable.Argv, "x"), Sudo: true}, // extra argument
+		{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "off"}, Sudo: true},
+		{Argv: []string{"/bin/sh", "-c", "id"}, Sudo: true},
+	}
+	for _, s := range refused {
+		if err := allow.Check("a", s); !errors.Is(err, ErrRefused) {
+			t.Errorf("%s: want refusal, got %v", s, err)
+		}
+	}
+	if err := allow.Check("other", enable); !errors.Is(err, ErrRefused) {
+		t.Errorf("a step allowed for one action must not run for another: %v", err)
+	}
+}
+
+func TestRunChecksEveryStepBeforeRunningAny(t *testing.T) {
+	ex := &recordingExec{}
+	p := connector.Plan{Action: "a", Commands: []connector.Step{enable, {Argv: []string{"/bin/rm", "-rf", "/"}, Sudo: true}}}
+	if err := Run(context.Background(), p, Allowlist{"a": {enable}}, ex, quietIO()); !errors.Is(err, ErrRefused) {
+		t.Fatalf("want refusal, got %v", err)
+	}
+	if len(ex.ran) != 0 {
+		t.Fatalf("ran %v before refusing the plan", ex.ran)
+	}
+	if err := Run(context.Background(), connector.Plan{Action: "a", Commands: []connector.Step{enable}}, Allowlist{"a": {enable}}, ex, quietIO()); err != nil || len(ex.ran) != 1 {
+		t.Fatalf("err=%v ran=%v", err, ex.ran)
+	}
+}
+
+func TestStepStringQuotesLikeAShell(t *testing.T) {
+	s := connector.Step{Argv: []string{"/bin/chmod", "644", "/tmp/my file's"}, Sudo: true}
+	if got, want := s.String(), `sudo /bin/chmod 644 '/tmp/my file'\''s'`; got != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+}
+
+// fakeRemediator records Apply calls.
+type fakeRemediator struct {
+	plan    connector.Plan
+	applied int
+}
+
+func (f *fakeRemediator) Plan(context.Context, finding.Finding) (connector.Plan, error) {
+	return f.plan, nil
+}
+
+func (f *fakeRemediator) Apply(context.Context, finding.Finding, connector.Plan, connector.IO) error {
+	f.applied++
+	return nil
+}
+
+var target = finding.Finding{ID: "abc123", Connector: "macos", Account: "mac", Severity: finding.SevMedium, Title: "Firewall is off",
+	Remediation: finding.Remediation{Action: "macos.firewall.enable", Automatable: true}}
+
+func results(ids ...string) Reinventory {
+	return func(context.Context) ([]*run.Result, error) {
+		r := &run.Result{Name: "macos"}
+		for _, id := range ids {
+			r.Findings = append(r.Findings, finding.Finding{ID: id})
+		}
+		return []*run.Result{r}, nil
+	}
+}
+
+func neverReinventory(t *testing.T) Reinventory {
+	return func(context.Context) ([]*run.Result, error) {
+		t.Fatal("reinventory ran without an apply")
+		return nil, nil
+	}
+}
+
+func TestDryRunPrintsThePlanAndNeverApplies(t *testing.T) {
+	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable", Summary: "Turn on the firewall.", Commands: []connector.Step{enable},
+		Undo: []connector.Step{{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "off"}, Sudo: true}}}}
+	io := quietIO()
+	if err := Execute(context.Background(), target, r, Options{IO: io, TTY: true}, neverReinventory(t)); err != nil {
+		t.Fatal(err)
+	}
+	out := io.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on", "--setglobalstate off", "Dry run", "password"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan output lacks %q:\n%s", want, out)
+		}
+	}
+	if r.applied != 0 {
+		t.Fatal("dry run applied")
+	}
+}
+
+func TestApplyRefusesWithoutATerminalUnlessYes(t *testing.T) {
+	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
+	err := Execute(context.Background(), target, r, Options{Apply: true, TTY: false, IO: quietIO()}, neverReinventory(t))
+	if !errors.Is(err, ErrNotTTY) || r.applied != 0 {
+		t.Fatalf("err=%v applied=%d", err, r.applied)
+	}
+	if err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, results()); err != nil || r.applied != 1 {
+		t.Fatalf("--yes: err=%v applied=%d", err, r.applied)
+	}
+}
+
+func TestApplyAsksAndOnlyAcceptsYes(t *testing.T) {
+	for answer, want := range map[string]int{"y\n": 1, "YES\n": 1, "\n": 0, "n\n": 0, "": 0, "sure\n": 0} {
+		r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
+		io := quietIO()
+		io.In = strings.NewReader(answer)
+		if err := Execute(context.Background(), target, r, Options{Apply: true, TTY: true, IO: io}, results()); err != nil {
+			t.Fatalf("%q: %v", answer, err)
+		}
+		if r.applied != want {
+			t.Errorf("answer %q applied %d times, want %d", answer, r.applied, want)
+		}
+	}
+}
+
+func TestVerifyAfterApply(t *testing.T) {
+	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
+	opt := Options{Apply: true, Yes: true, IO: quietIO()}
+	if err := Execute(context.Background(), target, r, opt, results("other")); err != nil {
+		t.Fatalf("finding gone should pass: %v", err)
+	}
+	if err := Execute(context.Background(), target, r, opt, results("other", target.ID)); !errors.Is(err, ErrStillPresent) {
+		t.Fatalf("finding still there: want ErrStillPresent, got %v", err)
+	}
+	failed := func(context.Context) ([]*run.Result, error) {
+		return []*run.Result{{Name: "macos", Err: errors.New("could not start")}}, nil
+	}
+	if err := Execute(context.Background(), target, r, opt, failed); err == nil || errors.Is(err, ErrStillPresent) {
+		t.Fatalf("a check that could not run must not count as fixed: %v", err)
+	}
+}
+
+func TestForPicksCoreFileActionsAndRefusesManualFindings(t *testing.T) {
+	if _, err := For(finding.Finding{ID: "x", Remediation: finding.Remediation{Summary: "by hand"}}, nil); err == nil {
+		t.Fatal("manual finding should not be remediable")
+	}
+	r, err := For(finding.Finding{Connector: "local-secrets", Remediation: finding.Remediation{Action: ActionChmod600}}, nil)
+	if _, ok := r.(Files); err != nil || !ok {
+		t.Fatalf("file.chmod600 belongs to the core: %T %v", r, err)
+	}
+	if _, err := For(finding.Finding{Connector: "nope", Remediation: finding.Remediation{Action: "nope.fix"}}, nil); err == nil {
+		t.Fatal("missing connector should fail")
+	}
+}
+
+func TestChmod600PlansExactlyAndApplies(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("X=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := finding.Finding{Kind: finding.KindExposure, Evidence: map[string]any{"path": "~/.env"},
+		Remediation: finding.Remediation{Action: ActionChmod600}}
+	fs := Files{Home: func() (string, error) { return dir, nil }}
+	p, err := fs.Plan(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := connector.Plan{
+		Action: ActionChmod600, Summary: "Make " + path + " readable and writable by its owner only.",
+		Files:       []connector.FileChange{{Path: path, Mode: 0o600, Was: 0o644}},
+		Undo:        []connector.Step{{Argv: []string{"/bin/chmod", "644", path}}},
+		SideEffects: p.SideEffects,
+	}
+	if err := SamePlan(want, p); err != nil || p.NeedsSudo() {
+		t.Fatalf("plan %+v", p)
+	}
+	if err := fs.Apply(context.Background(), f, p, quietIO()); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %o", fi.Mode().Perm())
+	}
+	if _, err := fs.Plan(context.Background(), f); err == nil {
+		t.Fatal("an already private file has nothing to plan")
+	}
+}
+
+func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "key")
+	_ = os.WriteFile(path, nil, 0o600)
+	_ = os.Chmod(path, 0o640)
+	f := finding.Finding{Evidence: map[string]any{"path": path}, Remediation: finding.Remediation{Action: ActionChmod600}}
+	p, err := Files{}.Plan(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Files[0].Path = filepath.Join(dir, "other")
+	if err := (Files{}).Apply(context.Background(), f, p, quietIO()); err == nil {
+		t.Fatal("applied an altered plan")
+	}
+	link := filepath.Join(dir, "link")
+	_ = os.Symlink(path, link)
+	for _, bad := range []string{link, "relative/key", ""} {
+		g := finding.Finding{Evidence: map[string]any{"path": bad}, Remediation: finding.Remediation{Action: ActionChmod600}}
+		if _, err := (Files{}).Plan(context.Background(), g); err == nil {
+			t.Errorf("planned chmod on %q", bad)
+		}
+	}
+}
+
+func TestLatestDirLoadAndFind(t *testing.T) {
+	out := t.TempDir()
+	for _, d := range []string{"2026-11-01", "2026-11-23", "notes"} {
+		_ = os.MkdirAll(filepath.Join(out, d), 0o700)
+	}
+	_ = os.WriteFile(filepath.Join(out, "2026-12-31.jsonl"), nil, 0o600) // a file, not a run directory
+	dir, err := LatestDir(out)
+	if err != nil || filepath.Base(dir) != "2026-11-23" {
+		t.Fatalf("dir=%s err=%v", dir, err)
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	_ = enc.Encode(finding.Status{Type: "status", Connector: "macos", State: finding.StateOK})
+	_ = enc.Encode(finding.Finding{Type: "finding", ID: "aaaa1111", Severity: finding.SevLow, Remediation: finding.Remediation{Action: "x.y"}})
+	_ = enc.Encode(finding.Finding{Type: "finding", ID: "aaaa2222", Severity: finding.SevHigh})
+	_ = enc.Encode(finding.Finding{Type: "finding", ID: "bbbb3333", Severity: finding.SevHigh, Remediation: finding.Remediation{Action: "x.z"}})
+	_ = os.WriteFile(filepath.Join(dir, "macos.jsonl"), buf.Bytes(), 0o600)
+	all, err := Load(dir)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("loaded %d err=%v", len(all), err)
+	}
+	if f, err := Find(all, "bbbb"); err != nil || f.ID != "bbbb3333" {
+		t.Fatalf("unique prefix: %v %v", f.ID, err)
+	}
+	if _, err := Find(all, "aaaa"); err == nil {
+		t.Fatal("ambiguous prefix accepted")
+	}
+	if _, err := Find(all, "zzzz"); err == nil {
+		t.Fatal("unknown id accepted")
+	}
+	auto := Automatable(all)
+	if len(auto) != 2 || auto[0].ID != "bbbb3333" {
+		t.Fatalf("automatable worst first: %+v", auto)
+	}
+	if _, err := LatestDir(t.TempDir()); err == nil {
+		t.Fatal("empty out dir should explain how to run an inventory")
+	}
+}
+
+func TestIsTerminalRejectsDevNullAndPipes(t *testing.T) {
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	if IsTerminal(null) || IsTerminal(r) {
+		t.Fatal("/dev/null and pipes are not terminals")
+	}
+}
+
+func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
+	f := finding.Finding{ID: "abc123", Severity: finding.SevMedium, Connector: "macos", Account: "mac", Title: "Firewall off"}
+	p := connector.Plan{
+		Action:      "macos.firewall.enable",
+		Summary:     "Turn on the firewall.",
+		Commands:    []connector.Step{enable},
+		Files:       []connector.FileChange{{Path: "/tmp/a b", Mode: 0o600, Was: 0o644}},
+		SideEffects: []string{"Prompts appear."},
+		Undo:        []connector.Step{{Argv: []string{"/bin/echo", "off"}}},
+	}
+	var out bytes.Buffer
+	Print(&out, f, p)
+	want := "Finding  abc123 [" + string(finding.SevMedium) + "] macos · mac · Firewall off\n" +
+		"Action   macos.firewall.enable\n" +
+		"Plan     Turn on the firewall.\n" +
+		"\nRuns (sudo asks for your password on this terminal; securizame never sees it):\n" +
+		"  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on\n" +
+		"\nChanges:\n" +
+		"  chmod 600 '/tmp/a b' (now 644)\n" +
+		"\nSide effects:\n" +
+		"  - Prompts appear.\n" +
+		"\nUndo:\n" +
+		"  /bin/echo off\n"
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+
+	out.Reset()
+	Print(&out, f, connector.Plan{Action: "a", Summary: "s", Commands: []connector.Step{{Argv: []string{"/bin/true"}}}})
+	if !strings.Contains(out.String(), "\nRuns, as you:\n  /bin/true\n") || strings.Contains(out.String(), "Undo") {
+		t.Fatalf("plan without sudo or undo printed:\n%s", out.String())
+	}
+}

@@ -49,6 +49,17 @@ func TestFillKeepsConnectorChoicesAndSetsDerivedFields(t *testing.T) {
 	}
 }
 
+func TestFillDerivesAutomatableFromAction(t *testing.T) {
+	manual := Finding{Remediation: Remediation{Summary: "by hand", Automatable: true}}
+	manual.Fill(time.Now())
+	auto := Finding{Remediation: Remediation{Action: "macos.firewall.enable"}}
+	auto.Fill(time.Now())
+	if manual.Remediation.Automatable || !auto.Remediation.Automatable {
+		t.Fatalf("automatable must be true iff an action is set: manual=%v auto=%v",
+			manual.Remediation.Automatable, auto.Remediation.Automatable)
+	}
+}
+
 func TestSeverityRank(t *testing.T) {
 	order := []Severity{SevInfo, SevLow, SevMedium, SevHigh, SevCritical}
 	for i := 1; i < len(order); i++ {

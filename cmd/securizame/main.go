@@ -3,6 +3,8 @@
 //	securizame connectors                     list built-in and external connectors
 //	securizame inventory [name|name:label ...] run connectors (all when none given)
 //	    --min-severity=low  --out=out  --verbose
+//	securizame remediate --list               automatable findings of the latest run
+//	securizame remediate <finding-id>         show the plan; --apply [--yes] to apply it
 package main
 
 import (
@@ -39,6 +41,8 @@ func main() {
 		}
 	case "inventory":
 		os.Exit(inventory(os.Args[2:]))
+	case "remediate":
+		os.Exit(remediateCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -46,7 +50,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...]")
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes]")
 }
 
 func all() []connector.Connector {
