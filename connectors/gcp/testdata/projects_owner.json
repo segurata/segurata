@@ -1,0 +1,5 @@
+[
+  {"projectId": "demo-shop", "projectNumber": "100000000001", "lifecycleState": "ACTIVE", "name": "Demo Shop"},
+  {"projectId": "demo-blog", "projectNumber": "100000000002", "lifecycleState": "ACTIVE", "name": "Demo Blog"},
+  {"projectId": "demo-old", "projectNumber": "100000000003", "lifecycleState": "DELETE_REQUESTED", "name": "Old"}
+]

@@ -1,0 +1,10 @@
+[
+  {"name": "billingAccounts/000000-AAAAAA-111111/budgets/b-1", "displayName": "Blog only",
+   "amount": {"specifiedAmount": {"currencyCode": "EUR", "units": "20"}},
+   "budgetFilter": {"projects": ["projects/100000000002"]},
+   "thresholdRules": [{"thresholdPercent": 0.5}, {"thresholdPercent": 1}]},
+  {"name": "billingAccounts/000000-AAAAAA-111111/budgets/b-2", "displayName": "Silent",
+   "amount": {"specifiedAmount": {"currencyCode": "EUR", "units": "100"}},
+   "thresholdRules": [{"thresholdPercent": 0.9}],
+   "notificationsRule": {"disableDefaultIamRecipients": true}}
+]

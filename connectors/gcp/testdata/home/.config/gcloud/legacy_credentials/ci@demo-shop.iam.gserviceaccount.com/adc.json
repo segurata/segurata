@@ -1,0 +1,1 @@
+{"client_email": "ci@demo-shop.iam.gserviceaccount.com", "client_id": "100000000000000000001", "private_key": "-----BEGIN PRIVATE KEY-----\nSYNTHETIC-NOT-A-KEY\n-----END PRIVATE KEY-----\n", "private_key_id": "dddd0000000000000000000000000000000000dd", "token_uri": "https://oauth2.googleapis.com/token", "type": "service_account", "universe_domain": "googleapis.com"}

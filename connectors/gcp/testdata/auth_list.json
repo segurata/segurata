@@ -1,0 +1,5 @@
+[
+  {"account": "owner@example.com", "status": ""},
+  {"account": "work@example.org", "status": ""},
+  {"account": "ci@demo-shop.iam.gserviceaccount.com", "status": "ACTIVE"}
+]

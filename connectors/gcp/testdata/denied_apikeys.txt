@@ -1,0 +1,2 @@
+ERROR: (gcloud.services.api-keys.list) PERMISSION_DENIED: Permission 'apikeys.keys.list' denied on resource 'projects/demo-blog/locations/global/keys'
+Help Token: AAAAsyntheticHelpToken. This command is authenticated as owner@example.com which is the active account specified by the [core/account] property

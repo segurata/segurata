@@ -1,0 +1,11 @@
+[
+  {"keyAlgorithm": "KEY_ALG_RSA_2048", "keyOrigin": "GOOGLE_PROVIDED", "keyType": "USER_MANAGED",
+   "name": "projects/demo-shop/serviceAccounts/deployer@demo-shop.iam.gserviceaccount.com/keys/aaaa0000000000000000000000000000000000aa",
+   "validAfterTime": "2026-01-10T08:00:00Z", "validBeforeTime": "9999-12-31T23:59:59Z"},
+  {"keyAlgorithm": "KEY_ALG_RSA_2048", "keyOrigin": "GOOGLE_PROVIDED", "keyType": "USER_MANAGED",
+   "name": "projects/demo-shop/serviceAccounts/deployer@demo-shop.iam.gserviceaccount.com/keys/bbbb0000000000000000000000000000000000bb",
+   "validAfterTime": "2026-11-01T08:00:00Z", "validBeforeTime": "9999-12-31T23:59:59Z"},
+  {"keyAlgorithm": "KEY_ALG_RSA_2048", "keyOrigin": "GOOGLE_PROVIDED", "keyType": "USER_MANAGED", "disabled": true,
+   "name": "projects/demo-shop/serviceAccounts/deployer@demo-shop.iam.gserviceaccount.com/keys/cccc0000000000000000000000000000000000cc",
+   "validAfterTime": "2025-01-01T08:00:00Z", "validBeforeTime": "9999-12-31T23:59:59Z"}
+]

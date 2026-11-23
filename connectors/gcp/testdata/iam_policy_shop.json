@@ -1,0 +1,16 @@
+{
+  "bindings": [
+    {"role": "roles/owner", "members": ["user:owner@example.com", "serviceAccount:deployer@demo-shop.iam.gserviceaccount.com"]},
+    {"role": "roles/editor", "members": [
+      "serviceAccount:100000000001-compute@developer.gserviceaccount.com",
+      "serviceAccount:100000000001@cloudservices.gserviceaccount.com",
+      "serviceAccount:service-100000000001@gcp-sa-firebase.iam.gserviceaccount.com",
+      "serviceAccount:service-100000000001@containerregistry.iam.gserviceaccount.com",
+      "serviceAccount:deployer@demo-shop.iam.gserviceaccount.com",
+      "serviceAccount:service-runner@demo-shop.iam.gserviceaccount.com"
+    ]},
+    {"role": "roles/viewer", "members": ["serviceAccount:reader@demo-shop.iam.gserviceaccount.com"]}
+  ],
+  "etag": "BwX0000000=",
+  "version": 1
+}

@@ -1,0 +1,14 @@
+[
+  {"createTime": "2026-01-22T23:52:23.017972Z", "displayName": "Maps (browser)", "etag": "W/\"x\"",
+   "name": "projects/100000000001/locations/global/keys/11111111-2222-3333-4444-555555555555",
+   "uid": "11111111-2222-3333-4444-555555555555", "updateTime": "2026-01-22T23:52:23.017972Z"},
+  {"createTime": "2025-05-01T10:00:00Z", "displayName": "Server geocoding",
+   "name": "projects/100000000001/locations/global/keys/66666666-7777-8888-9999-000000000000",
+   "uid": "66666666-7777-8888-9999-000000000000",
+   "restrictions": {"apiTargets": [{"service": "geocoding-backend.googleapis.com"}]}},
+  {"createTime": "2025-06-01T10:00:00Z", "displayName": "Android app",
+   "name": "projects/100000000001/locations/global/keys/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+   "uid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+   "restrictions": {"androidKeyRestrictions": {"allowedApplications": [{"packageName": "com.example.shop", "sha1Fingerprint": "00:11"}]},
+                    "apiTargets": [{"service": "maps-android-backend.googleapis.com"}]}}
+]

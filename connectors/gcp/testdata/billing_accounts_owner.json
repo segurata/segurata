@@ -1,0 +1,4 @@
+[
+  {"name": "billingAccounts/000000-AAAAAA-111111", "displayName": "Main", "open": true, "currencyCode": "EUR", "masterBillingAccount": "", "parent": ""},
+  {"name": "billingAccounts/000000-CCCCCC-333333", "displayName": "Closed", "open": false, "currencyCode": "EUR", "masterBillingAccount": "", "parent": ""}
+]

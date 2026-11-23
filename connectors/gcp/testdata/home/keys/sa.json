@@ -1,0 +1,1 @@
+{"type": "service_account", "project_id": "demo-shop", "private_key_id": "eeee0000000000000000000000000000000000ee", "private_key": "-----BEGIN PRIVATE KEY-----\nSYNTHETIC-NOT-A-KEY-2\n-----END PRIVATE KEY-----\n", "client_email": "deployer@demo-shop.iam.gserviceaccount.com", "client_id": "100000000000000000002"}

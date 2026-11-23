@@ -1,0 +1,438 @@
+package gcp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
+)
+
+// outcome is one recorded gcloud answer: a fixture file for stdout, or a stderr fixture for a failure.
+type outcome struct{ stdout, stderr string }
+
+// fakeRunner replays recorded answers keyed by the command line without --format=json.
+type fakeRunner struct {
+	t     *testing.T
+	mu    sync.Mutex
+	plays map[string][]outcome
+	calls []string
+}
+
+func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if args[len(args)-1] != "--format=json" {
+		f.t.Errorf("gcloud called without --format=json: %v", args)
+	}
+	key := strings.Join(args[:len(args)-1], " ")
+	f.calls = append(f.calls, key)
+	queue, ok := f.plays[key]
+	if !ok || len(queue) == 0 {
+		f.t.Errorf("unexpected gcloud call: %s", key)
+		return nil, errors.New("unexpected call")
+	}
+	o := queue[0]
+	if len(queue) > 1 {
+		f.plays[key] = queue[1:]
+	}
+	if o.stderr != "" {
+		return nil, &cliError{stderr: fixture(f.t, o.stderr), err: errors.New("exit status 1")}
+	}
+	if o.stdout == "" {
+		return nil, nil // gcloud printed nothing
+	}
+	return []byte(fixture(f.t, o.stdout)), nil
+}
+
+func fixture(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+type recorder struct {
+	mu       sync.Mutex
+	findings []finding.Finding
+	statuses []finding.Status
+}
+
+func (r *recorder) Finding(f finding.Finding) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	f.Connector = connectorName
+	f.Fill(time.Now())
+	r.findings = append(r.findings, f)
+}
+
+func (r *recorder) Status(s finding.Status) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.statuses = append(r.statuses, s)
+}
+
+func (r *recorder) Log(string) {}
+
+func (r *recorder) byTitle(t *testing.T, sub string) finding.Finding {
+	t.Helper()
+	for _, match := range []func(string, string) bool{strings.HasSuffix, strings.Contains} {
+		for _, f := range r.findings {
+			if match(f.Title, sub) {
+				return f
+			}
+		}
+	}
+	t.Fatalf("no finding with title containing %q in:\n%s", sub, r.titles())
+	return finding.Finding{}
+}
+
+func (r *recorder) titles() string {
+	var b strings.Builder
+	for _, f := range r.findings {
+		b.WriteString("  [" + string(f.Severity) + "] " + f.Title + "\n")
+	}
+	return b.String()
+}
+
+// fakeHome copies testdata/home into a temp dir with the permissions git cannot keep.
+func fakeHome(t *testing.T) string {
+	t.Helper()
+	dst := t.TempDir()
+	src := filepath.Join("testdata", "home")
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
+func testConnector(t *testing.T, home string, plays map[string][]outcome, env map[string]string) (*Connector, *fakeRunner) {
+	r := &fakeRunner{t: t, plays: plays}
+	return &Connector{
+		runner: r,
+		getenv: func(k string) string { return env[k] },
+		home:   home,
+		now:    func() time.Time { return time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC) },
+	}, r
+}
+
+const (
+	owner = "--account=owner@example.com"
+	work  = "--account=work@example.org"
+	ci    = "--account=ci@demo-shop.iam.gserviceaccount.com"
+)
+
+func fullScenario() map[string][]outcome {
+	shop, blog := "--project=demo-shop", "--project=demo-blog"
+	return map[string][]outcome{
+		"auth list":                      {{stdout: "auth_list.json"}},
+		"projects list " + owner:         {{stdout: "projects_owner.json"}},
+		"projects list " + work:          {{stderr: "reauth.txt"}},
+		"projects list " + ci:            {{stdout: "projects_sa.json"}},
+		"billing accounts list " + owner: {{stdout: "billing_accounts_owner.json"}},
+		"billing accounts list " + ci:    {{stderr: "disabled_billing.txt"}},
+
+		"projects get-iam-policy demo-shop " + owner:      {{stdout: "iam_policy_shop.json"}},
+		"iam service-accounts list " + shop + " " + owner: {{stdout: "sa_list_shop.json"}},
+		"iam service-accounts keys list --iam-account=deployer@demo-shop.iam.gserviceaccount.com --managed-by=user " + shop + " " + owner: {{stdout: "sa_keys_deployer.json"}},
+		"iam service-accounts keys list --iam-account=reader@demo-shop.iam.gserviceaccount.com --managed-by=user " + shop + " " + owner:   {{}},
+		"services api-keys list " + shop + " " + owner: {{stdout: "api_keys_shop.json"}},
+		"billing projects describe demo-shop " + owner: {{stdout: "billing_info_shop.json"}},
+
+		"projects get-iam-policy demo-blog " + owner:      {{}},
+		"iam service-accounts list " + blog + " " + owner: {{}},
+		"services api-keys list " + blog + " " + owner:    {{stderr: "denied_apikeys.txt"}},
+		"billing projects describe demo-blog " + owner:    {{stderr: "rate_limited.txt"}, {stdout: "billing_info_blog.json"}},
+
+		"billing budgets list --billing-account=000000-AAAAAA-111111 " + owner: {{stdout: "budgets_main.json"}},
+		"billing budgets list --billing-account=000000-BBBBBB-222222 " + owner: {{stderr: "budgets_denied.txt"}},
+	}
+}
+
+func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
+	home := fakeHome(t)
+	env := map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": filepath.Join(home, "keys", "sa.json")}
+	c, runner := testConnector(t, home, fullScenario(), env)
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1}, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]finding.Severity{
+		// local
+		"Refresh token for a Google user on disk (ADC)":                                                                       finding.SevMedium,
+		"Service account private key for ci@demo-shop.iam.gserviceaccount.com on disk (gcloud config folder)":                 finding.SevHigh,
+		"Service account private key for deployer@demo-shop.iam.gserviceaccount.com on disk (GOOGLE_APPLICATION_CREDENTIALS)": finding.SevHigh,
+		// broad roles
+		"deployer@demo-shop.iam.gserviceaccount.com is editor and owner of project demo-shop": finding.SevHigh,
+		"100000000001-compute@developer.gserviceaccount.com is editor of project demo-shop":   finding.SevHigh,
+		"service-runner@demo-shop.iam.gserviceaccount.com is editor of project demo-shop":     finding.SevHigh,
+		// service account keys
+		"deployer@demo-shop.iam.gserviceaccount.com has a user-managed key 317 days old": finding.SevHigh,
+		"deployer@demo-shop.iam.gserviceaccount.com has a user-managed key":              finding.SevMedium,
+		"deployer@demo-shop.iam.gserviceaccount.com has a disabled user-managed key":     finding.SevLow,
+		// API keys
+		`"Maps (browser)" in demo-shop has no API restrictions and no application restrictions`: finding.SevHigh,
+		`"Server geocoding" in demo-shop has no application restrictions`:                       finding.SevHigh,
+		`"Android app" in demo-shop is restricted`:                                              finding.SevInfo,
+		// billing
+		"Billing account 000000-AAAAAA-111111 has 1 budget(s) with alerts":                        finding.SevInfo,
+		"Project demo-shop is billed to 000000-AAAAAA-111111 but no budget with alerts covers it": finding.SevHigh,
+	}
+	if len(rec.findings) != len(want) {
+		t.Fatalf("got %d findings, want %d:\n%s", len(rec.findings), len(want), rec.titles())
+	}
+	for title, sev := range want {
+		if f := rec.byTitle(t, title); f.Severity != sev {
+			t.Errorf("%q: severity %s, want %s", title, f.Severity, sev)
+		}
+	}
+
+	key := rec.byTitle(t, "Maps (browser)")
+	if key.Resource.ID != finding.Redact("11111111-2222-3333-4444-555555555555") || key.Resource.Name != "Maps (browser)" {
+		t.Errorf("API key must show display name and redacted uid: %+v", key.Resource)
+	}
+	if key.CreatedAt == nil || key.CreatedAt.Format("2006-01-02") != "2026-01-22" {
+		t.Errorf("API key created date: %v", key.CreatedAt)
+	}
+	old := rec.byTitle(t, "317 days old")
+	if old.Evidence["valid_after_time"] != "2026-01-10T08:00:00Z" || old.Kind != finding.KindCredential {
+		t.Errorf("old key evidence: %+v", old.Evidence)
+	}
+	adc := rec.byTitle(t, "(ADC)")
+	if adc.Kind != finding.KindExposure || adc.Evidence["gcloud_default_client"] != true || adc.Evidence["quota_project_id"] != "demo-shop" {
+		t.Errorf("ADC evidence: %+v", adc.Evidence)
+	}
+	for _, s := range []string{"myaccount.google.com/connections", "gcloud auth application-default revoke", "--client-id-file", "auth/drive.file", "auth/spreadsheets"} {
+		if !strings.Contains(adc.Remediation.Summary+adc.Remediation.URL, s) {
+			t.Errorf("ADC remediation lacks %q", s)
+		}
+	}
+	if b := rec.byTitle(t, "no budget with alerts covers it"); b.Kind != finding.KindSpend {
+		t.Errorf("budget finding kind %s", b.Kind)
+	}
+
+	raw, _ := json.Marshal(rec.findings)
+	for _, secret := range []string{"SYNTHETIC-NOT-A-KEY", "SYNTHETIC-refresh-token", "SYNTHETIC-client-secret", "11111111-2222-3333-4444-555555555555"} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("secret %q leaked into findings", secret)
+		}
+	}
+
+	statuses := map[string]finding.State{}
+	for _, s := range rec.statuses {
+		statuses[s.Account+" | "+s.Detail] = s.State
+	}
+	wantStatus := []struct {
+		account, detail string
+		state           finding.State
+	}{
+		{"owner@example.com", "3 project(s) visible", finding.StateOK},
+		{"ci@demo-shop.iam.gserviceaccount.com", "1 project(s) visible", finding.StateOK},
+		{"work@example.org", "projects list: credentials expired", finding.StateReauth},
+		{"ci@demo-shop.iam.gserviceaccount.com", "billing accounts list: API not enabled", finding.StateError},
+		{"owner@example.com", "project demo-blog: permission denied for api keys", finding.StateError},
+		{"owner@example.com", "billing account 000000-BBBBBB-222222: cannot read budgets, so spend alerts are unknown for demo-blog: permission denied", finding.StateError},
+	}
+	for _, w := range wantStatus {
+		found := false
+		for k, st := range statuses {
+			if strings.HasPrefix(k, w.account+" | "+w.detail) && st == w.state {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing status %s %q (%s); got %v", w.account, w.detail, w.state, statuses)
+		}
+	}
+	if len(rec.statuses) != len(wantStatus) {
+		t.Errorf("got %d statuses, want %d: %v", len(rec.statuses), len(wantStatus), statuses)
+	}
+	for k := range statuses {
+		if strings.Contains(k, "Help Token") || strings.Contains(k, "authenticated as") {
+			t.Errorf("status detail not summarized: %s", k)
+		}
+	}
+
+	for _, call := range runner.calls {
+		if !allowed(strings.Fields(call)) {
+			t.Errorf("non read-only call reached gcloud: %s", call)
+		}
+		if strings.Contains(call, "demo-old") {
+			t.Errorf("project pending deletion inspected: %s", call)
+		}
+	}
+	for key, rest := range runner.plays {
+		if len(rest) > 1 {
+			t.Errorf("recorded answers left unused for %s", key)
+		}
+	}
+}
+
+func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
+	plays := map[string][]outcome{
+		"projects list " + owner:                                                                                 {{stdout: "projects_owner.json"}},
+		"billing accounts list " + owner:                                                                         {{}},
+		"projects get-iam-policy demo-blog " + owner:                                                             {{}},
+		"iam service-accounts list --project=demo-blog " + owner:                                                 {{}},
+		"services api-keys list --project=demo-blog " + owner:                                                    {{}},
+		"billing projects describe demo-blog " + owner:                                                           {{stdout: "billing_info_blog.json"}},
+		"projects get-iam-policy unlisted-project " + owner:                                                      {{}},
+		"iam service-accounts list --project=unlisted-project " + owner:                                          {{}},
+		"services api-keys list --project=unlisted-project " + owner:                                             {{}},
+		"billing projects describe unlisted-project " + owner:                                                    {{}},
+		"billing budgets list --billing-account=000000-BBBBBB-222222 " + owner + " --billing-project=demo-quota": {{}},
+	}
+	c, _ := testConnector(t, t.TempDir(), plays, nil)
+	rec := &recorder{}
+	cfg := map[string]any{"accounts": []any{"owner@example.com"}, "projects": []any{"demo-blog", "unlisted-project"}, "billing_project": "demo-quota"}
+	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1, Config: cfg}, rec); err != nil {
+		t.Fatal(err)
+	}
+	f := rec.byTitle(t, "Billing account 000000-BBBBBB-222222 has no budget with alerts")
+	if f.Severity != finding.SevHigh || f.Kind != finding.KindSpend {
+		t.Errorf("budgetless billing account: %+v", f)
+	}
+	if got := f.Evidence["linked_projects"]; len(got.([]string)) != 1 || got.([]string)[0] != "demo-blog" {
+		t.Errorf("linked projects: %v", got)
+	}
+}
+
+func TestBadConfigFailsToStart(t *testing.T) {
+	c, _ := testConnector(t, t.TempDir(), nil, nil)
+	err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"projects": "demo"}}, &recorder{})
+	if err == nil {
+		t.Fatal("a non-list projects setting must be rejected")
+	}
+}
+
+func TestReadOnlyGuard(t *testing.T) {
+	for _, ok := range []string{
+		"auth list", "projects list --account=a", "projects get-iam-policy p --account=a",
+		"iam service-accounts keys list --iam-account=x --managed-by=user", "billing budgets list --billing-account=b",
+	} {
+		if !allowed(strings.Fields(ok)) {
+			t.Errorf("read-only command refused: %s", ok)
+		}
+	}
+	for _, bad := range []string{
+		"services api-keys get-key-string k", "services api-keys delete k", "iam service-accounts keys create f --iam-account=x",
+		"config set account a", "services disable x", "auth application-default print-access-token", "auth revoke a",
+		"projects delete p", "billing budgets create", "--account=a projects list",
+	} {
+		if allowed(strings.Fields(bad)) {
+			t.Errorf("mutating or secret-revealing command allowed: %s", bad)
+		}
+	}
+	g := &gcloud{run: &fakeRunner{t: t}}
+	if err := g.json(context.Background(), &[]any{}, "services", "api-keys", "get-key-string", "k"); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("guard must refuse before running: %v", err)
+	}
+}
+
+func TestRateLimitGivesUpAfterRetries(t *testing.T) {
+	r := &fakeRunner{t: t, plays: map[string][]outcome{"billing accounts list": {{stderr: "rate_limited.txt"}}}}
+	err := (&gcloud{run: r}).json(context.Background(), &[]any{}, "billing", "accounts", "list")
+	if err == nil || len(r.calls) != attempts {
+		t.Fatalf("err=%v calls=%d", err, len(r.calls))
+	}
+	if state, why := classify(err); state != finding.StateError || !strings.HasPrefix(why, "rate limited") {
+		t.Errorf("classify: %s %s", state, why)
+	}
+}
+
+func TestGoogleManagedServiceAgentsAreSkipped(t *testing.T) {
+	for email, managed := range map[string]bool{
+		"123@cloudservices.gserviceaccount.com":              true,
+		"service-123@gcp-sa-pubsub.iam.gserviceaccount.com":  true,
+		"service-123@compute-system.iam.gserviceaccount.com": true,
+		"service-runner@demo.iam.gserviceaccount.com":        false,
+		"123-compute@developer.gserviceaccount.com":          false,
+		"demo@appspot.gserviceaccount.com":                   false,
+		"firebase-adminsdk-x1@demo.iam.gserviceaccount.com":  false,
+	} {
+		if googleManaged(email) != managed {
+			t.Errorf("googleManaged(%s) = %v", email, !managed)
+		}
+	}
+}
+
+func TestBudgetAlertingAndCoverage(t *testing.T) {
+	var bs []budget
+	if err := json.Unmarshal([]byte(fixture(t, "budgets_main.json")), &bs); err != nil {
+		t.Fatal(err)
+	}
+	if !bs[0].alerting() || bs[1].alerting() {
+		t.Errorf("threshold rules alert unless every recipient is disabled")
+	}
+	if !bs[0].covers("demo-blog", "100000000002") || bs[0].covers("demo-shop", "100000000001") || !bs[1].covers("any", "") {
+		t.Errorf("project filter coverage wrong")
+	}
+	if (budget{}).alerting() {
+		t.Errorf("a budget without thresholds does not alert")
+	}
+}
+
+func TestLocalCredentialPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	home := fakeHome(t)
+	adc := filepath.Join(home, ".config", "gcloud", "application_default_credentials.json")
+	if err := os.Chmod(adc, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := localFindings(func(string) string { return "" }, home)
+	var got *finding.Finding
+	for i := range fs {
+		if fs[i].Resource.ID == adc {
+			got = &fs[i]
+		}
+	}
+	if got == nil || got.Severity != finding.SevHigh || got.Evidence["mode"] != "0644" ||
+		!strings.HasSuffix(got.Title, "readable by other users") || !strings.Contains(got.Remediation.Summary, "chmod 600") {
+		t.Fatalf("world-readable ADC must be high with chmod advice: %+v", got)
+	}
+	if len(fs) != 2 {
+		t.Errorf("want ADC and the legacy service account key, virtenv skipped; got %d", len(fs))
+	}
+}
+
+func TestLocalCredentialsHonourCloudsdkConfig(t *testing.T) {
+	home := fakeHome(t)
+	other := t.TempDir()
+	fs := localFindings(func(k string) string {
+		if k == "CLOUDSDK_CONFIG" {
+			return other
+		}
+		return ""
+	}, home)
+	if len(fs) != 0 {
+		t.Fatalf("CLOUDSDK_CONFIG points to an empty folder, got %d findings", len(fs))
+	}
+}

@@ -1,0 +1,4 @@
+[
+  {"email": "deployer@demo-shop.iam.gserviceaccount.com", "disabled": false, "displayName": "Deployer"},
+  {"email": "reader@demo-shop.iam.gserviceaccount.com", "disabled": true, "displayName": "Reader"}
+]
