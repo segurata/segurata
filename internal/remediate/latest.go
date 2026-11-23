@@ -14,11 +14,13 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// LatestDir is the most recent out/<YYYY-MM-DD> directory, where the last inventory wrote.
-func LatestDir(outDir string) (string, error) {
+// LatestFiles returns, for every connector instance, its output file from the most recent
+// out/<YYYY-MM-DD> run that has one. Runs are per connector, so the newest day alone is not
+// enough: after midnight it may hold only the connectors run since.
+func LatestFiles(outDir string) ([]string, error) {
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var dates []string
 	for _, e := range entries {
@@ -26,20 +28,30 @@ func LatestDir(outDir string) (string, error) {
 			dates = append(dates, e.Name())
 		}
 	}
-	if len(dates) == 0 {
-		return "", fmt.Errorf("no inventory under %s: run `securizame inventory` first", outDir)
-	}
 	sort.Strings(dates)
-	return filepath.Join(outDir, dates[len(dates)-1]), nil
+	newest := map[string]string{} // file name -> path in the newest run that has it
+	for _, d := range dates {
+		files, err := filepath.Glob(filepath.Join(outDir, d, "*.jsonl"))
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			newest[filepath.Base(f)] = f
+		}
+	}
+	if len(newest) == 0 {
+		return nil, fmt.Errorf("no inventory under %s: run `securizame inventory` first", outDir)
+	}
+	out := make([]string, 0, len(newest))
+	for _, f := range newest {
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
-// Load reads every finding in dir/*.jsonl, skipping status and log records.
-func Load(dir string) ([]finding.Finding, error) {
-	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(files)
+// Load reads every finding in the given files, skipping status and log records.
+func Load(files []string) ([]finding.Finding, error) {
 	var out []finding.Finding
 	for _, name := range files {
 		got, err := loadFile(name)
@@ -88,7 +100,7 @@ func Find(all []finding.Finding, id string) (finding.Finding, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return finding.Finding{}, fmt.Errorf("no finding %q in the latest run", id)
+		return finding.Finding{}, fmt.Errorf("no finding %q in the latest run of any connector", id)
 	case 1:
 		return matches[0], nil
 	}

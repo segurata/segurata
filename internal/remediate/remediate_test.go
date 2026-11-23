@@ -260,41 +260,54 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 	}
 }
 
-func TestLatestDirLoadAndFind(t *testing.T) {
+func TestLatestFilesTakeEachConnectorsNewestRun(t *testing.T) {
 	out := t.TempDir()
-	for _, d := range []string{"2026-11-01", "2026-11-23", "notes"} {
-		_ = os.MkdirAll(filepath.Join(out, d), 0o700)
+	write := func(day, name string, recs ...any) {
+		dir := filepath.Join(out, day)
+		_ = os.MkdirAll(dir, 0o700)
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		for _, r := range recs {
+			_ = enc.Encode(r)
+		}
+		_ = os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0o600)
 	}
+	_ = os.MkdirAll(filepath.Join(out, "notes"), 0o700)
 	_ = os.WriteFile(filepath.Join(out, "2026-12-31.jsonl"), nil, 0o600) // a file, not a run directory
-	dir, err := LatestDir(out)
-	if err != nil || filepath.Base(dir) != "2026-11-23" {
-		t.Fatalf("dir=%s err=%v", dir, err)
+	write("2026-11-01", "macos.jsonl", finding.Finding{Type: "finding", ID: "old00000"})
+	write("2026-11-23", "macos.jsonl",
+		finding.Status{Type: "status", Connector: "macos", State: finding.StateOK},
+		finding.Finding{Type: "finding", ID: "aaaa1111", Severity: finding.SevLow, Remediation: finding.Remediation{Action: "x.y"}},
+		finding.Finding{Type: "finding", ID: "aaaa2222", Severity: finding.SevHigh},
+		finding.Finding{Type: "finding", ID: "bbbb3333", Severity: finding.SevHigh, Remediation: finding.Remediation{Action: "x.z"}})
+	// After midnight only another connector ran: macos must still come from 2026-11-23.
+	write("2026-11-24", "local-secrets.jsonl", finding.Finding{Type: "finding", ID: "cccc4444"})
+
+	files, err := LatestFiles(out)
+	if err != nil || len(files) != 2 {
+		t.Fatalf("files=%v err=%v", files, err)
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	_ = enc.Encode(finding.Status{Type: "status", Connector: "macos", State: finding.StateOK})
-	_ = enc.Encode(finding.Finding{Type: "finding", ID: "aaaa1111", Severity: finding.SevLow, Remediation: finding.Remediation{Action: "x.y"}})
-	_ = enc.Encode(finding.Finding{Type: "finding", ID: "aaaa2222", Severity: finding.SevHigh})
-	_ = enc.Encode(finding.Finding{Type: "finding", ID: "bbbb3333", Severity: finding.SevHigh, Remediation: finding.Remediation{Action: "x.z"}})
-	_ = os.WriteFile(filepath.Join(dir, "macos.jsonl"), buf.Bytes(), 0o600)
-	all, err := Load(dir)
-	if err != nil || len(all) != 3 {
+	all, err := Load(files)
+	if err != nil || len(all) != 4 {
 		t.Fatalf("loaded %d err=%v", len(all), err)
 	}
+	if _, err := Find(all, "old00000"); err == nil {
+		t.Fatal("an older run of the same connector must be ignored")
+	}
 	if f, err := Find(all, "bbbb"); err != nil || f.ID != "bbbb3333" {
-		t.Fatalf("unique prefix: %v %v", f.ID, err)
+		t.Fatalf("unique prefix from the previous day: %v %v", f.ID, err)
+	}
+	if _, err := Find(all, "cccc4444"); err != nil {
+		t.Fatal("today's connector must be found too")
 	}
 	if _, err := Find(all, "aaaa"); err == nil {
 		t.Fatal("ambiguous prefix accepted")
-	}
-	if _, err := Find(all, "zzzz"); err == nil {
-		t.Fatal("unknown id accepted")
 	}
 	auto := Automatable(all)
 	if len(auto) != 2 || auto[0].ID != "bbbb3333" {
 		t.Fatalf("automatable worst first: %+v", auto)
 	}
-	if _, err := LatestDir(t.TempDir()); err == nil {
+	if _, err := LatestFiles(t.TempDir()); err == nil {
 		t.Fatal("empty out dir should explain how to run an inventory")
 	}
 }

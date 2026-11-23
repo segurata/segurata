@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -32,18 +33,18 @@ func remediateCmd(args []string) int {
 		return 2
 	}
 
-	dir, err := remediate.LatestDir(*out)
+	files, err := remediate.LatestFiles(*out)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	findings, err := remediate.Load(dir)
+	findings, err := remediate.Load(files)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	if *list {
-		fmt.Printf("Latest run: %s\n\n", dir)
+		fmt.Printf("Latest run of each connector:\n  %s\n\n", strings.Join(files, "\n  "))
 		remediate.List(os.Stdout, findings)
 		return 0
 	}
