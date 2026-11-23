@@ -224,7 +224,7 @@ func TestInventoryKeepsAcceptedFindingsInTheJSONLButHidesThemFromSummaryAndList(
 		s.Annotate(&all[i], now)
 	}
 	var list bytes.Buffer
-	remediate.List(&list, all)
+	remediate.List(&list, all, finding.SevInfo)
 	if strings.Contains(list.String(), fw.ID) || !strings.Contains(list.String(), "0 automatable findings") || !strings.Contains(list.String(), "1 accepted findings hidden") {
 		t.Errorf("remediate --list:\n%s", list.String())
 	}

@@ -15,14 +15,15 @@ import (
 // most a redacted hint (known prefix, last four characters of long keys, length) and an HMAC
 // fingerprint that only this machine's key can reproduce.
 type Evidence struct {
-	Source      string `json:"source"`         // scan | gitleaks | name | ssh
-	Kind        string `json:"kind"`           // config | repo | transcript | history | log
-	Type        string `json:"type"`           // a key of the catalog, or a gitleaks rule id
-	Redacted    string `json:"redacted"`       // e.g. "sk_live_…a1b2(107)"
-	Path        string `json:"path"`           // ~-relative
-	Line        int    `json:"line,omitempty"` // 0 when the whole file is the secret
-	Mode        string `json:"mode,omitempty"` // octal permissions, "" for git history
-	Tracked     bool   `json:"tracked"`        // in a git-tracked file or in git history
+	Source      string `json:"source"`              // scan | gitleaks | name | ssh
+	Kind        string `json:"kind"`                // config | repo | transcript | history | log
+	Type        string `json:"type"`                // a key of the catalog, or a gitleaks rule id
+	Redacted    string `json:"redacted"`            // e.g. "sk_live_…a1b2(107)"
+	Path        string `json:"path"`                // ~-relative
+	Line        int    `json:"line,omitempty"`      // 0 when the whole file is the secret
+	Mode        string `json:"mode,omitempty"`      // effective octal permissions for other accounts, "" for git history
+	FileMode    string `json:"file_mode,omitempty"` // the file's own mode, when parent folders close it
+	Tracked     bool   `json:"tracked"`             // in a git-tracked file or in git history
 	Remote      bool   `json:"remote,omitempty"`
 	Bucket      string `json:"bucket"` // 0-git | 1-readable | 2-trail | 3-local | ok
 	Fingerprint string `json:"fingerprint,omitempty"`

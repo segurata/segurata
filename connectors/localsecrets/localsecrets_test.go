@@ -250,7 +250,7 @@ type fixture struct {
 func (fx *fixture) write(t *testing.T, rel, content string, mode os.FileMode) string {
 	t.Helper()
 	p := filepath.Join(fx.home, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte(content), mode); err != nil {
@@ -264,6 +264,7 @@ func (fx *fixture) write(t *testing.T, rel, content string, mode os.FileMode) st
 
 func newFixture(t *testing.T) *fixture {
 	fx := &fixture{home: t.TempDir()}
+	_ = os.Chmod(fx.home, 0o755) // an open home folder, like macOS's default
 	anthropic := fake("sk-ant-api03-", 60)
 	fx.stripe = fake("sk_live_", 40)
 	fx.keyPEM, _ = fakePEM("RSA", nil)
@@ -576,5 +577,27 @@ func TestNoChmodFixForNoise(t *testing.T) {
 	readable.Type = "anthropic"
 	if a := action(readable); a != "file.chmod600" {
 		t.Fatalf("a real key in a readable file should offer chmod 600, got %q", a)
+	}
+}
+
+func TestModeCountsParentFolders(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "src", "app")
+	_ = os.MkdirAll(dir, 0o755)
+	f := filepath.Join(dir, ".env")
+	_ = os.WriteFile(f, []byte("X=1\n"), 0o644)
+	_ = os.Chmod(f, 0o644)
+
+	_ = os.Chmod(home, 0o755)
+	if eff, raw := modeOf(f, home); eff != "644" || raw != "" {
+		t.Fatalf("open home: effective %q, file %q", eff, raw)
+	}
+	_ = os.Chmod(home, 0o700)
+	if eff, raw := modeOf(f, home); eff != "600" || raw != "644" {
+		t.Fatalf("closed home must close the file for others: effective %q, file %q", eff, raw)
+	}
+	_ = os.Chmod(home, 0o750) // the staff group can still traverse
+	if eff, _ := modeOf(f, home); eff != "640" {
+		t.Fatalf("group-traversable home: effective %q", eff)
 	}
 }

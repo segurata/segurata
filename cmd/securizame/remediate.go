@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/segurata/segurata/internal/finding"
 	"os"
 	"os/signal"
 	"strings"
@@ -19,6 +20,7 @@ import (
 func remediateCmd(args []string) int {
 	fs := flag.NewFlagSet("remediate", flag.ExitOnError)
 	list := fs.Bool("list", false, "list the automatable findings of the latest run")
+	showAll := fs.Bool("all", false, "with --list, include info findings")
 	apply := fs.Bool("apply", false, "apply the plan after confirmation (default: dry run)")
 	yes := fs.Bool("yes", false, "with --apply, do not ask for confirmation")
 	out := fs.String("out", "out", "output directory")
@@ -53,7 +55,11 @@ func remediateCmd(args []string) int {
 	}
 	if *list {
 		fmt.Printf("Latest run of each connector:\n  %s\n\n", strings.Join(files, "\n  "))
-		remediate.List(os.Stdout, findings)
+		minSev := finding.SevLow
+		if *showAll {
+			minSev = finding.SevInfo
+		}
+		remediate.List(os.Stdout, findings, minSev)
 		return 0
 	}
 	f, err := remediate.Find(findings, id)

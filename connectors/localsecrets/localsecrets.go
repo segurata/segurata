@@ -245,12 +245,36 @@ func (s *scan) kindOf(p string) string {
 	return "config"
 }
 
-func modeOf(p string) string {
+// modeOf is the file's effective permissions for other accounts: the group and other read bits
+// count only if every parent directory lets that class through (execute bit). A 644 file inside
+// a 700 home folder is closed to everyone else. The walk stops at root (the home folder): above it
+// are system folders that every account can traverse. fileMode is the file's own mode, set when
+// the two differ so the evidence shows both.
+func modeOf(p, root string) (effective, fileMode string) {
 	st, err := os.Stat(p)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return fmt.Sprintf("%o", st.Mode().Perm())
+	perm := st.Mode().Perm()
+	eff := perm
+	for d := filepath.Dir(p); ; d = filepath.Dir(d) {
+		if ds, err := os.Stat(d); err == nil {
+			if ds.Mode().Perm()&0o010 == 0 {
+				eff &^= 0o070
+			}
+			if ds.Mode().Perm()&0o001 == 0 {
+				eff &^= 0o007
+			}
+		}
+		if d == root || filepath.Dir(d) == d {
+			break
+		}
+	}
+	effective = fmt.Sprintf("%o", eff)
+	if eff != perm {
+		fileMode = fmt.Sprintf("%o", perm)
+	}
+	return effective, fileMode
 }
 
 func bucketOf(ev secretrisk.Evidence) string {
@@ -331,7 +355,7 @@ func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
 		ev.Kind = s.kindOf(abs)
 	}
 	if ev.Source != "gitleaks" {
-		ev.Mode = modeOf(abs)
+		ev.Mode, ev.FileMode = modeOf(abs, s.home)
 		if !strings.Contains(abs, "/.git/") {
 			ev.Tracked, ev.Remote = s.trackedFile(abs)
 		}

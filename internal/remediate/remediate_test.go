@@ -362,3 +362,20 @@ func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
 		t.Fatalf("plan without sudo or undo printed:\n%s", out.String())
 	}
 }
+
+func TestListHidesFindingsBelowTheMinimumSeverity(t *testing.T) {
+	all := []finding.Finding{
+		{Type: "finding", ID: "noise0001", Severity: finding.SevInfo, Remediation: finding.Remediation{Action: "file.chmod600"}},
+		{Type: "finding", ID: "real00002", Severity: finding.SevMedium, Remediation: finding.Remediation{Action: "macos.firewall.enable"}},
+	}
+	var b bytes.Buffer
+	List(&b, all, finding.SevLow)
+	if strings.Contains(b.String(), "noise0001") || !strings.Contains(b.String(), "real00002") || !strings.Contains(b.String(), "1 more below low") {
+		t.Fatalf("default list:\n%s", b.String())
+	}
+	b.Reset()
+	List(&b, all, finding.SevInfo)
+	if !strings.Contains(b.String(), "noise0001") {
+		t.Fatalf("--all must include info:\n%s", b.String())
+	}
+}
