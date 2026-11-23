@@ -61,6 +61,7 @@ type Finding struct {
 	Type        string         `json:"type"` // always "finding"
 	ID          string         `json:"id"`
 	Connector   string         `json:"connector"`
+	Instance    string         `json:"instance,omitempty"` // config label, for several accounts of one provider
 	Account     string         `json:"account"`
 	Resource    Resource       `json:"resource"`
 	Kind        Kind           `json:"kind"`
@@ -77,7 +78,11 @@ type Finding struct {
 func (f *Finding) Fill(now time.Time) {
 	f.Type = "finding"
 	if f.ID == "" {
-		f.ID = StableID(f.Connector, f.Account, f.Resource.Type, f.Resource.ID)
+		parts := []string{f.Connector, f.Account, f.Resource.Type, f.Resource.ID}
+		if f.Instance != "" {
+			parts = append([]string{f.Instance}, parts...)
+		}
+		f.ID = StableID(parts...)
 	}
 	if f.ObservedAt.IsZero() {
 		f.ObservedAt = now.UTC()
@@ -109,6 +114,7 @@ const (
 type Status struct {
 	Type      string `json:"type"` // always "status"
 	Connector string `json:"connector"`
+	Instance  string `json:"instance,omitempty"`
 	Account   string `json:"account"`
 	State     State  `json:"state"`
 	Detail    string `json:"detail,omitempty"`

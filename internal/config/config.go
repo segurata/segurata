@@ -6,11 +6,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 type ConnectorConfig struct {
 	Config  map[string]any    `json:"config,omitempty"`
 	Secrets map[string]string `json:"secrets,omitempty"` // key -> reference (env:, keychain:, op://)
+}
+
+// Instance is one configured account of a connector. A config key "openrouter" gives the unnamed
+// instance; "openrouter:personal" gives the instance labelled "personal", so one connector can
+// inspect several accounts of the same provider.
+type Instance struct {
+	Label string
+	ConnectorConfig
 }
 
 type Config struct {
@@ -50,4 +60,23 @@ func Load(path string) (Config, error) {
 		cfg.CDPURL = env
 	}
 	return cfg, nil
+}
+
+// Instances returns the configured instances of a connector sorted by label, or one unnamed,
+// empty instance when the config does not mention it.
+func (c Config) Instances(name string) []Instance {
+	var out []Instance
+	for key, cc := range c.Connectors {
+		switch {
+		case key == name:
+			out = append(out, Instance{ConnectorConfig: cc})
+		case strings.HasPrefix(key, name+":"):
+			out = append(out, Instance{Label: strings.TrimPrefix(key, name+":"), ConnectorConfig: cc})
+		}
+	}
+	if len(out) == 0 {
+		return []Instance{{}}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
 }

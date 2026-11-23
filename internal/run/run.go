@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,9 +19,51 @@ import (
 	"github.com/segurata/segurata/internal/secrets"
 )
 
-// Result is what one connector produced in one run.
+// Target is one connector instance to run.
+type Target struct {
+	Connector connector.Connector
+	Instance  config.Instance
+}
+
+// Label is "name" or "name:label", the same spelling as the config key.
+func (t Target) Label() string {
+	name := t.Connector.Describe().Name
+	if t.Instance.Label == "" {
+		return name
+	}
+	return name + ":" + t.Instance.Label
+}
+
+// Targets expands connectors into their configured instances. A selector "name" picks every
+// instance of that connector, "name:label" just one; no selectors means everything.
+func Targets(cfg config.Config, conns []connector.Connector, selectors []string) ([]Target, error) {
+	var all []Target
+	for _, c := range conns {
+		for _, in := range cfg.Instances(c.Describe().Name) {
+			all = append(all, Target{Connector: c, Instance: in})
+		}
+	}
+	if len(selectors) == 0 {
+		return all, nil
+	}
+	var out []Target
+	for _, sel := range selectors {
+		n := len(out)
+		for _, t := range all {
+			if sel == t.Connector.Describe().Name || sel == t.Label() {
+				out = append(out, t)
+			}
+		}
+		if len(out) == n {
+			return nil, fmt.Errorf("unknown connector or instance %q (see: securizame connectors)", sel)
+		}
+	}
+	return out, nil
+}
+
+// Result is what one connector instance produced in one run.
 type Result struct {
-	Name     string
+	Name     string // target label
 	File     string
 	Findings []finding.Finding
 	Statuses []finding.Status
@@ -31,6 +74,8 @@ type Result struct {
 type sink struct {
 	mu      sync.Mutex
 	name    string
+	label   string
+	inst    string
 	enc     *json.Encoder
 	verbose io.Writer
 	res     *Result
@@ -39,7 +84,7 @@ type sink struct {
 func (s *sink) Finding(f finding.Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f.Connector = s.name
+	f.Connector, f.Instance = s.name, s.inst
 	f.Fill(time.Now())
 	s.res.Findings = append(s.res.Findings, f)
 	_ = s.enc.Encode(f)
@@ -48,39 +93,39 @@ func (s *sink) Finding(f finding.Finding) {
 func (s *sink) Status(st finding.Status) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st.Type, st.Connector = "status", s.name
+	st.Type, st.Connector, st.Instance = "status", s.name, s.inst
 	s.res.Statuses = append(s.res.Statuses, st)
 	_ = s.enc.Encode(st)
 }
 
 func (s *sink) Log(msg string) {
 	if s.verbose != nil {
-		fmt.Fprintf(s.verbose, "[%s] %s\n", s.name, msg)
+		fmt.Fprintf(s.verbose, "[%s] %s\n", s.label, msg)
 	}
 }
 
-// Inventory runs the given connectors concurrently and returns their results in input order.
-func Inventory(ctx context.Context, cfg config.Config, conns []connector.Connector, outDir string, verbose io.Writer) ([]*Result, error) {
+// Inventory runs the given targets concurrently and returns their results in input order.
+func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer) ([]*Result, error) {
 	dir := filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	results := make([]*Result, len(conns))
+	results := make([]*Result, len(targets))
 	var wg sync.WaitGroup
-	for i, c := range conns {
+	for i, t := range targets {
 		wg.Add(1)
-		go func(i int, c connector.Connector) {
+		go func(i int, t Target) {
 			defer wg.Done()
-			results[i] = runOne(ctx, cfg, c, dir, verbose)
-		}(i, c)
+			results[i] = runOne(ctx, cfg, t, dir, verbose)
+		}(i, t)
 	}
 	wg.Wait()
 	return results, nil
 }
 
-func runOne(ctx context.Context, cfg config.Config, c connector.Connector, dir string, verbose io.Writer) *Result {
-	name := c.Describe().Name
-	res := &Result{Name: name, File: filepath.Join(dir, name+".jsonl")}
+func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer) *Result {
+	name, label := t.Connector.Describe().Name, t.Label()
+	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
 	// 0600: the output names accounts, apps and services.
 	f, err := os.OpenFile(res.File, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -88,15 +133,14 @@ func runOne(ctx context.Context, cfg config.Config, c connector.Connector, dir s
 		return res
 	}
 	defer f.Close()
-	s := &sink{name: name, enc: json.NewEncoder(f), verbose: verbose, res: res}
+	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, res: res}
 
-	cc := cfg.Connectors[name]
-	resolved, errs := secrets.ResolveAll(cc.Secrets)
+	resolved, errs := secrets.ResolveAll(t.Instance.Secrets)
 	for _, e := range errs {
 		s.Status(finding.Status{State: finding.StateMissingCredentials, Detail: e.Error()})
 	}
-	req := connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: cc.Config, Secrets: resolved}
-	res.Err = c.Inventory(ctx, req, s)
+	req := connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: t.Instance.Config, Secrets: resolved}
+	res.Err = t.Connector.Inventory(ctx, req, s)
 	return res
 }
 
@@ -121,7 +165,11 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 			hidden++
 			continue
 		}
-		fmt.Fprintf(w, "[%-8s] %-16s %s · %s\n", f.Severity, f.Connector, f.Account, f.Title)
+		who := f.Connector
+		if f.Instance != "" {
+			who += ":" + f.Instance
+		}
+		fmt.Fprintf(w, "[%-8s] %-20s %s · %s\n", f.Severity, who, f.Account, f.Title)
 	}
 	fmt.Fprintf(w, "\n%d findings (%d below %s hidden).", len(all), hidden, minSev)
 	for _, r := range results {

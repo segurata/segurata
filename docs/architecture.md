@@ -119,6 +119,18 @@ Config at `~/.config/securizame/config.json` (override with `SECURIZAME_CONFIG`)
 }
 ```
 
+### Several accounts of one provider
+
+A config key `name` is the connector's unnamed instance; `name:label` adds a labelled one, with
+its own config and secrets. Each instance runs separately, writes `out/<date>/<name>-<label>.jsonl`,
+and stamps `"instance": "<label>"` on its records (part of the finding id). On the command line,
+`name` selects every instance and `name:label` just one.
+
+```json
+"openrouter:work":     {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:securizame-openrouter-work"}},
+"openrouter:personal": {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:securizame-openrouter-personal"}}
+```
+
 ## v0 connectors
 
 | Connector | How it looks | What it looks for |

@@ -1,7 +1,7 @@
 // securizame inventories a personal digital footprint. See docs/arquitectura.md.
 //
 //	securizame connectors                     list built-in and external connectors
-//	securizame inventory [name ...]           run connectors (all when none given)
+//	securizame inventory [name|name:label ...] run connectors (all when none given)
 //	    --min-severity=low  --out=out  --verbose
 package main
 
@@ -69,21 +69,10 @@ func inventory(args []string) int {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		return 1
 	}
-	byName := map[string]connector.Connector{}
-	for _, c := range all() {
-		byName[c.Describe().Name] = c
-	}
-	var selected []connector.Connector
-	if fs.NArg() == 0 {
-		selected = all()
-	}
-	for _, n := range fs.Args() {
-		c, ok := byName[n]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown connector %q (see: securizame connectors)\n", n)
-			return 2
-		}
-		selected = append(selected, c)
+	targets, err := run.Targets(cfg, all(), fs.Args())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -92,7 +81,7 @@ func inventory(args []string) int {
 	if *verbose {
 		logw = os.Stderr
 	}
-	results, err := run.Inventory(ctx, cfg, selected, *out, logw)
+	results, err := run.Inventory(ctx, cfg, targets, *out, logw)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

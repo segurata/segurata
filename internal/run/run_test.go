@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/segurata/segurata/internal/config"
@@ -53,7 +54,7 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 		"fake": {Secrets: map[string]string{"OK": "env:SECURIZAME_TEST_SECRET", "BAD": "env:SECURIZAME_TEST_UNSET"}},
 	}}
 	fk := &fake{}
-	res, err := Inventory(context.Background(), cfg, []connector.Connector{fk}, t.TempDir(), nil)
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, fk), t.TempDir(), nil)
 	if err != nil || len(res) != 1 || res[0].Err != nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
@@ -116,7 +117,7 @@ esac
 	if ext == nil {
 		t.Fatal("external connector not discovered")
 	}
-	res, err := Inventory(context.Background(), config.Config{}, []connector.Connector{ext}, t.TempDir(), nil)
+	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, ext), t.TempDir(), nil)
 	if err != nil || res[0].Err != nil {
 		t.Fatalf("err=%v resErr=%v", err, res[0].Err)
 	}
@@ -127,4 +128,68 @@ esac
 	if len(r.Findings) != 1 || r.Findings[0].Connector != "ext" || r.Findings[0].ID == "" {
 		t.Fatalf("findings: %+v (connector name must come from describe, not the record)", r.Findings)
 	}
+}
+
+func mustTargets(t *testing.T, cfg config.Config, conns ...connector.Connector) []Target {
+	t.Helper()
+	ts, err := Targets(cfg, conns, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts
+}
+
+// Two accounts of one provider: each instance gets its own secrets, output file and finding ids.
+func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
+	t.Setenv("SECURIZAME_TEST_A", "key-a")
+	t.Setenv("SECURIZAME_TEST_B", "key-b")
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{
+		"fake:work":     {Secrets: map[string]string{"K": "env:SECURIZAME_TEST_A"}},
+		"fake:personal": {Secrets: map[string]string{"K": "env:SECURIZAME_TEST_B"}},
+	}}
+	seen := map[string]string{}
+	var mu sync.Mutex
+	rec := recordingFake{onReq: func(req connector.Request) { mu.Lock(); seen[req.Secrets["K"]] = "x"; mu.Unlock() }}
+	ts, err := Targets(cfg, []connector.Connector{rec}, nil)
+	if err != nil || len(ts) != 2 || ts[0].Label() != "fake:personal" || ts[1].Label() != "fake:work" {
+		t.Fatalf("targets %v, %v", ts, err)
+	}
+	res, err := Inventory(context.Background(), cfg, ts, t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("each instance must get its own secret, saw %v", seen)
+	}
+	if filepath.Base(res[0].File) != "fake-personal.jsonl" || filepath.Base(res[1].File) != "fake-work.jsonl" {
+		t.Fatalf("files %s %s", res[0].File, res[1].File)
+	}
+	a, b := res[0].Findings[0], res[1].Findings[0]
+	if a.Instance != "personal" || b.Instance != "work" || a.ID == b.ID {
+		t.Fatalf("instances must be labelled and ids distinct: %+v %+v", a, b)
+	}
+
+	one, err := Targets(cfg, []connector.Connector{rec}, []string{"fake:work"})
+	if err != nil || len(one) != 1 || one[0].Instance.Label != "work" {
+		t.Fatalf("selector name:label: %v %v", one, err)
+	}
+	both, _ := Targets(cfg, []connector.Connector{rec}, []string{"fake"})
+	if len(both) != 2 {
+		t.Fatalf("selector name should pick every instance, got %d", len(both))
+	}
+	if _, err := Targets(cfg, []connector.Connector{rec}, []string{"fake:nope"}); err == nil {
+		t.Fatal("unknown instance should be an error")
+	}
+}
+
+type recordingFake struct{ onReq func(connector.Request) }
+
+func (recordingFake) Describe() connector.Description {
+	return connector.Description{Name: "fake", Version: "0", Protocol: 1}
+}
+
+func (r recordingFake) Inventory(_ context.Context, req connector.Request, emit connector.Emitter) error {
+	r.onReq(req)
+	emit.Finding(finding.Finding{Account: "same-account-name", Resource: finding.Resource{Type: "key", ID: "k"}, Severity: finding.SevLow, Title: "t"})
+	return nil
 }
