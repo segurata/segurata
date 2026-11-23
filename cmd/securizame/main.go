@@ -1,0 +1,102 @@
+// securizame inventories a personal digital footprint. See docs/arquitectura.md.
+//
+//	securizame connectors                     list built-in and external connectors
+//	securizame inventory [name ...]           run connectors (all when none given)
+//	    --min-severity=low  --out=out  --verbose
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"strings"
+
+	"github.com/segurata/segurata/internal/config"
+	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/run"
+
+	_ "github.com/segurata/segurata/connectors" // registers built-in connectors
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	switch os.Args[1] {
+	case "connectors":
+		for _, c := range all() {
+			d := c.Describe()
+			kind := "built-in"
+			if e, ok := c.(*connector.External); ok {
+				kind = e.Path
+			}
+			fmt.Printf("%-16s %-8s %s  [needs: %s] (%s)\n", d.Name, d.Version, d.Summary, strings.Join(d.Needs, ", "), kind)
+		}
+	case "inventory":
+		os.Exit(inventory(os.Args[2:]))
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...]")
+}
+
+func all() []connector.Connector {
+	conns := connector.Builtins()
+	for _, e := range connector.Discover() {
+		conns = append(conns, e)
+	}
+	return conns
+}
+
+func inventory(args []string) int {
+	fs := flag.NewFlagSet("inventory", flag.ExitOnError)
+	minSev := fs.String("min-severity", "low", "hide findings below this severity in the summary")
+	out := fs.String("out", "out", "output directory")
+	verbose := fs.Bool("verbose", false, "show connector logs")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		return 1
+	}
+	byName := map[string]connector.Connector{}
+	for _, c := range all() {
+		byName[c.Describe().Name] = c
+	}
+	var selected []connector.Connector
+	if fs.NArg() == 0 {
+		selected = all()
+	}
+	for _, n := range fs.Args() {
+		c, ok := byName[n]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown connector %q (see: securizame connectors)\n", n)
+			return 2
+		}
+		selected = append(selected, c)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	var logw io.Writer
+	if *verbose {
+		logw = os.Stderr
+	}
+	results, err := run.Inventory(ctx, cfg, selected, *out, logw)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	run.Summary(os.Stdout, results, finding.Severity(*minSev))
+	return 0
+}

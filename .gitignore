@@ -2,3 +2,7 @@
 out/
 *.jsonl
 .DS_Store
+
+# Go
+/securizame
+/bin/
