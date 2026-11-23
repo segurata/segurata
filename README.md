@@ -21,3 +21,7 @@ apps con acceso a datos (`access`, con sus permisos) y las que solo usan «Inici
   correos y la lista de servicios de cada cuenta.
 - Para quitar un acceso: <https://myaccount.google.com/connections> en la cuenta que toque, o el
   campo `href` de cada fila, que lleva directo a la ficha de la app.
+
+## Plan
+
+Acciones por área y prioridad, con fuentes comprobadas y qué se puede auditar por script: [docs/plan.md](docs/plan.md).
