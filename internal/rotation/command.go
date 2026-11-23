@@ -25,7 +25,9 @@ const usage = `usage: securizame rotations <command>
   done   <id> [--note text]
   snooze <id> --until YYYY-MM-DD [--note text]
   ignore <id> --reason text
-  reopen <id> [--note text]`
+  reopen <id> [--note text]
+  done, snooze, ignore and reopen take --path <prefix> instead of an id: every item (open, or
+  closed for reopen) whose locations all lie under that path, e.g. a test log full of fixtures.`
 
 // Run executes one subcommand and returns the exit code.
 func (c CLI) Run(args []string) int {
@@ -239,38 +241,55 @@ func (c CLI) change(l *Ledger, path, cmd string, args []string, now time.Time) i
 	case "ignore":
 		reason = fs.String("reason", "", "why this is not a secret to rotate")
 	}
+	under := fs.String("path", "", "instead of an id: every item whose locations all lie under this path")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return 2
 	}
-	if len(pos) != 1 {
-		fmt.Fprintf(c.Err, "usage: securizame rotations %s <id> (see: securizame rotations --help)\n", cmd)
+	if (len(pos) == 1) == (*under != "") {
+		fmt.Fprintf(c.Err, "usage: securizame rotations %s <id> | --path <prefix> (see: securizame rotations)\n", cmd)
 		return 2
 	}
-	it, err := l.Find(pos[0])
-	if err != nil {
-		return c.fail(err)
-	}
-	switch cmd {
-	case "done":
-		it.Done(now, *note)
-	case "snooze":
-		err = it.Snooze(now, *until, *note)
-	case "ignore":
-		r := strings.TrimSpace(*reason)
-		if r != "" && *note != "" {
-			r += "; " + *note
+	var items []*Item
+	if *under != "" {
+		items = l.Under(*under, cmd == "reopen", now)
+		if len(items) == 0 {
+			return c.fail(fmt.Errorf("no %s item lies entirely under %s", map[bool]string{true: "closed", false: "open"}[cmd == "reopen"], *under))
 		}
-		err = it.Ignore(now, r)
-	case "reopen":
-		it.Reopen(now, *note)
+	} else {
+		it, err := l.Find(pos[0])
+		if err != nil {
+			return c.fail(err)
+		}
+		items = []*Item{it}
 	}
-	if err != nil {
-		return c.fail(err)
+	for _, it := range items {
+		switch cmd {
+		case "done":
+			it.Done(now, *note)
+		case "snooze":
+			err = it.Snooze(now, *until, *note)
+		case "ignore":
+			r := strings.TrimSpace(*reason)
+			if r != "" && *note != "" {
+				r += "; " + *note
+			}
+			err = it.Ignore(now, r)
+		case "reopen":
+			it.Reopen(now, *note)
+		}
+		if err != nil {
+			return c.fail(err) // nothing saved: a bad flag fails before the first item changes
+		}
 	}
 	if err := l.Save(path); err != nil {
 		return c.fail(err)
 	}
-	fmt.Fprintf(c.Out, "%s %s/%s %s: %s\n", it.ID, it.Service, it.Type, orDash(it.Redacted), it.Status)
+	for _, it := range items {
+		fmt.Fprintf(c.Out, "%s %s/%s %s: %s\n", it.ID, it.Service, it.Type, orDash(it.Redacted), it.Status)
+	}
+	if len(items) > 1 {
+		fmt.Fprintf(c.Out, "%d items\n", len(items))
+	}
 	return 0
 }

@@ -261,6 +261,43 @@ func TestCommands(t *testing.T) {
 	}
 }
 
+func TestBulkByPath(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "f.jsonl")
+	writeFindings(t, src,
+		ev("1111111111111111", "private-key", "~/src/app/log/test.log", "scan", "log", "644", false, false),
+		ev("2222222222222222", "private-key", "~/src/app/log/test.log", "scan", "log", "644", false, false),
+		ev("3333333333333333", "private-key", "~/src/app/log/test.log", "scan", "log", "644", false, false),
+		ev("3333333333333333", "private-key", "~/.ssh/id_x", "ssh", "config", "600", false, false),
+		ev("4444444444444444", "github", "~/src/app/log/test.log.old", "scan", "log", "644", false, false))
+	state := filepath.Join(dir, "rotations.json")
+	run := func(args ...string) (string, string, int) {
+		var o, e bytes.Buffer
+		code := CLI{Out: &o, Err: &e, StatePath: state, Now: func() time.Time { return t0 }}.Run(args)
+		return o.String(), e.String(), code
+	}
+	run("sync", "--from", src)
+	o, e, code := run("ignore", "--path", "~/src/app/log/test.log", "--reason", "test fixtures")
+	if code != 0 || !strings.Contains(o, "2 items") {
+		t.Fatalf("bulk ignore: %d %q %q", code, o, e)
+	}
+	l, _ := Load(state)
+	for id, want := range map[string]Status{"1111": Ignored, "2222": Ignored, "3333": Open, "4444": Open} {
+		if it, _ := l.Find(id); it.Status != want {
+			t.Errorf("%s: %s, want %s", id, it.Status, want)
+		}
+	}
+	if _, _, code := run("reopen", "--path", "~/src/app/log/"); code != 0 {
+		t.Error("bulk reopen")
+	}
+	if _, e, code := run("done", "1111", "--path", "~/src"); code != 2 || !strings.Contains(e, "usage") {
+		t.Errorf("id and --path together: %d %q", code, e)
+	}
+	if _, e, code := run("snooze", "--path", "~/nowhere", "--until", "2027-01-01"); code != 1 || !strings.Contains(e, "no open item") {
+		t.Errorf("empty selection: %d %q", code, e)
+	}
+}
+
 func TestDefaultPathHonoursEnv(t *testing.T) {
 	t.Setenv("SECURIZAME_STATE", "/somewhere")
 	if p, _ := DefaultPath(); p != "/somewhere/rotations.json" {

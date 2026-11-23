@@ -182,6 +182,32 @@ func (l *Ledger) Find(ref string) (*Item, error) {
 	return nil, fmt.Errorf("%q matches %d items, use more characters", ref, len(hits))
 }
 
+// Under returns the items whose every location lies under prefix (a ~/ path, as findings report
+// them; an absolute path inside the home directory is accepted too): active ones, or closed ones
+// (rotated, ignored) when closed is true.
+func (l *Ledger) Under(prefix string, closed bool, now time.Time) []*Item {
+	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(prefix, home+"/") {
+		prefix = "~" + prefix[len(home):]
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
+	inside := func(p string) bool { return p == prefix || strings.HasPrefix(p, prefix+"/") }
+	var out []*Item
+	for _, it := range l.Items {
+		if it.Active(now) == closed || len(it.Locations) == 0 {
+			continue
+		}
+		all := true
+		for _, loc := range it.Locations {
+			all = all && inside(loc.Path)
+		}
+		if all {
+			out = append(out, it)
+		}
+	}
+	Sort(out)
+	return out
+}
+
 func (l *Ledger) byFingerprint() map[string]*Item {
 	m := make(map[string]*Item, len(l.Items))
 	for _, it := range l.Items {
