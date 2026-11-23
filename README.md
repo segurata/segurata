@@ -134,26 +134,63 @@ the same secret repeats.
 - What to do with each finding: [docs/secrets.md](docs/secrets.md); each row's `fix` field links
   the section.
 
-## macOS and Brave posture
+## macOS and Brave posture (`macos`)
 
 ```bash
-macos/posture.sh
+./securizame inventory macos
+./securizame inventory --verbose macos   # also logs the checks that pass
 ```
 
-Read-only checks without `sudo`, each `OK`, `WARN`, `INFO` or `SKIP`: FileVault, SIP, Gatekeeper,
-firewall and stealth mode, automatic update settings and pending updates (`softwareupdate -l`,
-capped at 120 s), screen lock, automatic login and guest account, TCP ports listening outside
-loopback (instead of `systemsetup -getremotelogin`, which needs admin), login and background items
-(`sfltool dumpbtm`, flagging those without a developer signature), Brave extensions per profile with
-their permissions (flags access to all sites and APIs such as `cookies`, `debugger` or
-`nativeMessaging`), and whether Brave runs with `--remote-debugging-port`.
+Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
+update settings and pending updates (`softwareupdate -l`, capped at 120 s), screen lock, automatic
+login and guest account, TCP ports listening outside loopback (instead of
+`systemsetup -getremotelogin`, which needs admin; for SMB it names the shared folders and flags guest
+access), login and background items (`sfltool dumpbtm`, flagging those without a developer
+signature), Brave extensions per profile with their permissions (flags access to all sites and APIs
+such as `cookies`, `debugger` or `nativeMessaging`), and whether Brave runs with
+`--remote-debugging-port`.
 
-- That last one is a `WARN` even though the google-personal and connected-apps connectors need it: while the
-  port is open, any local process can drive the browser with every signed-in session. Start Brave
-  with the flag only for those connectors.
-- Output: `out/macos-posture-<date>.jsonl` with `{check, status, detail}`. Takes about a minute
+- A passing check emits no finding (only a log line with `--verbose`); a check that cannot run here
+  is an `unsupported` status. Findings are kind `setting`.
+- The remote debugging port is a `high` finding even though the google-personal and connected-apps
+  connectors need it: while the port is open, any local process can drive the browser with every
+  signed-in session. Start Brave with the flag only for those connectors.
+- Every command it runs is on an exact allowlist in `connectors/macos`. Takes about half a minute
   because of `softwareupdate` and `sfltool`.
+
+## Remediation
+
+```bash
+./securizame remediate --list                # automatable findings of the latest run
+./securizame remediate <id>                  # the exact plan; changes nothing
+./securizame remediate <id> --apply          # asks "Apply? [y/N]", applies, re-checks
+```
+
+One finding at a time. The plan shows the commands, whether they need sudo, the side effects and
+how to undo them. With `--apply` it asks for confirmation (and refuses without a terminal unless
+`--yes`), then runs that connector again and says whether the finding is gone. Commands that need
+root run as `sudo <command>` on your terminal, so sudo asks for your password itself; securizame
+never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
+
+| Action | What it runs | Undo |
+|---|---|---|
+| `macos.firewall.enable` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on` | `--setglobalstate off` |
+| `macos.firewall.stealth` | `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on` | `--setstealthmode off` |
+| `macos.airplay-receiver.disable` | `defaults -currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool false`, then `killall ControlCenter` (no sudo) | the same with `true` |
+| `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
+
+Manual, with the System Settings path in the finding: File Sharing (SMB, port 445; turning off the
+`smbd` launchd service by hand is not a supported way), Remote Login, Screen Sharing, FileVault,
+Gatekeeper, SIP, update settings, screen lock, login items and Brave extensions.
+
+AirPlay Receiver: the `defaults` key is the Terminal remediation in the CIS macOS benchmarks, and
+Control Center restarts so it reads it again. If the check after `--apply` still sees ports 5000 or
+7000 open, turn it off in System Settings > General > AirDrop & Handoff > AirPlay Receiver.
 
 ## Plan
 
 Actions by area and priority, with verified sources and what a script can audit: [docs/plan.md](docs/plan.md).
+
+## Manual review
+
+Services without a connector, with the page where you revoke access: [docs/manual-review.md](docs/manual-review.md).
