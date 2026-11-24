@@ -62,11 +62,11 @@ var services = []service{
 	{"x", xService},
 	{"slack", slack},
 	{"notion", notion},
-	{"microsoft", microsoft},
-	{"dropbox", dropbox},
+	{"microsoft", microsoftPage.run},
+	{"dropbox", dropboxPage.run},
 	{"facebook", facebook},
-	{"instagram", instagram},
-	{"linkedin", linkedin},
+	{"instagram", instagramPage.run},
+	{"linkedin", linkedinPage.run},
 }
 
 // selectServices reads config "services": a list of service names, all of them when absent.

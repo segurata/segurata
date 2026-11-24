@@ -116,6 +116,7 @@ func (b cdpBrowser) load(ctx context.Context, url, expr string, ready func(json.
 
 // The account email is read from the page source: it is not always in the visible text.
 const connectionsJS = `({
+  url: location.href,
   mail: ((document.documentElement.innerHTML.match(/"([\w.+-]+@[\w-]+\.[\w.-]+)"/) || [])[1]) || "",
   text: document.body.innerText,
   apps: [...document.querySelectorAll('a[href*="linkedapps/overview/"]')].map(a => ({name: a.innerText.trim(), href: a.href}))
@@ -127,6 +128,7 @@ const pageJS = `({
 })`
 
 type connectionsPage struct {
+	URL  string    `json:"url"`
 	Mail string    `json:"mail"`
 	Text string    `json:"text"`
 	Apps []appLink `json:"apps"`

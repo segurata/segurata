@@ -77,8 +77,14 @@ func parseSlackApp(r row) slackApp {
 	return a
 }
 
+// slackListed reports whether a workspace's app page shows its apps or its empty message.
+func slackListed(p listPage) bool { return len(p.Rows) > 0 || slackEmptyRE.MatchString(p.Text) }
+
+// slackSignedIn reports whether the sign-in page lists a workspace this browser is signed in to.
+func slackSignedIn(p listPage) bool { return len(slackWorkspaces(p.Rows)) > 0 }
+
 func slack(ctx context.Context, e *env) {
-	raw, err := e.b.load(ctx, slackSignin, slackSigninJS, readyWhen(func(p listPage) bool { return len(slackWorkspaces(p.Rows)) > 0 }), 30)
+	raw, err := e.b.load(ctx, slackSignin, slackSigninJS, readyWhen(slackSignedIn), 30)
 	if err != nil {
 		e.fail("", err)
 		return
@@ -95,7 +101,7 @@ func slack(ctx context.Context, e *env) {
 		}
 		manage := "https://" + host + "/apps/manage"
 		raw, err := e.b.load(ctx, manage, slackAppsJS, readyWhen(func(p listPage) bool {
-			return len(p.Rows) > 0 || slackSignedOutRE.MatchString(p.URL) || slackEmptyRE.MatchString(p.Text)
+			return slackSignedOutRE.MatchString(p.URL) || slackListed(p)
 		}), 40)
 		if err != nil {
 			e.fail(host, err)

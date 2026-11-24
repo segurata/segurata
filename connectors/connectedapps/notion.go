@@ -64,10 +64,13 @@ func parseNotionRow(cells [][]string) notionIntegration {
 	return n
 }
 
+// notionListed reports whether the page shows the connections table or its empty message.
+func notionListed(p notionPage) bool { return len(p.Cells) > 0 || notionEmptyRE.MatchString(p.Text) }
+
 func notion(ctx context.Context, e *env) {
 	raw, err := e.b.load(ctx, notionURL, notionJS, func(raw json.RawMessage) bool {
 		p, ok := decode[notionPage](raw)
-		return ok && (len(p.Cells) > 0 || notionSignedOutRE.MatchString(p.URL) || notionEmptyRE.MatchString(p.Text))
+		return ok && (notionSignedOutRE.MatchString(p.URL) || notionListed(p))
 	}, 50)
 	if err != nil {
 		e.fail("", err)
