@@ -10,6 +10,7 @@ import (
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Ranking for "Do next": how much doing an item now is worth.
@@ -146,7 +147,7 @@ var efforts = []struct {
 	// A review list takes longer the more entries it has: 1 for a few, 3 at most.
 	{func(it *Item) bool { return it.Kind == KindReview },
 		func(it *Item) float64 { return math.Min(3, 1+float64(len(it.Findings))/20) },
-		func(it *Item) string { return count(len(it.Findings), "entry", "entries") + " to go through" }},
+		func(it *Item) string { return textfmt.Count(len(it.Findings), "entry", "entries") + " to go through" }},
 }
 
 func fixed(v float64) func(*Item) float64 { return func(*Item) float64 { return v } }
@@ -263,6 +264,6 @@ func (t *Tracker) decisionScore(d *Item, now time.Time) Score {
 	if len(blocked) == 0 {
 		return newScore(Factor{"impact", impactOf(d.EffectivePriority()), prioLabel(d.EffectivePriority())}, Factor{"effort", 1, "one answer"})
 	}
-	return newScore(Factor{"leverage", math.Round(sum*5) / 10, "half the worth of the " + count(len(blocked), "item", "items") + " it unblocks"},
-		Factor{"effort", 1, "one answer"}, Factor{"quick win", 1.5, "answering unblocks " + count(len(blocked), "item", "items")})
+	return newScore(Factor{"leverage", math.Round(sum*5) / 10, "half the worth of the " + textfmt.Count(len(blocked), "item", "items") + " it unblocks"},
+		Factor{"effort", 1, "one answer"}, Factor{"quick win", 1.5, "answering unblocks " + textfmt.Count(len(blocked), "item", "items")})
 }

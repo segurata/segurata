@@ -405,7 +405,7 @@ func (t *Tracker) leverage(r Rule, now time.Time) string {
 			parts = append(parts, fmt.Sprintf("%s %d", textfmt.OrDash(string(p)), by[p]))
 		}
 	}
-	s := "closes " + count(n, "open item", "open items")
+	s := "closes " + textfmt.Count(n, "open item", "open items")
 	if len(parts) > 0 {
 		s += " (" + strings.Join(parts, ", ") + ")"
 	}
@@ -423,7 +423,7 @@ func (t *Tracker) leverage(r Rule, now time.Time) string {
 			keptParts = append(keptParts, fmt.Sprintf("%s %d", name, kept[o]))
 		}
 	}
-	s += ", keeps " + count(k, "open", "open")
+	s += ", keeps " + textfmt.Count(k, "open", "open")
 	if len(keptParts) > 0 {
 		s += " (" + strings.Join(keptParts, ", ") + ")"
 	}

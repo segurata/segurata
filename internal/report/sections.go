@@ -10,6 +10,7 @@ import (
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -127,7 +128,7 @@ func (r *Report) completeness(d *doc.Doc) {
 			items = append(items, doc.Item{Badge: "unknown", Text: fmt.Sprintf("%s (%s): completeness unknown", run.Label, run.Date), Meta: why})
 		case !c.Complete():
 			sk := c.Skipped()
-			it := doc.Item{Badge: "partial", Text: fmt.Sprintf("%s (%s): %s not inspected", run.Label, run.Date, count(len(sk), "scope"))}
+			it := doc.Item{Badge: "partial", Text: fmt.Sprintf("%s (%s): %s not inspected", run.Label, run.Date, textfmt.Count(len(sk), "scope", "scopes"))}
 			for _, s := range sk[:min(len(sk), r.Top)] {
 				it.Details = append(it.Details, doc.Detail{Label: s.Scope, Text: s.Reason})
 			}
@@ -399,7 +400,7 @@ func rotationItem(it *tracker.Item, when string) doc.Item {
 	if s.Redacted != "" {
 		text += " " + s.Redacted
 	}
-	out := doc.Item{Badge: string(it.EffectivePriority()), Text: text, Meta: fmt.Sprintf("id %s · %s · %s · %s", s.ID, it.WorstLabel(), count(len(s.Locations), "location"), when)}
+	out := doc.Item{Badge: string(it.EffectivePriority()), Text: text, Meta: fmt.Sprintf("id %s · %s · %s · %s", s.ID, it.WorstLabel(), textfmt.Count(len(s.Locations), "location", "locations"), when)}
 	if len(s.Reasons) > 0 {
 		out.Details = append(out.Details, doc.Detail{Label: "Why", Text: s.Reasons[0]})
 	}
@@ -442,11 +443,4 @@ func (r *Report) accepted(d *doc.Doc) {
 	if gone > 0 {
 		d.P(fmt.Sprintf("%d no longer reported by the latest run of their connector: ", gone), doc.Code("segurata unaccept <id>"), " tidies them up.")
 	}
-}
-
-func count(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
 }

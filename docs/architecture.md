@@ -184,13 +184,13 @@ connector and resource type, first match wins:
 | github org and repository-setting checks | check, across orgs ("Two-factor authentication not required in 5 GitHub orgs") | fix |
 | github repositories | organization | fix |
 | connected-apps Slack apps | workspace and severity | review |
-| other connected-apps | account and title family ("27 X apps can post and delete posts as you") | review |
+| other connected-apps | account and title family ("27 X apps can post and delete posts as you"); the predicate agrees with the count (`textfmt.PluralPredicate`: "shared with them", "they are installed on") | review |
 | google-personal OAuth grants | account and severity | review |
 | gcp API keys, service-account keys, service-account roles | project | fix |
 | openai, anthropic, openrouter API keys | instance, account and severity | fix |
 | macos, aws | finding | fix |
 | browser-extensions | extension | review |
-| anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked) | fix |
+| anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked), titled by the worst finding: `Expired client secret of app "Billing" is still registered, and 69 more like it` | fix |
 | a connector status other than `ok` | instance, account and state | setup |
 
 A setup item keeps one ref per distinct status detail (`status:<key>#<hash of the detail>`), so

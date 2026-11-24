@@ -591,9 +591,9 @@ func (it *Item) secretTitleAndNext() {
 	case len(s.UsedIn) == 0:
 		n.Action = "Rotate it " + where + ", then mark it done (no working file holds it)."
 	case !single:
-		n.Action = fmt.Sprintf("Rotate it %s, put the new value in %s by hand, then mark it done.", where, count(len(s.UsedIn), "file", "files"))
+		n.Action = fmt.Sprintf("Rotate it %s, put the new value in %s by hand, then mark it done.", where, textfmt.Count(len(s.UsedIn), "file", "files"))
 	default:
-		n.Action = fmt.Sprintf("Rotate it %s and copy the new value; segurata puts it in %s.", where, count(len(s.UsedIn), "file", "files"))
+		n.Action = fmt.Sprintf("Rotate it %s and copy the new value; segurata puts it in %s.", where, textfmt.Count(len(s.UsedIn), "file", "files"))
 		n.Command = "segurata rotations replace " + s.ID
 	}
 	it.Next = n

@@ -232,7 +232,7 @@ func (s Score) factor(name string) Factor {
 // rotate with why and the command that does it.
 func secretsDoc(p secretrisk.Priority, queue []*Item) doc.Item {
 	next := queue[0]
-	out := doc.Item{Badge: string(p), Text: "Rotate " + count(len(queue), string(p)+" secret", string(p)+" secrets"),
+	out := doc.Item{Badge: string(p), Text: "Rotate " + textfmt.Count(len(queue), string(p)+" secret", string(p)+" secrets"),
 		Meta:    "Secrets to rotate · one at a time, most urgent first",
 		Details: []doc.Detail{{Label: "Next secret", Text: next.Title + " (" + next.ID + ")"}}}
 	if r := next.Secret.Reasons; len(r) > 0 {
@@ -261,7 +261,7 @@ func (t *Tracker) decisionDetails(it *Item, now time.Time) []doc.Detail {
 		out = append(out, doc.Detail{Label: "Options", Text: strings.Join(it.Decision.Options, " | ")})
 	}
 	if u := t.Unblocks(it, now); len(u) > 0 {
-		out = append(out, doc.Detail{Label: "Unblocks", Text: count(len(u), "item", "items") + " " + byPriority(u)})
+		out = append(out, doc.Detail{Label: "Unblocks", Text: textfmt.Count(len(u), "item", "items") + " " + byPriority(u)})
 	}
 	for _, l := range t.Leverage(it, now) {
 		out = append(out, doc.Detail{Label: "Leverage", Text: l})
@@ -291,7 +291,7 @@ func itemDoc(it *Item, t *Tracker) doc.Item {
 		meta = append(meta, string(it.Severity))
 	}
 	if n := len(it.Findings); n > 0 {
-		meta = append(meta, count(n, "finding", "findings"))
+		meta = append(meta, textfmt.Count(n, "finding", "findings"))
 	}
 	out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: it.Title, Meta: strings.Join(meta, " · ")}
 	if n := it.Next; n != nil {

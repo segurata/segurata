@@ -241,9 +241,9 @@ func (c CLI) list(t *Tracker, args []string, now time.Time) int {
 			textfmt.OrDash(string(it.Severity)), len(it.Findings), textfmt.Truncate(it.Title, 100))
 	}
 	tw.Flush()
-	fmt.Fprintf(c.Out, "%s\n", count(len(items), "item", "items"))
+	fmt.Fprintf(c.Out, "%s\n", textfmt.Count(len(items), "item", "items"))
 	if secrets > 0 {
-		fmt.Fprintf(c.Out, "Plus %s to rotate: segurata rotations list (or --kind rotate).\n", count(secrets, "secret", "secrets"))
+		fmt.Fprintf(c.Out, "Plus %s to rotate: segurata rotations list (or --kind rotate).\n", textfmt.Count(secrets, "secret", "secrets"))
 	}
 	return 0
 }
@@ -307,7 +307,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 	}
 	if s := it.Secret; s != nil {
 		fmt.Fprintf(w, "\nsecret %s %s/%s %s, %s, owner %s; details: segurata rotations show %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted),
-			count(len(s.Locations), "location", "locations"), textfmt.OrDash(string(it.Owner())), s.ID)
+			textfmt.Count(len(s.Locations), "location", "locations"), textfmt.OrDash(string(it.Owner())), s.ID)
 	}
 	if len(it.Findings) > 0 {
 		fmt.Fprintf(w, "\nfindings (%d):\n", len(it.Findings))
@@ -386,7 +386,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 			for _, r := range added {
 				fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
 			}
-			fmt.Fprintf(c.Out, "%s closed now by this decision.\n", count(closed, "item", "items"))
+			fmt.Fprintf(c.Out, "%s closed now by this decision.\n", textfmt.Count(closed, "item", "items"))
 		}
 	case "snooze":
 		err = it.Snooze(now, *until, *note)
@@ -399,7 +399,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	case "reopen":
 		it.Reopen(now, *note)
 		if n := t.DropRules(it.ID); n > 0 {
-			fmt.Fprintf(c.Out, "%s of this decision removed; the items they closed stay as they are.\n", count(n, "rule", "rules"))
+			fmt.Fprintf(c.Out, "%s of this decision removed; the items they closed stay as they are.\n", textfmt.Count(n, "rule", "rules"))
 		}
 	case "prioritize":
 		var p secretrisk.Priority

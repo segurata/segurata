@@ -19,6 +19,35 @@ func TestPlural(t *testing.T) {
 	}
 }
 
+func TestCount(t *testing.T) {
+	for n, want := range map[int]string{0: "0 integrations", 1: "1 integration", 4: "4 integrations"} {
+		if got := Count(n, "integration", "integrations"); got != want {
+			t.Errorf("Count(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestPluralPredicate(t *testing.T) {
+	for _, c := range []struct {
+		n        int
+		in, want string
+	}{
+		{1, "can read the Notion pages shared with it", "can read the Notion pages shared with it"},
+		{15, "can read the Notion pages shared with it", "can read the Notion pages shared with them"},
+		{4, "can act on the repositories it is installed on (its permissions need sudo mode to read)",
+			"can act on the repositories they are installed on (their permissions need sudo mode to read)"},
+		{2, "can act on your repositories again if it is unsuspended", "can act on your repositories again if they are unsuspended"},
+		{3, "can act on your behalf within its GitHub App permissions", "can act on your behalf within their GitHub App permissions"},
+		{2, "can edit items it has opened", "can edit items they have opened"},
+		// Words that contain "it" are left alone.
+		{5, "can edit your posts with item limits", "can edit your posts with item limits"},
+	} {
+		if got := PluralPredicate(c.n, c.in); got != c.want {
+			t.Errorf("PluralPredicate(%d, %q) = %q, want %q", c.n, c.in, got, c.want)
+		}
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	for _, c := range []struct {
 		in   string

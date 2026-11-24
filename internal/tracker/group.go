@@ -45,28 +45,28 @@ var rules = []rule{
 	{connectors: []string{"github"}, resource: "github_org_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
 	{connectors: []string{"github"}, resource: "github_repo_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
 	{connectors: []string{"github"}, resource: "github_repo", by: perAccount, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Repository security settings off in %s of %s", count(len(p.findings), "repository", "repositories"), p.account)
+		return fmt.Sprintf("Repository security settings off in %s of %s", textfmt.Count(len(p.findings), "repository", "repositories"), p.account)
 	}},
 	{connectors: []string{"connected-apps"}, resource: "slack_app", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
-		return fmt.Sprintf("Review %s with %s permissions in %s", count(len(p.findings), "Slack app", "Slack apps"),
+		return fmt.Sprintf("Review %s with %s permissions in %s", textfmt.Count(len(p.findings), "Slack app", "Slack apps"),
 			breadth(p.worst().Severity, "broad", "several", "few"), strings.TrimPrefix(p.account, "slack:"))
 	}},
 	{connectors: []string{"connected-apps"}, by: perFamily, kind: KindReview, title: appsTitle},
 	{connectors: []string{"google-personal"}, resource: "oauth_grant", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
-		return fmt.Sprintf("Review %s with %s access to %s", count(len(p.findings), "app", "apps"),
+		return fmt.Sprintf("Review %s with %s access to %s", textfmt.Count(len(p.findings), "app", "apps"),
 			breadth(p.worst().Severity, "high-risk", "broad", "limited"), p.account)
 	}},
 	{connectors: []string{"gcp"}, resource: "api_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Restrict %s in GCP project %s", count(len(p.findings), "API key", "API keys"), p.project)
+		return fmt.Sprintf("Restrict %s in GCP project %s", textfmt.Count(len(p.findings), "API key", "API keys"), p.project)
 	}},
 	{connectors: []string{"gcp"}, resource: "service_account_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Rotate or delete %s in GCP project %s", count(len(p.findings), "user-managed service-account key", "user-managed service-account keys"), p.project)
+		return fmt.Sprintf("Rotate or delete %s in GCP project %s", textfmt.Count(len(p.findings), "user-managed service-account key", "user-managed service-account keys"), p.project)
 	}},
 	{connectors: []string{"gcp"}, resource: "service_account_role", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Narrow the roles of %s in GCP project %s", count(len(p.findings), "service account", "service accounts"), p.project)
+		return fmt.Sprintf("Narrow the roles of %s in GCP project %s", textfmt.Count(len(p.findings), "service account", "service accounts"), p.project)
 	}},
 	{connectors: []string{"openai", "anthropic", "openrouter"}, resource: "api_key", by: perAccountSeverity, kind: KindFix, title: func(p *proposal) string {
-		s := fmt.Sprintf("Revoke or limit %s", count(len(p.findings), providerName(p.connector)+" API key", providerName(p.connector)+" API keys"))
+		s := fmt.Sprintf("Revoke or limit %s", textfmt.Count(len(p.findings), providerName(p.connector)+" API key", providerName(p.connector)+" API keys"))
 		if p.instance != "" {
 			s += " (" + p.instance + ")"
 		}
@@ -85,7 +85,7 @@ func dumpsTitle(p *proposal) string {
 		n, _ := f.Evidence["size_bytes"].(float64)
 		total += int64(n)
 	}
-	return fmt.Sprintf("%s in the git history of %s (%s)", count(len(p.findings), "database dump", "database dumps"), p.repo, secretrisk.HumanSize(total))
+	return fmt.Sprintf("%s in the git history of %s (%s)", textfmt.Count(len(p.findings), "database dump", "database dumps"), p.repo, secretrisk.HumanSize(total))
 }
 
 // dumpsNext purges every dump of the repository in one history rewrite, lists the files with their
@@ -158,19 +158,25 @@ func githubCheckTitle(p *proposal) string {
 	if !ok {
 		phrase = strings.ReplaceAll(strings.TrimPrefix(p.check, "org-"), "-", " ")
 	}
-	return phrase + " in " + count(len(p.accounts()), "GitHub org", "GitHub orgs")
+	return phrase + " in " + textfmt.Count(len(p.accounts()), "GitHub org", "GitHub orgs")
 }
 
 // appNouns name what a connected-apps resource type is.
 var appNouns = map[string][2]string{
-	"x_app":                {"X app", "X apps"},
-	"github_oauth_app":     {"GitHub OAuth app", "GitHub OAuth apps"},
-	"github_app_installed": {"GitHub App", "GitHub Apps"},
-	"github_ssh_key":       {"GitHub SSH key", "GitHub SSH keys"},
-	"notion_integration":   {"Notion integration", "Notion integrations"},
-	"facebook_app":         {"Facebook app", "Facebook apps"},
+	"x_app":                 {"X app", "X apps"},
+	"github_oauth_app":      {"GitHub OAuth app", "GitHub OAuth apps"},
+	"github_app_installed":  {"GitHub App", "GitHub Apps"},
+	"github_app_authorized": {"authorized GitHub App", "authorized GitHub Apps"},
+	"github_ssh_key":        {"GitHub SSH key", "GitHub SSH keys"},
+	"notion_integration":    {"Notion integration", "Notion integrations"},
+	"facebook_app":          {"Facebook app", "Facebook apps"},
+	"dropbox_app":           {"Dropbox app", "Dropbox apps"},
+	"microsoft_work_app":    {"work account app", "work account apps"},
 }
 
+// appsTitle puts the count and noun in front of what the findings' titles say about one app, with
+// the predicate made plural: "7 Notion integrations can read and change the Notion pages shared
+// with them (your own integrations)".
 func appsTitle(p *proposal) string {
 	if len(p.findings) == 1 {
 		return p.findings[0].Title
@@ -179,8 +185,14 @@ func appsTitle(p *proposal) string {
 	if !ok {
 		noun = [2]string{"app", "apps"}
 	}
-	return count(len(p.findings), noun[0], noun[1]) + " " + stripName(p.findings[0])
+	n := len(p.findings)
+	rest := textfmt.PluralPredicate(n, stripName(p.findings[0]))
+	one, many := lastWord(noun[0]), lastWord(noun[1])
+	rest = strings.ReplaceAll(rest, "(your own "+one+")", "(your own "+many+")")
+	return textfmt.Count(n, noun[0], noun[1]) + " " + rest
 }
+
+func lastWord(s string) string { f := strings.Fields(s); return f[len(f)-1] }
 
 var (
 	quoted = regexp.MustCompile(`"[^"]*"`)
@@ -336,7 +348,8 @@ func (p *proposal) finish(itemID string) {
 	case len(p.findings) == 1:
 		p.title = p.findings[0].Title
 	default:
-		p.title = fmt.Sprintf("%s (%d)", family(p.findings[0]), len(p.findings))
+		// A group no rule names: the worst finding's own title, and how many more are like it.
+		p.title = fmt.Sprintf("%s, and %d more like it", p.worst().Title, len(p.findings)-1)
 	}
 	if p.rule.next != nil {
 		p.next = p.rule.next(p)

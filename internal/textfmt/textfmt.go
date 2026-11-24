@@ -1,7 +1,11 @@
 // Package textfmt holds the small wording helpers the command-line tables and messages share.
 package textfmt
 
-import "strings"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 // OrDash is s, or "-" when s is empty, for table cells.
 func OrDash(s string) string {
@@ -17,6 +21,39 @@ func Plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// Count is "1 thing" or "N things".
+func Count(n int, one, many string) string {
+	return fmt.Sprintf("%d %s", n, Plural(n, one, many))
+}
+
+// pronouns rewrite a predicate written about one thing ("it") for several, longest first so that
+// "it is" turns into "they are" before a lone "it" turns into "them".
+var pronouns = []struct {
+	re   *regexp.Regexp
+	many string
+}{
+	{regexp.MustCompile(`\bit is\b`), "they are"},
+	{regexp.MustCompile(`\bit was\b`), "they were"},
+	{regexp.MustCompile(`\bit has\b`), "they have"},
+	{regexp.MustCompile(`\bits\b`), "their"},
+	{regexp.MustCompile(`\bit\b`), "them"},
+}
+
+// PluralPredicate is a predicate written for one subject, rewritten for n of them: "can read the
+// pages shared with it" stays as is for 1 and becomes "can read the pages shared with them" for 4;
+// "it is installed on" becomes "they are installed on". A lone "it" left after the subject forms
+// is an object ("shared with it"), so it becomes "them". For group titles that put a count in front
+// of what one finding's title says about one thing.
+func PluralPredicate(n int, predicate string) string {
+	if n == 1 {
+		return predicate
+	}
+	for _, p := range pronouns {
+		predicate = p.re.ReplaceAllString(predicate, p.many)
+	}
+	return predicate
 }
 
 // Truncate cuts s to n runes, the last one an ellipsis, when it is longer. A cut that would fall

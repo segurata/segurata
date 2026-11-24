@@ -11,6 +11,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Remediation actions this connector can apply. Each groups the findings of one GitHub owner (a
@@ -299,14 +300,14 @@ func (st state) plan() (connector.Plan, error) {
 	}
 	switch st.action {
 	case ActionSecretScanning:
-		p.Summary = fmt.Sprintf("Turn on secret scanning and push protection in %d public %s of %s.", n, plural(n, "repository", "repositories"), st.owner)
+		p.Summary = fmt.Sprintf("Turn on secret scanning and push protection in %d public %s of %s.", n, textfmt.Plural(n, "repository", "repositories"), st.owner)
 		p.SideEffects = []string{
 			"GitHub scans each repository's whole git history and opens a secret scanning alert for every credential it recognises; the alerts are visible to the repository's admins (and, for an organization, its security managers).",
 			"Push protection blocks pushes that contain a recognised credential, for everyone who pushes to these repositories; a pusher can bypass a block by giving a reason, which GitHub records.",
 			"Free on public repositories: no billing change.",
 		}
 	case ActionWorkflowRead:
-		p.Summary = fmt.Sprintf("Make the default GITHUB_TOKEN of workflows read-only in %d %s of %s.", n, plural(n, "place", "places"), st.owner)
+		p.Summary = fmt.Sprintf("Make the default GITHUB_TOKEN of workflows read-only in %d %s of %s.", n, textfmt.Plural(n, "place", "places"), st.owner)
 		p.SideEffects = []string{
 			"A workflow that writes with GITHUB_TOKEN (pushes, comments, labels, releases, packages, deployments) and does not declare `permissions:` fails with HTTP 403 until it declares what it needs.",
 			"Whether workflows may create and approve pull requests stays as it is in each place.",
