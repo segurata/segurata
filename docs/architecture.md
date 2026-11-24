@@ -193,6 +193,12 @@ connector and resource type, first match wins:
 | anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked), titled by the worst finding: `Expired client secret of app "Billing" is still registered, and 69 more like it` | fix |
 | a connector status other than `ok` | instance, account and state | setup |
 
+A group's severity and priority are its worst finding's. When its scopes (projects, orgs,
+accounts) sit at different severities, the title ends with how many sit at each, worst first:
+"Log sink created fails in 40 projects (Prowler logging_sink_created) (1 medium, 39 low)". The
+one production project that keeps a hygiene check at medium still makes it P2 work, and the split
+shows that it is one project of P2 work, not forty.
+
 A setup item keeps one ref per distinct status detail (`status:<key>#<hash of the detail>`), so
 gcp's six "project X: permission denied …" statuses for one account are six refs of one item,
 titled "gcp: permission denied on 6 projects for <account>" (or "… failed on 6 projects" when
