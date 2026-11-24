@@ -7,6 +7,7 @@ import (
 	_ "github.com/segurata/segurata/connectors/aws"
 	_ "github.com/segurata/segurata/connectors/azure"
 	_ "github.com/segurata/segurata/connectors/browserext"
+	_ "github.com/segurata/segurata/connectors/cloudflare"
 	_ "github.com/segurata/segurata/connectors/connectedapps"
 	_ "github.com/segurata/segurata/connectors/gcp"
 	_ "github.com/segurata/segurata/connectors/github"

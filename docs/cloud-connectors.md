@@ -1,8 +1,8 @@
 # Cloud connectors
 
-Four built-in connectors look for credentials that grant too much or live too long, and for
-accounts whose spend has no budget, alert or cap: `aws`, `azure`, `vercel` and `supabase`. All four
-are read-only: they only list, get and describe. They never print or store a secret value; a key
+Five built-in connectors look for credentials that grant too much or live too long, accounts whose
+spend has no budget, alert or cap, and weak account and edge settings: `aws`, `azure`, `vercel`,
+`supabase` and `cloudflare`. All five are read-only: they only list, get and describe. They never print or store a secret value; a key
 appears at most as the identifier or hint the provider itself returns, redacted with
 `finding.Redact` when it is a key id.
 
@@ -11,9 +11,10 @@ output, through the runner they share with `gcp` (`connectors/internal/cli`). Ea
 allowlist of exactly the commands in its table below; anything else is refused before it reaches
 the CLI, so a bug cannot run `aws iam delete-access-key` or `az ad app credential reset`. Tests
 check both that every command the connector runs is on the list and that mutating ones are
-refused. Each `aws` command has a 2 minute timeout, each `az` one 3 minutes. `vercel` and `supabase` call the providers' REST APIs with a token the core resolves from
-the config (`env:`, `keychain:` or `op://`, see [secrets.md](secrets.md)). Neither reads a token
-from another tool's config files: the `vercel` CLI's stored login is never touched.
+refused. Each `aws` command has a 2 minute timeout, each `az` one 3 minutes. `vercel`, `supabase` and `cloudflare` call the providers' REST APIs, GET only, with a token the
+core resolves from the config (`env:`, `keychain:` or `op://`, see [secrets.md](secrets.md)). None
+reads a token from another tool's config files: the `vercel` CLI's stored login and `wrangler`'s
+are never touched.
 
 Whatever fails turns into a `status` record, never a crash: a missing CLI is `unsupported`, an
 expired session `reauth`, `az` without a login `signedout`, a missing token `missing_credentials`
@@ -208,3 +209,96 @@ Setup:
    ```json
    {"connectors": {"supabase": {"secrets": {"SUPABASE_ACCESS_TOKEN": "keychain:securizame-supabase"}}}}
    ```
+
+## Cloudflare (`cloudflare`)
+
+Secret `CLOUDFLARE_API_TOKEN`, a user API token, sent as `Authorization: Bearer`. Base URL
+`https://api.cloudflare.com/client/v4` ([API reference](https://developers.cloudflare.com/api/)).
+Each login is one instance: `cloudflare` and, for more, `cloudflare:<label>` with its own token.
+
+| Endpoint | Used for | Permission | Docs |
+|---|---|---|---|
+| `GET /user/tokens/verify` | The token is active (otherwise `reauth`); its id marks it `used_by_securizame` in the list | none | [verify token](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/) |
+| `GET /user/tokens` | User API tokens: `status`, `issued_on`, `modified_on`, `last_used_on`, `expires_on`, `condition` (client IP `in`/`not_in`), `policies` (effect, permission group names, resources) | User > API Tokens > Read | [list tokens](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/list/) |
+| `GET /accounts` | Accounts the token reaches | none (lists what the token's account permissions cover) | [list accounts](https://developers.cloudflare.com/api/resources/accounts/methods/list/) |
+| `GET /accounts/{id}` | `settings.enforce_twofactor` | Account > Account Settings > Read | [account details](https://developers.cloudflare.com/api/resources/accounts/methods/get/) |
+| `GET /accounts/{id}/members` | Members: `status`, `roles`, `policies`, `user.two_factor_authentication_enabled` | Account > Account Settings > Read | [list members](https://developers.cloudflare.com/api/resources/accounts/subresources/members/methods/list/) |
+| `GET /zones` | Zones and their account, up to `max_zones` | Zone > Zone > Read | [list zones](https://developers.cloudflare.com/api/resources/zones/methods/list/) |
+| `GET /zones/{id}/settings/{ssl,always_use_https,min_tls_version}` | One setting each | Zone > Zone Settings > Read | [get zone setting](https://developers.cloudflare.com/api/resources/zones/subresources/settings/methods/get/) |
+| `GET /zones/{id}/dnssec` | DNSSEC `status` | Zone > DNS > Read | [DNSSEC details](https://developers.cloudflare.com/api/resources/dns/subresources/dnssec/methods/get/) |
+
+Endpoints, fields, permission groups and page sizes were checked against Cloudflare's OpenAPI
+description ([cloudflare/api-schemas](https://github.com/cloudflare/api-schemas)) and the
+[permissions reference](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).
+Listings ask for 50 per page, the maximum. Zone settings are read one by one because the bulk
+`GET /zones/{id}/settings` is marked deprecated. `GET /memberships` is not used: `/accounts` gives
+the same accounts without the extra Memberships Read permission. Moved zones are skipped. The token
+response also has `token_prefix` and `token_suffix`; the connector does not read them.
+
+The IP filter key is `request.ip` in the [token guide](https://developers.cloudflare.com/fundamentals/api/how-to/create-via-api/)
+and `request_ip` in the API reference; both are read. A permission group counts as edit unless its
+name ends in "Read" or "Read-Only", so an unnamed or unknown group is never taken for read-only.
+A policy on `com.cloudflare.api.account.*` (all accounts) or `com.cloudflare.api.account.zone.*`
+(all zones of every account) is broad; all zones of one named account is not.
+
+| Situation | Kind | Severity |
+|---|---|---|
+| Active token that can edit all zones or all accounts | `credential` | high |
+| Account without "Members 2FA enforcement" (`enforce_twofactor` false) | `setting` | high |
+| Zone with SSL off | `setting` | high |
+| Active token with edit permissions and no client IP `in` filter | `credential` | medium |
+| Active token without expiry | `credential` | medium |
+| Active token unused for more than 90 days, or never used 90 days after it was issued | `credential` | medium |
+| More than one accepted super administrator ("Super Administrator - All Privileges", by role or policy) | `grant` | medium |
+| Accepted member without two-factor authentication (low when the account enforces it) | `grant` | medium |
+| Zone with Flexible SSL, or minimum TLS 1.0 or 1.1 | `setting` | medium |
+| Zone with Full (not strict) SSL, Always Use HTTPS off, DNSSEC disabled or in error | `setting` | low |
+| Global API Key: check by hand, the API cannot list it ([keys](https://developers.cloudflare.com/fundamentals/api/get-started/keys/)) | `credential` | info |
+| Disabled or expired tokens, other members, accounts, zone settings | all | info |
+
+Rate limits: Cloudflare allows 1200 requests per five minutes per user, shared with the dashboard
+and every other token, and blocks all calls for five minutes after that
+([limits](https://developers.cloudflare.com/fundamentals/api/reference/limits/)). The connector
+starts at most one request every 300 ms (1000 per five minutes), four zones at a time, and stops
+at the first HTTP 429 with an `error` status that says when to retry. A zone costs four requests,
+so the default `max_zones` of 200 is about 800 requests and four minutes; a run over the cap logs
+how many zones it skipped. A check Cloudflare answers with HTTP 403 is `noscope` on the account it
+affects, counted once per check rather than once per zone. Without
+Account Settings Read, `/accounts` returns an empty list rather than an error, so that gap shows
+as missing account findings; `doctor` lists what the token can read.
+
+Not covered: dangling DNS records (a CNAME or A record pointing at a deprovisioned host) need
+resolution and ownership checks outside the Cloudflare API; account-owned API tokens
+(`/accounts/{id}/tokens`), audit logs, WAF and Access settings.
+
+Config, optional:
+
+```json
+{"connectors": {"cloudflare": {"config": {"max_zones": 200}}}}
+```
+
+Setup:
+
+1. At <https://dash.cloudflare.com/profile/api-tokens>, Create Token > Create Custom Token, with
+   only these permissions:
+   - User > API Tokens > Read
+   - Account > Account Settings > Read
+   - Zone > Zone > Read
+   - Zone > Zone Settings > Read
+   - Zone > DNS > Read
+
+   Account Resources: Include > All accounts. Zone Resources: Include > All zones. Set a TTL and,
+   if you run securizame from a fixed address, Client IP Address Filtering. A read-only token on
+   all zones is not flagged as broad; only edit permissions are.
+2. `security add-generic-password -s securizame-cloudflare -a "$USER" -w` (paste the token at the prompt).
+3. In `~/.config/securizame/config.json`:
+
+   ```json
+   {"connectors": {"cloudflare": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:securizame-cloudflare"}}}}
+   ```
+
+   A second login: `"cloudflare:work": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:securizame-cloudflare-work"}}`.
+
+`securizame doctor --connector cloudflare` verifies the token, shows its expiry and reads one page
+of tokens, accounts and zones, plus the settings and DNSSEC of the first zone, so a missing
+permission shows with the group to add.

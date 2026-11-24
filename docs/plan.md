@@ -59,7 +59,7 @@ Legend: **P0** today, **P1** this week, **P2** this month. **[S]** a script can 
 - **P0** Check whether SSH keys have a passphrase; move keys to the 1Password SSH agent or a FIDO key (`ed25519-sk`). Review the keys registered on GitHub. 20 min. [S] `ssh-keygen -y -P "" -f key`: if it succeeds, the key has no passphrase. `gh api /user/keys /user/ssh_signing_keys /user/gpg_keys`.
 - **P0** AWS: hardware-key MFA on root, no access keys on root, rotate keys older than 90 days. 20 min. [S] `aws iam get-account-summary` and `aws iam generate-credential-report`.
 - **P1** GCP: delete service-account JSON keys; prefer Workload Identity. [S] `gcloud iam service-accounts keys list`.
-- **P1** Cloudflare: replace the Global API Key with least-privilege tokens with TTL and IP restrictions. [S] API `GET /user/tokens`.
+- **P1** Cloudflare: replace the Global API Key with least-privilege tokens with TTL and IP restrictions; enforce 2FA on every account; Full (strict) SSL, TLS 1.2 minimum and DNSSEC on every zone. [S] **cloudflare** connector: `GET /user/tokens`, account settings and members, zone settings and DNSSEC; the Global API Key stays a manual check.
 - **P1** Stripe: use restricted keys and remove unused secret keys. [S] CDP inventory of the dashboard.
 - **P1** AI service keys: one per project, with a spend limit; revoke unused ones. [S] Local scan plus each provider's console or admin API.
 - **P1** Enable secret scanning and push protection on GitHub organizations. [S] **github** connector: `security_and_analysis` per repository and the organization's default code security configurations.
