@@ -16,8 +16,8 @@ go build -o securizame ./cmd/securizame
 
 Before the first inventory, `./securizame doctor` checks, read-only, the config and its secret
 references (resolved, never printed), the browser's debugging port, each connector's CLIs and
-sign-ins (expired gcloud accounts, AWS profiles, `az`, `gh` scopes, Workspace tokens, rg and
-gitleaks) and the modes of securizame's own files, with the exact fix for each problem
+sign-ins (expired gcloud accounts, AWS profiles, `az`, `gh` scopes, Workspace tokens, the
+Cloudflare token's permissions, rg and gitleaks) and the modes of securizame's own files, with the exact fix for each problem
 (`--connector name` checks one). Details: [docs/architecture.md](docs/architecture.md#doctor).
 
 An external connector is any `securizame-<name>` executable on `PATH`, in any language; how to
@@ -189,6 +189,31 @@ service accounts:
   the tenant's path.
 - A token from elsewhere: set the `WORKSPACE_ACCESS_TOKEN` secret reference on the instance
   (`"secrets": {"WORKSPACE_ACCESS_TOKEN": "keychain:..."}`); gcloud is then not used.
+
+## Cloudflare (`cloudflare`)
+
+Read-only, GET only, with a user API token in `CLOUDFLARE_API_TOKEN`. It grades your API tokens
+(edit on all zones or accounts: high; edit without a client IP filter, no expiry, unused for 90
+days: medium), each account's 2FA enforcement (off: high), members without 2FA and extra super
+administrators (medium), and per zone the SSL mode (off: high, Flexible: medium), minimum TLS
+below 1.2 (medium), Always Use HTTPS and DNSSEC (low). The Global API Key cannot be listed by the
+API, so it is one reminder to check it by hand. `max_zones` (default 200) caps the zones checked,
+and requests are paced under Cloudflare's 1200 per five minutes. One instance per login:
+`cloudflare:<label>`.
+
+Create the token at <https://dash.cloudflare.com/profile/api-tokens> (Create Custom Token) with
+User > API Tokens > Read, Account > Account Settings > Read, Zone > Zone > Read, Zone > Zone
+Settings > Read and Zone > DNS > Read, on all accounts and all zones, with a TTL. Then:
+
+```bash
+security add-generic-password -s securizame-cloudflare -a "$USER" -w
+```
+
+```json
+{"connectors": {"cloudflare": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:securizame-cloudflare"}}}}
+```
+
+Endpoints, severities and limits: [docs/cloud-connectors.md](docs/cloud-connectors.md#cloudflare-cloudflare).
 
 ## Plaintext secrets on disk (`local-secrets`)
 

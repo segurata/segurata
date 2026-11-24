@@ -214,6 +214,7 @@ connector or instance (the config and state are always checked).
 | `workspace` | Per tenant: the token is obtained as the inventory does (secret, or gcloud with the tenant's `CLOUDSDK_CONFIG`) and checked with tokeninfo for scopes and domain; the token is discarded |
 | `aws` | `sts get-caller-identity` per profile; SSO, static-key and missing-credential failures get different fixes |
 | `azure` | `az account show` |
+| `cloudflare` | `GET /user/tokens/verify` (status and expiry), then one page of tokens, accounts and zones and the first zone's SSL setting and DNSSEC, each failure naming the permission group to add |
 | `connected-apps` | `gh auth status --json hosts` (JSON, never the token; the one gh command added to its allowlist); scopes the key lists need (`admin:public_key`, `admin:ssh_signing_key`, `admin:gpg_key`, from `ghKeyEndpoints`) |
 | `macos` | `dscl` lists the local users; `tmutil destinationinfo -X` and the Time Machine preferences are readable (a warning with the Full Disk Access fix otherwise) |
 | `local-secrets` | rg, gitleaks (optional; not needed with `skip_git_history`), git and ssh-keygen on `PATH`; `rg --version` and `gitleaks version` (added to the gitleaks guard) |
@@ -234,7 +235,7 @@ with examples: [connectors.md](connectors.md#external-connector-protocol).
 
 ## Secrets used by connectors
 
-Admin keys (OpenAI, Anthropic, OpenRouter, Vercel, Supabase…) do not live in plain files. The
+Admin keys (OpenAI, Anthropic, OpenRouter, Vercel, Supabase, Cloudflare…) do not live in plain files. The
 config says where each one is; the core resolves it on the fly and passes it to the connector in
 the request, without writing it to disk. A literal value in the config is rejected.
 
@@ -284,6 +285,7 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | `openrouter` | API | Keys, per-key credit limit, spend |
 | `vercel` | API | Tokens, spend management |
 | `supabase` | Management API | Projects, service keys, spend cap |
+| `cloudflare` | API, read-only user token | User API tokens (no expiry, idle, edit without an IP filter, edit on all zones or accounts), Global API Key reminder, account 2FA enforcement, members without 2FA, super administrators, per zone SSL mode, Always Use HTTPS, minimum TLS and DNSSEC. One instance per login |
 | `macos` | macOS tools, read-only and without sudo | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, local accounts other than yours (admin, home folder, last login), items owned by deleted accounts' UIDs in shared folders and launchd folders, Time Machine (no destination, unencrypted destination, latest backup age), endpoint agents and their leftovers, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
 | `workspace` | Admin SDK, token from a per-tenant gcloud config | One instance per tenant: accounts without 2SV enrolled or enforced, admins (super admins used day to day), suspended or inactive accounts, third-party apps with OAuth grants ranked by scope and users, token authorizations and revocations over 30 days |
 | `browser-extensions` | Brave and Chrome profile files, read-only, no network | Every extension in every profile: capabilities, source, install and update dates, category hint, and a `remove`/`review`/`keep` verdict with reasons (README, "Browser extensions"). Not automatable; each finding links the extension's page in the browser. Web Store lookups (pulled extensions, new owners) are a future enhancement |
