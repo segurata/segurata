@@ -27,6 +27,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `accepted.json` |
+| `report` | Summarises the latest runs, what changed, the ledger and the accepted risks | Never (writes only the `--out` file) |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
@@ -134,6 +135,34 @@ names another file, `internal/accept`):
   resource id, so a resource id must not hold anything that changes between runs (a pid, a port).
   The debugging-port finding's resource id is `brave-remote-debugging`, whatever port Brave uses.
 - A broken file is an error, never an empty list: a typo must not unhide or hide anything silently.
+
+## Report
+
+`securizame report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
+changes:
+
+- the latest run of every connector instance, through `remediate.LatestFiles` and
+  `remediate.ReadRun` (findings and statuses);
+- for each, its previous run: `remediate.PreviousFile`, the same file name in the newest earlier
+  `out/<date>/` folder;
+- the accepted-risks file, which annotates every finding as `inventory` does, so an acceptance
+  made after the run counts and an expired one shows again;
+- the rotation ledger.
+
+The diff is by finding id: an id only in the latest file is new, one only in the previous file is
+resolved, one in both with another severity changed. That is why ids must stay stable (see
+"Accepted risks"). Runs compare per connector instance, because each connector runs on its own
+schedule.
+
+The report is built once as a small document (headings, paragraphs, lists, tables) and rendered as
+text, Markdown or HTML, so the three formats carry the same content. Markdown escapes markup in
+titles; HTML escapes everything, links only absolute http(s) URLs, has no script, loads nothing
+(its CSP is `default-src 'none'`) and switches colours with `prefers-color-scheme`. `--out` writes
+atomically with mode 0600 (`statefile.Write`).
+
+What it shows of the ledger is the item id, service, type, redacted hint, worst exposure, first
+reason and rotate URL; never a location path. Findings never hold a value, so neither does the
+report.
 
 ## External connector protocol (v1)
 

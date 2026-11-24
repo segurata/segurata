@@ -239,6 +239,37 @@ manager, crypto wallet, AI assistant, shopping, dev tool) from a short list of i
   is a future enhancement.
 - To keep an extension the verdict disagrees with: `securizame accept <id> --reason "..."`.
 
+## Report
+
+```bash
+./securizame report                                   # terminal text
+./securizame report --format html --out report.html   # one self-contained page, mode 0600
+./securizame report --format md --out report.md
+```
+
+One page from the latest run of every connector instance (`out/<date>/<name>.jsonl`, the same
+files `remediate` reads), the accepted risks and the rotation ledger:
+
+- Headline: findings by severity for each connector instance, its run date, how many are
+  accepted and how many statuses need attention.
+- Needs attention: `reauth`, `signedout`, `missing_credentials`, `unsupported` and `error`
+  statuses, each with what to do and the `securizame inventory <name>` that checks it afterwards.
+- Changes since the previous run: new findings, resolved ones and severity changes, comparing each
+  instance's latest file with its own file in the newest earlier `out/<date>/` folder. Finding ids
+  are stable, so a finding is the same across runs. Running a connector twice in a day overwrites
+  that day's file, so the comparison is always with an earlier day.
+- Top findings, worst first and grouped by connector, each with its remediation, its page and
+  `securizame remediate <id>` when automatable.
+- Rotation ledger: open items by priority, the first P0 items (redacted hint, exposure, reason,
+  rotate URL; never a location) and snoozes past their date.
+- Accepted risks, with the expired ones and the ones the latest run no longer reports.
+
+`--min-severity` (default `low`) and `--top` (default 10 per connector and per kind of change)
+trim the lists; `--dir` names another inventory directory. The HTML page has no script and no
+external asset, follows the system's light or dark mode and fits a phone. Written to a file, the
+report gets mode 0600: it names accounts, services and paths. It never contains a secret value,
+because findings and the ledger never hold one.
+
 ## Remediation
 
 ```bash

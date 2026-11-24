@@ -50,11 +50,34 @@ func LatestFiles(outDir string) ([]string, error) {
 	return out, nil
 }
 
+// PreviousFile returns the same connector instance's output in the newest out/<YYYY-MM-DD> run
+// before the one file belongs to, or "" when file is its first run. file is a path LatestFiles
+// returned: out/<date>/<name>.jsonl.
+func PreviousFile(file string) (string, error) {
+	dateDir := filepath.Dir(file)
+	date, base := filepath.Base(dateDir), filepath.Base(file)
+	entries, err := os.ReadDir(filepath.Dir(dateDir))
+	if err != nil {
+		return "", err
+	}
+	prev := ""
+	for _, e := range entries { // sorted by name, so by date
+		if _, err := time.Parse("2006-01-02", e.Name()); !e.IsDir() || err != nil || e.Name() >= date {
+			continue
+		}
+		p := filepath.Join(filepath.Dir(dateDir), e.Name(), base)
+		if _, err := os.Stat(p); err == nil {
+			prev = p
+		}
+	}
+	return prev, nil
+}
+
 // Load reads every finding in the given files, skipping status and log records.
 func Load(files []string) ([]finding.Finding, error) {
 	var out []finding.Finding
 	for _, name := range files {
-		got, err := loadFile(name)
+		got, _, err := ReadRun(name)
 		if err != nil {
 			return nil, err
 		}
@@ -63,25 +86,38 @@ func Load(files []string) ([]finding.Finding, error) {
 	return out, nil
 }
 
-func loadFile(name string) ([]finding.Finding, error) {
+// ReadRun reads one connector instance's output: its findings and statuses, skipping log records.
+func ReadRun(name string) ([]finding.Finding, []finding.Status, error) {
 	f, err := os.Open(name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
-	var out []finding.Finding
+	var findings []finding.Finding
+	var statuses []finding.Status
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
-		var rec finding.Finding
-		if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+		var head struct{ Type string }
+		if err := json.Unmarshal(sc.Bytes(), &head); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
-		if rec.Type == "finding" {
-			out = append(out, rec)
+		switch head.Type {
+		case "finding":
+			var rec finding.Finding
+			if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", name, err)
+			}
+			findings = append(findings, rec)
+		case "status":
+			var st finding.Status
+			if err := json.Unmarshal(sc.Bytes(), &st); err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", name, err)
+			}
+			statuses = append(statuses, st)
 		}
 	}
-	return out, sc.Err()
+	return findings, statuses, sc.Err()
 }
 
 // Find returns the finding with that id, or the only one whose id starts with it.
