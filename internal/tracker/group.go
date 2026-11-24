@@ -365,6 +365,7 @@ func (p *proposal) finish(itemID string) {
 		// A group no rule names: the worst finding's own title, and how many more are like it.
 		p.title = fmt.Sprintf("%s, and %d more like it", p.worst().Title, len(p.findings)-1)
 	}
+	p.title += p.severitySplit()
 	if p.rule.next != nil {
 		p.next = p.rule.next(p)
 		p.next.Command = "segurata track show " + itemID
@@ -382,6 +383,34 @@ func (p *proposal) finish(itemID string) {
 		n.Command = "segurata track show " + itemID
 	}
 	p.next = n
+}
+
+// severitySplit is, for a group whose scopes (projects, orgs, accounts) sit at different severities,
+// how many sit at each, worst first: " (1 medium, 2 low)"; "" otherwise. The item's priority is its
+// worst scope's, since that scope needs the fix at that urgency; the split keeps the count in the
+// title from reading as that much work at that priority, as when a project's activity profile
+// lowered a hygiene check everywhere but in one production project.
+func (p *proposal) severitySplit() string {
+	worst := map[string]finding.Severity{}
+	for _, f := range p.findings {
+		if s, ok := worst[finding.ScopeOf(f)]; !ok || f.Severity.Rank() > s.Rank() {
+			worst[finding.ScopeOf(f)] = f.Severity
+		}
+	}
+	count := map[finding.Severity]int{}
+	for _, s := range worst {
+		count[s]++
+	}
+	if len(count) < 2 {
+		return ""
+	}
+	var parts []string
+	for _, s := range []finding.Severity{finding.SevCritical, finding.SevHigh, finding.SevMedium, finding.SevLow} {
+		if count[s] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", count[s], s))
+		}
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 // prowlerCheckTitle names the Prowler check and how many projects fail it.

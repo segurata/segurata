@@ -100,6 +100,61 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	}
 }
 
+// An ignored secret that a connector proves live opens again: the connector's own item merges into
+// it, so leaving it ignored would leave a live, leaked key with no open item. A rule's ignore gives
+// way the same way and does not close it again; the owner ignoring it after the proof sticks. An
+// accepted secret stays accepted: that risk was kept on purpose.
+func TestProofOfALiveKeyReopensAnIgnoredSecret(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	tr := New(t0)
+	cred := secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/legacyco/data/s3.py",
+		Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2019-05-02"}
+	writeRun(t, out, t0, "local-secrets.jsonl", leak(cred, t0), okStatus(SecretsConnector, "local"))
+	syncOrDie(t, tr, out, t0.Add(time.Minute))
+	rot := mustRotate(t, tr, awsFP[:8])
+	d := tr.AddDecision("manual:legacy", "Is legacyco dead?", []string{"yes"}, t0)
+	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: EffectIgnore, Scope: "path:~/src/legacyco"}}
+	if _, closed, err := tr.DecideWithEffects(d, t0.Add(2*time.Minute), "yes", nil, nil, nil); err != nil || closed != 1 || rot.Status != Ignored {
+		t.Fatalf("decide: %d %v %s", closed, err, rot.Status)
+	}
+
+	day2 := t0.Add(24 * time.Hour)
+	awsKeyRuns(t, out, day2, awsFP)
+	syncOrDie(t, tr, out, day2.Add(time.Minute))
+	if rot.Status != Open || rot.Priority != secretrisk.P0 {
+		t.Fatalf("proven live: %s %s", rot.Status, rot.Priority)
+	}
+	last := rot.History[len(rot.History)-1]
+	if last.Action != actProvenLive || !strings.Contains(last.Detail, "proven live by aws") || !strings.Contains(last.Detail, "by decision "+d.ID) {
+		t.Errorf("history %+v", last)
+	}
+	// The next sync of the same runs leaves it open: the rule does not close it again.
+	syncOrDie(t, tr, out, day2.Add(2*time.Minute))
+	if rot.Status != Open {
+		t.Fatalf("closed again: %s", rot.Status)
+	}
+
+	// Ignored by hand after the proof: it stays ignored.
+	if err := rot.Ignore(day2.Add(time.Hour), "a canary key, live on purpose"); err != nil {
+		t.Fatal(err)
+	}
+	syncOrDie(t, tr, out, day2.Add(2*time.Hour))
+	if rot.Status != Ignored {
+		t.Errorf("ignored after the proof: %s", rot.Status)
+	}
+
+	// Accepted: stays accepted.
+	if err := rot.Accept(day2.Add(3*time.Hour), "kept until the migration", ""); err != nil {
+		t.Fatal(err)
+	}
+	day3 := day2.Add(24 * time.Hour)
+	awsKeyRuns(t, out, day3, awsFP)
+	syncOrDie(t, tr, out, day3.Add(time.Minute))
+	if rot.Status != Accepted {
+		t.Errorf("accepted: %s", rot.Status)
+	}
+}
+
 // Without a fingerprint, a provider key matches by its redacted hint and service, a credential
 // file by its path; info findings (a key in use) are evidence too, and a secret a connector signs
 // in with (run_end) is live.

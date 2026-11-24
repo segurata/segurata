@@ -198,6 +198,12 @@ connector and resource type, first match wins:
 | anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked), titled by the worst finding: `Expired client secret of app "Billing" is still registered, and 69 more like it` | fix |
 | a connector status other than `ok` | instance, account and state | setup |
 
+A group's severity and priority are its worst finding's. When its scopes (projects, orgs,
+accounts) sit at different severities, the title ends with how many sit at each, worst first:
+"Log sink created fails in 40 projects (Prowler logging_sink_created) (1 medium, 39 low)". The
+one production project that keeps a hygiene check at medium still makes it P2 work, and the split
+shows that it is one project of P2 work, not forty.
+
 A setup item keeps one ref per distinct status detail (`status:<key>#<hash of the detail>`), so
 gcp's six "project X: permission denied …" statuses for one account are six refs of one item,
 titled "gcp: permission denied on 6 projects for <account>" (or "… failed on 6 projects" when
@@ -257,7 +263,8 @@ substring of the status detail, or a regular expression between slashes; `reason
   closed, so no setup item is ever opened for it. Its key keeps the reported state, so the item
   it closes is the one that state opened. If one of several statuses under a key is not
   expected, the item stays open. When a status no rule covers comes back the item opens again
-  (`auto-reopen`); when the status is gone the item is done like any other.
+  (`auto-reopen`); when the status is gone the item is done like any other, and when only
+  expected statuses come back it is expected again, not open.
 - `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
   setup blockers (and the report's "Needs attention" before any sync); `inventory` prints one line
   per instance and reason.
@@ -290,7 +297,9 @@ label followed by ":" or a space) and for every scope given:
 Rules apply at once and at the end of every sync: an open, in-progress or snoozed item in scope
 is ignored (or accepted, with no end date) with the reason "by decision T-0002: …", so a finding
 in scope found later never stays open. An item reopened by hand after the rule was added is left
-alone. Reopening the decision removes its rules; the items they closed stay as they are. A pending
+alone. Reopening the decision removes its rules; the items they closed stay as they are. Answering
+an answered decision again does the same before adding the new answer's rules, so answers never
+accumulate rules. A pending
 decision with effects shows its leverage in `status` and `track show`: `answering "yes" closes 128
 open items (P0 120, P1 8) by ignore path:~/src/legacyco`.
 
@@ -351,12 +360,24 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
-- `schema_version` 4 is the current format. A format change adds an upgrade step from version n
+- Save also refuses a file that is not the one the command loaded or last saved (compared by
+  SHA-256): another command saved it in between, and writing would drop that change silently.
+  The command fails with "changed since this command loaded it; … run it again" and writes
+  nothing, the backup included. `track sync` alone folds its runs once more into that version.
+- Commands that change the tracker hold a lock from load to save: an exclusive `flock` on
+  `tracker.json.lock` (released by the system if the process dies), waiting up to two minutes for
+  another command, so the scheduled `inventory` → `track sync` and an interactive command run one
+  after the other. Views (`status` without `--mark-seen`, `track list|show`, `report`) take no
+  lock. `rotations replace` and `redact` hold the tracker across a confirmation and file rewrites,
+  so they take no lock for that; they record their outcome (rotated, a failed attempt, the
+  redaction notes) with `tracker.Update`, which loads the tracker fresh under the lock. Without
+  `flock` (Windows) the lock is a no-op and the SHA-256 check still refuses lost updates.
+- `schema_version` 5 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
   `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
   status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
-  the top-level `runs` (see "Coverage"). An older file holds none of them, so it loads as it is and is saved as the current version (the
+  the top-level `runs` (see "Coverage"); 5 added a location's `gone`. An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### `segurata status`
@@ -902,7 +923,10 @@ Priority is impact × exposure, both table-driven:
   ignored count is what the owner judged. If a later sighting is not noise, the item opens again
   (`auto-reopen`), or goes back to ignored with the owner's reason when it was ignored before.
 - `sync` merges locations (never drops one: git history and transcripts do not forget) and
-  refreshes `last_seen` only for secrets it saw. Expired snoozes go back to `open`.
+  refreshes `last_seen` only for secrets it saw. A working location (config, `.env`, rc or repo
+  working tree) that a finished local-secrets run did not report although it read the files is
+  marked `gone`: kept for the record, left out of `used_in`, the exposure, the title and path
+  rules until a sighting there brings it back. Expired snoozes go back to `open`.
 - After a real rotation the old value is revoked, so only a working file that still holds it
   matters. `done` and `replace` record the locations known at that moment (`rotated_locations`).
   A `rotated` item seen again is reopened, with the reason "still present after rotation (old
@@ -911,15 +935,15 @@ Priority is impact × exposure, both table-driven:
   value never reached it) or new since; the history note says which. Copies only in git history,
   transcripts, logs or shell history leave it `rotated` and add one `history-only` note per
   rotation ([docs/secrets.md](secrets.md#after-a-rotation)).
-- `used_in` lists the working files (config, `.env`, rc files) that hold the secret: where the new
-  value has to go once it is rotated.
+- `used_in` lists the working files (config, `.env`, rc files) that hold the secret now (not
+  `gone`): where the new value has to go once it is rotated.
 - `rotate_url` is the provider console page for that kind of secret, checked against each
   provider's documentation. Types without a stable, account-independent page (npm tokens, Shopify,
   private keys) have none.
 - `secret.id` is the first 8 characters of the fingerprint, longer on collision. Commands accept
   any unique prefix of it or of the fingerprint, or the tracker's `T-` id.
 - `done`, `snooze`, `ignore` and `reopen` also take `--path <prefix>` instead of an id: every item
-  whose locations all lie under that path. A test log or a data file full of fixtures goes away in
+  whose current locations all lie under that path. A test log or a data file full of fixtures goes away in
   one command, while a secret that also appears elsewhere stays.
 
 ### What counts against the owner
@@ -1173,7 +1197,12 @@ On the rotate item, the refs still reported are evidence the secret is live:
   reason is "live key, leaked in <repo>:<file>", and it sorts first among secrets;
 - each ref adds a reason "live: <instance>: <title>" ("live: aws: Long-lived AWS access key for
   profile "default" stored in plain text; aws sts says it works for account 123456789012",
-  "live: openrouter:personal: API key "Claude Code": in use with a credit limit").
+  "live: openrouter:personal: API key "Claude Code": in use with a credit limit");
+- an ignored item opens again (history `reopened` / `proven-live`, "proven live by aws; it was
+  ignored: …"), since the connector's own item merged into it and the key would otherwise have no
+  open item. A decision's rule that ignored it does not close it again. Ignoring it by hand after
+  the proof sticks. An accepted item stays accepted (the risk was kept on purpose; the priority
+  still rises), and a done item is reopened only by the working-file sightings of "Rotation ledger".
 
 ## Redaction
 

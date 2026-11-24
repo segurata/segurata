@@ -48,10 +48,13 @@ func (p *proposal) expectedReasons() []string {
 }
 
 // expectedMoves closes a setup item whose every current status is expected, or opens again one
-// that was expected and now reports a status no rule covers; it reports whether it closed one.
+// that was expected and now reports a status no rule covers; it reports whether it closed one. A
+// done item reported again with only expected statuses goes back to expected rather than open: an
+// intermittent expected status (a key that needs a sign-in one day in two) never reaches the to-do
+// list.
 func (it *Item) expectedMoves(reasons []string, now time.Time) bool {
 	switch {
-	case reasons != nil && (it.Status == Open || it.Status == InProgress || it.Status == Snoozed):
+	case reasons != nil && (it.Status == Open || it.Status == InProgress || it.Status == Snoozed || it.Status == Done):
 		it.setStatus(now, Expected, EvStatus, actExpected, "expected by your config: "+strings.Join(reasons, "; "))
 		return true
 	case reasons == nil && it.Status == Expected:

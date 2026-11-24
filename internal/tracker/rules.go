@@ -139,20 +139,20 @@ func under(p, prefix string) bool {
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
-// Under reports whether the item lies entirely under a path: every location of a rotate item, or
-// every finding still reported of another item, has a path inside prefix. An item with none
-// does not.
+// Under reports whether the item lies entirely under a path: every current location of a rotate
+// item, or every finding still reported of another item, has a path inside prefix. An item with
+// none does not.
 func (it *Item) Under(prefix string) bool {
 	return it.allIn(func(p string) bool { return under(p, prefix) }, func(r FindingRef) string { return r.Path })
 }
 
-// allIn applies in to the path of every location of a rotate item, or to what field reads from
-// every finding still reported of another item; false when there is nothing to test or a value is
-// empty.
+// allIn applies in to the path of every current location of a rotate item, or to what field reads
+// from every finding still reported of another item; false when there is nothing to test or a value
+// is empty.
 func (it *Item) allIn(in func(string) bool, field func(FindingRef) string) bool {
 	var values []string
 	if it.Secret != nil {
-		for _, l := range it.Secret.Locations {
+		for _, l := range it.current() {
 			values = append(values, l.Path)
 		}
 	} else {
@@ -214,19 +214,21 @@ func (r Rule) InScope(it *Item) bool {
 }
 
 // applyRules closes, with the first rule that covers it, every open, in-progress or snoozed item
-// in a rule's scope, and returns how many it closed. An item reopened by hand after the rule was
-// added is left alone: the owner overrode it. An item a rule narrowed to owners closed opens again
-// (auto-reopen) once its attribution is no longer one of them: a key that turned out to be the
-// owner's is rotated after all.
+// in a rule's scope, and returns how many it closed. An item reopened after the rule was added, by
+// hand or because a connector proved its secret live, is left alone: the owner or the evidence
+// overrode it. An item a rule narrowed to owners closed opens again (auto-reopen) once its
+// attribution is no longer one of them: a key that turned out to be the owner's is rotated after
+// all. An ignored secret a connector proves live opens again too (see reopenProvenLive).
 func (t *Tracker) applyRules(now time.Time) int {
 	n := 0
 	for _, it := range t.Items {
 		t.reopenReattributed(it, now)
+		it.reopenProvenLive(now)
 		if it.Status != Open && it.Status != InProgress && it.Status != Snoozed {
 			continue
 		}
 		for _, r := range t.Rules {
-			if !r.Matches(it) || it.reopenedByHandSince(r.At) {
+			if !r.Matches(it) || it.reopenedSince(r.At) {
 				continue
 			}
 			reason := r.closing()
@@ -279,8 +281,12 @@ func (t *Tracker) reopenReattributed(it *Item, now time.Time) {
 	}
 }
 
-func (it *Item) reopenedByHandSince(at time.Time) bool {
-	return slices.ContainsFunc(it.History, func(e Event) bool { return e.Action == actReopen && e.At.After(at) })
+// reopenedSince reports whether the item was reopened by hand, or by proof that its secret is live,
+// after at.
+func (it *Item) reopenedSince(at time.Time) bool {
+	return slices.ContainsFunc(it.History, func(e Event) bool {
+		return (e.Action == actReopen || e.Action == actProvenLive) && e.At.After(at)
+	})
 }
 
 // DecideWithEffects answers a decision, adds the rules its answer carries (the matching option's
@@ -289,13 +295,22 @@ func (it *Item) reopenedByHandSince(at time.Time) bool {
 //
 // owners, when given, narrow the rules of the scopes given here (not those of the options, which
 // carry their own) to rotate items attributed to those owners.
+//
+// A decision answered before is answered again: the new answer replaces the old one and its rules,
+// as reopening and answering would; the items the old rules closed stay as they are.
 func (t *Tracker) DecideWithEffects(it *Item, at time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]Rule, int, error) {
 	add, err := t.decisionRules(it, at, answer, ignore, accept, owners)
 	if err != nil {
 		return nil, 0, err
 	}
+	prev := it.Decision.Answer
 	if err := it.Decide(at, answer); err != nil {
 		return nil, 0, err
+	}
+	if prev != "" {
+		n := t.DropRules(it.ID)
+		it.Log(at, EvDecided, actReanswer, fmt.Sprintf("replaces the answer %q; %s of it removed, the items they closed stay as they are",
+			prev, textfmt.Count(n, "rule", "rules")))
 	}
 	t.Rules = append(t.Rules, add...)
 	for _, r := range add {

@@ -284,12 +284,9 @@ func (c CLI) watch(out, lbl, account string, on bool) int {
 
 // moveSetup reopens (watch) or closes (unwatch) the account's setup items in the tracker.
 func (c CLI) moveSetup(lbl, account string, on bool) int {
-	p, err := c.Paths.Resolve()
-	if err != nil {
-		return c.fail(err)
-	}
 	now := c.Now()
-	t, err := tracker.LoadOrNew(p, now)
+	t, path, unlock, err := tracker.LoadFor(c.Paths, now, true)
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}
@@ -302,7 +299,7 @@ func (c CLI) moveSetup(lbl, account string, on bool) int {
 	if len(moved) == 0 {
 		return 0
 	}
-	if err := t.Save(p.Tracker); err != nil {
+	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
 	for _, it := range moved {

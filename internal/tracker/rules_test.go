@@ -108,6 +108,43 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 	}
 }
 
+// Answering a decision again replaces the rules of the previous answer instead of adding to them:
+// "yes" then "no" must not leave "yes"'s ignore rule closing items at every sync.
+func TestAnsweringADecisionAgainReplacesThePreviousRules(t *testing.T) {
+	tr, out := rulesFixture(t)
+	d := tr.AddDecision("manual:old", "Are the old repos dead?", []string{"yes", "no"}, t0)
+	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: EffectIgnore, Scope: "path:~/src/old"}}
+	now := t0.Add(2 * time.Hour)
+	if _, _, err := tr.DecideWithEffects(d, now, "yes", nil, []string{"gcp-project:old-proj"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	later := now.Add(time.Hour)
+	rules, _, err := tr.DecideWithEffects(d, later, "no", nil, nil, nil)
+	if err != nil || len(rules) != 0 {
+		t.Fatalf("second answer: %+v %v", rules, err)
+	}
+	if len(tr.Rules) != 0 {
+		t.Fatalf("the first answer's rules are still applied: %+v", tr.Rules)
+	}
+	if d.Decision.Answer != "no" || d.Status != Done {
+		t.Errorf("decision %q %s", d.Decision.Answer, d.Status)
+	}
+	if got := d.lastDetail(actReanswer); !strings.Contains(got, `replaces the answer "yes"`) || !strings.Contains(got, "2 rules") {
+		t.Errorf("history %q", got)
+	}
+
+	// A secret found later under ~/src/old opens an item: no rule covers it any more.
+	f := fnd(SecretsConnector, "", "local", "secret", "scan:x#4444", "AWS key", finding.SevCritical, "AWS key", t0)
+	raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: "4444dddd4444dddd", Type: "aws", Redacted: "AKIA…4444(20)", Path: "~/src/old/d/z.py",
+		Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "b"})
+	_ = json.Unmarshal(raw, &f.Evidence)
+	writeRun(t, out, t0.Add(24*time.Hour), "local-secrets.jsonl", f, okStatus(SecretsConnector, "local"))
+	syncOrDie(t, tr, out, t0.Add(25*time.Hour))
+	if n, _ := tr.FindRotate("4444dddd"); n.Status != Open {
+		t.Errorf("new secret under ~/src/old: %s", n.Status)
+	}
+}
+
 func TestRuleScopesOnFindings(t *testing.T) {
 	tr, _ := rulesFixture(t)
 	repo := byTitle(t, tr, "Repository security settings off in 1 repository of github:acme")
@@ -177,6 +214,15 @@ func TestTrackDecideWithEffectsFromTheCLI(t *testing.T) {
 	}
 	if tr, _ := Load(x.path); len(tr.Rules) != 0 {
 		t.Error("rules kept after reopen")
+	}
+	if _, e, code := x.run(t, "decide", d.ID, "--answer", "yes"); code != 0 {
+		t.Fatal(e)
+	}
+	if o, e, code = x.run(t, "decide", d.ID, "--answer", "no"); code != 0 || !strings.Contains(o, `This answer replaces the answer "yes"; 1 rule of it removed`) {
+		t.Errorf("answering again: %q %q", o, e)
+	}
+	if tr, _ := Load(x.path); len(tr.Rules) != 0 {
+		t.Error("the previous answer's rule kept")
 	}
 }
 

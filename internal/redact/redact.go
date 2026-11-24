@@ -135,7 +135,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 		fmt.Fprintln(c.Out, "Not applied.")
 		return 0
 	}
-	return c.apply(ctx, t, s, p, ledger, paths.Tracker, now)
+	return c.apply(ctx, t, s, p, paths.Tracker, now)
 }
 
 func (c CLI) parse(args []string) (options, bool) {
@@ -476,7 +476,7 @@ func typeCounts(m map[string]int) string {
 
 // apply rewrites every planned file that is still as planned, verifies the result by scanning
 // the rewritten files again, and notes the redaction on the rotation items.
-func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p *plan, ledger *tracker.Tracker, statePath string, now time.Time) int {
+func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p *plan, statePath string, now time.Time) int {
 	open, err := c.openFiles(ctx)
 	if err != nil {
 		return c.fail(err)
@@ -513,16 +513,23 @@ func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p 
 		}
 	}
 	noted := 0
-	for _, it := range ledger.Items {
-		if n := files[it.Fingerprint]; n > 0 {
-			it.NoteRedaction(now, n)
-			noted++
+	if len(files) > 0 {
+		// The ledger loaded at the start is stale after the confirmation and the rewrites: the notes
+		// go into the tracker as it is now.
+		err := tracker.Update(statePath, now, func(fresh *tracker.Tracker) error {
+			for _, it := range fresh.Items {
+				if n := files[it.Fingerprint]; n > 0 {
+					it.NoteRedaction(now, n)
+					noted++
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return c.fail(err)
 		}
 	}
 	if noted > 0 {
-		if err := ledger.Save(statePath); err != nil {
-			return c.fail(err)
-		}
 		fmt.Fprintf(c.Out, "Noted the redaction on %d rotation %s. Rotation is still needed: these copies reached the model provider or wherever the trail was sent.\n",
 			noted, textfmt.Plural(noted, "item", "items"))
 	}

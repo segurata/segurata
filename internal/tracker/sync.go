@@ -149,6 +149,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		if r := folded[l]; r.isSecrets() {
 			rep.Secrets.add(t.syncSecrets(Sightings(r.findings), now, opt.IncludeNoise, owned))
 			rep.Secrets.add(t.SyncNoise(NoiseOnly(r.findings), now))
+			t.markGoneLocations(r)
 		}
 	}
 	// A connector's credential that is a rotate item's secret goes to that item, not to a group of

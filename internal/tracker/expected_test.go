@@ -3,6 +3,7 @@ package tracker
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,38 @@ func TestExpectedStatusesCloseTheirSetupItems(t *testing.T) {
 	}
 	if anna.Status != Done {
 		t.Errorf("expected status gone: %s", anna.Status)
+	}
+}
+
+// An intermittent expected status (an ephemeral key's reauth, reported one day in two) moves its
+// item between expected and done, and never onto the to-do list.
+func TestAnIntermittentExpectedStatusNeverReopensItsItem(t *testing.T) {
+	out := t.TempDir()
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"google-personal": {Expected: []config.Expected{
+		{State: finding.StateReauth, Account: "anna@*", Reason: "someone else's account"}}}}}
+	tr := New(t0)
+	var anna *Item
+	for day := range 4 {
+		at := t0.AddDate(0, 0, day)
+		recs := []any{okStatus("google-personal", "me@x.com")}
+		if day%2 == 0 {
+			recs = append(recs, reauthStatus("anna@x.com"))
+		}
+		writeRun(t, out, at, "google-personal.jsonl", recs...)
+		rep, err := tr.Sync(SyncOptions{OutDir: out, Expect: cfg.Expect}, at.Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if anna == nil {
+			anna = byTitle(t, tr, "google-personal · anna@x.com")
+		}
+		want := map[bool]Status{true: Expected, false: Done}[day%2 == 0]
+		if anna.Status != want || rep.Reopened != 0 {
+			t.Fatalf("day %d: %s, want %s; reopened %d", day, anna.Status, want, rep.Reopened)
+		}
+	}
+	if slices.ContainsFunc(anna.History, func(e Event) bool { return e.Event == EvReopened }) {
+		t.Errorf("reopened on the way: %+v", anna.History)
 	}
 }
 
