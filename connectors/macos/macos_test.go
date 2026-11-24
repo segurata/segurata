@@ -117,8 +117,12 @@ func TestHealthyMacEmitsOnlyInformationalFindings(t *testing.T) {
 			t.Errorf("kind %s account %s", f.Kind, f.Account)
 		}
 	}
-	rec.ByResource(t, "macos_setting", "screensaver")
 	rec.ByResource(t, "background_item", "btm:16.com.example.helper")
+	for _, f := range rec.Findings {
+		if f.Resource.ID == "screensaver" {
+			t.Errorf("display sleep at 10 minutes passes the idle lock check: %+v", f)
+		}
+	}
 	// systemsetup needs admin: it is reported as a skipped check.
 	var skipped []string
 	for _, s := range rec.Statuses {

@@ -33,6 +33,8 @@ const (
 	softwareUpdate = "/usr/sbin/softwareupdate"
 	netstatBin     = "/usr/sbin/netstat"
 	psBin          = "/bin/ps"
+	sfltoolBin     = "/usr/bin/sfltool"
+	plutilBin      = "/usr/bin/plutil"
 )
 
 // Preference files read by the checks.
@@ -59,6 +61,7 @@ var readOnly = func() map[string]bool {
 		{"/usr/bin/sw_vers", "-productVersion"},
 		{"/usr/sbin/sysadminctl", "-screenLock", "status"},
 		{defaultsBin, "-currentHost", "read", "com.apple.screensaver", "idleTime"},
+		{defaultsBin, "read", "com.apple.screensaver", "idleTime"},
 		{"/usr/bin/pmset", "-g"},
 		{defaultsBin, "read", loginWindowPrefs, "autoLoginUser"},
 		{defaultsBin, "read", loginWindowPrefs, "GuestEnabled"},
@@ -67,7 +70,7 @@ var readOnly = func() map[string]bool {
 		{psBin, "-axo", "pid=,comm="},
 		{psBin, "-axo", "command="},
 		listShares,
-		{"/usr/bin/sfltool", "dumpbtm"},
+		{sfltoolBin, "dumpbtm"},
 		{"/bin/launchctl", "list"},
 		listUIDs,
 		listHomes,
@@ -149,15 +152,20 @@ func (c *Connector) Describe() connector.Description {
 	}
 }
 
+// slowTimeout is how long the tools that can take minutes get: softwareupdate asks Apple's
+// servers, and sfltool dumpbtm walks every background item record and slows down a lot when the
+// Mac is busy.
+const slowTimeout = 2 * time.Minute
+
 // system runs the macOS tools. It returns stdout, or stderr when stdout is empty, because several
-// of them (sysadminctl, defaults on a missing key) answer only on stderr. softwareupdate gets two
-// minutes; everything else thirty seconds.
+// of them (sysadminctl, defaults on a missing key) answer only on stderr. softwareupdate and
+// sfltool get slowTimeout; everything else thirty seconds.
 type system struct{}
 
 func (system) Run(ctx context.Context, args ...string) ([]byte, error) {
 	timeout := 30 * time.Second
-	if args[0] == softwareUpdate {
-		timeout = 2 * time.Minute
+	if args[0] == softwareUpdate || args[0] == sfltoolBin {
+		timeout = slowTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -222,16 +230,21 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 		r.reportAll(c.endpointAgents(ctx, users))
 	}
 	r.reportAll(c.backupChecks(ctx))
-	c.listeningPorts(ctx, r)
-	c.backgroundItems(ctx, r)
+	items := c.backgroundItems(ctx, r)
+	c.listeningPorts(ctx, r, items)
+	r.reportAll(items.checks)
 	r.report(c.braveDebugging(ctx))
 	r.report(<-pending)
 
 	if len(r.skipped) == 0 {
 		emit.Status(finding.Status{Account: host, State: finding.StateOK})
 	}
-	for _, s := range r.skipped {
-		emit.Status(finding.Status{Account: host, State: finding.StateUnsupported, Detail: s})
+	for _, ch := range r.skipped {
+		state := ch.skipState
+		if state == "" {
+			state = finding.StateUnsupported
+		}
+		emit.Status(finding.Status{Account: host, State: state, Detail: ch.id + ": " + ch.skip})
 	}
 	return nil
 }
@@ -244,17 +257,20 @@ type check struct {
 	name     string
 	ok       bool
 	skip     string // why the check could not run
-	sev      finding.Severity
-	title    string
-	detail   string
-	evidence map[string]any
-	rem      finding.Remediation
+	// skipState is the status a skipped check reports: unsupported (the default) when this Mac
+	// cannot answer it, error when the tool failed or timed out.
+	skipState finding.State
+	sev       finding.Severity
+	title     string
+	detail    string
+	evidence  map[string]any
+	rem       finding.Remediation
 }
 
 type reporter struct {
 	host    string
 	emit    connector.Emitter
-	skipped []string
+	skipped []check
 }
 
 func (r *reporter) reportAll(chs []check) {
@@ -266,7 +282,7 @@ func (r *reporter) reportAll(chs []check) {
 func (r *reporter) report(ch check) {
 	switch {
 	case ch.skip != "":
-		r.skipped = append(r.skipped, ch.id+": "+ch.skip)
+		r.skipped = append(r.skipped, ch)
 		return
 	case ch.ok:
 		r.emit.Log(fmt.Sprintf("OK %s: %s", ch.id, ch.detail))

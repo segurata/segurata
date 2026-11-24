@@ -421,7 +421,24 @@ flagging those without a developer signature), and whether Brave runs with
 `--remote-debugging-port`. Browser extensions are the `browser-extensions` connector, below.
 
 - A passing check emits no finding (only a log line with `--verbose`); a check that cannot run here
-  is an `unsupported` status. Findings are kind `setting`.
+  is an `unsupported` status, and one whose tool failed or timed out is an `error` status that says
+  so. Findings are kind `setting`.
+- Idle lock: the screen locks when the screen saver starts or the display sleeps. The check reads
+  the screen saver's `idleTime` with `defaults -currentHost read com.apple.screensaver`, then the
+  global domain when the per-host key is unset, and `displaysleep` from `pmset -g`. It passes when
+  the earlier of the two is 10 minutes or less; longer is `low`, both off is `medium`, and a failed
+  read is an `error` status naming what could not be read.
+- Login and background items: `sfltool dumpbtm` gets two minutes (it slows down on a busy Mac). When
+  it fails or answers nothing, the check lists one item per launchd label from the plists in
+  `/Library/LaunchDaemons`, `/Library/LaunchAgents` and `~/Library/LaunchAgents` and the
+  `launchctl list` jobs no plist names, leaving out Apple's and the transient `application.*` jobs
+  launchd creates for running apps. Either way, a plist whose `Program` (or `ProgramArguments[0]`)
+  does not exist, or a helper in `/Library/PrivilegedHelperTools` from a vendor no installed app
+  belongs to (by the first two labels of the bundle id, e.g. `com.tunnelbear`), is a `low`
+  "leftover privileged helper" finding instead of a background item. Binary plists are read with
+  `plutil -convert xml1 -o - <file>`, allowed for that file only.
+- A listening port that would be an `info` row (an app's own network feature) is added to the
+  background item that runs the process, when there is one, instead of getting its own row.
 - The remote debugging port is a `high` finding even though the google-personal and connected-apps
   connectors need it: while the port is open, any local process can drive the browser with every
   signed-in session. Start Brave with the flag only for those connectors.
