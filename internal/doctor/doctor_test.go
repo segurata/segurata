@@ -228,3 +228,18 @@ func TestDoctorStateModes(t *testing.T) {
 		t.Error("key printed")
 	}
 }
+
+func TestKeychainServiceMatchesConnectorMessages(t *testing.T) {
+	cases := map[[2]string]string{
+		{"openai", "OPENAI_ADMIN_KEY"}:              "segurata-openai-admin",
+		{"anthropic", "ANTHROPIC_ADMIN_KEY"}:        "segurata-anthropic-admin",
+		{"openrouter", "OPENROUTER_MANAGEMENT_KEY"}: "segurata-openrouter-admin",
+		{"vercel", "VERCEL_TOKEN"}:                  "segurata-vercel",
+		{"cloudflare", "CLOUDFLARE_API_TOKEN"}:      "segurata-cloudflare",
+	}
+	for in, want := range cases {
+		if got := keychainService(in[0], in[1]); got != want {
+			t.Errorf("%v: got %q, want %q", in, got, want)
+		}
+	}
+}
