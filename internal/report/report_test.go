@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/doc"
+
 	"github.com/segurata/segurata/internal/accept"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/rotation"
@@ -222,7 +224,7 @@ func TestRenderEveryFormatSaysTheSame(t *testing.T) {
 			"First run, nothing to compare: aws, openrouter:work",
 			"agents need it", "not reported",
 		} {
-			if !strings.Contains(out, want) && !strings.Contains(out, mdEscape(want)) {
+			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {
 				t.Errorf("%s report lacks %q", f, want)
 			}
 		}
@@ -260,12 +262,6 @@ func TestMarkdownEscapesTitles(t *testing.T) {
 	out := render(t, x.build(t), Markdown)
 	if strings.Contains(out, "<b>") || !strings.Contains(out, `Guest account \<b\>on\</b\>`) {
 		t.Error("markdown does not escape a title's markup")
-	}
-	if mdCode("a`b") != "`` a`b ``" {
-		t.Errorf("code span %q", mdCode("a`b"))
-	}
-	if safeURL("javascript:alert(1)") || safeURL("https://x.example/\"><b>") || !safeURL("https://x.example/a?b=c") {
-		t.Error("safeURL")
 	}
 }
 

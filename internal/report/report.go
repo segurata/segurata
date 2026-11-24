@@ -6,6 +6,9 @@
 package report
 
 import (
+	"io"
+
+	"github.com/segurata/segurata/internal/doc"
 	"path/filepath"
 	"sort"
 	"time"
@@ -211,3 +214,15 @@ func visible(fs []finding.Finding, minSev finding.Severity) []finding.Finding {
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Severity.Rank() > out[j].Severity.Rank() })
 	return out
 }
+
+// Format is an output format of `securizame report`.
+type Format = doc.Format
+
+const (
+	Text     = doc.Text
+	Markdown = doc.Markdown
+	HTML     = doc.HTML
+)
+
+// Render writes the report in the given format.
+func (r *Report) Render(w io.Writer, f Format) error { return doc.Render(w, r.document(), f) }

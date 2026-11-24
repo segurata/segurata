@@ -1,4 +1,4 @@
-package report
+package doc
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 )
 
-// Format is an output format of `securizame report`.
+// Format is an output format.
 type Format string
 
 const (
@@ -18,9 +18,11 @@ const (
 	HTML     Format = "html"
 )
 
-// Render writes the report in the given format.
-func (r *Report) Render(w io.Writer, f Format) error {
-	d := r.document()
+// Valid reports whether f is a known format.
+func (f Format) Valid() bool { return f == Text || f == Markdown || f == HTML }
+
+// Render writes d in the given format.
+func Render(w io.Writer, d *Doc, f Format) error {
 	switch f {
 	case Text:
 		renderText(w, d)
@@ -36,7 +38,7 @@ func (r *Report) Render(w io.Writer, f Format) error {
 
 // --- terminal text ---
 
-func renderText(w io.Writer, d *doc) {
+func renderText(w io.Writer, d *Doc) {
 	for _, b := range d.blocks {
 		switch b.kind {
 		case bHeading:
@@ -54,15 +56,15 @@ func renderText(w io.Writer, d *doc) {
 		case bList:
 			for _, it := range b.items {
 				lead := "  "
-				if it.badge != "" {
-					lead += "[" + it.badge + "] "
+				if it.Badge != "" {
+					lead += "[" + it.Badge + "] "
 				}
-				fmt.Fprintln(w, lead+it.text)
-				if it.meta != "" {
-					fmt.Fprintf(w, "      %s\n", it.meta)
+				fmt.Fprintln(w, lead+it.Text)
+				if it.Meta != "" {
+					fmt.Fprintf(w, "      %s\n", it.Meta)
 				}
-				for _, dt := range it.details {
-					fmt.Fprintf(w, "      %s: %s\n", dt.label, dt.text)
+				for _, dt := range it.Details {
+					fmt.Fprintf(w, "      %s: %s\n", dt.Label, dt.Text)
 				}
 			}
 		case bTable:
@@ -71,7 +73,7 @@ func renderText(w io.Writer, d *doc) {
 			for _, row := range b.rows {
 				cells := make([]string, len(row))
 				for j, c := range row {
-					cells[j] = c.text
+					cells[j] = c.Text
 				}
 				fmt.Fprintln(tw, strings.Join(cells, "\t"))
 			}
@@ -82,9 +84,9 @@ func renderText(w io.Writer, d *doc) {
 
 // --- Markdown ---
 
-// mdEscape backslash-escapes the characters Markdown would read as markup, including < so a
+// EscapeMarkdown backslash-escapes the characters Markdown would read as markup, including < so a
 // title cannot open an HTML tag in a viewer.
-func mdEscape(s string) string {
+func EscapeMarkdown(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		if strings.ContainsRune("\\`*_[]<>|#!~", r) {
@@ -110,13 +112,13 @@ func mdSpans(spans []span) string {
 		if s.code {
 			b.WriteString(mdCode(s.text))
 		} else {
-			b.WriteString(mdEscape(s.text))
+			b.WriteString(EscapeMarkdown(s.text))
 		}
 	}
 	return b.String()
 }
 
-func renderMarkdown(w io.Writer, d *doc) {
+func renderMarkdown(w io.Writer, d *Doc) {
 	for _, b := range d.blocks {
 		switch b.kind {
 		case bHeading:
@@ -126,25 +128,25 @@ func renderMarkdown(w io.Writer, d *doc) {
 		case bList:
 			for _, it := range b.items {
 				lead := "- "
-				if it.badge != "" {
-					lead += "**" + mdEscape(it.badge) + "** "
+				if it.Badge != "" {
+					lead += "**" + EscapeMarkdown(it.Badge) + "** "
 				}
-				fmt.Fprintln(w, lead+mdEscape(it.text))
-				if it.meta != "" {
-					fmt.Fprintf(w, "  - %s\n", mdEscape(it.meta))
+				fmt.Fprintln(w, lead+EscapeMarkdown(it.Text))
+				if it.Meta != "" {
+					fmt.Fprintf(w, "  - %s\n", EscapeMarkdown(it.Meta))
 				}
-				for _, dt := range it.details {
-					fmt.Fprintf(w, "  - %s: %s\n", mdEscape(dt.label), mdDetail(dt))
+				for _, dt := range it.Details {
+					fmt.Fprintf(w, "  - %s: %s\n", EscapeMarkdown(dt.Label), mdDetail(dt))
 				}
 			}
 			fmt.Fprintln(w)
 		case bTable:
-			esc := func(s string) string { return strings.ReplaceAll(mdEscape(s), "\n", " ") }
+			esc := func(s string) string { return strings.ReplaceAll(EscapeMarkdown(s), "\n", " ") }
 			head := make([]string, len(b.head))
 			sep := make([]string, len(b.head))
 			for i, h := range b.head {
 				head[i], sep[i] = esc(h), "---"
-				if len(b.rows) > 0 && i < len(b.rows[0]) && b.rows[0][i].num {
+				if len(b.rows) > 0 && i < len(b.rows[0]) && b.rows[0][i].Num {
 					sep[i] = "---:"
 				}
 			}
@@ -152,7 +154,7 @@ func renderMarkdown(w io.Writer, d *doc) {
 			for _, row := range b.rows {
 				cells := make([]string, len(row))
 				for i, c := range row {
-					cells[i] = esc(c.text)
+					cells[i] = esc(c.Text)
 				}
 				fmt.Fprintf(w, "| %s |\n", strings.Join(cells, " | "))
 			}
@@ -161,16 +163,16 @@ func renderMarkdown(w io.Writer, d *doc) {
 	}
 }
 
-func mdDetail(dt detail) string {
-	switch dt.kind {
-	case dCode:
-		return mdCode(dt.text)
-	case dLink:
-		if safeURL(dt.text) {
-			return "<" + dt.text + ">"
+func mdDetail(dt Detail) string {
+	switch dt.Kind {
+	case DCode:
+		return mdCode(dt.Text)
+	case DLink:
+		if safeURL(dt.Text) {
+			return "<" + dt.Text + ">"
 		}
 	}
-	return mdEscape(dt.text)
+	return EscapeMarkdown(dt.Text)
 }
 
 // safeURL accepts only absolute http(s) URLs without characters that would break out of a link.
@@ -257,8 +259,8 @@ func htmlSpans(spans []span) string {
 	return b.String()
 }
 
-func renderHTML(w io.Writer, d *doc) {
-	fmt.Fprintf(w, htmlHead, html.EscapeString(d.title))
+func renderHTML(w io.Writer, d *Doc) {
+	fmt.Fprintf(w, htmlHead, html.EscapeString(d.Title))
 	for _, b := range d.blocks {
 		switch b.kind {
 		case bHeading:
@@ -268,12 +270,12 @@ func renderHTML(w io.Writer, d *doc) {
 		case bList:
 			fmt.Fprintln(w, "<ul>")
 			for _, it := range b.items {
-				fmt.Fprintf(w, `<li><div class="text">%s%s</div>`, badgeHTML(it.badge), html.EscapeString(it.text))
-				if it.meta != "" {
-					fmt.Fprintf(w, `<div class="meta">%s</div>`, html.EscapeString(it.meta))
+				fmt.Fprintf(w, `<li><div class="text">%s%s</div>`, badgeHTML(it.Badge), html.EscapeString(it.Text))
+				if it.Meta != "" {
+					fmt.Fprintf(w, `<div class="meta">%s</div>`, html.EscapeString(it.Meta))
 				}
-				for _, dt := range it.details {
-					fmt.Fprintf(w, `<div class="detail"><b>%s:</b> %s</div>`, html.EscapeString(dt.label), htmlDetail(dt))
+				for _, dt := range it.Details {
+					fmt.Fprintf(w, `<div class="detail"><b>%s:</b> %s</div>`, html.EscapeString(dt.Label), htmlDetail(dt))
 				}
 				fmt.Fprintln(w, "</li>")
 			}
@@ -287,12 +289,12 @@ func renderHTML(w io.Writer, d *doc) {
 			for _, row := range b.rows {
 				fmt.Fprint(w, "<tr>")
 				for _, c := range row {
-					cls, text := "", html.EscapeString(c.text)
-					if c.num {
+					cls, text := "", html.EscapeString(c.Text)
+					if c.Num {
 						cls = ` class="num"`
 					}
-					if c.badge {
-						text = badgeHTML(c.text)
+					if c.Badge {
+						text = badgeHTML(c.Text)
 					}
 					fmt.Fprintf(w, "<td%s>%s</td>", cls, text)
 				}
@@ -305,19 +307,19 @@ func renderHTML(w io.Writer, d *doc) {
 }
 
 func numClass(b block, col int) string {
-	if len(b.rows) > 0 && col < len(b.rows[0]) && b.rows[0][col].num {
+	if len(b.rows) > 0 && col < len(b.rows[0]) && b.rows[0][col].Num {
 		return ` class="num"`
 	}
 	return ""
 }
 
-func htmlDetail(dt detail) string {
-	t := html.EscapeString(dt.text)
-	switch dt.kind {
-	case dCode:
+func htmlDetail(dt Detail) string {
+	t := html.EscapeString(dt.Text)
+	switch dt.Kind {
+	case DCode:
 		return "<code>" + t + "</code>"
-	case dLink:
-		if safeURL(dt.text) {
+	case DLink:
+		if safeURL(dt.Text) {
 			return `<a href="` + t + `" rel="noreferrer noopener">` + t + `</a>`
 		}
 	}

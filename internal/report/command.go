@@ -45,7 +45,7 @@ func (c CLI) Run(args []string) int {
 		return 2
 	}
 	f := Format(*format)
-	if f != Text && f != Markdown && f != HTML {
+	if !f.Valid() {
 		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
