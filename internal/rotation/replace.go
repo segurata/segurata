@@ -15,6 +15,7 @@ import (
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
@@ -464,11 +465,11 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		return c.fail(errors.New(note))
 	}
 	if r.service != "" {
-		kc := keychain{run: c.Exec, account: r.account}
-		if err := kc.store(ctx, r.service, v); err != nil {
+		kc := keychain.Keychain{Run: c.Exec, Account: r.account}
+		if err := kc.Store(ctx, r.service, v); err != nil {
 			return failed(err, nil)
 		}
-		got, err := kc.read(ctx, r.service)
+		got, err := kc.Read(ctx, r.service)
 		if err != nil {
 			return failed(err, nil)
 		}
