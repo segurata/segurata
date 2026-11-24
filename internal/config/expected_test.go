@@ -11,7 +11,7 @@ import (
 )
 
 func TestExpectedRulesMatchStateAccountAndDetail(t *testing.T) {
-	st := finding.Status{Connector: "google-personal", Account: "gabi@example.com", State: finding.StateReauth, Detail: "Google asks to verify it's you"}
+	st := finding.Status{Connector: "google-personal", Account: "colleague@example.com", State: finding.StateReauth, Detail: "Google asks to verify it's you"}
 	cases := []struct {
 		rule Expected
 		want bool

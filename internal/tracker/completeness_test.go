@@ -186,7 +186,7 @@ func TestRefsWithoutScopeNeedACompleteRun(t *testing.T) {
 // without run_end, or whose connector failed, proves no status gone.
 func TestStaleSetupItemsCloseOnAFinishedRun(t *testing.T) {
 	day1, day2 := t0, t0.AddDate(0, 0, 1)
-	const acct = "111122223333"
+	const acct = "012345678901"
 	first := []any{
 		status("aws", acct, "", finding.StateError, "root user: AccessDenied"),
 		status("aws", "profile r2-example", "", finding.StateReauth, "InvalidClientTokenId"),

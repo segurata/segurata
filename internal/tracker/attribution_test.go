@@ -18,7 +18,7 @@ import (
 func init() { ownerEmail = func() string { return "" } }
 
 const (
-	ownAWS     = "111122223333"
+	ownAWS     = "012345678901"
 	foreignAWS = "999988887777"
 	legacy     = "~/segurata-test-nowhere/legacyco"
 )

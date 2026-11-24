@@ -119,8 +119,8 @@ imports both, history included, and renames them to `*.migrated-<date>`. Details
 
 ```bash
 ./segurata accounts list [gcp|google-personal] [--out out]   # accounts each connector saw: watched or not, last state, last seen
-./segurata accounts unwatch google-personal gabi@example.com  # take it out of connectors."google-personal".config.accounts
-./segurata accounts watch google-personal gabi@example.com    # put it back
+./segurata accounts unwatch google-personal colleague@example.com  # take it out of connectors."google-personal".config.accounts
+./segurata accounts watch google-personal colleague@example.com    # put it back
 ./segurata accounts owned [--out out]                         # the owner's accounts attribution compares secrets with
 ```
 

@@ -83,11 +83,11 @@ func (x *fixture) accounts(t *testing.T, key string) ([]string, bool) {
 }
 
 func TestListWatchUnwatch(t *testing.T) {
-	x := newFixture(t, `{"connectors": {"google-personal": {"config": {"accounts": ["me@x.com", "gabi@x.com"]}}}}`)
+	x := newFixture(t, `{"connectors": {"google-personal": {"config": {"accounts": ["me@x.com", "anna@x.com"]}}}}`)
 	runtest.Write(t, filepath.Join(x.out, "2026-11-23", "google-personal.jsonl"),
-		st("google-personal", "me@x.com", finding.StateOK), st("google-personal", "gabi@x.com", finding.StateReauth), st("google-personal", "old@x.com", finding.StateOK))
+		st("google-personal", "me@x.com", finding.StateOK), st("google-personal", "anna@x.com", finding.StateReauth), st("google-personal", "old@x.com", finding.StateOK))
 	runtest.Write(t, filepath.Join(x.out, "2026-11-24", "google-personal.jsonl"),
-		st("google-personal", "me@x.com", finding.StateOK), st("google-personal", "gabi@x.com", finding.StateReauth),
+		st("google-personal", "me@x.com", finding.StateOK), st("google-personal", "anna@x.com", finding.StateReauth),
 		finding.Skipped{Scope: "old@x.com", Reason: "not in connectors.google-personal.config.accounts"})
 	x.sync(t)
 
@@ -95,35 +95,35 @@ func TestListWatchUnwatch(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("list: %q", e)
 	}
-	for _, want := range []string{`google-personal (connectors."google-personal".config.accounts: 2 watched)`, "gabi@x.com  yes", "me@x.com    yes",
+	for _, want := range []string{`google-personal (connectors."google-personal".config.accounts: 2 watched)`, "anna@x.com  yes", "me@x.com    yes",
 		"old@x.com   no       skipped: not in connectors.google-personal.config.accounts"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("list lacks %q:\n%s", want, o)
 		}
 	}
 
-	o, e, code = x.run(t, "unwatch", "google-personal", "gabi@x.com", "--out", x.out)
+	o, e, code = x.run(t, "unwatch", "google-personal", "anna@x.com", "--out", x.out)
 	if code != 0 || !strings.Contains(o, "is now: me@x.com") || !strings.Contains(o, "kept as") || !strings.Contains(o, ": ignored") {
 		t.Fatalf("unwatch: %q %q", o, e)
 	}
 	if list, _ := x.accounts(t, "google-personal"); !slices.Equal(list, []string{"me@x.com"}) {
 		t.Errorf("accounts after unwatch: %v", list)
 	}
-	if it := x.setupItem(t, "gabi@x.com"); it.Status != tracker.Ignored {
-		t.Errorf("gabi's setup item: %s", it.Status)
+	if it := x.setupItem(t, "anna@x.com"); it.Status != tracker.Ignored {
+		t.Errorf("anna's setup item: %s", it.Status)
 	}
 	if _, e, code := x.run(t, "unwatch", "google-personal", "me@x.com", "--out", x.out); code != 1 || !strings.Contains(e, "empty") {
 		t.Errorf("unwatching the last account: %d %q", code, e)
 	}
 
-	o, e, code = x.run(t, "watch", "google-personal", "gabi@x.com", "--out", x.out)
-	if code != 0 || !strings.Contains(o, "is now: me@x.com, gabi@x.com") || !strings.Contains(o, ": open") {
+	o, e, code = x.run(t, "watch", "google-personal", "anna@x.com", "--out", x.out)
+	if code != 0 || !strings.Contains(o, "is now: me@x.com, anna@x.com") || !strings.Contains(o, ": open") {
 		t.Fatalf("watch: %q %q", o, e)
 	}
-	if it := x.setupItem(t, "gabi@x.com"); it.Status != tracker.Open {
-		t.Errorf("gabi's setup item after watch: %s", it.Status)
+	if it := x.setupItem(t, "anna@x.com"); it.Status != tracker.Open {
+		t.Errorf("anna's setup item after watch: %s", it.Status)
 	}
-	if o, _, _ := x.run(t, "watch", "google-personal", "GABI@x.com"); !strings.Contains(o, "already in") {
+	if o, _, _ := x.run(t, "watch", "google-personal", "ANNA@x.com"); !strings.Contains(o, "already in") {
 		t.Errorf("watch twice: %q", o)
 	}
 	if _, e, code := x.run(t, "watch", "aws", "123"); code != 1 || !strings.Contains(e, "no accounts list") {
@@ -149,10 +149,10 @@ func TestUnwatchWithoutAListWritesOne(t *testing.T) {
 
 func TestOwned(t *testing.T) {
 	x := newFixture(t, `{"owned": {"aws_accounts": ["111111111111"]}}`)
-	runtest.Write(t, filepath.Join(x.out, "2026-11-24", "aws.jsonl"), st("aws", "111122223333", finding.StateNoScope))
+	runtest.Write(t, filepath.Join(x.out, "2026-11-24", "aws.jsonl"), st("aws", "012345678901", finding.StateNoScope))
 	x.sync(t)
 	o, e, code := x.run(t, "owned", "--out", x.out)
-	for _, want := range []string{"aws_accounts (2):", "111122223333  (tracker, runs in " + x.out + ")", "111111111111  (config)",
+	for _, want := range []string{"aws_accounts (2):", "012345678901  (tracker, runs in " + x.out + ")", "111111111111  (config)",
 		"me@x.com  (git config user.email)", "slack_teams (0):", "none known: set owned.slack_teams"} {
 		if code != 0 || !strings.Contains(o, want) {
 			t.Errorf("owned lacks %q: %q %q", want, o, e)

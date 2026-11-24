@@ -38,9 +38,9 @@ func awsKeyRuns(t *testing.T, out string, at time.Time, connectorFP string) {
 		Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2019-05-02"}
 	writeRun(t, out, at, "local-secrets.jsonl", leak(cred, at), leak(git, at), okStatus(SecretsConnector, "local"))
 	key := withEvidence(fnd("aws", "", "local", "aws_local_credentials", "/x/.aws/credentials#default", "default", finding.SevMedium,
-		`Long-lived AWS access key for profile "default" stored in plain text; aws sts says it works for account 111122223333`, at),
-		map[string]any{"file": "~/.aws/credentials", "key_id": "AKIARB…(20)", "fingerprint": connectorFP, "sts_account": "111122223333"})
-	writeRun(t, out, at, "aws.jsonl", key, okStatus("aws", "111122223333"))
+		`Long-lived AWS access key for profile "default" stored in plain text; aws sts says it works for account 012345678901`, at),
+		map[string]any{"file": "~/.aws/credentials", "key_id": "AKIARB…(20)", "fingerprint": connectorFP, "sts_account": "012345678901"})
+	writeRun(t, out, at, "aws.jsonl", key, okStatus("aws", "012345678901"))
 }
 
 // The aws connector's plain-text key and the leaked AWS key are one problem: the rotate item owns
@@ -65,7 +65,7 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	if rot.Priority != secretrisk.P0 || len(rot.Secret.Reasons) == 0 || rot.Secret.Reasons[0] != "live key, leaked in legacyco/data:s3.py" {
 		t.Errorf("rotate item: %s %q", rot.Priority, rot.Secret.Reasons)
 	}
-	if !strings.Contains(strings.Join(rot.Secret.Reasons, "; "), "live: aws: Long-lived AWS access key for profile \"default\" stored in plain text; aws sts says it works for account 111122223333") {
+	if !strings.Contains(strings.Join(rot.Secret.Reasons, "; "), "live: aws: Long-lived AWS access key for profile \"default\" stored in plain text; aws sts says it works for account 012345678901") {
 		t.Errorf("live evidence missing from the reasons: %q", rot.Secret.Reasons)
 	}
 	if len(rot.Findings) != 1 || rot.Findings[0].Match != byFingerprint || !rot.LiveAndLeaked() {
