@@ -3,6 +3,7 @@ package localsecrets
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
@@ -156,11 +157,12 @@ var gitHeadCheck = cli.CheckFunc(func(args []string) error {
 var commitPath = regexp.MustCompile(`\A[0-9a-f]{7,40}:[^\x00]+\z`)
 
 // ghCheck allows only `gh repo view <owner/name> --json visibility` and the two reads of who the
-// user is (origin.go): `gh api user` and `gh api user/orgs?per_page=100`, both GET.
+// user is (origin.go): `gh api user` and every page of `gh api user/orgs` (ghOrgsArgs), both GET.
 var ghCheck = cli.CheckFunc(func(args []string) error {
 	switch {
 	case len(args) == 5 && args[0] == "repo" && args[1] == "view" && githubSlugRe.MatchString(args[2]) && args[3] == "--json" && args[4] == "visibility":
-	case len(args) == 2 && args[0] == "api" && (args[1] == "user" || args[1] == "user/orgs?per_page=100"):
+	case len(args) == 2 && args[0] == "api" && args[1] == "user":
+	case slices.Equal(args, ghOrgsArgs):
 	default:
 		return refuse(args)
 	}

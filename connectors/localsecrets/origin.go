@@ -19,8 +19,9 @@ import (
 // A secret committed to someone else's repository (a clone of instructure/canvas-lms, fastai,
 // testssl.sh) is that project's to rotate, and so is one a fork inherited from its upstream. This
 // file decides whose each repository is, from its GitHub remotes and the owner's GitHub account
-// and organizations: those come from config (owned_owners) and from `gh api user` and
-// `gh api user/orgs`, asked once a week and cached in ~/.cache/segurata/github-owners.json.
+// and organizations: those come from config (owned_owners) and from `gh api user` and every page
+// of `gh api user/orgs`, asked once a week and cached in ~/.cache/segurata/github-owners.json
+// when both answered.
 //
 // Limits: a repository without a GitHub remote has no known origin and counts as the owner's; so
 // does every repository when neither gh nor owned_owners names an owner. A fork's inherited
@@ -102,20 +103,22 @@ func (s *scan) githubOwners() (ownersCache, bool) {
 		s.emit.Log("gh api user: repository ownership unknown (set owned_owners): " + errString(err))
 		return c, false
 	}
-	out, err = gh.Run(s.ctx, "api", "user/orgs?per_page=100")
-	var orgs []struct{ Login string }
-	if err != nil || json.Unmarshal(out, &orgs) != nil {
-		s.emit.Log("gh api user/orgs: organizations unknown: " + errString(err))
+	// Without every organization, their repositories would pass for third-party ones: an answer
+	// short of a page is no answer, and it is not cached.
+	out, err = gh.Run(s.ctx, ghOrgsArgs...)
+	if err != nil {
+		s.emit.Log("gh api user/orgs: repository ownership unknown (set owned_owners): " + err.Error())
+		return c, false
 	}
-	c = ownersCache{Login: user.Login, At: s.now}
-	for _, o := range orgs {
-		c.Orgs = append(c.Orgs, o.Login)
-	}
+	c = ownersCache{Login: user.Login, Orgs: strings.Fields(string(out)), At: s.now}
 	if err := statefile.WriteJSON(path, c); err != nil {
 		s.emit.Log("github owners cache: " + err.Error())
 	}
 	return c, true
 }
+
+// ghOrgsArgs read the user's organizations, every page, one login per line.
+var ghOrgsArgs = []string{"api", "--paginate", "--jq", ".[].login", "user/orgs?per_page=100"}
 
 func errString(err error) string {
 	if err == nil {

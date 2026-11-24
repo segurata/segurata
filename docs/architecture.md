@@ -987,8 +987,9 @@ every run without a new scan.
 
 - Repository origin (`origin`). From each repository's GitHub remotes, origin first, and the
   owner's names: `owned_owners` in the config plus the login and organizations from `gh api user`
-  and `gh api user/orgs?per_page=100`, asked once a week and cached in
-  `~/.cache/segurata/github-owners.json` (both calls are on the gh guard's allowlist). `owned`
+  and every page of `gh api user/orgs`, asked once a week and cached in
+  `~/.cache/segurata/github-owners.json` (both calls are on the gh guard's allowlist). Only a
+  complete answer is cached; when either call fails, gh names nobody for that run. `owned`
   when origin's owner is one of them, `third-party` otherwise (a clone of instructure/canvas-lms).
   A copy committed to a third-party repository is noise and its spot is local: the upstream's
   secret. An owned repository with another remote whose owner is not the user is a fork: commits
