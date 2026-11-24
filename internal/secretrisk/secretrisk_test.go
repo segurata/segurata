@@ -190,3 +190,12 @@ func TestIsShellRC(t *testing.T) {
 		}
 	}
 }
+
+func TestHexLookalikesAreNoiseUnlessPrefixed(t *testing.T) {
+	if ImpactOf(Evidence{Type: "sourcegraph-access-token", Redacted: "…ca5(40)"}) != Noise {
+		t.Fatal("a bare 40-hex match is a hash more often than a token")
+	}
+	if ImpactOf(Evidence{Type: "sourcegraph-access-token", Redacted: "sgp_…ab12(49)"}) == Noise {
+		t.Fatal("a prefixed Sourcegraph token is a real secret")
+	}
+}

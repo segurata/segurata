@@ -247,10 +247,19 @@ func Lookup(typ string) Type {
 // is almost always dead, so it is low impact instead of a long-lived AKIA key.
 var temporaryAWS = Type{Service: "aws", Label: "Temporary AWS credential (STS, expires within 36 hours)", Impact: Low, RotateURL: urlAWS}
 
+// hexLookalike is for gitleaks rules that also accept any 40-character hex string (Sourcegraph's
+// legacy token format). Without the service's own prefix the match is most often a SHA-1, a git
+// object id or a hash column in a database dump: 2,013 such matches in one SQL backup on
+// 2026-11-24. Real current tokens carry the prefix and keep the catalog impact.
+var hexLookalike = Type{Service: "generic", Label: "40-character hex string (a hash more often than a token)", Impact: Noise}
+
 // TypeFor is Lookup refined by the redacted hint, for types whose prefix changes what they are.
 func TypeFor(typ, redacted string) Type {
 	if strings.HasPrefix(typ, "aws-access") && strings.HasPrefix(redacted, "ASIA") {
 		return temporaryAWS
+	}
+	if typ == "sourcegraph-access-token" && !strings.HasPrefix(redacted, "sgp_") {
+		return hexLookalike
 	}
 	return Lookup(typ)
 }
