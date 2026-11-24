@@ -78,7 +78,7 @@ func (c cachedLeak) evidence(now time.Time, remote bool, origin string) secretri
 // commitDay is the end of the day of a commit date ("2024-05-01", as evidence keeps it): the
 // latest the commit can have happened. Zero when the date is unreadable.
 func commitDay(date string) time.Time {
-	d, err := time.Parse(time.DateOnly, truncate(date, 10))
+	d, err := time.Parse(time.DateOnly, leading(date, 10))
 	if err != nil {
 		return time.Time{}
 	}

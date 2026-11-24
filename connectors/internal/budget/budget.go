@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Threshold is one alert rule of a budget.
@@ -176,7 +177,7 @@ func (j judge) budgetRes(kind string, b Budget) finding.Resource {
 
 func (j judge) noBudget(total int) finding.Finding {
 	return j.finding(j.c.NoBudget, finding.SevHigh,
-		upperFirst(j.c.Label)+" has no budget with alerts: nothing warns you when spend runs away",
+		textfmt.UpperFirst(j.c.Label)+" has no budget with alerts: nothing warns you when spend runs away",
 		map[string]any{"budgets": total, "units": j.c.Units},
 		finding.Remediation{
 			Summary: "Create a budget with alerts at 50%, 90% and 100% of actual spend and at 100% of forecasted spend. " + j.w.CapHowTo,
@@ -195,7 +196,7 @@ func (j judge) summary(budgets []Budget) finding.Finding {
 		}
 		list = append(list, evidence(b))
 	}
-	title := fmt.Sprintf("%s has %s: %s", upperFirst(j.c.Label), plural(len(budgets), "budget"), strings.Join(parts, "; "))
+	title := fmt.Sprintf("%s has %s: %s", textfmt.UpperFirst(j.c.Label), textfmt.Count(len(budgets), "budget", "budget"+"s"), strings.Join(parts, "; "))
 	if n := len(budgets) - shown; n > 0 {
 		title += fmt.Sprintf("; and %d more", n)
 	}
@@ -218,7 +219,7 @@ func (j judge) thresholds(b Budget) (finding.Finding, bool) {
 			add = append(add, "a forecasted threshold")
 		}
 		return j.finding(j.budgetRes("budget_thresholds", b), finding.SevMedium,
-			fmt.Sprintf("%s %s: add %s", head, thresholdPhrase(b.Thresholds), join(add)), ev,
+			fmt.Sprintf("%s %s: add %s", head, thresholdPhrase(b.Thresholds), textfmt.JoinAnd(add)), ev,
 			finding.Remediation{
 				Summary: "Edit the budget's thresholds: without one at 100% of actual spend, nobody hears when the budget is spent. " +
 					"Add 90% and 100% of actual spend and 100% of forecasted spend.",
@@ -261,7 +262,7 @@ func (j judge) duplicates(budgets []Budget) []finding.Finding {
 			for i, n := range names {
 				quoted[i] = "'" + n + "'"
 			}
-			who = "Budgets " + join(quoted)
+			who = "Budgets " + textfmt.JoinAnd(quoted)
 		}
 		fix := "delete one"
 		if len(g) > 2 {
@@ -269,7 +270,7 @@ func (j judge) duplicates(budgets []Budget) []finding.Finding {
 		}
 		out = append(out, j.finding(finding.Resource{Type: "budget_duplicates", ID: j.c.ID + "/" + strings.Join(ids, "+"), Name: g[0].Name},
 			finding.SevLow,
-			fmt.Sprintf("%s on %s are the same (%s): %s", upperFirst(who), j.c.Label, j.describe(g[0]), fix),
+			fmt.Sprintf("%s on %s are the same (%s): %s", textfmt.UpperFirst(who), j.c.Label, j.describe(g[0]), fix),
 			map[string]any{"budgets": list},
 			finding.Remediation{
 				Summary: "These budgets count the same spend against the same amount, so each alert arrives once per copy. " +
@@ -326,7 +327,7 @@ func (j judge) scopeGaps(alerting []Budget) []finding.Finding {
 			continue
 		}
 		out = append(out, j.finding(j.budgetRes("budget_scope", b), finding.SevLow,
-			fmt.Sprintf("Budget '%s' (%s) leaves out %s", b.Name, j.describe(b), join(left)),
+			fmt.Sprintf("Budget '%s' (%s) leaves out %s", b.Name, j.describe(b), textfmt.JoinAnd(left)),
 			map[string]any{"budget": evidence(b), "left_out": ev},
 			finding.Remediation{
 				Summary: fmt.Sprintf("Add these %ss to the budget's scope, or create a budget that covers them: "+
@@ -345,7 +346,7 @@ func (j judge) uncovered(alerting []Budget) []finding.Finding {
 			continue
 		}
 		out = append(out, j.finding(finding.Resource{Type: j.w.UnitNoun + "_budget", ID: j.c.ID + "/" + u, Name: u}, finding.SevHigh,
-			fmt.Sprintf("%s %s is billed to %s but no budget with alerts covers it", upperFirst(j.w.UnitNoun), u, j.c.Label),
+			fmt.Sprintf("%s %s is billed to %s but no budget with alerts covers it", textfmt.UpperFirst(j.w.UnitNoun), u, j.c.Label),
 			map[string]any{j.w.UnitNoun: u},
 			finding.Remediation{
 				Summary: fmt.Sprintf("Add this %s to an existing budget's scope, or create a budget for it with threshold alerts.", j.w.UnitNoun),
@@ -378,7 +379,7 @@ func (j judge) describe(b Budget) string {
 	case n == 1:
 		scope = append(scope, b.Scope.Units[0])
 	default:
-		scope = append(scope, plural(n, j.w.UnitNoun))
+		scope = append(scope, textfmt.Count(n, j.w.UnitNoun, j.w.UnitNoun+"s"))
 	}
 	scope = append(scope, b.Scope.Filters...)
 	return amount + ", " + strings.Join(scope, ", ")
@@ -426,7 +427,7 @@ func thresholdPhrase(ts []Threshold) string {
 	case 1:
 		return "alerts only at " + parts[0]
 	}
-	return "alerts at " + join(parts)
+	return "alerts at " + textfmt.JoinAnd(parts)
 }
 
 // totalRisks adds the risks up by kind: "2 unrestricted API keys and 1 user-managed key".
@@ -444,9 +445,9 @@ func totalRisks(rs []Risk) string {
 	}
 	parts := make([]string, len(order))
 	for i, w := range order {
-		parts[i] = plural(sums[w], w)
+		parts[i] = textfmt.Count(sums[w], w, w+"s")
 	}
-	return join(parts)
+	return textfmt.JoinAnd(parts)
 }
 
 func riskEvidence(rs []Risk) []any {
@@ -462,29 +463,4 @@ func riskEvidence(rs []Risk) []any {
 // number prints 110 as "110" and 12.5 as "12.5".
 func number(f float64) string {
 	return strconv.FormatFloat(math.Round(f*100)/100, 'f', -1, 64)
-}
-
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
-
-// join lists items as "a", "a and b", "a, b and c".
-func join(items []string) string {
-	switch len(items) {
-	case 0:
-		return ""
-	case 1:
-		return items[0]
-	}
-	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
-}
-
-func upperFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // oldAfter is the approval age past which a service's apps are revoked as one batch: most apps
@@ -76,7 +77,7 @@ func (e *env) oldAppsFinding(who string, old []grant, b oldBatch) finding.Findin
 		Resource:  finding.Resource{Type: resType, ID: e.service + ":old-apps", Name: fmt.Sprintf("%s apps approved more than %d years ago", b.title, years)},
 		Kind:      finding.KindGrant,
 		Severity:  worst,
-		Title:     fmt.Sprintf("%s %d %s %s %s before %s%s", b.verb, len(old), b.title, apps1(len(old)), b.approved, cutoff, b.note),
+		Title:     fmt.Sprintf("%s %d %s %s %s before %s%s", b.verb, len(old), b.title, textfmt.Plural(len(old), "app", "apps"), b.approved, cutoff, b.note),
 		Evidence:  map[string]any{"service": e.service, "apps": apps, "names": names, "older_than_years": years},
 		CreatedAt: old[0].created,
 		Remediation: finding.Remediation{
@@ -84,12 +85,4 @@ func (e *env) oldAppsFinding(who string, old []grant, b oldBatch) finding.Findin
 			URL:     b.url,
 		},
 	}
-}
-
-// apps1 is "app" or "apps", for n of them.
-func apps1(n int) string {
-	if n == 1 {
-		return "app"
-	}
-	return "apps"
 }

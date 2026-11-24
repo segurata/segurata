@@ -122,13 +122,10 @@ func ErrorMessage(body []byte) string {
 	return truncate(strings.TrimSpace(string(body)))
 }
 
-func truncate(s string) string {
-	const max = 300
-	if len(s) > max {
-		return s[:max] + "…"
-	}
-	return s
-}
+// maxMessage is how many characters of a provider's error message an error keeps.
+const maxMessage = 300
+
+func truncate(s string) string { return textfmt.Truncate(s, maxMessage+1) }
 
 // MatchesRedacted reports whether secret is the key a provider shows as redacted, a visible
 // prefix and suffix around a mask ("sk-proj-****dYwA", "sk-or-v1-27e...d4d") or a hint in

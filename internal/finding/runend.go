@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Run completeness: every run ends with a run_end record saying which scopes it inspected and
@@ -151,11 +153,7 @@ func (t *Tally) End(connector, instance string, started, ended time.Time, err er
 }
 
 func clip(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) <= maxReason {
-		return s
-	}
-	return s[:maxReason] + "…"
+	return textfmt.Truncate(strings.Join(strings.Fields(s), " "), maxReason+1)
 }
 
 // unknownCoverage explains why a file without run_end is never trusted to say something is gone.

@@ -108,3 +108,11 @@ func TestJoinAnd(t *testing.T) {
 		}
 	}
 }
+
+func TestUpperFirst(t *testing.T) {
+	for in, want := range map[string]string{"": "", "owner": "Owner", "élan": "Élan", "Admin": "Admin"} {
+		if got := UpperFirst(in); got != want {
+			t.Errorf("UpperFirst(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
