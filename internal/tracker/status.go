@@ -73,21 +73,24 @@ func (t *Tracker) Status(path string, now time.Time, v View) *doc.Doc {
 		sync = "last synced " + t.LastSyncAt.In(now.Location()).Format("2006-01-02 15:04")
 	}
 	d.P(fmt.Sprintf("As of %s. Tracker %s, %s.", now.Format("2006-01-02 15:04"), path, sync))
-	t.headline(d, items, now)
+	d.H(2, "Headline")
+	t.Headline(d, items, now)
 	if line := t.coverageLine(v.Instances, now); line != "" {
 		d.P(line)
 	}
 	t.doNext(d, items, now, v.Explain)
 	t.decisions(d, items, now)
-	blockers(d, items, now)
+	Blockers(d, items, now)
 	notAudited(d, items, now)
 	t.changes(d, items, now)
 	accepted(d, items, now)
 	return d
 }
 
-func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
-	d.H(2, "Headline")
+// Headline counts the items: open by priority and theme, done and verified in the last 7 days,
+// closed by kind, and the areas not audited here. status and report open with it, so both count
+// the same things: tracker items, not findings.
+func (t *Tracker) Headline(d *doc.Doc, items []*Item, now time.Time) {
 	byTheme := map[string]map[secretrisk.Priority]int{}
 	open := map[secretrisk.Priority]int{}
 	byStatus := map[Status]int{}
@@ -309,7 +312,10 @@ func (t *Tracker) decisions(d *doc.Doc, items []*Item, now time.Time) {
 	d.List(list)
 }
 
-func blockers(d *doc.Doc, items []*Item, now time.Time) {
+// Blockers lists the open setup items (what keeps segurata from seeing an account) with their
+// next step, and the statuses the config expects on one line. report shows it too, instead of
+// listing the runs' statuses again.
+func Blockers(d *doc.Doc, items []*Item, now time.Time) {
 	d.H(2, "Setup blockers")
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Kind == KindSetup && it.Active(now) }) {
@@ -350,29 +356,64 @@ func ExpectedLine(byReason map[string]int) string {
 // changes counts the history events since the last status, secrets apart, and lists the latest
 // ones of other items. The first status only counts: everything is new.
 func (t *Tracker) changes(d *doc.Doc, items []*Item, now time.Time) {
-	since := time.Time{}
-	if t.LastStatusAt != nil {
-		since = *t.LastStatusAt
-		d.H(2, "Since the last status ("+since.In(now.Location()).Format("2006-01-02 15:04")+")")
-	} else {
+	if t.LastStatusAt == nil {
 		d.H(2, "Since the last status (first status: everything)")
+		Changes(d, items, time.Time{}, false)
+		return
 	}
+	d.H(2, "Since the last status ("+t.LastStatusAt.In(now.Location()).Format("2006-01-02 15:04")+")")
+	Changes(d, items, *t.LastStatusAt, true)
+}
+
+// changeKinds are the kinds of change Changes counts, in the order it names them.
+var changeKinds = []string{"new", "closed", "verified", "reopened", "other"}
+
+// changeKind sorts a history event: an item found, closed (done, ignored, accepted, expected,
+// reclassified, merged), verified (by a later run, closing it or confirming a done), reopened (also
+// by a snooze or an acceptance running out), or another change (seen again, a note, a snooze, a
+// priority).
+func changeKind(e Event) string {
+	switch e.Event {
+	case EvFound:
+		return "new"
+	case EvReopened:
+		return "reopened"
+	case EvVerified:
+		return "verified"
+	case EvReclassified, EvMerged:
+		return "closed"
+	case EvStatus:
+		switch e.Action {
+		case actDone, actIgnore, actAccept, actExpected:
+			return "closed"
+		case actWake, actAcceptLapse, actUnaccept:
+			return "reopened"
+		}
+	}
+	return "other"
+}
+
+// Changes counts the items' history events after since by kind, secrets apart ("Items: 3 new,
+// 2 closed, 1 verified by a later run, 1 reopened"), and with list names the latest changes of
+// items other than secrets. status shows the changes since the last status, report those of the
+// last 7 days.
+func Changes(d *doc.Doc, items []*Item, since time.Time, list bool) {
 	type change struct {
 		at   time.Time
 		item doc.Item
 	}
 	var listed []change
-	secretEvents, itemEvents := map[string]int{}, map[string]int{}
+	secretKinds, itemKinds := map[string]int{}, map[string]int{}
 	for _, it := range items {
 		for _, e := range it.History {
 			if !e.At.After(since) || e.Action == ActNext || e.Action == ActReplacePlan {
 				continue
 			}
 			if it.Kind == KindRotate {
-				secretEvents[e.Action]++
+				secretKinds[changeKind(e)]++
 				continue
 			}
-			itemEvents[e.Action]++
+			itemKinds[changeKind(e)]++
 			text := e.Action
 			if e.Detail != "" {
 				text += ": " + textfmt.Truncate(oneLine(e.Detail), 120)
@@ -380,32 +421,40 @@ func (t *Tracker) changes(d *doc.Doc, items []*Item, now time.Time) {
 			listed = append(listed, change{e.At, doc.Item{Badge: e.Event, Text: it.Title, Meta: it.ID + " · " + text}})
 		}
 	}
-	if len(listed) == 0 && len(secretEvents) == 0 {
+	if len(listed) == 0 && len(secretKinds) == 0 {
 		d.P("No change.")
 		return
 	}
 	for _, c := range []struct {
 		what   string
 		counts map[string]int
-	}{{"Secrets", secretEvents}, {"Other items", itemEvents}} {
-		if len(c.counts) == 0 {
-			continue
-		}
+	}{{"Secrets", secretKinds}, {"Other items", itemKinds}} {
 		var parts []string
-		for _, a := range slices.Sorted(maps.Keys(c.counts)) {
-			parts = append(parts, fmt.Sprintf("%s %d", a, c.counts[a]))
+		for _, k := range changeKinds {
+			if n := c.counts[k]; n > 0 {
+				word := k
+				switch k {
+				case "verified":
+					word = "verified by a later run"
+				case "other":
+					word = textfmt.Plural(n, "other change", "other changes")
+				}
+				parts = append(parts, fmt.Sprintf("%d %s", n, word))
+			}
 		}
-		d.P(c.what + ": " + strings.Join(parts, ", ") + ".")
+		if len(parts) > 0 {
+			d.P(c.what + ": " + strings.Join(parts, ", ") + ".")
+		}
 	}
-	if t.LastStatusAt == nil {
+	if !list {
 		return
 	}
 	sort.SliceStable(listed, func(i, j int) bool { return listed[i].at.After(listed[j].at) })
-	var list []doc.Item
+	var out []doc.Item
 	for _, c := range listed[:min(len(listed), statusChanges)] {
-		list = append(list, c.item)
+		out = append(out, c.item)
 	}
-	d.List(list)
+	d.List(out)
 	if len(listed) > statusChanges {
 		d.P(fmt.Sprintf("… and %d more changes: ", len(listed)-statusChanges), doc.Code("segurata track show <id>"), ".")
 	}

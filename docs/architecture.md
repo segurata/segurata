@@ -254,7 +254,8 @@ substring of the status detail, or a regular expression between slashes; `reason
   expected, the item stays open. When a status no rule covers comes back the item opens again
   (`auto-reopen`); when the status is gone the item is done like any other.
 - `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
-  setup blockers and needs attention; `inventory` prints one line per instance and reason.
+  setup blockers (and the report's "Needs attention" before any sync); `inventory` prints one line
+  per instance and reason.
 - `segurata track expect <setup-id> --reason "…" [--detail text] [--dry-run]` writes the rule
   that matches the item (its instance's key, the reported state, the account with glob characters
   escaped, the detail only when given) into the config and closes the item as expected. The
@@ -546,6 +547,14 @@ changes:
 
 The only write is the one-time import of the former state files, when the tracker does not exist
 yet.
+
+Once a sync has filled the tracker (`last_sync_at` set), the report counts what `status` counts:
+its headline is the tracker's (`Tracker.Headline`: items by priority and theme), followed by the
+findings of the latest runs as a note ("an item groups the findings one action fixes") and the
+table by connector instance; its setup section is the tracker's setup blockers (`tracker.Blockers`)
+instead of the runs' statuses; and its changes are the items found, closed, verified and reopened
+in the last 7 days (`tracker.Changes`, the same counts `status` gives since the last status)
+instead of the file diff below, which only a report without a synced tracker shows.
 
 The diff is by finding id: an id only in the latest file is new, one only in the previous file is
 resolved if the latest run inspected its scope and "not checked this run" otherwise, one in both

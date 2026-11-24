@@ -318,3 +318,33 @@ func TestExpectedStatusesAreOneLine(t *testing.T) {
 		t.Error("a status no rule covers left the report")
 	}
 }
+
+// With a synced tracker the report speaks in tracker items, as status does: the headline counts
+// items (findings come second), setup blockers replace the runs' statuses, and the changes come
+// from item history, not from diffing files.
+func TestSyncedTrackerReportsItems(t *testing.T) {
+	x := newFx(t)
+	tr, err := tracker.Load(x.tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Sync(tracker.SyncOptions{OutDir: x.out}, now); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Build(Inputs{OutDir: x.out, Now: now.Add(time.Hour), Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := render(t, r, Text)
+	for _, want := range []string{"10 open: P0 4, P1 1, P2 3, P3 2.", "Findings in the latest runs: 1 critical, 1 high, 1 medium", "Findings by connector",
+		"Setup blockers", "openrouter:work · org: needs a fresh sign-in", "Changes in the last 7 days", "Other items: 11 new, 1 reopened."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"Needs attention", "Changes since the previous run", "Gone (was high)"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("report still has %q:\n%s", gone, out)
+		}
+	}
+}

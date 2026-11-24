@@ -26,8 +26,16 @@ func (r *Report) document() *doc.Doc {
 		r.Generated.Format("2006-01-02 15:04"), r.OutDir, r.MinSev))
 	r.headline(d)
 	r.completeness(d)
-	r.attention(d)
-	r.changes(d)
+	if r.tracked() {
+		// The tracker's units, as status shows them: setup items and item history, not the runs'
+		// statuses and file diffs again.
+		tracker.Blockers(d, r.tr.Items, r.Generated)
+		d.H(2, "Changes in the last 7 days")
+		tracker.Changes(d, r.tr.Items, r.Generated.AddDate(0, 0, -7), true)
+	} else {
+		r.attention(d)
+		r.changes(d)
+	}
 	r.topFindings(d)
 	r.rotations(d)
 	r.accepted(d)
@@ -36,8 +44,31 @@ func (r *Report) document() *doc.Doc {
 	return d
 }
 
+// tracked reports whether a sync has folded runs into the tracker: then the report counts and
+// lists tracker items, as status does, and the findings come second.
+func (r *Report) tracked() bool { return r.tr != nil && r.tr.LastSyncAt != nil }
+
+// headline counts tracker items when there is a synced tracker, with the runs' findings as a
+// secondary note and table; without one, findings by connector.
 func (r *Report) headline(d *doc.Doc) {
 	d.H(2, "Headline")
+	if r.tracked() {
+		r.tr.Headline(d, r.tr.Items, r.Generated)
+		total := map[finding.Severity]int{}
+		for _, run := range r.Runs {
+			for _, f := range run.Findings {
+				if !f.Hidden() {
+					total[f.Severity]++
+				}
+			}
+		}
+		var parts []string
+		for _, s := range severities {
+			parts = append(parts, fmt.Sprintf("%d %s", total[s], s))
+		}
+		d.P("Findings in the latest runs: " + strings.Join(parts, ", ") + ". An item groups the findings one action fixes, and a secret is one item however many copies of it were found.")
+		d.H(3, "Findings by connector")
+	}
 	head := []string{"Connector", "Run"}
 	for _, s := range severities {
 		head = append(head, strings.ToUpper(string(s[:1]))+string(s[1:]))
