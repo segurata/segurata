@@ -121,7 +121,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 	if ex.Resource.Type != "sign_in_with_google_summary" || ex.Severity != finding.SevInfo || ex.Account != "a@example.test" {
 		t.Errorf("sign-in summary: %+v", ex)
 	}
-	if ex.Title != "a@example.test is the Sign in with Google login for 1 apps" || fmt.Sprint(ex.Evidence["services"]) != "[example.test]" {
+	if ex.Title != "a@example.test is the Sign in with Google login for 1 app" || fmt.Sprint(ex.Evidence["services"]) != "[example.test]" {
 		t.Errorf("sign-in summary %q %v", ex.Title, ex.Evidence)
 	}
 	if ex.Remediation.URL != connectionsURL(0) {
@@ -273,6 +273,9 @@ func TestLoginDependencyNamesFinancialAndCloudServices(t *testing.T) {
 			t.Errorf("%v: services %v severity %s", tc.apps, f.Evidence["services"], f.Severity)
 		}
 		want := fmt.Sprintf("Google account me@example.test is the login for %d financial/cloud services: use a passkey/security key and consider Advanced Protection", len(tc.want))
+		if len(tc.want) == 1 {
+			want = strings.Replace(want, "services", "service", 1)
+		}
 		if f.Title != want || f.Remediation.URL != urlPasskeys || !strings.Contains(f.Remediation.Summary, urlAdvancedProtection) {
 			t.Errorf("finding %q %+v", f.Title, f.Remediation)
 		}

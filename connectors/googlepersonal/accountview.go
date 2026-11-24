@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const (
@@ -36,7 +37,7 @@ func signInSummary(account, connections string, signIns []finding.Finding) (find
 		Resource: finding.Resource{Type: "sign_in_with_google_summary", ID: account, Name: account},
 		Kind:     finding.KindGrant,
 		Severity: finding.SevInfo,
-		Title:    fmt.Sprintf("%s is the Sign in with Google login for %d apps", account, len(signIns)),
+		Title:    fmt.Sprintf("%s is the Sign in with Google login for %d %s", account, len(signIns), textfmt.Plural(len(signIns), "app", "apps")),
 		Evidence: map[string]any{"services": names, "apps": apps},
 		Remediation: finding.Remediation{
 			Summary: "Review the list once in a while. " + summarySignIn,
@@ -92,7 +93,8 @@ func loginDependency(account string, apps []finding.Finding) (finding.Finding, b
 		Resource: finding.Resource{Type: "google_login_dependency", ID: account, Name: account},
 		Kind:     finding.KindSetting,
 		Severity: sev,
-		Title:    fmt.Sprintf("Google account %s is the login for %d financial/cloud services: use a passkey/security key and consider Advanced Protection", account, len(names)),
+		Title: fmt.Sprintf("Google account %s is the login for %d financial/cloud %s: use a passkey/security key and consider Advanced Protection",
+			account, len(names), textfmt.Plural(len(names), "service", "services")),
 		Evidence: map[string]any{"services": names, "can_move_money": moves},
 		Remediation: finding.Remediation{
 			Summary: "Whoever takes over this Google account signs in to " + strings.Join(names, ", ") +
