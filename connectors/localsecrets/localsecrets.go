@@ -43,7 +43,9 @@ type Connector struct {
 	Home                         func() (string, error)
 	// KeyPath is the fingerprint key file for a home directory.
 	KeyPath func(home string) string
-	Now     func() time.Time
+	// CacheDir holds the per-repository git history caches for a home directory (historycache.go).
+	CacheDir func(home string) string
+	Now      func() time.Time
 }
 
 func New() *Connector {
@@ -55,6 +57,7 @@ func New() *Connector {
 		LookPath:  exec.LookPath,
 		Home:      os.UserHomeDir,
 		KeyPath:   fingerprint.DefaultPath,
+		CacheDir:  DefaultCacheDir,
 		Now:       time.Now,
 	}
 }
@@ -77,15 +80,19 @@ type settings struct {
 	skipHistory bool          // skip_git_history
 	workers     int           // gitleaks_workers
 	timeout     time.Duration // gitleaks_timeout, per repository
+	gitCache    bool          // git_cache: scan only commits added since the last run
 }
 
 func parseSettings(cfg map[string]any, home string) (settings, error) {
-	s := settings{reposRoot: filepath.Join(home, "src"), workers: defaultWorkers, timeout: defaultTimeout}
+	s := settings{reposRoot: filepath.Join(home, "src"), workers: defaultWorkers, timeout: defaultTimeout, gitCache: true}
 	if v, ok := cfg["repos_root"].(string); ok && v != "" {
 		s.reposRoot = expandHome(v, home)
 	}
 	if v, ok := cfg["skip_git_history"].(bool); ok {
 		s.skipHistory = v
+	}
+	if v, ok := cfg["git_cache"].(bool); ok {
+		s.gitCache = v
 	}
 	if v, ok := cfg["gitleaks_workers"].(float64); ok && v >= 1 {
 		s.workers = int(v)
@@ -166,7 +173,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	detail := fmt.Sprintf("%d findings", len(findings))
 	switch {
 	case history:
-		detail += fmt.Sprintf("; gitleaks: %d repositories, %d failed", repos, failed)
+		detail += fmt.Sprintf("; gitleaks: %d repositories (%s), %d failed", repos, s.stats.String(), failed)
 	case cfg.skipHistory:
 		detail += "; git history skipped (skip_git_history)"
 	default:
@@ -197,7 +204,9 @@ type scan struct {
 	rows    map[string]*row
 	omitted int
 
-	git gitCache
+	git   gitCache
+	stats historyStats
+	historyOnce
 }
 
 func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprint.Key, emit connector.Emitter) *scan {
@@ -342,6 +351,24 @@ func fixFor(ev secretrisk.Evidence) string {
 // add records one secret at one location. value is what gets fingerprinted (the raw secret, or the
 // body of a PEM key); it never leaves this function.
 func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
+	ev, ok := s.prepare(abs, ev, value)
+	if !ok {
+		s.omit(1)
+		return
+	}
+	s.store(ev)
+}
+
+func (s *scan) omit(n int) {
+	s.mu.Lock()
+	s.omitted += n
+	s.mu.Unlock()
+}
+
+// prepare completes the evidence of one secret at one location: kind, permissions, git status,
+// fingerprint, bucket and fix. It reports false when the evidence would contain the value itself,
+// so the caller drops it. value never leaves this function.
+func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secretrisk.Evidence, bool) {
 	if ev.Kind == "" {
 		ev.Kind = s.kindOf(abs)
 	}
@@ -358,12 +385,14 @@ func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
 	if len(value) >= 6 {
 		raw, _ := json.Marshal(ev)
 		if strings.Contains(string(raw), value) {
-			s.mu.Lock()
-			s.omitted++
-			s.mu.Unlock()
-			return
+			return ev, false
 		}
 	}
+	return ev, true
+}
+
+// store aggregates prepared evidence: the same secret at the same location counts once more.
+func (s *scan) store(ev secretrisk.Evidence) {
 	key := strings.Join([]string{ev.Source, ev.Path, ev.Type, ev.Fingerprint}, "\x00")
 	s.mu.Lock()
 	defer s.mu.Unlock()

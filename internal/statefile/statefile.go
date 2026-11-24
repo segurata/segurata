@@ -1,6 +1,6 @@
 // Package statefile writes files atomically, so a crash never leaves half a file: securizame's
-// own state files (rotation ledger, accepted risks) as JSON, mode 0600, in a 0700 directory, and
-// the user's files that `securizame rotations replace` edits, keeping their mode.
+// own files (rotation ledger, accepted risks, reports) with mode 0600 in a 0700 directory, and the
+// user's files that `securizame rotations replace` edits, keeping their mode.
 package statefile
 
 import (
@@ -16,10 +16,15 @@ func WriteJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+	return Write(path, append(raw, '\n'))
+}
+
+// Write writes one of securizame's own files: mode 0600, creating its directory with 0700.
+func Write(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return Replace(path, append(raw, '\n'), 0o600)
+	return Replace(path, data, 0o600)
 }
 
 // Replace writes data to a temporary file next to path with the given mode, flushes it to disk and

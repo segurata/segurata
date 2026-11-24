@@ -23,6 +23,9 @@ type Key struct{ key []byte }
 
 const keyBytes = 32
 
+// FromBytes builds a key from raw bytes, for tests and callers that hold the key already.
+func FromBytes(b []byte) Key { return Key{key: append([]byte(nil), b...)} }
+
 // DefaultPath is ~/.config/securizame/fingerprint.key.
 func DefaultPath(home string) string {
 	return filepath.Join(home, ".config", "securizame", "fingerprint.key")

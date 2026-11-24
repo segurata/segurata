@@ -212,6 +212,12 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   at a time, each with a 10-minute timeout. Without gitleaks it scans the whole working tree under
   `repos_root` with its own patterns instead, but not history; install gitleaks respecting the
   4-day quarantine (`~/.claude/scripts/safe-update.sh`).
+- Incremental history: after the first full scan of a repository, later runs scan only the commits
+  added since, and replay the earlier leaks from `~/.cache/securizame/gitleaks/<repo-hash>.json`
+  (mode 0600; fingerprints, redacted hints, paths and commits, never values). A rewritten or
+  deleted ref, a new gitleaks version or config, or a new fingerprint key means a full scan again.
+  The status line says how many repositories were unchanged, incremental or full. Details:
+  [docs/architecture.md](docs/architecture.md#incremental-git-history-scan).
 - SSH keys in `~/.ssh`: type, permissions and whether they have a passphrase
   (`ssh-keygen -y -P ""`). A key without one is an `exposure` finding; a key with one, an `info`
   `setting`.
@@ -223,8 +229,9 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
 - Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history. The disk scan takes
   about a minute; the history scan of ~330 repositories takes most of the run.
 - Config (`connectors.local-secrets.config`): `repos_root`, `skip_git_history` (true skips
-  gitleaks and keeps the fast scan), `gitleaks_workers` (default 6), `gitleaks_timeout` (per
-  repository, default `"10m"`).
+  gitleaks and keeps the fast scan), `git_cache` (default true; false scans every repository's
+  whole history and leaves the cache alone), `gitleaks_workers` (default 6), `gitleaks_timeout`
+  (per repository, default `"10m"`).
 - What to do with each finding: [docs/secrets.md](docs/secrets.md); each finding's `evidence.fix`
   links the section.
 
@@ -335,6 +342,37 @@ manager, crypto wallet, AI assistant, shopping, dev tool) from a short list of i
 - No network calls. Checking the Web Store (an extension pulled from the store, a change of owner)
   is a future enhancement.
 - To keep an extension the verdict disagrees with: `securizame accept <id> --reason "..."`.
+
+## Report
+
+```bash
+./securizame report                                   # terminal text
+./securizame report --format html --out report.html   # one self-contained page, mode 0600
+./securizame report --format md --out report.md
+```
+
+One page from the latest run of every connector instance (`out/<date>/<name>.jsonl`, the same
+files `remediate` reads), the accepted risks and the rotation ledger:
+
+- Headline: findings by severity for each connector instance, its run date, how many are
+  accepted and how many statuses need attention.
+- Needs attention: `reauth`, `signedout`, `missing_credentials`, `unsupported` and `error`
+  statuses, each with what to do and the `securizame inventory <name>` that checks it afterwards.
+- Changes since the previous run: new findings, resolved ones and severity changes, comparing each
+  instance's latest file with its own file in the newest earlier `out/<date>/` folder. Finding ids
+  are stable, so a finding is the same across runs. Running a connector twice in a day overwrites
+  that day's file, so the comparison is always with an earlier day.
+- Top findings, worst first and grouped by connector, each with its remediation, its page and
+  `securizame remediate <id>` when automatable.
+- Rotation ledger: open items by priority, the first P0 items (redacted hint, exposure, reason,
+  rotate URL; never a location) and snoozes past their date.
+- Accepted risks, with the expired ones and the ones the latest run no longer reports.
+
+`--min-severity` (default `low`) and `--top` (default 10 per connector and per kind of change)
+trim the lists; `--dir` names another inventory directory. The HTML page has no script and no
+external asset, follows the system's light or dark mode and fits a phone. Written to a file, the
+report gets mode 0600: it names accounts, services and paths. It never contains a secret value,
+because findings and the ledger never hold one.
 
 ## Remediation
 

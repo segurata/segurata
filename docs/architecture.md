@@ -29,6 +29,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `accepted.json` |
 | `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
 | `rotations` | Keeps the ledger of secrets to rotate and guides each rotation | Only securizame's own `rotations.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
+| `report` | Summarises the latest runs, what changed, the ledger and the accepted risks | Never (writes only the `--out` file) |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
@@ -112,6 +113,34 @@ names another file, `internal/accept`):
   resource id, so a resource id must not hold anything that changes between runs (a pid, a port).
   The debugging-port finding's resource id is `brave-remote-debugging`, whatever port Brave uses.
 - A broken file is an error, never an empty list: a typo must not unhide or hide anything silently.
+
+## Report
+
+`securizame report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
+changes:
+
+- the latest run of every connector instance, through `remediate.LatestFiles` and
+  `remediate.ReadRun` (findings and statuses);
+- for each, its previous run: `remediate.PreviousFile`, the same file name in the newest earlier
+  `out/<date>/` folder;
+- the accepted-risks file, which annotates every finding as `inventory` does, so an acceptance
+  made after the run counts and an expired one shows again;
+- the rotation ledger.
+
+The diff is by finding id: an id only in the latest file is new, one only in the previous file is
+resolved, one in both with another severity changed. That is why ids must stay stable (see
+"Accepted risks"). Runs compare per connector instance, because each connector runs on its own
+schedule.
+
+The report is built once as a small document (headings, paragraphs, lists, tables) and rendered as
+text, Markdown or HTML, so the three formats carry the same content. Markdown escapes markup in
+titles; HTML escapes everything, links only absolute http(s) URLs, has no script, loads nothing
+(its CSP is `default-src 'none'`) and switches colours with `prefers-color-scheme`. `--out` writes
+atomically with mode 0600 (`statefile.Write`).
+
+What it shows of the ledger is the item id, service, type, redacted hint, worst exposure, first
+reason and rotate URL; never a location path. Findings never hold a value, so neither does the
+report.
 
 ## Scheduled runs
 
@@ -263,6 +292,42 @@ of a browser at once (duplicates, one finding per extension).
 
 Every connector is written in Go. The Node prototypes (`google/`, `connected-apps/`, `workspace/`,
 `secrets/`, `macos/`) were deleted once their connectors matched them on a live run.
+
+## Incremental git history scan
+
+gitleaks over every repository under `repos_root` is most of a `local-secrets` run (about 30
+minutes for ~330 repositories). History only grows, so each repository is scanned in full once and
+then only for the commits added since (`connectors/localsecrets/historycache.go`).
+
+Cache: `~/.cache/securizame/gitleaks/<sha256(repo path)[:16]>.json`, mode 0600, one per
+repository. It holds the repository path, the cache format version, a hash of the gitleaks
+version and configuration (`GITLEAKS_CONFIG`, `GITLEAKS_CONFIG_TOML`, the repository's
+`.gitleaks.toml` and `.gitleaksignore`), a probe fingerprint of the machine key, the tips (every
+commit a ref or HEAD pointed to, from `git rev-list --no-walk --all`) and the leaks found, as
+prepared evidence: fingerprint, redacted hint, path, line, commit. The evidence is cached after
+the check that it does not contain the value, so the cache never holds one.
+
+Each run:
+
+1. Lists the current tips.
+2. Loads the cache. A different format, repository, gitleaks version or configuration, or
+   fingerprint key (the probe differs) discards it.
+3. Checks that every old tip is still reachable from a current one: `git rev-list -n 1 <old tips>
+   --not <current tips>` must print nothing. A rewritten or deleted ref fails the check (its
+   commits, and their leaks, may be gone), and so does an old tip whose object no longer exists:
+   gitleaks itself would scan nothing and exit 0 on a bad object.
+4. Passing the check, it scans `gitleaks git --log-opts "--full-history <new tips> --not <old
+   tips>"`, exactly the commits no earlier run saw, or nothing when no tip is new. Failing it, it
+   scans `--full-history <current tips>` in full. Tips are passed explicitly rather than with
+   gitleaks' default `--all`, so the cache records exactly what was scanned. A tip list longer
+   than 256 KiB falls back to gitleaks' default.
+5. Replays the cached leaks plus the new ones, recomputing what can change without a new commit:
+   whether the repository has a remote, and whether a cached JWT has expired since.
+
+`git_cache: false` in the connector config turns it off: every repository is scanned in full and
+the cache is neither read nor written. A cache that cannot be written is logged and costs the next
+run a full scan, nothing more. The connector runs only `git rev-list` and `git ls-files`, and
+`gitleaks git` and `gitleaks version`, each on an allowlist (`guards.go`).
 
 ## Rotation ledger
 

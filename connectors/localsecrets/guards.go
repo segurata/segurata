@@ -43,8 +43,8 @@ var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// gitList allows only `git ls-files`.
-var gitList = cli.Allowlist{"ls-files"}
+// gitList allows only `git ls-files` and `git rev-list`, both read-only.
+var gitList = cli.Allowlist{"ls-files", "rev-list"}
 
 // sshKeygenCheck allows exactly two shapes: print the public key of a key opened with an empty
 // passphrase (-y -P "" -f key), and print a key's fingerprint (-l -f key).

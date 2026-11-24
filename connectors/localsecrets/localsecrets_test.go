@@ -283,12 +283,21 @@ func (fx *fixture) connector(t *testing.T, gitleaksReport string) *Connector {
 	return &Connector{
 		RG: cli.Exec{Path: rg, Timeout: time.Minute},
 		Gitleaks: &fakeTool{reply: func(args []string) ([]byte, error) {
+			if args[0] == "version" {
+				return []byte("8.30.1\n"), nil
+			}
 			if args[len(args)-1] != tracked {
 				return []byte("[]"), nil
 			}
 			return []byte(gitleaksReport), nil
 		}},
 		Git: &fakeTool{reply: func(args []string) ([]byte, error) {
+			if args[1] == "rev-list" { // one commit per repository; nothing rewritten
+				if args[2] == "--no-walk" {
+					return []byte(strings.Repeat("a", 40) + "\n"), nil
+				}
+				return nil, nil
+			}
 			if args[0] == "--git-dir="+filepath.Join(tracked, ".git") {
 				return []byte("deploy.pem\x00"), nil // .env is ignored, the key is committed
 			}
@@ -303,6 +312,7 @@ func (fx *fixture) connector(t *testing.T, gitleaksReport string) *Connector {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 		Home:     func() (string, error) { return fx.home, nil },
 		KeyPath:  func(home string) string { return filepath.Join(home, ".config", "securizame", "fingerprint.key") },
+		CacheDir: DefaultCacheDir,
 		Now:      func() time.Time { return time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC) },
 	}
 }
@@ -430,7 +440,7 @@ func TestInventoryEndToEnd(t *testing.T) {
 		t.Error("ssh key comment leaked")
 	}
 
-	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateOK || !strings.Contains(rec.statuses[0].Detail, "gitleaks: 1 repositories, 0 failed") {
+	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateOK || !strings.Contains(rec.statuses[0].Detail, "gitleaks: 1 repositories (0 unchanged, 0 incremental, 1 full), 0 failed") {
 		t.Errorf("statuses %+v", rec.statuses)
 	}
 	if st, err := os.Stat(filepath.Join(fx.home, ".config", "securizame", "fingerprint.key")); err != nil || st.Mode().Perm() != 0o600 {

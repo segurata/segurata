@@ -158,9 +158,10 @@ func entropy(s string) float64 {
 // verdict is a plausible secret: its raw value (kept in memory only, to fingerprint it) and a
 // note that is safe to print.
 type verdict struct {
-	secret string
-	note   string
-	public bool
+	secret  string
+	note    string
+	public  bool
+	expires int64 // JWT exp claim (Unix seconds), 0 when none
 }
 
 // judge decides whether a value matched by p is a plausible secret. It rejects placeholders,
@@ -202,7 +203,7 @@ func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
 		if expired {
 			notes = append(notes, "expired")
 		}
-		return verdict{secret: secret, note: strings.Join(notes, " "), public: role == "anon" || expired}, true
+		return verdict{secret: secret, note: strings.Join(notes, " "), public: role == "anon" || expired, expires: int64(exp)}, true
 	}
 	return verdict{secret: secret}, true
 }

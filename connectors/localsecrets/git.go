@@ -232,44 +232,60 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 	return len(list), failed
 }
 
-// gitleaks runs one repository with the JSON report on stdout, so raw values only travel through
-// a pipe into this process (never a file, never the terminal): each is fingerprinted and dropped.
-func (s *scan) gitleaks(repo string) error {
+// runGitleaks scans one repository's history with the JSON report on stdout, so raw values only
+// travel through a pipe into this process (never a file, never the terminal): each is
+// fingerprinted and dropped. logOpts, when set, limits the scan to those commits (`git log`
+// arguments). It returns the prepared leaks and how many were omitted because the evidence would
+// have held the value.
+func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
 	defer cancel()
 	secs := strconv.Itoa(int(s.cfg.timeout.Seconds()))
-	out, err := guardGitleaks(s.c.Gitleaks).Run(ctx, "git", "--no-banner", "--log-level", "fatal", "--exit-code", "0",
-		"--timeout", secs, "--report-format", "json", "--report-path", "-", repo)
+	args := []string{"git", "--no-banner", "--log-level", "fatal", "--exit-code", "0",
+		"--timeout", secs, "--report-format", "json", "--report-path", "-"}
+	if logOpts != "" {
+		args = append(args, "--log-opts", logOpts)
+	}
+	out, err := guardGitleaks(s.c.Gitleaks).Run(ctx, append(args, repo)...)
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("timed out after %s (raise gitleaks_timeout)", s.cfg.timeout)
+		return nil, 0, fmt.Errorf("timed out after %s (raise gitleaks_timeout)", s.cfg.timeout)
 	}
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	var leaks []leak
 	if err := json.Unmarshal(out, &leaks); err != nil {
-		return fmt.Errorf("unreadable report: %v", err)
+		return nil, 0, fmt.Errorf("unreadable report: %v", err)
 	}
-	remote := s.hasRemote(repo)
+	var found []cachedLeak
+	omitted := 0
 	for _, l := range leaks {
-		s.leak(repo, remote, l)
+		c, ok, dropped := s.prepareLeak(repo, l)
+		switch {
+		case dropped:
+			omitted++
+		case ok:
+			found = append(found, c)
+		}
 	}
-	return nil
+	return found, omitted, nil
 }
 
-func (s *scan) leak(repo string, remote bool, l leak) {
-	ev := secretrisk.Evidence{Source: "gitleaks", Kind: "repo", Line: l.StartLine, Tracked: true, Remote: remote,
+// prepareLeak turns one gitleaks finding into evidence. ok is false for values that are not
+// secrets (placeholders, low entropy, short PEM bodies); dropped is true when the evidence would
+// have held the value.
+func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool) {
+	ev := secretrisk.Evidence{Source: "gitleaks", Kind: "repo", Line: l.StartLine, Tracked: true,
 		Repo: s.tilde(repo), Commit: truncate(l.Commit, 10), Date: truncate(l.Date, 10)}
-	abs := filepath.Join(repo, l.File)
 	value := l.Secret
 	if value == "" || value == "REDACTED" {
-		return
+		return c, false, false
 	}
 	switch p := classifyValue(value); {
 	case l.RuleID == "private-key" || strings.Contains(value, "PRIVATE KEY-----"):
 		body := pemBody(value)
 		if len(body) < 40 {
-			return
+			return c, false, false
 		}
 		label := pemLabel(value)
 		ev.Type, ev.Redacted, ev.Note, ev.Encrypted = privateKeyType, "PEM", label, pemEncrypted(label, value, body)
@@ -277,12 +293,13 @@ func (s *scan) leak(repo string, remote bool, l leak) {
 	case p != nil:
 		v, ok := judge(p, value, "", s.now)
 		if !ok {
-			return
+			return c, false, false
 		}
 		ev.Type, ev.Redacted, ev.Note, ev.Public = p.typ, secretrisk.Redact(p.typ, p.prefix, value), v.note, v.public
+		c.Expires = v.expires
 	default:
 		if placeholder.MatchString(value) {
-			return
+			return c, false, false
 		}
 		ev.Type = l.RuleID
 		if t, ok := gitleaksRules[l.RuleID]; ok {
@@ -290,7 +307,12 @@ func (s *scan) leak(repo string, remote bool, l leak) {
 		}
 		ev.Redacted = secretrisk.Redact(ev.Type, "", value)
 	}
-	s.add(abs, ev, value)
+	ev, ok = s.prepare(filepath.Join(repo, l.File), ev, value)
+	if !ok {
+		return c, false, true
+	}
+	c.Evidence = ev
+	return c, true, false
 }
 
 func truncate(s string, n int) string {

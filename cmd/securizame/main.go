@@ -3,6 +3,7 @@
 //	securizame connectors                     list built-in and external connectors
 //	securizame inventory [name|name:label ...] run connectors (all when none given)
 //	    --min-severity=low  --out=out  --verbose
+//	securizame report [--format text|md|html] [--out file]   latest runs, changes, ledger, accepted risks
 //	securizame remediate --list               automatable findings of the latest run
 //	securizame remediate <finding-id>         show the plan; --apply [--yes] to apply it
 //	securizame rotations sync|list|next|show|replace|done|snooze|ignore|reopen   ledger of secrets to rotate
@@ -50,6 +51,8 @@ func main() {
 		}
 	case "inventory":
 		os.Exit(inventory(os.Args[2:]))
+	case "report":
+		os.Exit(reportCmd(os.Args[2:]))
 	case "remediate":
 		os.Exit(remediateCmd(os.Args[2:]))
 	case "rotations":
@@ -69,7 +72,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id> | securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | securizame doctor [--connector name]")
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame report [--format text|md|html] [--out file] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id> | securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | securizame doctor [--connector name]")
 }
 
 func all() []connector.Connector {
