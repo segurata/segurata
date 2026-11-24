@@ -1,5 +1,5 @@
 // Package finding defines the records every connector emits: findings and per-account statuses.
-// See docs/arquitectura.md, "Modelo de hallazgo".
+// See docs/architecture.md, "Finding model".
 package finding
 
 import (
@@ -140,6 +140,8 @@ const (
 	StateOK                 State = "ok"
 	StateReauth             State = "reauth"
 	StateSignedOut          State = "signedout"
+	StateNoScope            State = "noscope"    // signed in, but the credential lacks a permission
+	StateUnverified         State = "unverified" // signed in, but the reader was never checked against a real page
 	StateMissingCredentials State = "missing_credentials"
 	StateUnsupported        State = "unsupported"
 	StateError              State = "error"
