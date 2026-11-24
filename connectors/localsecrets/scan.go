@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -71,16 +72,35 @@ func (s *scan) passes(history bool) []pass {
 	if history || s.cfg.skipHistory {
 		srcExtra = globs(srcSecretGlobs...)
 	}
-	return []pass{
+	return append([]pass{
 		{withAssignment, s.hs(credFiles), noCode},
 		{withAssignment, []string{s.h(".claude")}, append([]string{"--max-filesize", "50M"}, globs("*.json", "!projects", "!plugins/cache")...)},
 		{withAssignment, []string{s.src}, append([]string{"--max-filesize", "50M"}, srcExtra...)},
+	}, s.trailPasses()...)
+}
+
+// trailPasses are the runs over trails: shell histories, logs and agent transcripts.
+func (s *scan) trailPasses() []pass {
+	return []pass{
 		{withAssignment, s.hs(historyFiles), nil},
 		{specific, []string{s.src}, globs("*.log")},
 		{specific, s.hs([]string{"Library/Logs", ".local/log"}), nil},
 		{specific, s.hs(transcriptDirs), nil},
 	}
 }
+
+// patternsFor are the patterns a pass applies to a file of this kind: shell histories get the
+// generic assignment pattern, the other trails only the specific ones.
+func patternsFor(kind string) []pattern {
+	if specificOnly(kind) {
+		return specific
+	}
+	return withAssignment
+}
+
+// specificOnly reports whether files of this kind (transcripts, logs) are searched with the
+// specific patterns only.
+func specificOnly(kind string) bool { return kind == "transcript" || kind == "log" }
 
 func existing(paths []string) []string {
 	var out []string
@@ -114,21 +134,27 @@ func (s *scan) rgOutput(args []string) []byte {
 	return out
 }
 
-func (s *scan) rg(p pass) {
+// rgArgsFor is the ripgrep command line of one pass, or nil when none of its paths exist.
+func rgArgsFor(p pass) []string {
 	paths := existing(p.paths)
 	if len(paths) == 0 {
-		return
+		return nil
 	}
 	args := append(rgArgs(), p.extra...)
 	for _, pt := range p.patterns {
 		args = append(args, "-e", rgPattern(pt.src))
 	}
-	args = append(append(args, "--"), paths...)
-	s.parseRG(s.rgOutput(args), p.patterns)
+	return append(append(args, "--"), paths...)
 }
 
-// parseRG reads `path\0line:match` lines.
-func (s *scan) parseRG(out []byte, patterns []pattern) {
+func (s *scan) rg(p pass) {
+	if args := rgArgsFor(p); args != nil {
+		eachRGMatch(s.rgOutput(args), func(path string, line int, text string) { s.match(path, line, text, p.patterns) })
+	}
+}
+
+// eachRGMatch reads `path\0line:match` lines.
+func eachRGMatch(out []byte, f func(path string, line int, text string)) {
 	for _, l := range bytes.Split(out, []byte{'\n'}) {
 		z := bytes.IndexByte(l, 0)
 		if z < 0 {
@@ -143,47 +169,92 @@ func (s *scan) parseRG(out []byte, patterns []pattern) {
 		if err != nil {
 			continue
 		}
-		s.match(string(l[:z]), line, string(rest[c+1:]), patterns)
+		f(string(l[:z]), line, string(rest[c+1:]))
 	}
 }
 
-// match classifies one ripgrep match with the first pattern that fits it whole.
-func (s *scan) match(path string, line int, text string, patterns []pattern) {
-	kind := s.kindOf(path)
+// classified is one ripgrep match read by the first pattern that fits it whole. idx holds the
+// submatch byte offsets inside the match text, as regexp's Index functions return them.
+type classified struct {
+	p       *pattern
+	idx     []int
+	varName string
+}
+
+// subs are the submatches of text.
+func (c classified) subs(text string) []string {
+	m := make([]string, len(c.idx)/2)
+	for i := range m {
+		if c.idx[2*i] >= 0 {
+			m[i] = text[c.idx[2*i]:c.idx[2*i+1]]
+		}
+	}
+	return m
+}
+
+// classify finds the first pattern that fits text whole. ripgrep reports the leftmost match, so
+// `NAME=sk-ant-…` arrives as an assignment: its value is classified with the specific patterns
+// when one of them fits.
+func classify(path, text string, patterns []pattern) (classified, bool) {
 	for i := range patterns {
 		p := &patterns[i]
 		if p.files != nil && !p.files.MatchString(path) {
 			continue
 		}
-		m := p.re.FindStringSubmatch(text)
-		if m == nil {
+		idx := p.re.FindStringSubmatchIndex(text)
+		if idx == nil {
 			continue
 		}
-		varName := ""
+		c := classified{p: p, idx: idx}
 		if p.typ == "assignment" {
-			// ripgrep reports the leftmost match, so `NAME=sk-ant-…` arrives as an assignment:
-			// classify the value with the specific patterns when one of them fits.
-			varName = m[1]
-			if q := classifyValue(m[2]); q != nil {
-				p, m = q, q.re.FindStringSubmatch(m[2])
+			c.varName = text[idx[2]:idx[3]]
+			vs, ve := idx[4], idx[5]
+			if q := classifyValue(text[vs:ve]); q != nil {
+				qi := q.re.FindStringSubmatchIndex(text[vs:ve])
+				for j := range qi {
+					if qi[j] >= 0 {
+						qi[j] += vs
+					}
+				}
+				c.p, c.idx = q, qi
 			}
 		}
-		switch p.typ {
-		case privateKeyType:
-			s.privateKey(path, line, kind, m[0])
-		case "gcp-service-account":
-			s.serviceAccount(path, line, kind)
-		default:
-			s.value(path, line, kind, p, m, varName)
-		}
+		return c, true
+	}
+	return classified{}, false
+}
+
+// match classifies one ripgrep match and records it.
+func (s *scan) match(path string, line int, text string, patterns []pattern) {
+	c, ok := classify(path, text, patterns)
+	if !ok {
 		return
+	}
+	kind := s.kindOf(path)
+	switch c.p.typ {
+	case privateKeyType:
+		s.privateKey(path, line, kind, text)
+	case "gcp-service-account":
+		s.serviceAccount(path, line, kind)
+	default:
+		s.value(path, line, kind, c.p, c.subs(text), c.varName)
 	}
 }
 
 func (s *scan) value(path string, line int, kind string, p *pattern, m []string, varName string) {
-	v, ok := judge(p, m[p.group], varName, s.now)
+	ev, secret, ok := valueEvidence(p, m, varName, s.now)
 	if !ok {
 		return
+	}
+	ev.Kind, ev.Line = kind, line
+	s.add(path, ev, secret)
+}
+
+// valueEvidence judges a value match: the evidence without its location, and the raw secret.
+func valueEvidence(p *pattern, m []string, varName string, now time.Time) (secretrisk.Evidence, string, bool) {
+	v, ok := judge(p, m[p.group], varName, now)
+	if !ok {
+		return secretrisk.Evidence{}, "", false
 	}
 	note := v.note
 	if note == "" {
@@ -194,23 +265,33 @@ func (s *scan) value(path string, line int, kind string, p *pattern, m []string,
 			note = m[0][:i+3] + "…" + m[0][j:] // scheme and host only
 		}
 	}
-	s.add(path, secretrisk.Evidence{Source: "scan", Kind: kind, Line: line, Type: p.typ,
-		Redacted: secretrisk.Redact(p.typ, p.prefix, v.secret), Note: note, Public: v.public}, v.secret)
+	return secretrisk.Evidence{Source: "scan", Type: p.typ, Redacted: secretrisk.Redact(p.typ, p.prefix, v.secret),
+		Note: note, Public: v.public}, v.secret, true
 }
 
 // privateKey fingerprints the key body. A header with no body in a transcript or a log is
 // documentation; in a file, the body is on the following lines.
 func (s *scan) privateKey(path string, line int, kind, text string) {
-	body := pemBody(text)
-	if len(body) < 40 {
+	if len(pemBody(text)) < 40 {
 		if kind == "transcript" || kind == "log" {
 			return
 		}
 		text = pemBlockAt(path, line)
-		body = pemBody(text)
 	}
-	if len(body) < 40 {
+	ev, body, ok := privateKeyEvidence(text)
+	if !ok {
 		return
+	}
+	ev.Kind, ev.Line = kind, line
+	s.add(path, ev, body)
+}
+
+// privateKeyEvidence reads a PEM block (real or escaped newlines): the evidence without its
+// location and the base64 body that is fingerprinted. ok is false without a body.
+func privateKeyEvidence(text string) (secretrisk.Evidence, string, bool) {
+	body := pemBody(text)
+	if len(body) < 40 {
+		return secretrisk.Evidence{}, "", false
 	}
 	label := pemLabel(text)
 	enc := pemEncrypted(label, text, body)
@@ -218,14 +299,13 @@ func (s *scan) privateKey(path string, line int, kind, text string) {
 	if enc {
 		note += " encrypted"
 	}
-	s.add(path, secretrisk.Evidence{Source: "scan", Kind: kind, Line: line, Type: privateKeyType, Redacted: "PEM",
-		Note: note, Encrypted: enc}, body)
+	return secretrisk.Evidence{Source: "scan", Type: privateKeyType, Redacted: "PEM", Note: note, Encrypted: enc}, body, true
 }
 
 // serviceAccount reads a service-account key file and fingerprints its private key, so the same key
 // matches wherever else it appears. In a transcript the private-key match covers it.
 func (s *scan) serviceAccount(path string, line int, kind string) {
-	if kind == "transcript" || kind == "log" || kind == "history" {
+	if IsTrail(kind) {
 		return
 	}
 	raw, err := readSmall(path)

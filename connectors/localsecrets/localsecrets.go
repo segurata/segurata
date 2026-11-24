@@ -279,7 +279,7 @@ func bucketOf(ev secretrisk.Evidence) string {
 		return "ok"
 	case ev.Tracked:
 		return "0-git"
-	case ev.Kind == "transcript" || ev.Kind == "log" || ev.Kind == "history":
+	case IsTrail(ev.Kind):
 		return "2-trail"
 	case secretrisk.Where("", "", ev.Mode, false, false).Level == secretrisk.Shared:
 		return "1-readable"

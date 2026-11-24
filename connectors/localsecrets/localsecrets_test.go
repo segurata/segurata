@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 )
 
 // Every secret in these tests is generated at run time from a fixed seed: no real or real-looking
@@ -556,4 +557,75 @@ func TestModeCountsParentFolders(t *testing.T) {
 	if eff, _ := modeOf(f, home); eff != "640" {
 		t.Fatalf("group-traversable home: effective %q", eff)
 	}
+}
+
+// Trails must see in a trail exactly what an inventory reports there: same types, same
+// fingerprints, same noise.
+func TestTrailsFindAgreesWithInventory(t *testing.T) {
+	fx := newFixture(t)
+	noise := fake("", 19) + "7"
+	fx.write(t, ".zsh_history", ": 1700000000:0;export OPENAI_KEY="+fake("sk-proj-", 50)+"\n: 1700000001:0;MY_SECRET="+noise+"\n", 0o600)
+	fx.write(t, "Library/Logs/app/app.log", "token "+fake("ghp_", 36)+" and https://u:"+fake("", 12)+"9@db.example.com\n", 0o600)
+	c := fx.connector(t, "[]")
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{}
+	for _, f := range rec.findings {
+		if IsTrail(evidence(f, "kind")) && evidence(f, "source") == "scan" {
+			want[evidence(f, "path")+" "+evidence(f, "type")+" "+evidence(f, "fingerprint")] = true
+		}
+	}
+	tr, err := c.Trails(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := tr.Lines(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for p, ls := range lines {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all := strings.Split(string(raw), "\n")
+		for _, n := range ls {
+			text := all[n-1]
+			for _, h := range tr.Find(p, tr.Mode(p), text) {
+				got[tr.Tilde(p)+" "+h.Type+" "+h.Fingerprint] = true
+				if h.Fingerprint != fx.fpOf(t, c, text[h.Start:h.End], h.Type) {
+					t.Errorf("%s: the span does not hold the fingerprinted value", h.Type)
+				}
+			}
+		}
+	}
+	if len(want) < 5 {
+		t.Fatalf("fixture too small: %v", want)
+	}
+	for k := range want {
+		if !got[k] {
+			t.Errorf("inventory reports %s, Trails does not", k)
+		}
+	}
+	for k := range got {
+		if !want[k] {
+			t.Errorf("Trails finds %s, the inventory does not", k)
+		}
+	}
+}
+
+// fpOf fingerprints a span as the scan does: a private key by its body, anything else whole.
+func (fx *fixture) fpOf(t *testing.T, c *Connector, span, typ string) string {
+	t.Helper()
+	key, err := fingerprint.Open(c.KeyPath(fx.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ == privateKeyType {
+		return key.Of(pemBody(span))
+	}
+	return key.Of(span)
 }
