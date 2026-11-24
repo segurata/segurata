@@ -62,7 +62,11 @@ func TestSignInPages(t *testing.T) {
 			{page("https://account.live.com/consent/Manage", "short", nil), false},
 			{page("https://account.live.com/consent/Manage", long, nil), true},
 		}},
-		{"dropbox", finding.Status{Account: "dropbox", State: finding.StateSignedOut}, "https://www.dropbox.com/account/connected_apps", false, nil},
+		{"dropbox", finding.Status{Account: "dropbox", State: finding.StateSignedOut}, dropboxURL, false, []check{
+			{map[string]any{"url": "https://www.dropbox.com/login?cont=x", "fetched": true}, false},
+			{map[string]any{"url": dropboxURL, "fetched": false}, false},
+			{map[string]any{"url": dropboxURL, "fetched": true}, true},
+		}},
 	} {
 		p, ok := (&Connector{}).SignInPage(c.st)
 		if !ok || p.URL != c.url || p.Brief != c.brief || p.Do == "" || p.Expr == "" || p.Done == nil {

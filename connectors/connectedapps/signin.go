@@ -67,6 +67,13 @@ func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
 			p, ok := decode[fbListPage](raw)
 			return ok && p.URL != "" && !fbSignedOutRE.MatchString(p.URL) && !fbReauthRE.MatchString(p.URL) && fbListed(p)
 		}}, true
+	case "dropbox":
+		if signedOut {
+			return connector.SignInPage{URL: dropboxURL, Do: "sign in to Dropbox", Expr: dropboxJS, Done: func(raw json.RawMessage) bool {
+				p, ok := decode[dropboxPage](raw)
+				return ok && !dropboxOut(p) && p.Fetched
+			}}, true
+		}
 	default:
 		if s, ok := pageOnlyServices[service]; ok && signedOut {
 			return listSignIn(s.page.url, "sign in to "+s.title, pageTextJS, func(p listPage) bool {
@@ -85,7 +92,6 @@ var pageOnlyServices = map[string]struct {
 	"instagram": {instagramPage, "Instagram"},
 	"linkedin":  {linkedinPage, "LinkedIn"},
 	"microsoft": {microsoftPage, "your Microsoft account"},
-	"dropbox":   {dropboxPage, "Dropbox"},
 }
 
 // listSignIn is a sign-in page whose expression returns a listPage: through once the URL is set and

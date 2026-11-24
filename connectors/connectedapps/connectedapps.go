@@ -63,7 +63,7 @@ var services = []service{
 	{"slack", slack},
 	{"notion", notion},
 	{"microsoft", microsoftPage.run},
-	{"dropbox", dropboxPage.run},
+	{"dropbox", dropbox},
 	{"facebook", facebook},
 	{"instagram", instagramPage.run},
 	{"linkedin", linkedinPage.run},
@@ -419,6 +419,20 @@ type row struct {
 	Name  string   `json:"name"`
 	Href  string   `json:"href"`
 	Lines []string `json:"lines"`
+}
+
+// twice passes once ready has accepted two values in a row, for pages that pass a moment before
+// they are done (a response still finishing, a redirect still under way).
+func twice(ready func(json.RawMessage) bool) func(json.RawMessage) bool {
+	n := 0
+	return func(raw json.RawMessage) bool {
+		if ready(raw) {
+			n++
+		} else {
+			n = 0
+		}
+		return n >= 2
+	}
 }
 
 func readyWhen(match func(listPage) bool) func(json.RawMessage) bool {

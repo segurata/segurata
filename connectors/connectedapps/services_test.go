@@ -234,7 +234,6 @@ func TestPageOnlyServices(t *testing.T) {
 	const ig = "https://www.instagram.com/accounts/manage_access/"
 	const li = "https://www.linkedin.com/mypreferences/d/data-sharing-for-permitted-services"
 	const ms = "https://account.live.com/consent/Manage"
-	const db = "https://www.dropbox.com/account/connected_apps"
 	long := strings.Repeat("Some account page text. ", 30)
 	cases := []struct {
 		name, svc, url string
@@ -250,8 +249,6 @@ func TestPageOnlyServices(t *testing.T) {
 		{"linkedin signed out", "linkedin", li, page("https://www.linkedin.com/login?session_redirect=x", "Sign in", nil), finding.StateSignedOut},
 		{"microsoft signed out", "microsoft", ms, page("https://login.live.com/oauth20_authorize.srf?x", "Sign in", nil), finding.StateSignedOut},
 		{"microsoft signed in", "microsoft", ms, page(ms, long, nil), finding.StateUnverified},
-		{"dropbox signed out", "dropbox", db, page("https://www.dropbox.com/login?cont=x", "Sign in", nil), finding.StateSignedOut},
-		{"dropbox signed in", "dropbox", db, page(db, long, nil), finding.StateUnverified},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

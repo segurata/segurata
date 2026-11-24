@@ -18,7 +18,7 @@ service's login page.
 | Slack | `<workspace>.slack.com/apps/manage` | `connected-apps` |
 | Notion | Settings › Connections (a dialog with no URL) | `connected-apps`, developer connections only |
 | Microsoft | https://account.live.com/consent/Manage | `connected-apps`, session check only (unverified) |
-| Dropbox | https://www.dropbox.com/account/connected_apps | `connected-apps`, session check only (unverified) |
+| Dropbox | https://www.dropbox.com/account/connected_apps › "View Dropbox content" | `connected-apps` ("Launch from Dropbox" is not read) |
 | Facebook | https://www.facebook.com/settings/?tab=applications | `connected-apps`, first page only ("See more" is not clicked) |
 | Instagram | https://www.instagram.com/accounts/manage_access/ | `connected-apps`; a non-empty list is `unverified` |
 | LinkedIn | https://www.linkedin.com/mypreferences/d/data-sharing-for-permitted-services (the old `/permitted-services` redirects here) | `connected-apps`; a non-empty list is `unverified` |

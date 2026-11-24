@@ -61,10 +61,4 @@ var (
 		signedOut: regexp.MustCompile(`login\.(live|microsoftonline)\.com`),
 		loaded:    regexp.MustCompile(`(?s).{400}`),
 	}
-
-	dropboxPage = pageOnly{
-		url:       "https://www.dropbox.com/account/connected_apps",
-		signedOut: regexp.MustCompile(`dropbox\.com/login`),
-		loaded:    regexp.MustCompile(`(?s).{400}`),
-	}
 )
