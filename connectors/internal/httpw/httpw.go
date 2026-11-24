@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
@@ -47,17 +46,9 @@ type Client struct {
 // New returns a client that follows no redirect, so a request and its credential never go
 // anywhere but the URL the plan showed.
 func New(baseURL string, header http.Header, routes ...Route) *Client {
-	h := header.Clone()
-	h.Set("Accept", "application/json")
-	h.Set("User-Agent", "segurata")
-	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		Header:  h,
-		Routes:  routes,
-		HTTP: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
-	}
+	base := httpx.New(baseURL, header)
+	base.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Client{BaseURL: base.BaseURL, Header: base.Header, HTTP: base.HTTP, Routes: routes}
 }
 
 // Check refuses a method and path no route allows.
