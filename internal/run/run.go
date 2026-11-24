@@ -216,6 +216,33 @@ func unresolved(c connector.Connector, errs []error, emit connector.Emitter) boo
 	return missing
 }
 
+// StatusSummary prints, per result, its error and the statuses that need attention: those other
+// than ok, expected ones counted by reason, and the scopes an incomplete run left out.
+func StatusSummary(w io.Writer, results []*Result) {
+	for _, r := range results {
+		if r.Err != nil {
+			fmt.Fprintf(w, "! %s: %v\n", r.Name, r.Err)
+		}
+		expected := map[string]int{}
+		for _, st := range r.Statuses {
+			switch st.State {
+			case finding.StateOK:
+			case finding.StateExpected:
+				expected[st.Expected]++
+			default:
+				fmt.Fprintf(w, "~ %s %s: %s %s\n", r.Name, st.Account, st.State, st.Detail)
+			}
+		}
+		for _, reason := range slices.Sorted(maps.Keys(expected)) {
+			fmt.Fprintf(w, "~ %s: %d expected (by your config: %s)\n", r.Name, expected[reason], reason)
+		}
+		if sk := r.End.Scopes.Skipped; r.Err == nil && len(sk) > 0 {
+			fmt.Fprintf(w, "~ %s: incomplete run, %d %s not inspected (first %s: %s); missing findings there are not resolved\n",
+				r.Name, r.End.Scopes.SkippedCount, textfmt.Plural(r.End.Scopes.SkippedCount, "scope", "scopes"), sk[0].Scope, sk[0].Reason)
+		}
+	}
+}
+
 // FingerprintKey is fingerprint.OpenDefault; a variable so tests use their own key.
 var FingerprintKey = fingerprint.OpenDefault
 
@@ -260,28 +287,9 @@ func InstanceCredentials(cfg config.Config, name, label string) (connector.Crede
 
 // Summary prints statuses that need attention, then findings worst first.
 func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
+	StatusSummary(w, results)
 	var all []finding.Finding
 	for _, r := range results {
-		if r.Err != nil {
-			fmt.Fprintf(w, "! %s: %v\n", r.Name, r.Err)
-		}
-		expected := map[string]int{}
-		for _, st := range r.Statuses {
-			switch st.State {
-			case finding.StateOK:
-			case finding.StateExpected:
-				expected[st.Expected]++
-			default:
-				fmt.Fprintf(w, "~ %s %s: %s %s\n", r.Name, st.Account, st.State, st.Detail)
-			}
-		}
-		for _, reason := range slices.Sorted(maps.Keys(expected)) {
-			fmt.Fprintf(w, "~ %s: %d expected (by your config: %s)\n", r.Name, expected[reason], reason)
-		}
-		if sk := r.End.Scopes.Skipped; r.Err == nil && len(sk) > 0 {
-			fmt.Fprintf(w, "~ %s: incomplete run, %d %s not inspected (first %s: %s); missing findings there are not resolved\n",
-				r.Name, r.End.Scopes.SkippedCount, textfmt.Plural(r.End.Scopes.SkippedCount, "scope", "scopes"), sk[0].Scope, sk[0].Reason)
-		}
 		all = append(all, r.Findings...)
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Severity.Rank() > all[j].Severity.Rank() })

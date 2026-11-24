@@ -236,3 +236,25 @@ func StatusURL(st finding.Status) string {
 	}
 	return ""
 }
+
+// SetupStatuses are the statuses a setup item still holds, one per ref not gone, as the connector
+// reported them: the state comes from the key, the detail from the ref.
+func (it *Item) SetupStatuses() []finding.Status {
+	if it.Kind != KindSetup {
+		return nil
+	}
+	state := it.setupState()
+	var out []finding.Status
+	for _, r := range it.Findings {
+		if r.Gone || !strings.HasPrefix(r.ID, "status:") {
+			continue
+		}
+		out = append(out, finding.Status{Type: "status", Connector: r.Connector, Instance: r.Instance, Account: r.Account, Scope: r.Scope, State: state, Detail: r.Title})
+	}
+	return out
+}
+
+// setupState is the state a setup item's key names: the last field of SetupKey.
+func (it *Item) setupState() finding.State {
+	return finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])
+}
