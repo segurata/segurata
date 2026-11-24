@@ -8,7 +8,7 @@ Rules every connector follows, whatever its language:
 
 - **Inventory is read-only.** It lists, reads and computes. It never revokes, deletes, clicks a
   button that changes something, or writes outside its own process. Changes happen only through a
-  remediation, one finding at a time, after the owner saw the plan and said yes.
+  remediation, one plan at a time (a plan can cover several findings), after the owner saw the plan and said yes.
 - **No secret values anywhere**: not in findings, statuses, logs, stderr, test fixtures or commit
   messages. At most a redacted prefix and the length (`finding.Redact` in Go).
 - **English** for code, finding text and docs.
