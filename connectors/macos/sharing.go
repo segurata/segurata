@@ -42,10 +42,11 @@ func (c *Connector) sharePoints(ctx context.Context) (map[string]sharePoint, err
 	return parseSharePoints(out)
 }
 
-// parseSharePoints decodes `sharing -l -f json`. Empty output means no share points.
+// parseSharePoints decodes `sharing -l -f json`. Empty output, or the text "No share point
+// records." that macOS 15 prints even with -f json, means no share points.
 func parseSharePoints(raw []byte) (map[string]sharePoint, error) {
 	shares := map[string]sharePoint{}
-	if len(bytes.TrimSpace(raw)) == 0 {
+	if t := bytes.TrimSpace(raw); len(t) == 0 || bytes.Equal(t, []byte("No share point records.")) {
 		return shares, nil
 	}
 	if err := json.Unmarshal(raw, &shares); err != nil {
