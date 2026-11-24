@@ -40,10 +40,8 @@ var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	}
 	safe := false
 	for i, a := range args {
-		if strings.HasPrefix(a, "--report-path=") || (a == "--report-path" && (i+1 >= len(args) || args[i+1] != "-")) {
-			return refuse(args)
-		}
-		if strings.HasPrefix(a, "--log-opts=") {
+		if strings.HasPrefix(a, "--report-path=") || strings.HasPrefix(a, "--log-opts=") ||
+			(a == "--report-path" && (i+1 >= len(args) || args[i+1] != "-")) {
 			return refuse(args)
 		}
 		if a == "--log-opts" && i+1 < len(args) {

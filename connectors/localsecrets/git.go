@@ -262,8 +262,8 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 // runGitleaks scans one repository's history with the JSON report on stdout, so raw values only
 // travel through a pipe into this process (never a file, never the terminal): each is
 // fingerprinted and dropped. logOpts, when set, limits the scan to those commits (`git log`
-// arguments); else every commit is scanned, as gitleaks does by default. It returns the prepared leaks and how many were omitted because the evidence would
-// have held the value.
+// arguments); else every commit is scanned, as gitleaks does by default. It returns the prepared
+// leaks and how many were omitted because the evidence would have held the value.
 func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
 	defer cancel()
