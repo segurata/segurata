@@ -1,6 +1,7 @@
 package connectedapps
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,15 +20,14 @@ import (
 )
 
 const (
-	ghSettings     = "https://github.com/settings"
-	ghOAuthSel     = `a[href*="/settings/connections/applications/"]`
-	ghDetailTries  = 30
-	ghConcurrency  = 6 // OAuth app pages open at once
-	ghKeysURL      = ghSettings + "/keys"
-	ghRevokeOAuth  = `Open the page and choose "Revoke access". The app keeps any data it already copied.`
-	ghRevokeApp    = `Open the page, choose "Configure", then "Uninstall" at the bottom (GitHub asks you to confirm your identity first).`
-	ghRevokeKey    = `If you no longer use it, delete it on the SSH and GPG keys page.`
-	ghRevokeSessio = `If you do not recognise it, open the page and revoke the session.`
+	ghSettings      = "https://github.com/settings"
+	ghOAuthSel      = `a[href*="/settings/connections/applications/"]`
+	ghConcurrency   = 6 // OAuth app pages open at once
+	ghKeysURL       = ghSettings + "/keys"
+	ghRevokeOAuth   = `Open the page and choose "Revoke access". The app keeps any data it already copied.`
+	ghRevokeApp     = `Open the page, choose "Configure", then "Uninstall" at the bottom (GitHub asks you to confirm your identity first).`
+	ghRevokeKey     = `If you no longer use it, delete it on the SSH and GPG keys page.`
+	ghRevokeSession = `If you do not recognise it, open the page and revoke the session.`
 )
 
 // The account login comes from a meta tag GitHub puts on every signed-in page.
@@ -159,7 +159,7 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 			raw, err := e.b.load(ctx, a.href, ghDetailJS, func(raw json.RawMessage) bool {
 				p, _ := decode[listPage](raw)
 				return strings.Contains(p.Text, "Permissions") || strings.Contains(p.Text, "Organization access")
-			}, ghDetailTries)
+			}, 30)
 			if err != nil {
 				errs[i] = err
 				return
@@ -298,7 +298,7 @@ func githubSessions(ctx context.Context, e *env, login string) {
 	for _, r := range p.Rows {
 		s := parseGitHubSession(r)
 		e.report(grant{who: login, resType: "github_session", kind: finding.KindCredential, name: s.name, key: lastSegment(r.Href),
-			usedText: s.seen, note: s.note, url: r.Href, revoke: ghRevokeSessio, extra: map[string]any{"current": s.current}})
+			usedText: s.seen, note: s.note, url: r.Href, revoke: ghRevokeSession, extra: map[string]any{"current": s.current}})
 	}
 }
 
@@ -397,8 +397,8 @@ func (k ghKey) keyType() string {
 }
 
 var (
-	ghNoScopeRE = regexp.MustCompile(`needs the .* scope|HTTP 404|Not Found`)
-	ghSignedOff = regexp.MustCompile(`(?i)not logged in|auth login`)
+	ghNoScopeRE   = regexp.MustCompile(`needs the .* scope|HTTP 404|Not Found`)
+	ghSignedOffRE = regexp.MustCompile(`(?i)not logged in|auth login`)
 )
 
 // githubKeys lists SSH, signing and GPG keys with `gh api`. A missing scope is reported as
@@ -416,7 +416,7 @@ func githubKeys(ctx context.Context, e *env, login string) {
 			case errors.Is(err, exec.ErrNotFound):
 				e.status(login, finding.StateUnsupported, "the gh CLI is not installed: GitHub keys not listed (%s)", ghKeysURL)
 				return
-			case ghSignedOff.MatchString(msg):
+			case ghSignedOffRE.MatchString(msg):
 				e.status(login, finding.StateSignedOut, "gh is not signed in: run `gh auth login` to list GitHub keys")
 				return
 			case ghNoScopeRE.MatchString(msg):
@@ -445,7 +445,7 @@ func githubKeys(ctx context.Context, e *env, login string) {
 // parseGitHubKeys reads `gh api --paginate` output, which concatenates one JSON array per page.
 func parseGitHubKeys(out []byte) ([]ghKey, error) {
 	var all []ghKey
-	dec := json.NewDecoder(strings.NewReader(string(out)))
+	dec := json.NewDecoder(bytes.NewReader(out))
 	dec.UseNumber()
 	for dec.More() {
 		var page []ghKey

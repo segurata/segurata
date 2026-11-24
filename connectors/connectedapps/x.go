@@ -3,6 +3,7 @@ package connectedapps
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -98,7 +99,7 @@ type xApp struct {
 // parseXApps reads the captured oauth/list.json response.
 func parseXApps(resp *response) ([]xApp, error) {
 	if resp == nil {
-		return nil, fmt.Errorf("X did not fetch the app list")
+		return nil, errors.New("X did not fetch the app list")
 	}
 	var body struct {
 		Applications *[]xGrant `json:"applications"`

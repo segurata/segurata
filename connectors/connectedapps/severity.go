@@ -134,17 +134,20 @@ func classify(service, scope string) (rule, int) {
 // slackSeverity works from the scope count, the only thing the workspace's app list shows.
 // Fifteen or more scopes nearly always include posting and reading channel history.
 func slackSeverity(g grant) (finding.Severity, string) {
-	switch {
-	case g.extra["pending_approval"] == true:
+	if g.extra["pending_approval"] == true {
 		return finding.SevInfo, "be installed once a workspace admin approves it"
-	case g.count >= 15:
-		return finding.SevHigh, fmt.Sprintf("use %d permissions in %s", g.count, g.scope)
-	case g.count >= 5:
-		return finding.SevMedium, fmt.Sprintf("use %d permissions in %s", g.count, g.scope)
-	case g.count > 0:
-		return finding.SevLow, fmt.Sprintf("use %d permissions in %s", g.count, g.scope)
 	}
-	return finding.SevMedium, "act in " + g.scope
+	if g.count <= 0 {
+		return finding.SevMedium, "act in " + g.scope
+	}
+	label := fmt.Sprintf("use %d permissions in %s", g.count, g.scope)
+	switch {
+	case g.count >= 15:
+		return finding.SevHigh, label
+	case g.count >= 5:
+		return finding.SevMedium, label
+	}
+	return finding.SevLow, label
 }
 
 // raise moves a severity up one level, stopping at critical.

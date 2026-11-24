@@ -18,10 +18,8 @@ type pageOnly struct {
 	loaded    *regexp.Regexp // matches text present once the page has rendered
 }
 
-const pageOnlyJS = `({url: location.href, text: document.body ? document.body.innerText : ""})`
-
 func (s pageOnly) run(ctx context.Context, e *env) {
-	raw, err := e.b.load(ctx, s.url, pageOnlyJS, func(raw json.RawMessage) bool {
+	raw, err := e.b.load(ctx, s.url, pageTextJS, func(raw json.RawMessage) bool {
 		p, ok := decode[listPage](raw)
 		return ok && (s.signedOut.MatchString(p.URL) || s.loaded.MatchString(p.Text))
 	}, 40)

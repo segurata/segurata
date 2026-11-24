@@ -371,6 +371,9 @@ const pageHelpers = `
   const page = {url: location.href, title: document.title, text: document.body ? document.body.innerText : ""};
 `
 
+// pageTextJS reads only the page URL and its text.
+const pageTextJS = `({url: location.href, text: document.body ? document.body.innerText : ""})`
+
 // inPage wraps an expression body that returns an object built from pageHelpers.
 func inPage(body string) string { return "(() => {" + pageHelpers + body + "})()" }
 

@@ -25,12 +25,12 @@ const slackAppSel = `a[href*="/integrations/profile/"]`
 var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `')};`)
 
 var (
-	slackScopesRE    = regexp.MustCompile(`^(\d+) (ámbitos?|scopes?)$`)
-	slackNoteRE      = regexp.MustCompile(`^(Aprobado|Aprobación necesaria|Approved|Approval required|Restringido|Restricted)`)
-	slackPendingRE   = regexp.MustCompile(`^(Aprobación necesaria|Approval required|Restringido|Restricted)`)
-	slackEmptyRE     = regexp.MustCompile(`(?i)no hay aplicaciones|no apps`)
-	slackSignedOutRE = regexp.MustCompile(`signin`)
-	slackServiceHost = regexp.MustCompile(`^(app|api|www|status|slack)\.`)
+	slackScopesRE      = regexp.MustCompile(`^(\d+) (ámbitos?|scopes?)$`)
+	slackNoteRE        = regexp.MustCompile(`^(Aprobado|Aprobación necesaria|Approved|Approval required|Restringido|Restricted)`)
+	slackPendingRE     = regexp.MustCompile(`^(Aprobación necesaria|Approval required|Restringido|Restricted)`)
+	slackEmptyRE       = regexp.MustCompile(`(?i)no hay aplicaciones|no apps`)
+	slackSignedOutRE   = regexp.MustCompile(`signin`)
+	slackServiceHostRE = regexp.MustCompile(`^(app|api|www|status|slack)\.`)
 )
 
 // slackWorkspaces returns the workspace hosts linked from the sign-in page, sorted.
@@ -39,7 +39,7 @@ func slackWorkspaces(rows []row) []string {
 	var out []string
 	for _, r := range rows {
 		u, err := url.Parse(r.Href)
-		if err != nil || !strings.HasSuffix(u.Hostname(), ".slack.com") || slackServiceHost.MatchString(u.Hostname()) {
+		if err != nil || !strings.HasSuffix(u.Hostname(), ".slack.com") || slackServiceHostRE.MatchString(u.Hostname()) {
 			continue
 		}
 		if h := u.Hostname(); !seen[h] {

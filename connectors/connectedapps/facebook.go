@@ -26,8 +26,6 @@ var fbListJS = inPage(`
   const more = [...document.querySelectorAll('[role=button], button')].some((b) => /^(Ver más aplicaciones|See more apps)/i.test((b.getAttribute("aria-label") || b.innerText || "").trim()));
   return {...page, rows: rows('` + fbAppSel + `'), more};`)
 
-const fbDetailJS = `({url: location.href, text: document.body ? document.body.innerText : ""})`
-
 type fbListPage struct {
 	listPage
 	More bool `json:"more"`
@@ -127,7 +125,7 @@ func facebook(ctx context.Context, e *env) {
 			return
 		}
 		a := parseFacebookRow(r)
-		raw, err := e.b.load(ctx, a.href, fbDetailJS, func(raw json.RawMessage) bool {
+		raw, err := e.b.load(ctx, a.href, pageTextJS, func(raw json.RawMessage) bool {
 			d, _ := decode[listPage](raw)
 			return fbSharingRE.MatchString(d.Text)
 		}, 30)
