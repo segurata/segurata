@@ -396,4 +396,5 @@ version 2, change `protocol` to 2 and accept `2` in the requests; add `remediate
 - Before a connector counts as done, run it once against a real account and compare the findings
   with the provider's own pages.
 
-`examples/hibp/` is a complete external connector in Python, with tests.
+`examples/hibp/` is a complete external connector in Python, with tests. `plugins/prowler/` wraps a
+third-party scanner: it runs Prowler per project and turns its OCSF output into findings.

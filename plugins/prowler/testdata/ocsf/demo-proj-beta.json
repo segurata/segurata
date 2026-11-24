@@ -1,0 +1,202 @@
+[
+    {
+        "message": "Firewall default-allow-ssh allows 0.0.0.0/0 on port 22.",
+        "metadata": {
+            "event_code": "compute_firewall_ssh_access_from_the_internet_allowed",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 5,
+        "severity": "Critical",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Firewall default-allow-ssh allows 0.0.0.0/0 on port 22.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "internet-exposed"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-3.0": [
+                    "3.6"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-beta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of compute_firewall_ssh_access_from_the_internet_allowed",
+            "title": "Firewall rule does not allow SSH from the Internet",
+            "types": [],
+            "uid": "prowler-gcp-compute_firewall_ssh_access_from_the_internet_allowed-demo-proj-beta-global-default-allow-ssh",
+            "name": "default-allow-ssh"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "default-allow-ssh"
+                    }
+                },
+                "group": {
+                    "name": "compute"
+                },
+                "labels": [],
+                "name": "default-allow-ssh",
+                "type": "compute.googleapis.com/Firewall",
+                "uid": "2222222222222222222"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-beta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-beta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Restrict SSH to known ranges.",
+            "references": [
+                "https://hub.prowler.com/check/compute_firewall_ssh_access_from_the_internet_allowed"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Project demo-proj-beta has OS Login enabled.",
+        "metadata": {
+            "event_code": "compute_project_os_login_enabled",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 2,
+        "severity": "Low",
+        "status": "New",
+        "status_code": "PASS",
+        "status_detail": "Project demo-proj-beta has OS Login enabled.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "identity-access"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {},
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-beta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of compute_project_os_login_enabled",
+            "title": "OS Login is enabled",
+            "types": [],
+            "uid": "prowler-gcp-compute_project_os_login_enabled-demo-proj-beta-global-demo-proj-beta",
+            "name": "demo-proj-beta"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-proj-beta"
+                    }
+                },
+                "group": {
+                    "name": "compute"
+                },
+                "labels": [],
+                "name": "demo-proj-beta",
+                "type": "compute.googleapis.com/Project",
+                "uid": "demo-proj-beta"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-beta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-beta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Enable OS Login.",
+            "references": [
+                "https://hub.prowler.com/check/compute_project_os_login_enabled"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    }
+]

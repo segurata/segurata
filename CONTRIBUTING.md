@@ -8,6 +8,7 @@ gofmt -l .                 # must print nothing
 go vet ./...
 go test ./...
 (cd examples/hibp && python3 -m unittest)   # the example external connector
+(cd plugins/prowler && python3 -m unittest) # the Prowler wrapper
 ```
 
 ## Rules

@@ -1,0 +1,53 @@
+#!/bin/sh
+# Fake Prowler for the tests. Reads the project and output flags it is given and, by the files in
+# $FAKE_DIR, behaves like Prowler 5.51.0 would:
+#   ocsf/<project>.json           copied to <output-directory>/<output-filename>.ocsf.json
+#   deny/<project>/<account>      exits 1 with Prowler's "no accessible projects" error
+#   slow/<project>                sleeps past any test timeout
+#   crash/<project>               exits 1 with an unexpected error
+#   unknown/<project>             logs a serviceusage 403 for the compute API
+#   refused/<project>             logs a 403 listing buckets, and one at organization level
+# Each run appends its argument list and environment facts to $FAKE_DIR/prowler.log.
+set -eu
+project="" outdir="" name="" logfile=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    --project-id) project="$a" ;;
+    --output-directory) outdir="$a" ;;
+    --output-filename) name="$a" ;;
+    --log-file) logfile="$a" ;;
+  esac
+  prev="$a"
+done
+token="${CLOUDSDK_AUTH_ACCESS_TOKEN:-}"
+account="${token#ya29.TEST-not-a-real-token-for-}"
+if stat -c %a "$outdir" >/dev/null 2>&1; then mode=$(stat -c %a "$outdir"); else mode=$(stat -f %Lp "$outdir"); fi
+{
+  echo "ARGS $*"
+  echo "ENV account=$account adc=${GOOGLE_APPLICATION_CREDENTIALS:-unset} project=${GOOGLE_CLOUD_PROJECT:-} outdir_mode=$mode outdir=$outdir"
+} >> "$FAKE_DIR/prowler.log"
+if [ -e "$FAKE_DIR/deny/$project/$account" ]; then
+  echo '{"timestamp": "11/24/2026 09:00:00 PM", "filename": "gcp_provider.py:220", "level": "CRITICAL", "module": "gcp_provider", "message": "No Input Project IDs are active or can be accessed via Google Credentials."}' >> "$logfile"
+  echo "GCPNoAccesibleProjectsError[3000]: No Input Project IDs are active or can be accessed via Google Credentials." >&2
+  exit 1
+fi
+if [ -e "$FAKE_DIR/slow/$project" ]; then
+  sleep 30
+fi
+if [ -e "$FAKE_DIR/crash/$project" ]; then
+  echo "11/24/2026 09:00:00 PM [File: __main__.py:900] CRITICAL: ValueError[12]: boom while loading checks" >&2
+  exit 1
+fi
+echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"service.py:77\", \"level\": \"ERROR\", \"module\": \"service\", \"message\": \"dataproc API has not been used in project $project before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/dataproc.googleapis.com/overview?project=$project then retry.\"}" >> "$logfile"
+if [ -e "$FAKE_DIR/unknown/$project" ]; then
+  echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"service.py:83\", \"level\": \"ERROR\", \"module\": \"service\", \"message\": \"HttpError[70]: <HttpError 403 when requesting https://serviceusage.googleapis.com/v1/projects/$project/services/compute.googleapis.com?alt=json returned Permission denied>\"}" >> "$logfile"
+fi
+if [ -e "$FAKE_DIR/refused/$project" ]; then
+  echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"cloudstorage_service.py:40\", \"level\": \"ERROR\", \"module\": \"cloudstorage_service\", \"message\": \"HttpError[52]: <HttpError 403 when requesting https://storage.googleapis.com/storage/v1/b?project=$project&alt=json returned \"denied\">\"}" >> "$logfile"
+  echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"iam_service.py:300\", \"level\": \"ERROR\", \"module\": \"iam_service\", \"message\": \"HttpError[90]: <HttpError 403 when requesting https://essentialcontacts.googleapis.com/v1/organizations/123/contacts?alt=json returned \"denied\">\"}" >> "$logfile"
+fi
+if [ -e "$FAKE_DIR/ocsf/$project.json" ]; then
+  cp "$FAKE_DIR/ocsf/$project.json" "$outdir/$name.ocsf.json"
+fi
+exit 0

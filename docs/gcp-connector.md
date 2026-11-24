@@ -152,6 +152,10 @@ script. Remediation:
 
 ## Not done
 
+Posture checks beyond the ones above (public buckets, firewall rules, Cloud SQL flags, logging,
+KMS) come from Prowler through the external connector in
+[plugins/prowler](../plugins/prowler/README.md), which leaves out the checks this connector makes.
+
 Spend-risk APIs without quota caps (item 5 of the plan). It needs `gcloud services list` per
 project plus each API's consumer quota overrides through the Service Usage API, many calls per
 project for a weak signal, so it was left out.
