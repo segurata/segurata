@@ -8,6 +8,7 @@ package accept
 import (
 	"flag"
 	"fmt"
+	"github.com/segurata/segurata/internal/config"
 	"io"
 	"time"
 
@@ -49,7 +50,7 @@ func (c CLI) Accept(args []string) int {
 	list := fs.Bool("list", false, "list accepted findings")
 	reason := fs.String("reason", "", "why the risk is kept on purpose")
 	until := fs.String("until", "", "last day the acceptance applies, YYYY-MM-DD (default: no end)")
-	out := fs.String("out", "out", "inventory output directory")
+	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil || len(pos) > 1 || (len(pos) == 1) == *list {
 		fmt.Fprintln(c.Err, acceptUsage)

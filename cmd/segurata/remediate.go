@@ -24,7 +24,7 @@ func remediateCmd(args []string) int {
 	showAll := fs.Bool("all", false, "with --list, include info findings")
 	apply := fs.Bool("apply", false, "apply the plan after confirmation (default: dry run)")
 	yes := fs.Bool("yes", false, "with --apply, do not ask for confirmation")
-	out := fs.String("out", "out", "output directory")
+	out := fs.String("out", config.DefaultOutDir(), "output directory")
 	_ = fs.Parse(args)
 	id := ""
 	if fs.NArg() > 0 { // flags may also follow the id

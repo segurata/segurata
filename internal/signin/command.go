@@ -65,7 +65,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	all := fs.Bool("all", false, "also list the commands of other open setup items")
 	list := fs.Bool("list", false, "only print what it would open")
 	timeout := fs.Duration("timeout", 10*time.Minute, "stop waiting after this long")
-	out := fs.String("out", "out", "inventory output directory")
+	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	selectors, err := cliflag.Parse(fs, args)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/segurata/segurata/internal/config"
 	"io"
 	"time"
 
@@ -35,7 +36,7 @@ func (c CLI) Run(args []string) int {
 	fs.SetOutput(c.Err)
 	format := fs.String("format", string(Text), "text, md or html")
 	out := fs.String("out", "", "write the report to this file (mode 0600) instead of stdout")
-	dir := fs.String("dir", "out", "inventory output directory")
+	dir := fs.String("dir", config.DefaultOutDir(), "inventory output directory")
 	minSev := fs.String("min-severity", string(finding.SevLow), "leave findings below this severity out of the lists")
 	top := fs.Int("top", 10, "findings listed per connector and per kind of change")
 	pos, err := cliflag.Parse(fs, args)

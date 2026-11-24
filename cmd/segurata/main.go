@@ -114,7 +114,7 @@ func all() []connector.Connector {
 func inventory(args []string) int {
 	fs := flag.NewFlagSet("inventory", flag.ExitOnError)
 	minSev := fs.String("min-severity", "low", "hide findings below this severity in the summary")
-	out := fs.String("out", "out", "output directory")
+	out := fs.String("out", config.DefaultOutDir(), "output directory")
 	verbose := fs.Bool("verbose", false, "show connector logs")
 	_ = fs.Parse(args)
 

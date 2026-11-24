@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/segurata/segurata/internal/config"
 	"io"
 	"io/fs"
 	"os"
@@ -26,16 +27,7 @@ type Paths struct {
 }
 
 // Dir is $SEGURATA_HOME, or ~/.segurata: the tracker and its generated views.
-func Dir() (string, error) {
-	if d := os.Getenv("SEGURATA_HOME"); d != "" {
-		return d, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".segurata"), nil
-}
+func Dir() (string, error) { return config.StateDir() }
 
 // DefaultPaths is the tracker in Dir and the legacy files it imports once: $SEGURATA_STATE/rotations.json
 // (or rotations.json in Dir, where the startup migration moves the old state directory's files) and

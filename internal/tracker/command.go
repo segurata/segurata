@@ -134,7 +134,7 @@ func (c CLI) Track(args []string) int {
 
 func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	fs := flags("track sync", c.Err)
-	out := fs.String("out", "out", "inventory output directory")
+	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	from := fs.String("from", "", "local-secrets JSONL to read instead of its latest run")
 	noise := fs.Bool("include-noise", false, "also track noise-only secrets, without a priority")
 	if pos, err := cliflag.Parse(fs, args); err != nil || len(pos) > 0 {

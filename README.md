@@ -45,8 +45,9 @@ An external connector is any `segurata-<name>` executable on `PATH`, in any lang
 write one, built-in or external: [docs/connectors.md](docs/connectors.md). Contributing:
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Output goes to `out/<date>/<connector>.jsonl` (mode 0600; `out/` is gitignored because it holds
-email addresses and each account's services), with a summary sorted by severity. Each inventory
+Output goes to `~/.segurata/out/<date>/<connector>.jsonl` (mode 0600, in a 0700 folder, because it
+holds email addresses and each account's services), whatever folder you run segurata from;
+`SEGURATA_OUT` or `--out` choose another place. The summary is sorted by severity. Each inventory
 ends with `segurata track sync`, which folds the latest runs into the tracker.
 
 ## Tracker and status

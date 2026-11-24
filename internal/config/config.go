@@ -96,3 +96,28 @@ func (c Config) Instances(name string) []Instance {
 	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
 	return out
 }
+
+// StateDir is $SEGURATA_HOME, or ~/.segurata: the tracker, its generated views and the runs.
+func StateDir() (string, error) {
+	if d := os.Getenv("SEGURATA_HOME"); d != "" {
+		return d, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".segurata"), nil
+}
+
+// DefaultOutDir is where inventories write their runs when --out is not given: $SEGURATA_OUT, or
+// out/ in StateDir. It never depends on the directory segurata is run from.
+func DefaultOutDir() string {
+	if d := os.Getenv("SEGURATA_OUT"); d != "" {
+		return d
+	}
+	dir, err := StateDir()
+	if err != nil {
+		return "out"
+	}
+	return filepath.Join(dir, "out")
+}

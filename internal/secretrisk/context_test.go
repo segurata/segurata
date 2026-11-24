@@ -10,7 +10,7 @@ func TestRoleOf(t *testing.T) {
 		"~/src/shop/config/app.yml":                     RoleNone,
 		"~/src/shop/.env":                               RoleNone,
 		"~/src/shop/.env.test":                          RoleNone,
-		"~/src/acme-labs/spec/fixtures/requests/s3.yml":   RoleTest,
+		"~/src/acme-labs/spec/fixtures/requests/s3.yml": RoleTest,
 		"~/src/app/src/Register.test.tsx":               RoleTest,
 		"~/src/store/tests/redact.test.cjs":             RoleTest,
 		"~/src/api/internal/x/handler_test.go":          RoleTest,

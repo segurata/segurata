@@ -24,7 +24,7 @@ const doctorUsage = "usage: segurata doctor [--connector name|name:label] [--out
 func doctorCmd(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	only := fs.String("connector", "", "check one connector (or one instance, name:label)")
-	out := fs.String("out", "out", "inventory output directory whose mode is checked")
+	out := fs.String("out", config.DefaultOutDir(), "inventory output directory whose mode is checked")
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil || len(pos) != 0 {
 		fmt.Fprintln(os.Stderr, doctorUsage)

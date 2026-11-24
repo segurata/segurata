@@ -60,7 +60,7 @@ func (c CLI) Run(args []string) int {
 	cmd, rest := args[0], args[1:]
 	fs := flag.NewFlagSet("accounts "+cmd, flag.ContinueOnError)
 	fs.SetOutput(c.Err)
-	out := fs.String("out", "out", "inventory output directory")
+	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	pos, err := cliflag.Parse(fs, rest)
 	if err != nil {
 		return 2

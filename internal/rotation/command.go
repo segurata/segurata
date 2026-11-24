@@ -7,6 +7,7 @@ package rotation
 import (
 	"flag"
 	"fmt"
+	"github.com/segurata/segurata/internal/config"
 	"io"
 	"slices"
 	"strings"
@@ -101,7 +102,7 @@ func newFlags(name string, errw io.Writer) *flag.FlagSet {
 func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time) int {
 	fs := newFlags("sync", c.Err)
 	from := fs.String("from", "", "local-secrets JSONL to read (default: the latest under --out)")
-	out := fs.String("out", "out", "inventory output directory")
+	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	noise := fs.Bool("include-noise", false, "also track generic matches, public, expired and encrypted values")
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
