@@ -74,7 +74,7 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	if awsItem.Status != Merged || awsItem.MergedInto != rot.ID || len(awsItem.Findings) != 0 || rep.Merged != 1 {
 		t.Errorf("aws item: %s into %q, %d refs, merged %d", awsItem.Status, awsItem.MergedInto, len(awsItem.Findings), rep.Merged)
 	}
-	if !strings.Contains(awsItem.Next.Action, rot.ID+" owns this secret") {
+	if !strings.Contains(awsItem.Next.Action, rot.ID+" owns this now") {
 		t.Errorf("merged next step: %+v", awsItem.Next)
 	}
 	// Another sync of the same runs changes nothing.

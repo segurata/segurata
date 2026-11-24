@@ -9,7 +9,7 @@ import (
 // themes are created in every tracker, in this order (the briefing follows it).
 var themes = []Theme{
 	{"rotations", "Secrets to rotate", "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."},
-	{"data-dumps", "Data dumps in git", "Database dumps committed to repositories, one item per file: purge from history, rotate what they hold, check breach duties."},
+	{"data-dumps", "Data dumps in git", "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."},
 	{"transcripts", "Secrets in trail files", "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."},
 	{"mac", "This Mac", "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."},
 	{"browser-extensions", "Browser extensions", "Extensions that can read or drive your pages, one item per extension."},

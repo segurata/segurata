@@ -180,7 +180,7 @@ connector and resource type, first match wins:
 |---|---|---|
 | local-secrets secrets | fingerprint (rotate items, below) | rotate |
 | local-secrets secrets in transcripts, shell histories and logs | local-secrets instance: "Redact secrets from N trail files", next step `segurata redact --trails`, severity capped at medium | fix |
-| local-secrets `data_dump` | file | fix |
+| local-secrets `data_dump` | repository: "3 database dumps in the git history of ~/src/api (11 MB)", one `git filter-repo` for all its files, the files and sizes listed, docs/secrets.md#data-dumps-in-git as the page and the AEPD and EDPB breach guidance as the secondary step | fix |
 | github org and repository-setting checks | check, across orgs ("Two-factor authentication not required in 5 GitHub orgs") | fix |
 | github repositories | organization | fix |
 | connected-apps Slack apps | workspace and severity | review |
@@ -206,8 +206,16 @@ for a signed-out service, and `segurata track expect <id>` (see "Expected status
 limitation kept on purpose. An `unsupported` check that needs administrator rights asks for no
 install.
 
-A finding that has an item of its own (key `finding:<id>`) always goes there before any rule: one
-accepted apart from its group, or one grouped per finding anyway. The title and next step come
+A finding that has an item of its own (key `finding:<id>`) goes there before any rule when it was
+accepted or ignored on its own, or when its rule groups per finding anyway. Otherwise its rule now
+groups it (data dumps were one item per file): the finding moves to the group and the old item,
+left with nothing reported, closes as `merged` into the group's item.
+
+An item can be blocked by a pending decision: the decision's option effects would close it, or it
+is a data-dump item and the decision is about dumps (its key or question names them, as
+"Purge the data dumps from git history?" does). Its next step then starts "Blocked by decision
+T-0001 (…): answer it first." until the decision is answered, and status counts what each
+decision unblocks (see "segurata status"). The title and next step come
 from the rule and the worst finding's remediation (`segurata remediate <id>` and `who:
 segurata` when the only finding is automatable). Only generic decisions are seeded, once each
 (whether to install the daily schedule). Questions about an owner's own projects are added with

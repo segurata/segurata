@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Grouping turns findings into items: one item per thing a person would do. Five GitHub orgs that
@@ -24,6 +26,7 @@ const (
 	perAccountSeverity                // one item per account and severity
 	perProject                        // one item per evidence.project
 	perFamily                         // one item per account and title family (the title without the resource's name)
+	perRepo                           // one item per evidence.repo
 )
 
 // rule maps findings of a connector and resource type (and, optionally, some resource ids) to how
@@ -34,10 +37,11 @@ type rule struct {
 	by         groupBy
 	kind       Kind
 	title      func(p *proposal) string // nil: the finding's title, or the family with a count
+	next       func(p *proposal) *Next  // nil: the worst finding's remediation
 }
 
 var rules = []rule{
-	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perFinding, kind: KindFix},
+	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
 	{connectors: []string{"github"}, resource: "github_org_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
 	{connectors: []string{"github"}, resource: "github_repo_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
 	{connectors: []string{"github"}, resource: "github_repo", by: perAccount, kind: KindFix, title: func(p *proposal) string {
@@ -71,6 +75,49 @@ var rules = []rule{
 	{connectors: []string{"macos", "aws"}, by: perFinding, kind: KindFix},
 	{connectors: []string{"browser-extensions"}, by: perFinding, kind: KindReview},
 	{by: perFamily, kind: KindFix},
+}
+
+// dumpsTitle names a repository's dumps by number and total size: "3 database dumps in the git
+// history of ~/src/api (11 MB)".
+func dumpsTitle(p *proposal) string {
+	var total int64
+	for _, f := range p.findings {
+		n, _ := f.Evidence["size_bytes"].(float64)
+		total += int64(n)
+	}
+	return fmt.Sprintf("%s in the git history of %s (%s)", count(len(p.findings), "database dump", "database dumps"), p.repo, secretrisk.HumanSize(total))
+}
+
+// dumpsNext purges every dump of the repository in one history rewrite, lists the files with their
+// size, and leaves the breach-notification duty as the secondary step. Its page is the guide in
+// docs/secrets.md.
+func dumpsNext(p *proposal) *Next {
+	fs := slices.Clone(p.findings)
+	sort.SliceStable(fs, func(i, j int) bool { return fs[i].Severity.Rank() > fs[j].Severity.Rank() })
+	var paths, files []string
+	pushed := false
+	for _, f := range fs {
+		str := func(k string) string { s, _ := f.Evidence[k].(string); return s }
+		paths = append(paths, "--path '"+strings.ReplaceAll(str("path"), "'", `'\''`)+"'")
+		state := "local"
+		if remote, _ := f.Evidence["remote"].(bool); remote {
+			state, pushed = "pushed", true
+		}
+		files = append(files, fmt.Sprintf("%s (%s, %s)", str("path"), str("size"), state))
+	}
+	var b strings.Builder
+	if pushed {
+		b.WriteString("Treat the data as exposed to everyone who could clone the repository. ")
+	}
+	fmt.Fprintf(&b, "Rotate every credential the dumps hold, then purge %s from history in one pass: `git filter-repo --invert-paths %s`",
+		textfmt.Plural(len(fs), "it", "them"), strings.Join(paths, " "))
+	if pushed {
+		b.WriteString(" and force-push every branch and tag; collaborators must re-clone")
+	}
+	b.WriteString(". segurata never rewrites history or pushes.\nFiles: " + strings.Join(files, "; ") + ".\n")
+	fmt.Fprintf(&b, "If they hold personal data of customers or staff, check the GDPR breach notification duty (72 hours): %s, %s.",
+		secretrisk.URLAEPDBreaches, secretrisk.URLEDPBBreaches)
+	return &Next{Who: You, Action: b.String(), URL: secretrisk.DumpFixDoc}
 }
 
 // breadth words a group's worst severity: high and critical, medium, or lower.
@@ -174,7 +221,7 @@ func ruleFor(f finding.Finding) *rule {
 // proposal is what one sync says an item should hold.
 type proposal struct {
 	key, theme, connector, instance, resource string
-	account, project, check                   string
+	account, project, check, repo             string
 	kind                                      Kind
 	rule                                      *rule
 	findings                                  []finding.Finding
@@ -207,6 +254,9 @@ func groupKey(f finding.Finding, r *rule) (key string, p proposal) {
 		key = base + "|project:" + p.project
 	case perFamily:
 		key = base + "|account:" + f.Account + "|family:" + family(f)
+	case perRepo:
+		p.repo, _ = f.Evidence["repo"].(string)
+		key = base + "|repo:" + p.repo
 	default:
 		key = pinnedKey(f.ID)
 	}
@@ -287,6 +337,11 @@ func (p *proposal) finish(itemID string) {
 		p.title = p.findings[0].Title
 	default:
 		p.title = fmt.Sprintf("%s (%d)", family(p.findings[0]), len(p.findings))
+	}
+	if p.rule.next != nil {
+		p.next = p.rule.next(p)
+		p.next.Command = "segurata track show " + itemID
+		return
 	}
 	w := p.worst()
 	n := &Next{Who: You, Action: w.Remediation.Summary, URL: w.Remediation.URL}

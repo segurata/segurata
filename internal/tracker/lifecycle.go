@@ -262,6 +262,12 @@ func (it *Item) AcceptanceExpired(now time.Time) bool {
 	return err != nil || !now.Before(d.AddDate(0, 0, 1))
 }
 
+// keptApart reports whether an item holding one finding on its own stays apart from the group the
+// finding's rule names: the owner accepted or ignored it on its own.
+func (it *Item) keptApart() bool {
+	return it.Accepted != nil || it.Status == Ignored
+}
+
 // Closed reports whether the item is off the to-do list for a reason other than a snooze.
 func (it *Item) Closed() bool {
 	switch it.Status {

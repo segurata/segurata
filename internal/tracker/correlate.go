@@ -262,16 +262,26 @@ func (t *Tracker) attachLive(claims map[string]claim, folded map[string]*run) {
 	}
 }
 
-// mergeClaimed takes the claimed findings out of a connector item: they belong to the rotate item
-// now. An item left with nothing reported closes as merged into the rotate item that took its
-// finding, unless the owner closed it already.
-func (it *Item) mergeClaimed(claims map[string]claim, now time.Time) bool {
+// claimedBy maps each claimed finding to the rotate item that took it.
+func claimedBy(claims map[string]claim) map[string]string {
+	out := make(map[string]string, len(claims))
+	for id, c := range claims {
+		out[id] = c.item.ID
+	}
+	return out
+}
+
+// moveRefs takes the findings that now belong to another item (moved: finding id to item id) out
+// of this one: a rotate item that owns the same secret, or the group a finding's rule now puts it
+// in. An item left with nothing reported closes as merged into the item that took its finding,
+// unless the owner closed it already.
+func (it *Item) moveRefs(moved map[string]string, now time.Time) bool {
 	into := ""
 	kept := it.Findings[:0]
 	for _, r := range it.Findings {
-		if c, ok := claims[r.ID]; ok {
+		if to, ok := moved[r.ID]; ok && to != it.ID {
 			if into == "" {
-				into = c.item.ID
+				into = to
 			}
 			continue
 		}
@@ -286,9 +296,9 @@ func (it *Item) mergeClaimed(claims map[string]claim, now time.Time) bool {
 	default:
 		return false
 	}
-	it.setStatus(now, Merged, EvMerged, actMerged, "the same secret as "+into+", which owns it now")
+	it.setStatus(now, Merged, EvMerged, actMerged, "merged into "+into+", which owns it now")
 	it.MergedInto = into
-	it.Next = &Next{Who: You, Action: "Nothing here: " + into + " owns this secret; rotate it there.", Command: "segurata track show " + into}
+	it.Next = &Next{Who: You, Action: "Nothing here: " + into + " owns this now.", Command: "segurata track show " + into}
 	return true
 }
 
@@ -296,7 +306,7 @@ func (it *Item) mergeClaimed(claims map[string]claim, now time.Time) bool {
 // not that secret now (the key in the file was rotated, the leaked copy is a different key).
 func (it *Item) reopenMerged(now time.Time) {
 	from := it.MergedInto
-	it.setStatus(now, Open, EvReopened, actAutoReopen, "no longer the same secret as "+from)
+	it.setStatus(now, Open, EvReopened, actAutoReopen, "no longer part of "+from)
 }
 
 // live are the connector findings attached to a rotate item that are still reported: evidence the

@@ -151,6 +151,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	// A connector's credential that is a rotate item's secret goes to that item, not to a group of
 	// its own (see correlate.go).
 	claims := t.correlate(folded)
+	regroup := map[string]string{} // finding id -> key of the group it moves to
 	for _, l := range rep.Runs {
 		r := folded[l]
 		for _, f := range r.findings {
@@ -165,9 +166,14 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 			}
 			rl := ruleFor(f)
 			key, p := groupKey(f, rl)
-			if _, pinned := byKey[pinnedKey(f.ID)]; pinned {
-				// An item already holds this finding on its own: it stays there, titled by the finding.
-				key, p.rule = pinnedKey(f.ID), &rule{kind: rl.kind}
+			if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
+				if rl.by == perFinding || pin.keptApart() {
+					// An item already holds this finding on its own: it stays there, titled by the finding.
+					key, p.rule = pinnedKey(f.ID), &rule{kind: rl.kind}
+				} else {
+					// Its rule groups it now (data dumps per repository): it moves to the group.
+					regroup[f.ID] = key
+				}
 			}
 			propose(key, p).add(f)
 		}
@@ -220,11 +226,15 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	}
 
 	t.attachLive(claims, folded)
+	moved := claimedBy(claims)
+	for id, key := range regroup {
+		moved[id] = byKey[key].ID
+	}
 	for _, it := range t.Items {
 		if it.Kind == KindRotate || len(it.Findings) == 0 {
 			continue
 		}
-		if it.mergeClaimed(claims, now) {
+		if it.moveRefs(moved, now) {
 			rep.Merged++
 		}
 		if it.Status == Merged {
@@ -238,6 +248,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	t.collectClaims(folded)
 	t.Attribute(owned)
 	rep.Ruled = t.applyRules(now)
+	t.noteBlocked(now)
 	t.seed(now)
 	if t.Sources == nil {
 		t.Sources = map[string]time.Time{}

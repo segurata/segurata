@@ -27,3 +27,9 @@ func TestMatchesInsideADumpAreNoiseUnlessRecognisable(t *testing.T) {
 		}
 	}
 }
+
+func TestHumanSize(t *testing.T) {
+	if HumanSize(3*1024+512) != "3.5 KB" || HumanSize(900) != "900 B" || HumanSize(1536<<20) != "1.5 GB" {
+		t.Error("HumanSize")
+	}
+}
