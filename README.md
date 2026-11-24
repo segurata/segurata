@@ -9,7 +9,7 @@ by hand or with an explicit remediation, after reviewing the list.
 ## Build
 
 ```bash
-go build -o securizame ./cmd/securizame
+go build -o segurata ./cmd/segurata
 ./securizame connectors            # built-in and external connectors
 ./securizame inventory [name ...]  # all connectors when none is given
 ```

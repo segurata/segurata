@@ -3,7 +3,7 @@
 ## Build and test
 
 ```bash
-go build -o securizame ./cmd/securizame
+go build -o segurata ./cmd/segurata
 gofmt -l .                 # must print nothing
 go vet ./...
 go test ./...
