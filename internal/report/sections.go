@@ -83,20 +83,38 @@ func needsAttention(sts []finding.Status) []finding.Status {
 	return out
 }
 
-// statusAction is what to do about a status, and the command that checks it afterwards.
+// statusAction is what to do about a status, and the command that checks it afterwards. Connectors
+// usually put the exact fix in the detail (a command to run, a page to open); then the action
+// points there instead of guessing from the state alone.
 func statusAction(st finding.Status, label string) (string, string) {
 	rerun := "securizame inventory " + label
+	if detailHasFix(st.Detail) {
+		return "Do what the detail above says.", rerun
+	}
 	switch st.State {
 	case finding.StateReauth:
-		return "Sign in to this account again in the browser securizame drives over CDP.", rerun
+		return "Sign in to this account again (in the browser for browser connectors, with the provider's CLI otherwise).", rerun
 	case finding.StateSignedOut:
-		return "Sign in to this account in that browser, or drop it from the config if it is gone.", rerun
+		return "Sign in to this account in the browser securizame drives, or drop it from the config if it is gone.", rerun
 	case finding.StateMissingCredentials:
 		return "Check the secret reference for " + label + " in ~/.config/securizame/config.json (Keychain item, 1Password field or environment variable).", rerun
+	case finding.StateNoScope:
+		return "Grant the permission the detail names to the credential this connector uses.", rerun
 	case finding.StateUnsupported:
 		return "Install what the detail names (respecting the 4-day quarantine), or remove " + label + " from the config.", rerun
 	}
 	return "Run it again with connector logs to see what failed.", rerun + " --verbose"
+}
+
+// detailHasFix reports whether a status detail already carries a concrete step.
+func detailHasFix(detail string) bool {
+	d := strings.ToLower(detail)
+	for _, cue := range []string{"run:", "run gcloud", "run gh", "run aws", "run az", "; run ", "open http", "store it with", "raise ", "create an "} {
+		if strings.Contains(d, cue) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Report) attention(d *doc) {
