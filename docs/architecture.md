@@ -111,6 +111,47 @@ names another file, `internal/accept`):
   The debugging-port finding's resource id is `brave-remote-debugging`, whatever port Brave uses.
 - A broken file is an error, never an empty list: a typo must not unhide or hide anything silently.
 
+## Scheduled runs
+
+```
+securizame schedule install [--every 24h] [--connectors a,b] [--apply [--yes]]
+securizame schedule uninstall [--apply [--yes]]
+securizame schedule status
+securizame schedule run [--connectors a,b]        what the agent executes
+```
+
+`internal/schedule`. On macOS, `install` builds a launchd user agent,
+`~/Library/LaunchAgents/com.securizame.inventory.plist`, that runs `securizame schedule run` every
+`--every` (default 24h, at least 1h; `StartInterval`, not at load) from
+`~/.local/state/securizame`, with the PATH of the shell that installed it and its output in
+`~/Library/Logs/securizame/`. Without `--apply` it prints the plist and the
+`launchctl bootstrap gui/<uid> <plist>` command and changes nothing; with `--apply` it asks on the
+terminal as `remediate` does (`--yes` skips it), writes the plist (mode 644), boots out an agent
+already loaded and bootstraps the new one. `uninstall` boots it out and removes the plist, keeping
+reports and logs. `install` refuses a binary under the temp directory (`go run`), which would be
+gone by the first run.
+
+One `schedule run`:
+
+1. Reads the high and critical findings of the latest scheduled run (`~/.local/state/securizame/out`),
+   leaving out accepted ones.
+2. Runs `securizame inventory --out ~/.local/state/securizame/out <connectors>`. Without
+   `--connectors`, every installed connector except those whose `describe` needs `cdp`: the browser
+   is rarely running with its debugging port when the agent fires.
+3. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three new
+   high or critical findings by title. Titles never carry secrets; evidence is never shown. Each
+   is also written to the log.
+4. Runs `securizame report --format md --out ~/.local/state/securizame/last-report.md --dir
+   ~/.local/state/securizame/out`.
+
+Scheduled inventories live apart from the interactive `out/`; `securizame remediate --out
+~/.local/state/securizame/out --list` works from them.
+
+On Linux `install` prints the equivalent systemd user service and timer
+(`~/.config/systemd/user/securizame-inventory.{service,timer}`) and the `systemctl --user` commands
+to enable them; `--apply` is refused there, and new findings go to the journal instead of a
+notification.
+
 ## External connector protocol (v1, v2)
 
 An external connector is a `securizame-<name>` executable on `PATH`, in any language, discovered

@@ -142,14 +142,20 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 }
 
 func confirm(opt Options) (bool, error) {
-	if opt.Yes {
+	return Confirm(opt.IO, opt.TTY, opt.Yes)
+}
+
+// Confirm asks "Apply? [y/N]" on the terminal and accepts only y or yes. yes skips the question;
+// without a terminal it refuses with ErrNotTTY, since nobody could have answered.
+func Confirm(term connector.IO, tty, yes bool) (bool, error) {
+	if yes {
 		return true, nil
 	}
-	if !opt.TTY {
+	if !tty {
 		return false, ErrNotTTY
 	}
-	fmt.Fprint(opt.IO.Out, "\nApply? [y/N] ")
-	line, err := bufio.NewReader(opt.IO.In).ReadString('\n')
+	fmt.Fprint(term.Out, "\nApply? [y/N] ")
+	line, err := bufio.NewReader(term.In).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}

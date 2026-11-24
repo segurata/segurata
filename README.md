@@ -338,6 +338,24 @@ again after that day, marked "(acceptance expired)". State: `~/.config/securizam
 (mode 0600; `SECURIZAME_ACCEPTED` names another file). Details:
 [docs/architecture.md](docs/architecture.md#accepted-risks).
 
+## Scheduled runs
+
+```bash
+./securizame schedule install                         # print the launchd agent; changes nothing
+./securizame schedule install --every 12h --apply     # write and load it, after "Apply? [y/N]"
+./securizame schedule status
+./securizame schedule uninstall --apply
+```
+
+A launchd user agent (`~/Library/LaunchAgents/com.securizame.inventory.plist`) runs an inventory
+every day (or `--every`), writes `~/.local/state/securizame/last-report.md`, and posts a macOS
+notification when a high or critical finding appears that the previous run did not have. By default
+it runs every connector except those that need the browser's debugging port; `--connectors
+macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/securizame/`, inventories to
+`~/.local/state/securizame/out`. Install it from the binary you will keep: the agent runs that
+exact path, with the PATH you had when installing. On Linux it prints a systemd user timer to
+install by hand. Details: [docs/architecture.md](docs/architecture.md#scheduled-runs).
+
 ## Plan
 
 Actions by area and priority, with verified sources and what a script can audit: [docs/plan.md](docs/plan.md).
