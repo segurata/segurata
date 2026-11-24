@@ -187,7 +187,7 @@ func itemDoc(it *Item, t *Tracker) doc.Item {
 	}
 	out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: it.Title, Meta: strings.Join(meta, " · ")}
 	if n := it.Next; n != nil {
-		out.Details = append(out.Details, doc.Detail{Label: "Next (" + string(n.Who) + ")", Text: textfmt.Truncate(oneLine(n.Action), actionLen)})
+		out.Details = append(out.Details, doc.Fold("Next ("+string(n.Who)+")", n.Action, actionLen))
 		if n.Command != "" {
 			out.Details = append(out.Details, doc.Detail{Label: "Command", Text: n.Command, Kind: doc.DCode})
 		}
@@ -227,7 +227,7 @@ func blockers(d *doc.Doc, items []*Item, now time.Time) {
 			out.Meta += " · " + textfmt.Truncate(oneLine(it.Findings[0].Title), actionLen)
 		}
 		if n := it.Next; n != nil {
-			out.Details = append(out.Details, doc.Detail{Label: "Action", Text: textfmt.Truncate(oneLine(n.Action), actionLen)},
+			out.Details = append(out.Details, doc.Fold("Action", n.Action, actionLen),
 				doc.Detail{Label: "Then", Text: n.Command, Kind: doc.DCode})
 		}
 		list = append(list, out)

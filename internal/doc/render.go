@@ -64,7 +64,11 @@ func renderText(w io.Writer, d *Doc) {
 					fmt.Fprintf(w, "      %s\n", it.Meta)
 				}
 				for _, dt := range it.Details {
-					fmt.Fprintf(w, "      %s: %s\n", dt.Label, dt.Text)
+					more := ""
+					if dt.More != "" {
+						more = " […]"
+					}
+					fmt.Fprintf(w, "      %s: %s%s\n", dt.Label, dt.Text, more)
 				}
 			}
 		case bTable:
@@ -136,7 +140,15 @@ func renderMarkdown(w io.Writer, d *Doc) {
 					fmt.Fprintf(w, "  - %s\n", EscapeMarkdown(it.Meta))
 				}
 				for _, dt := range it.Details {
-					fmt.Fprintf(w, "  - %s: %s\n", EscapeMarkdown(dt.Label), mdDetail(dt))
+					if dt.More == "" {
+						fmt.Fprintf(w, "  - %s: %s\n", EscapeMarkdown(dt.Label), mdDetail(dt))
+						continue
+					}
+					fmt.Fprintf(w, "  - <details><summary>%s: %s</summary>\n\n", html.EscapeString(dt.Label), html.EscapeString(dt.Text))
+					for _, l := range strings.Split(dt.More, "\n") {
+						fmt.Fprintf(w, "    %s<br>\n", html.EscapeString(strings.TrimSpace(l)))
+					}
+					fmt.Fprintln(w, "    </details>")
 				}
 			}
 			fmt.Fprintln(w)
@@ -275,7 +287,12 @@ func renderHTML(w io.Writer, d *Doc) {
 					fmt.Fprintf(w, `<div class="meta">%s</div>`, html.EscapeString(it.Meta))
 				}
 				for _, dt := range it.Details {
-					fmt.Fprintf(w, `<div class="detail"><b>%s:</b> %s</div>`, html.EscapeString(dt.Label), htmlDetail(dt))
+					if dt.More == "" {
+						fmt.Fprintf(w, `<div class="detail"><b>%s:</b> %s</div>`, html.EscapeString(dt.Label), htmlDetail(dt))
+						continue
+					}
+					fmt.Fprintf(w, `<details class="detail"><summary><b>%s:</b> %s</summary><div>%s</div></details>`, html.EscapeString(dt.Label),
+						htmlDetail(dt), strings.ReplaceAll(html.EscapeString(dt.More), "\n", "<br>"))
 				}
 				fmt.Fprintln(w, "</li>")
 			}

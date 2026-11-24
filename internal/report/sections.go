@@ -13,6 +13,9 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
+// foldLen is how much of a long step shows before the rest folds away.
+const foldLen = 240
+
 var severities = []finding.Severity{finding.SevCritical, finding.SevHigh, finding.SevMedium, finding.SevLow, finding.SevInfo}
 
 // document lays the report out section by section.
@@ -314,7 +317,7 @@ func (r *Report) topFindings(d *doc.Doc) {
 func findingItem(f finding.Finding) doc.Item {
 	it := doc.Item{Badge: string(f.Severity), Text: f.DisplayTitle(), Meta: meta(f)}
 	if s := f.Remediation.Summary; s != "" {
-		it.Details = append(it.Details, doc.Detail{Label: "Fix", Text: s})
+		it.Details = append(it.Details, doc.Fold("Fix", s, foldLen))
 	}
 	if u := f.Remediation.URL; u != "" {
 		it.Details = append(it.Details, doc.Detail{Label: "Where", Text: u, Kind: doc.DLink})
