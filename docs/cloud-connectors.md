@@ -14,7 +14,9 @@ check both that every command the connector runs is on the list and that mutatin
 refused. Each `aws` command has a 2 minute timeout, each `az` one 3 minutes. `vercel`, `supabase` and `cloudflare` call the providers' REST APIs, GET only, with a token the
 core resolves from the config (`env:`, `keychain:` or `op://`, see [secrets.md](secrets.md)). None
 reads a token from another tool's config files: the `vercel` CLI's stored login and `wrangler`'s
-are never touched.
+are never touched. The one write is `azure.app-secret.delete-expired`, a remediation that runs
+`az ad app credential delete` for already expired client secrets after a confirmed plan, through
+its own allowlist (README, "Remediation").
 
 Whatever fails turns into a `status` record, never a crash: a missing CLI is `unsupported`, an
 expired session `reauth`, `az` without a login `signedout`, a missing token `missing_credentials`
