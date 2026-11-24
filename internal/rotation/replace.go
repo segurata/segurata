@@ -88,6 +88,7 @@ type replacement struct {
 	newFP   string
 	files   []*fileEdit
 	service string
+	account string // Keychain account, with service
 	warn    []string
 }
 
@@ -217,6 +218,9 @@ func (r *replacement) checkNew(raw []byte, service string) (string, error) {
 		if !safeService.MatchString(service) {
 			return "", fmt.Errorf("--to-keychain %q: use letters, digits and . _ / @ : -", service)
 		}
+		if !safeAccount.MatchString(r.account) {
+			return "", fmt.Errorf("user name %q cannot be a Keychain account", r.account)
+		}
 		if err := r.planKeychain(); err != nil {
 			return "", err
 		}
@@ -293,7 +297,7 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 		}
 	}
 	if r.service != "" {
-		fmt.Fprintf(w, "\nKeychain: store the new value as service %q, account %q (security -i, value on stdin), then read it back to check.\n", r.service, "$USER")
+		fmt.Fprintf(w, "\nKeychain: store the new value as service %q, account %q (security -i, value on stdin), then read it back to check.\n", r.service, r.account)
 	}
 	fmt.Fprintln(w, "\nThen: re-read every file (old fingerprint gone, new value in place), mark the item rotated, clear the clipboard.")
 	if backup {
@@ -426,6 +430,7 @@ func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
 	if err != nil {
 		return c.fail(err)
 	}
+	r.account = c.User
 
 	ctx := context.Background()
 	clip := clipboard{run: c.Exec}
@@ -476,10 +481,7 @@ func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
 		return c.fail(errors.New(note))
 	}
 	if r.service != "" {
-		kc := keychain{run: c.Exec, account: c.User}
-		if !safeAccount.MatchString(kc.account) {
-			return failed(fmt.Errorf("user name %q cannot be a Keychain account", kc.account), nil)
-		}
+		kc := keychain{run: c.Exec, account: r.account}
 		if err := kc.store(ctx, r.service, v); err != nil {
 			return failed(err, nil)
 		}
