@@ -275,7 +275,7 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 |---|---|---|
 | `google-personal` | CDP over the signed-in browser | Linked apps, scopes, dates, accounts that need a fresh sign-in |
 | `connected-apps` | CDP over the signed-in browser, `gh api` | Apps connected to GitHub (OAuth apps with scopes and organization access, GitHub Apps, sessions, SSH/signing/GPG keys), X, Slack (every signed-in workspace), Notion (developer connections), Facebook (first page of Apps and websites), Instagram and LinkedIn (empty list verified only), Microsoft and Dropbox (session check only). `services` in the config selects some; one instance per service is allowed |
-| `local-secrets` | `rg`, `gitleaks`, `git`, `ssh-keygen` | Plaintext secrets in config and `.env` files, shell histories, logs, agent transcripts and git history; SSH keys without a passphrase; HMAC fingerprints so one secret is recognised in every place it appears |
+| `local-secrets` | `rg`, `gitleaks`, `git`, `ssh-keygen`, `gh` (optional) | Plaintext secrets in config and `.env` files, shell histories, logs, agent transcripts and git history; database dumps committed to git, one finding per file; SSH keys without a passphrase; HMAC fingerprints so one secret is recognised in every place it appears |
 | `github` | `gh api`, GET on allowlisted paths | Account 2FA; organizations you own: 2FA requirement and members or outside collaborators without it, base permission, public repository creation, Actions (allowed actions, default workflow token, PR approval), code security defaults for new repositories; repositories you administer: insecure webhooks, write deploy keys, secret scanning and push protection, write workflow token on public repositories, Dependabot security updates, optional default-branch protection. Missing scopes are `noscope` with the `gh auth refresh` command |
 | `gcp` | `gcloud` CLI | Unrestricted API keys, service-account keys and their age, service accounts with broad roles, billing budgets and alerts, local ADC credentials and their scopes |
 | `aws` | `aws` CLI | Root keys or no root MFA, old or unused access keys, budgets |
@@ -330,8 +330,64 @@ Each run:
 
 `git_cache: false` in the connector config turns it off: every repository is scanned in full and
 the cache is neither read nor written. A cache that cannot be written is logged and costs the next
-run a full scan, nothing more. The connector runs only `git rev-list` and `git ls-files`, and
-`gitleaks git` and `gitleaks version`, each on an allowlist (`guards.go`).
+run a full scan, nothing more. The connector runs only `git rev-list`, `git ls-files`, `git log`
+with a fixed set of listing flags, `git cat-file -s` and `git cat-file blob` (the data-dump check
+below), `gitleaks git` and `gitleaks version`, and `gh repo view <owner/name> --json visibility`,
+each on an allowlist (`guards.go`).
+
+## Data dumps in git
+
+A database dump committed to a repository is reported once per file, as an `exposure` finding of
+resource type `data_dump`, rather than as the thousands of gitleaks matches its hash columns
+produce (`connectors/localsecrets/datadump.go`, `dumpscan.go`). It runs inside `local-secrets`, not
+as a separate connector: it needs the same repository discovery, git runner, guards and tips, and
+its results change how the gitleaks matches of the same run are judged.
+
+For each repository under `repos_root`:
+
+1. Candidates by name: every path in the index (`git ls-files -s -z`) and every path ever added
+   (`git log --all --no-renames --diff-filter=A --name-only --format= -z`) whose name looks like a
+   dump: `*.sql`, `*.sql.gz|zip|bz2|xz`, `*.dump`, `*.pgdump`, `*.sqlite`, `*.sqlite3`, `*.db`,
+   `*.bak` with a database word, and `.csv`/`.json`/`.xlsx` with `prod`, `production`, `backup` or
+   `dump` in the name (those only above 1 MiB). Never: names containing `schema`, `structure` or
+   `seed`, migration folders (`migrations`, `migrate`, `drizzle`, `flyway`, `alembic`,
+   `liquibase`), vendored code (`vendor`, `third_party`, `node_modules`), `Thumbs.db`. Under test
+   folders (`test`, `spec`, `fixtures`, `testdata`) a file must exceed 1 MiB.
+2. History of the candidates: `git log --all --full-history --no-renames --diff-filter=AM --raw
+   --no-abbrev -- :(literal)<path>…` gives every blob id and the commit that first added each
+   path. `--full-history` matters: a dump added and deleted on a merged branch is otherwise
+   simplified away. `git log --remotes …` says whether a remote-tracking ref holds the addition.
+3. Size: the largest blob of the path (`git cat-file -s`, at most the 32 newest versions); files of
+   4 KiB or less are dropped.
+4. Content: the first 4 KiB of one blob (the current one if tracked, else the largest), read by
+   `git cat-file blob` through a reader that stops git after 4 KiB, never more. gzip is inflated
+   as far as those bytes go and UTF-16 is read as ASCII. Headers: `PGDMP`, `SQLite format 3`,
+   mysqldump and pg_dump banners (`data`), `INSERT INTO` / `COPY … FROM stdin` (`rows`), `CREATE
+   TABLE` (`schema`).
+5. Visibility: for a repository with a GitHub remote and at least one hit, `gh repo view
+   <owner/name> --json visibility`, cached for 7 days. No gh, no GitHub remote or no access: unknown.
+
+Severity. A file is a real dump when it has a production or backup name (or folder), a `data`
+header, `rows` in a file of 64 KiB or more, or `schema` in a file of 1 MiB or more. A real dump in
+a repository with a remote is `critical` when the remote is public and `high` otherwise; a local
+one is `medium`. Other candidates are `medium` (remote) or `low` above 1 MiB, and `info` below.
+The title says whether the addition is on a remote branch ("pushed") or only in a repository that
+has a remote.
+
+gitleaks matches inside a detected dump get `in_data_dump: true` and `secretrisk.ImpactOf` makes
+them noise, so the rotation ledger skips them; the dump finding counts them in
+`gitleaks_matches`. AWS access keys, Stripe live keys, GitHub and GitLab tokens and private keys
+keep their impact: those are more often the owner's own credentials than a column of user data.
+
+Cache: `~/.cache/securizame/datadumps/<sha256(repo path)[:16]>.json`, mode 0600, beside the
+gitleaks cache and named the same way. It holds the tips the history was read at (the same
+`git rev-list --no-walk --all` as the gitleaks cache), the candidates' history facts, sizes and
+header classes by blob id, and the visibility. With unchanged tips a repository costs one
+`rev-list` and one `ls-files`; with new tips the history is read again but known blobs are neither
+sized nor read again. Never any content beyond the header class.
+
+`data_dumps` in the connector config: `true` (default), `false`, or `"only"` to run just this
+check (with `skip_git_history: true`, no rg, gitleaks or ssh-keygen pass runs).
 
 ## Rotation ledger
 
