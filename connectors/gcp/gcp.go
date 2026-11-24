@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -193,6 +194,25 @@ func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings, skipp
 	return out, nil
 }
 
+// projectsFinding records, as an info finding, the id and number of every project an account
+// sees, so attribution knows the owner's projects (an OAuth client id names the number only).
+func projectsFinding(account string, projects []listedProject) finding.Finding {
+	list := make([]any, 0, len(projects))
+	for _, p := range projects {
+		list = append(list, map[string]any{"id": p.ProjectID, "number": p.ProjectNumber})
+	}
+	return finding.Finding{Account: account, Resource: finding.Resource{Type: attribution.GCPProjectsType, ID: account, Name: account},
+		Kind: finding.KindSetting, Severity: finding.SevInfo, Title: fmt.Sprintf("%s sees %d projects", account, len(projects)),
+		Evidence: map[string]any{"projects": list}}
+}
+
+// listedProject is a project as `gcloud projects list` reports it.
+type listedProject struct {
+	ProjectID      string `json:"projectId"`
+	ProjectNumber  string `json:"projectNumber"`
+	LifecycleState string `json:"lifecycleState"`
+}
+
 // plan lists each account's projects and gives every project the accounts that see it, first
 // lister first. Configured projects nobody lists go to the accounts that could list projects.
 // Skipped projects and projects pending deletion are left out.
@@ -209,11 +229,7 @@ func (c *Connector) plan(ctx context.Context, g *gcloud, accounts []string, cfg 
 		skip[p] = true
 	}
 	for _, a := range accounts {
-		var projects []struct {
-			ProjectID      string `json:"projectId"`
-			ProjectNumber  string `json:"projectNumber"`
-			LifecycleState string `json:"lifecycleState"`
-		}
+		var projects []listedProject
 		if err := g.json(ctx, &projects, "projects", "list", "--account="+a); err != nil {
 			state, why := classify(err)
 			emit.Status(finding.Status{Account: a, State: state, Detail: "projects list: " + why})
@@ -221,6 +237,7 @@ func (c *Connector) plan(ctx context.Context, g *gcloud, accounts []string, cfg 
 		}
 		usable = append(usable, a)
 		emit.Status(finding.Status{Account: a, State: finding.StateOK, Detail: fmt.Sprintf("%d project(s) visible", len(projects))})
+		emit.Finding(projectsFinding(a, projects))
 		for _, p := range projects {
 			if skip[p.ProjectID] && !declared[p.ProjectID] {
 				declared[p.ProjectID] = true

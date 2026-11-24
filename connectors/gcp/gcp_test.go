@@ -210,6 +210,8 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		// billing
 		"Billing account 000000-AAAAAA-111111 has 1 budget(s) with alerts":                        finding.SevInfo,
 		"Project demo-shop is billed to 000000-AAAAAA-111111 but no budget with alerts covers it": finding.SevHigh,
+		// the projects each account sees, for attribution
+		"owner@example.com sees 3 projects": finding.SevInfo,
 	}
 	if len(rec.findings) != len(want) {
 		t.Fatalf("got %d findings, want %d:\n%s", len(rec.findings), len(want), rec.titles())
@@ -220,6 +222,10 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		}
 	}
 
+	seen := rec.byTitle(t, "owner@example.com sees")
+	if ps, _ := seen.Evidence["projects"].([]any); len(ps) != 3 || ps[0].(map[string]any)["number"] != "100000000001" || ps[0].(map[string]any)["id"] != "demo-shop" {
+		t.Errorf("projects record: %+v", seen.Evidence)
+	}
 	key := rec.byTitle(t, "Maps (browser)")
 	if key.Resource.ID != finding.Redact("11111111-2222-3333-4444-555555555555") || key.Resource.Name != "Maps (browser)" {
 		t.Errorf("API key must show display name and redacted uid: %+v", key.Resource)

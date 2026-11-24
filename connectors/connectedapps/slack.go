@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -22,7 +23,9 @@ var slackSigninJS = inPage(`
 
 const slackAppSel = `a[href*="/integrations/profile/"]`
 
-var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `')};`)
+// The workspace id (T…) is in the page's boot data, not in its text.
+var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `'),
+    team: (document.documentElement.innerHTML.match(/"team_?[iI]d":"(T[A-Z0-9]{6,})"/) || [])[1] || ""};`)
 
 var (
 	slackScopesRE      = regexp.MustCompile(`^(\d+) (ámbitos?|scopes?)$`)
@@ -110,6 +113,17 @@ func slack(ctx context.Context, e *env) {
 			e.report(grant{who: host, scope: host, resType: "slack_app", name: a.name, count: a.count, note: a.note,
 				url: a.href, revoke: slackRevoke, extra: map[string]any{"pending_approval": a.pending}})
 		}
+		if p.Team != "" {
+			e.emit.Finding(slackWorkspaceFinding(e.account(host), host, p.Team))
+		}
 		e.status(host, finding.StateOK, "%d apps", len(p.Rows))
 	}
+}
+
+// slackWorkspaceFinding records, as an info finding, the id of a workspace signed in to, so
+// attribution knows which workspace a leaked webhook belongs to.
+func slackWorkspaceFinding(account, host, team string) finding.Finding {
+	return finding.Finding{Account: account, Scope: host, Resource: finding.Resource{Type: attribution.SlackWorkspaceType, ID: team, Name: host},
+		Kind: finding.KindSetting, Severity: finding.SevInfo, Title: "Slack workspace " + host + " is " + team,
+		Evidence: map[string]any{"team_id": team, "host": host}}
 }
