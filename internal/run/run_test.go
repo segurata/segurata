@@ -625,3 +625,19 @@ func TestAHungExternalConnectorTimesOut(t *testing.T) {
 		t.Fatalf("run_end %+v", end)
 	}
 }
+
+// observed_at belongs to the core: a connector's own value, a future one above all, is replaced
+// with the time the record was written.
+func TestTheCoreStampsObservedAt(t *testing.T) {
+	future := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "k"}, Severity: finding.SevLow, Title: "t", ObservedAt: future})
+		return nil
+	})
+	before := time.Now()
+	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, inv), t.TempDir(), nil, nil)
+	if got := res[0].Findings[0].ObservedAt; got.Before(before.Add(-time.Second)) || got.After(time.Now()) {
+		t.Fatalf("observed_at %v", got)
+	}
+}

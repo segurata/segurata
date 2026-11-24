@@ -265,3 +265,27 @@ func TestAnUnreadableRunIsSkippedAndClosesNothing(t *testing.T) {
 		t.Errorf("sync line does not name the unreadable run:\n%s", line)
 	}
 }
+
+// A run's time is when it ended. A future observed_at in a run, or a future source a tracker
+// already holds from one, must not make every later real run look stale.
+func TestAFutureTimestampNeverFreezesAConnector(t *testing.T) {
+	future := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	out := filepath.Join(t.TempDir(), "out")
+	day1 := t0.AddDate(0, 0, 1)
+	f := at(fnd("macos", "", "Mac", "macos_setting", "firewall", "firewall", finding.SevMedium, "The firewall is off", t0), future)
+	var tally finding.Tally
+	tally.Status(okStatus("macos", "Mac"))
+	runtest.WriteUnfinished(t, filepath.Join(out, t0.Format(time.DateOnly), "macos.jsonl"), f, okStatus("macos", "Mac"), tally.End("macos", "", t0, t0, nil))
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0)
+	if got := tr.Sources["macos"]; !got.Equal(t0) {
+		t.Fatalf("source %v, want the run's end %v", got, t0)
+	}
+
+	tr.Sources["macos"] = future // written by an earlier version
+	writeRun(t, out, day1, "macos.jsonl", okStatus("macos", "Mac"))
+	rep := syncOrDie(t, tr, out, day1)
+	if len(rep.Stale) != 0 || byTitle(t, tr, "The firewall is off").Status != Done {
+		t.Fatalf("a future source froze the connector: %+v", rep)
+	}
+}

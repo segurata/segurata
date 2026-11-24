@@ -50,7 +50,7 @@ func LatestRuns(outDir string) ([]Latest, error) {
 }
 
 // History lists every run file under out/<YYYY-MM-DD>/, by file name (one connector instance),
-// oldest first.
+// oldest first, leaving out days after today.
 func History(outDir string) (map[string][]string, error) {
 	entries, err := os.ReadDir(outDir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -59,9 +59,11 @@ func History(outDir string) (map[string][]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A directory after today (a clock set wrong once) would stand in for every real run.
+	today := time.Now().Format(time.DateOnly)
 	var dates []string
 	for _, e := range entries {
-		if _, err := time.Parse("2006-01-02", e.Name()); e.IsDir() && err == nil {
+		if _, err := time.Parse(time.DateOnly, e.Name()); e.IsDir() && err == nil && e.Name() <= today {
 			dates = append(dates, e.Name())
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -136,5 +137,17 @@ func TestLatestRunsPreferFinishedRuns(t *testing.T) {
 	_ = os.WriteFile(middle, append([]byte("{not json\n"), raw...), 0o600)
 	if _, err := ReadRun(middle); err == nil {
 		t.Fatal("a broken line before the last one is an error, not a torn tail")
+	}
+}
+
+// A date directory after today (a clock set wrong once) never stands in for the latest run.
+func TestHistorySkipsDaysAfterToday(t *testing.T) {
+	out := t.TempDir()
+	today := filepath.Join(out, time.Now().Format(time.DateOnly), "github.jsonl")
+	runtest.Write(t, today, finding.Finding{Type: "finding", Connector: "github", ID: "a"})
+	runtest.Write(t, filepath.Join(out, "2099-01-01", "github.jsonl"), finding.Finding{Type: "finding", Connector: "github", ID: "b"})
+	h, err := History(out)
+	if err != nil || len(h["github.jsonl"]) != 1 || h["github.jsonl"][0] != today {
+		t.Fatalf("history %v, %v", h, err)
 	}
 }

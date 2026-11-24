@@ -130,8 +130,11 @@ func (s *sink) write(v any) error {
 func (s *sink) Finding(f finding.Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f.Connector, f.Instance = s.name, s.inst
-	f.Fill(time.Now())
+	// The core owns observed_at: a connector's own value, a future one above all, would make the
+	// tracker take every later run as older (see tracker.Sync).
+	now := time.Now()
+	f.Connector, f.Instance, f.ObservedAt = s.name, s.inst, now.UTC()
+	f.Fill(now)
 	if s.annotate != nil {
 		s.annotate(&f)
 	}

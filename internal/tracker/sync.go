@@ -114,7 +114,9 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	rep.Unreadable = unreadable
 	folded := map[string]*run{}
 	for _, r := range runs {
-		if prev, ok := t.Sources[r.label]; ok && r.at.Before(prev) {
+		// A source after now came from a future timestamp: it counts as absent, or it would hold
+		// every later run back as stale.
+		if prev, ok := t.Sources[r.label]; ok && !prev.After(now) && r.at.Before(prev) {
 			rep.Stale = append(rep.Stale, r.label)
 			continue
 		}
@@ -383,12 +385,16 @@ func readRunFile(file string) (*run, error) {
 		return nil, err
 	}
 	r := &run{label: RunLabel(file, rf), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
+	// A finished run's time is when it ended. A file without run_end falls back to its newest
+	// observed_at that is not in the future, then to its modification time.
 	if rf.End != nil {
 		r.at, r.failed, r.fingerprints = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints
-	}
-	for _, f := range rf.Findings {
-		if f.ObservedAt.After(r.at) {
-			r.at = f.ObservedAt
+	} else {
+		limit := time.Now()
+		for _, f := range rf.Findings {
+			if f.ObservedAt.After(r.at) && !f.ObservedAt.After(limit) {
+				r.at = f.ObservedAt
+			}
 		}
 	}
 	if r.at.IsZero() {

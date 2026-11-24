@@ -323,7 +323,11 @@ owner's after all. Ignoring it by hand afterwards sticks.
 finished run of every connector instance (`remediate.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
-   syncing two output folders (interactive and scheduled) never makes items flap.
+   syncing two output folders (interactive and scheduled) never makes items flap. A run's time is
+   its `run_end` `ended_at` (a file without one: its newest `observed_at` not in the future, else
+   its modification time). A source after now counts as absent, and `out/` days after today are
+   never read, so one wrong clock cannot freeze a connector. A latest run that cannot be read (a
+   torn line) is skipped with a warning; its instance counts as not run.
 2. Folds local-secrets findings into rotate items (below) and every other finding at low or above
    into the item its rule names, creating it (`found`) or adding the new finding (`seen`).
 3. Marks a linked finding `gone` when its connector instance ran and did not report it, unless

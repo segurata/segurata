@@ -97,7 +97,7 @@ One JSON object per finding (`internal/finding`):
 | `evidence` | Connector | Whatever backs the finding: scopes, dates, paths, counts. Never a secret value |
 | `created_at`, `last_used_at` | Connector | What the provider reports, RFC 3339. `null` when it reports nothing, never a made-up date |
 | `remediation` | Connector | `summary` says what to do by hand; `url` is the page where it is done; `action` names an automatable remediation or is empty; `automatable` is computed by the core |
-| `observed_at` | Core | When the record was written |
+| `observed_at` | Core | When the record was written; a connector's own value is replaced |
 | `accepted` | Core | Set from the accepted-risks file |
 
 Besides findings, a connector emits per-account status records saying whether something could be
