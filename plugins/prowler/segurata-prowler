@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 NAME = "prowler"
@@ -35,6 +36,7 @@ PROWLER_VERSION = "5.51.0"  # the version the parser and the overlap table were 
 DEFAULT_TIMEOUT = 1800  # seconds per project
 TOKEN_LIFETIME = 3600  # a gcloud access token lasts an hour and Prowler cannot refresh it
 GCLOUD_TIMEOUT = 90
+RETRY_DELAY = 3  # seconds before the one retry of a profile read Google throttled or dropped
 OUTPUT_NAME = "prowler"  # --output-filename; the OCSF file is <dir>/prowler.ocsf.json
 LOG_NAME = "prowler.log"  # --log-file, in the same directory
 IMPLEMENTED = ("gcp",)
@@ -365,6 +367,9 @@ class Gcloud:
 
     def read_json(self, account, *args):
         code, out, err = self.run(*args, "--account=" + account, "--format=json")
+        if code != 0 and TRANSIENT.search(err):
+            time.sleep(RETRY_DELAY)
+            code, out, err = self.run(*args, "--account=" + account, "--format=json")
         if code != 0:
             raise RuntimeError(first_line(err) or "gcloud %s failed" % " ".join(args[:3]))
         return json.loads(out or "null")
@@ -408,25 +413,32 @@ def login_hint(account):
 
 # --- activity profile ------------------------------------------------------------------------
 
+TRANSIENT = re.compile(r"RESOURCE_EXHAUSTED|rateLimitExceeded|[Qq]uota exceeded|\b429\b|\b50[23]\b|UNAVAILABLE|"
+                       r"DEADLINE_EXCEEDED|timed out|Connection reset")
 SERVICE_DISABLED = re.compile(r"SERVICE_DISABLED|has not been used in project|is disabled")
 
 
-def profile_project(gcloud, account, project, in_org):
-    """What the project runs, read as account. A value that could not be read is None and named in
-    unread; classify_profile treats it as possibly production."""
+def profile_project(gcloud, account, project, in_org, log=lambda msg: None):
+    """What the project runs, read as account. A value that could not be read is None, named in
+    unread and logged with gcloud's reason; classify_profile treats it as possibly production."""
     profile = {"services_enabled": None, "services_non_default": None, "billing_enabled": None,
                "in_organization": in_org, "resources": {}, "unread": []}
+
+    def unread(what, error):
+        profile["unread"].append(what)
+        log("%s: profile could not read %s as %s: %s" % (project, what, account, error))
+
     try:
         services = gcloud.enabled_services(account, project)
         profile["services_enabled"] = len(services)
         profile["services_non_default"] = len(services - DEFAULT_SERVICES)
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError) as e:
         services = None
-        profile["unread"].append("services")
+        unread("services", e)
     try:
         profile["billing_enabled"] = gcloud.billing_enabled(account, project)
-    except (RuntimeError, ValueError):
-        profile["unread"].append("billing")
+    except (RuntimeError, ValueError) as e:
+        unread("billing", e)
     for key, enabling, command, _ in RESOURCE_KINDS:
         if services is not None and not services.intersection(enabling):
             profile["resources"][key] = 0
@@ -438,7 +450,7 @@ def profile_project(gcloud, account, project, in_org):
                 profile["resources"][key] = 0
             else:
                 profile["resources"][key] = None
-                profile["unread"].append(key)
+                unread(key, e)
     profile["class"] = classify_profile(profile)
     return profile
 
@@ -717,7 +729,7 @@ def inspect_project(project, candidates, ctx):
                 return
         finally:
             shutil.rmtree(outdir, ignore_errors=True)
-        profile = profile_project(gcloud, account, project, ctx["in_org"].get(project))
+        profile = profile_project(gcloud, account, project, ctx["in_org"].get(project), emit.log)
         findings, counts = summarize(records, config, owner, project, profile)
         for f in findings:
             emit.finding(f)

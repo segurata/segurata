@@ -564,6 +564,17 @@ class RelevanceInventoryTest(unittest.TestCase):
         self.assertEqual(findings["logging_sink_created"]["evidence"]["profile"]["unread"], ["sql_instances"])
         self.assertIn("not read: sql_instances", status["detail"])
 
+    def test_throttled_read_is_retried_once_and_failures_are_logged_with_the_reason(self):
+        self.fake.profile(DELTA, services=DEFAULTS)
+        self.fake.flag("profile", DELTA, "flaky-billing")
+        findings, _ = self.run_delta()
+        self.assertEqual(findings["logging_sink_created"]["evidence"]["profile"]["unread"], [])
+        self.assertEqual(self.fake.calls().count("billing projects describe " + DELTA), 2)
+        os.remove(os.path.join(self.fake.dir, "profile", DELTA, "billing.json"))
+        _, records = self.fake.run({"projects": [DELTA]})
+        logs = [r["msg"] for r in of(records, "log")]
+        self.assertIn("%s: profile could not read billing as %s: ERROR: (gcloud) fake has no" % (DELTA, ALICE), "\n".join(logs))
+
     def test_relevance_off_still_records_the_profile(self):
         self.fake.profile(DELTA, services=DEFAULTS)
         findings, _ = self.run_delta({"relevance": False})
