@@ -28,6 +28,9 @@ func Count(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, Plural(n, one, many))
 }
 
+// USD writes an amount of dollars with cents: "$42.50".
+func USD(v float64) string { return fmt.Sprintf("$%.2f", v) }
+
 // pronouns rewrite a predicate written about one thing ("it") for several, longest first so that
 // "it is" turns into "they are" before a lone "it" turns into "them".
 var pronouns = []struct {

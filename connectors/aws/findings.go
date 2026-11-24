@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 const (
@@ -69,7 +70,7 @@ func keyFinding(user string, k accessKey, lastUsed *time.Time, now time.Time) fi
 		Kind:       finding.KindCredential,
 		Severity:   finding.SevInfo,
 		Title:      fmt.Sprintf("Access key of IAM user %s (%d days old)", user, age),
-		Evidence:   map[string]any{"key_id": finding.Redact(k.AccessKeyId), "status": k.Status, "age_days": age},
+		Evidence:   map[string]any{"key_id": secretrisk.RedactID(awsKeyPrefixes, k.AccessKeyId), "status": k.Status, "age_days": age},
 		CreatedAt:  &created,
 		LastUsedAt: lastUsed,
 		Remediation: finding.Remediation{

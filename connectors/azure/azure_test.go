@@ -79,6 +79,10 @@ func TestInventory(t *testing.T) {
 		if f.Resource.Type == "azure_app_secret" && f.Account != "example.onmicrosoft.com" {
 			t.Fatalf("app secrets belong to the tenant: %+v", f)
 		}
+		// Graph's hint (the first characters) in secretrisk.Redact's format, length unknown.
+		if f.Resource.ID == "11111111-1111-1111-1111-111111111111/k1" && f.Evidence["hint"] != "abc…(?)" {
+			t.Errorf("hint %v", f.Evidence["hint"])
+		}
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 const (
@@ -287,7 +288,7 @@ func keyFinding(acct string, k apiKey, now time.Time) finding.Finding {
 		n = k.Hash
 	}
 	ev := map[string]any{
-		"redacted":      k.Label, // OpenRouter's own masked form of the key
+		"redacted":      secretrisk.Masked(k.Label, 0), // from OpenRouter's label, which gives no length
 		"issues":        a.Reasons,
 		"usage_usd":     k.Usage,
 		"usage_month":   k.UsageMonthly,

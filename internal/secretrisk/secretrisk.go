@@ -389,12 +389,24 @@ func Redact(typ, prefixes, secret string) string {
 	if secret == "" {
 		return ""
 	}
-	shown := KnownPrefix(prefixes, secret)
-	tail := ""
-	if !passwordLike[typ] && len(secret) >= 24 && len(secret)-len(shown) >= 20 {
-		tail = secret[len(secret)-4:]
+	h := Hint{Prefix: KnownPrefix(prefixes, secret), Len: len(secret)}
+	if !passwordLike[typ] && len(secret) >= 24 && len(secret)-len(h.Prefix) >= 20 {
+		h.Tail = secret[len(secret)-tailLen:]
 	}
-	return shown + "…" + tail + "(" + strconv.Itoa(len(secret)) + ")"
+	return h.String()
+}
+
+// RedactID is the hint of an identifier that is not itself secret but names one (an AWS access
+// key id): the known prefix, the last four characters and the length, "AKIA…WXYZ(20)".
+func RedactID(prefixes, id string) string {
+	if id == "" {
+		return ""
+	}
+	h := Hint{Prefix: KnownPrefix(prefixes, id), Len: len(id)}
+	if len(id)-len(h.Prefix) > tailLen {
+		h.Tail = id[len(id)-tailLen:]
+	}
+	return h.String()
 }
 
 // KnownPrefix is the prefix from the "|"-separated list that secret starts with, or "".
@@ -407,28 +419,104 @@ func KnownPrefix(prefixes, secret string) string {
 	return ""
 }
 
-// Hint is a redacted hint read back: what Redact showed of a value.
+// tailLen is how many of a value's last characters a hint shows.
+const tailLen = 4
+
+// unknownLen stands for the length in a hint made from what a provider shows of a key when the
+// provider does not give the length: "sk-or-v1-27e…d4d(?)".
+const unknownLen = "?"
+
+// Hint is a redacted hint read back: what Redact showed of a value. Len is 0 when the hint's
+// source did not give the length.
 type Hint struct {
 	Prefix, Tail string
 	Len          int
 }
 
-// ParseHint reads a hint made by Redact. ok is false for hints that do not describe one value on
-// one line ("PEM", a whole file, an empty hint).
+// String writes the hint in Redact's format: prefix, "…", tail, and the length in parentheses, or
+// "(?)" when it is not known.
+func (h Hint) String() string {
+	n := unknownLen
+	if h.Len > 0 {
+		n = strconv.Itoa(h.Len)
+	}
+	return h.Prefix + "…" + h.Tail + "(" + n + ")"
+}
+
+// ParseHint reads a hint made by Redact, RedactID or Masked. ok is false for hints that do not
+// describe one value on one line ("PEM", a whole file, an empty hint).
 func ParseHint(redacted string) (h Hint, ok bool) {
 	i, j := strings.Index(redacted, "…"), strings.LastIndexByte(redacted, '(')
 	if i < 0 || j < i || !strings.HasSuffix(redacted, ")") {
 		return Hint{}, false
 	}
-	n, err := strconv.Atoi(redacted[j+1 : len(redacted)-1])
-	if err != nil || n <= 0 {
-		return Hint{}, false
+	h = Hint{Prefix: redacted[:i], Tail: redacted[i+len("…") : j]}
+	if num := redacted[j+1 : len(redacted)-1]; num == unknownLen {
+		return h, h.Prefix != "" || h.Tail != ""
+	} else if n, err := strconv.Atoi(num); err == nil && n > 0 {
+		h.Len = n
+		return h, len(h.Prefix)+len(h.Tail) <= n
 	}
-	h = Hint{Prefix: redacted[:i], Tail: redacted[i+len("…") : j], Len: n}
-	return h, len(h.Prefix)+len(h.Tail) <= n
+	return Hint{}, false
 }
 
-// Fits reports whether value could be the one the hint describes.
+// Masked turns what a provider shows of a key into a hint in Redact's format, keeping every
+// character the provider shows in front, at most the last four at the end, and the length n, or
+// unknown when n is 0. It reads the masked forms providers use: OpenRouter's label
+// "sk-or-v1-27e...d4d", Anthropic's partial_key_hint "sk-ant-api03-R2D...igAA", OpenAI's
+// redacted_value "sk-proj-****…abcd" (stars) and an ellipsis. "" when the text masks nothing.
+func Masked(masked string, n int) string {
+	h, ok := parseMasked(masked)
+	if !ok {
+		return ""
+	}
+	if len(h.Tail) > tailLen {
+		h.Tail = h.Tail[len(h.Tail)-tailLen:]
+	}
+	if n >= len(h.Prefix)+len(h.Tail) {
+		h.Len = n
+	}
+	return h.String()
+}
+
+// ReadHint reads a hint in Redact's format or, failing that, a provider's masked form (see
+// Masked), for code that meets both: findings written before every connector used Redact's format,
+// a provider's raw value.
+func ReadHint(s string) (Hint, bool) {
+	if h, ok := ParseHint(s); ok {
+		return h, true
+	}
+	return ParseHint(Masked(s, 0))
+}
+
+// parseMasked splits a provider's masked key at its mask: "...", "…" or a run of "*".
+func parseMasked(s string) (Hint, bool) {
+	for _, sep := range []string{"...", "…"} {
+		if i := strings.Index(s, sep); i >= 0 {
+			pre, tail := s[:i], s[i+len(sep):]
+			h := Hint{Prefix: strings.TrimRight(pre, "*"), Tail: strings.TrimLeft(tail, "*")}
+			return h, h.Prefix != "" || h.Tail != ""
+		}
+	}
+	if i, j := strings.IndexByte(s, '*'), strings.LastIndexByte(s, '*'); i >= 0 {
+		h := Hint{Prefix: s[:i], Tail: s[j+1:]}
+		return h, h.Prefix != "" || h.Tail != ""
+	}
+	return Hint{}, false
+}
+
+// Agrees reports whether two hints can describe the same value: one prefix starts the other, one
+// tail ends the other, and the lengths agree when both are known.
+func (h Hint) Agrees(o Hint) bool {
+	if h.Len > 0 && o.Len > 0 && h.Len != o.Len {
+		return false
+	}
+	return (strings.HasPrefix(h.Prefix, o.Prefix) || strings.HasPrefix(o.Prefix, h.Prefix)) &&
+		(strings.HasSuffix(h.Tail, o.Tail) || strings.HasSuffix(o.Tail, h.Tail))
+}
+
+// Fits reports whether value could be the one the hint describes. A hint without a length fits
+// nothing: it cannot tell where a value ends.
 func (h Hint) Fits(value string) bool {
-	return len(value) == h.Len && strings.HasPrefix(value, h.Prefix) && strings.HasSuffix(value, h.Tail)
+	return h.Len > 0 && len(value) == h.Len && strings.HasPrefix(value, h.Prefix) && strings.HasSuffix(value, h.Tail)
 }

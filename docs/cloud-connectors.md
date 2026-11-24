@@ -3,8 +3,10 @@
 Five built-in connectors look for credentials that grant too much or live too long, accounts whose
 spend has no budget, alert or cap, and weak account and edge settings: `aws`, `azure`, `vercel`,
 `supabase` and `cloudflare`. All five are read-only: they only list, get and describe. They never print or store a secret value; a key
-appears at most as the identifier or hint the provider itself returns, redacted with
-`finding.Redact` when it is a key id.
+appears at most as the identifier or hint the provider itself returns, in `secretrisk.Redact`'s
+format (architecture.md, "Hints"): an AWS key id as `secretrisk.RedactID` writes it,
+`AKIA…WXYZ(20)`, Azure's hint as `abc…(?)`. Vercel, Cloudflare and Supabase return no part of a
+token's value (their token ids are not parts of it), so their findings carry no hint.
 
 `aws` and `azure` call the CLIs that are already signed in on the machine (`aws`, `az`) with JSON
 output, through the runner they share with `gcp` (`connectors/internal/cli`). Each keeps an
@@ -140,7 +142,7 @@ Runs only when `az account show` works; otherwise the status is `signedout` (no 
 
 `az ad app list` returns only the first 100 apps without `--all`, so the connector passes it. From
 each [passwordCredential](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0)
-it keeps `keyId`, `hint` (the first three characters, as the portal shows), `displayName`,
+it keeps `keyId`, `hint` (the first three characters, as the portal shows, written `abc…(?)`), `displayName`,
 `startDateTime` and `endDateTime`. Graph returns the secret value only when it is created.
 
 | Situation | Kind | Severity |

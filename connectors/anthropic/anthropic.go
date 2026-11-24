@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 const (
@@ -359,7 +360,7 @@ func (s *scan) keyFinding(k apiKey, wsName map[string]string, members map[string
 	a := keyAssessment(k, created, members, lastUse, s.now)
 	ev := map[string]any{"status": k.Status, "issues": a.Reasons, "scope": k.Scope.Type}
 	if k.PartialKeyHint != nil {
-		ev["redacted"] = *k.PartialKeyHint
+		ev["redacted"] = secretrisk.Masked(*k.PartialKeyHint, 0) // Anthropic gives no length
 	}
 	where := "all workspaces"
 	if k.Scope.WorkspaceID != "" {

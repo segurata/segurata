@@ -91,3 +91,9 @@ func TestClip(t *testing.T) {
 		}
 	}
 }
+
+func TestUSD(t *testing.T) {
+	if got := USD(42); got != "$42.00" {
+		t.Errorf("USD(42) = %q", got)
+	}
+}

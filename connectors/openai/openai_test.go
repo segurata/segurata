@@ -148,7 +148,7 @@ func TestInventoryFindsUncappedIdleAndOrphanKeysAndBudgets(t *testing.T) {
 	if never := rec.ByResource(t, "api_key", "key_never"); never.LastUsedAt != nil {
 		t.Errorf("a never-used key got a last-used date: %v", never.LastUsedAt)
 	}
-	if stale.Evidence["redacted"] != "sk-proj-****key_stale" || stale.Evidence["owner"] != "key_stale@example.test" {
+	if stale.Evidence["redacted"] != "sk-proj-…tale(?)" || stale.Evidence["owner"] != "key_stale@example.test" {
 		t.Errorf("evidence: %v", stale.Evidence)
 	}
 }
@@ -267,5 +267,17 @@ func TestAdminListingProjectKeysAreNotAdminKeysButLendLastUse(t *testing.T) {
 	}
 	if len(projectKeys) != 1 || projectKeys[0].LastUsedAt == nil || projectKeys[0].LastUsedAt.Unix() != ago(3) {
 		t.Fatalf("project key should take last use from the admin listing: %+v", projectKeys)
+	}
+}
+
+// A redacted_value masked with one star per hidden character gives the key's length; a short mask
+// does not.
+func TestKeyHintReadsTheLengthFromALongMask(t *testing.T) {
+	long := "sk-proj-" + strings.Repeat("*", 152) + "j_MA"
+	if got := keyHint(long); got != "sk-proj-…j_MA(164)" {
+		t.Errorf("long mask %q", got)
+	}
+	if got := keyHint("sk-admin-****dead"); got != "sk-admin-…dead(?)" {
+		t.Errorf("short mask %q", got)
 	}
 }

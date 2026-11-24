@@ -29,6 +29,9 @@ func TestMatchesRedacted(t *testing.T) {
 		{"no-mask", "no-mask", false},
 		{"sk-****", "sk-anything", false}, // no visible suffix
 		{"sk-proj-****dYwA", "", false},
+		{"sk-or-v1-27e…d4d(?)", "sk-or-v1-27e0123456d4d", true},
+		{"sk-proj-…dYwA(18)", "sk-proj-abcdefdYwA", true},
+		{"sk-proj-…dYwA(19)", "sk-proj-abcdefdYwA", false},
 	} {
 		if got := MatchesRedacted(c.redacted, c.secret); got != c.want {
 			t.Errorf("MatchesRedacted(%q, %q) = %v", c.redacted, c.secret, got)

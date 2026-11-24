@@ -12,13 +12,14 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // IdleAfter is how long a credential can go unused before it is worth a look.
-const IdleAfter = 90 * 24 * time.Hour
+const IdleAfter = finding.IdleAfter
 
 // Client issues GET requests against one API base URL with fixed headers.
 type Client struct {
@@ -121,18 +122,15 @@ func truncate(s string) string {
 }
 
 // MatchesRedacted reports whether secret is the key a provider shows as redacted, a visible
-// prefix and suffix around a mask ("sk-proj-****dYwA", "sk-or-v1-27e...d4d"). Both parts must be
-// visible and match; a redacted form without a mask matches nothing.
+// prefix and suffix around a mask ("sk-proj-****dYwA", "sk-or-v1-27e...d4d") or a hint in
+// secretrisk.Redact's format. Both parts must be visible and match, and the length when the hint
+// gives it; a redacted form without a mask matches nothing.
 func MatchesRedacted(redacted, secret string) bool {
-	i := strings.IndexAny(redacted, "*.…")
-	if i <= 0 || secret == "" {
+	h, ok := secretrisk.ReadHint(redacted)
+	if !ok || h.Prefix == "" || h.Tail == "" || secret == "" || h.Len > 0 && h.Len != len(secret) {
 		return false
 	}
-	j := strings.LastIndexAny(redacted, "*.…")
-	_, size := utf8.DecodeRuneInString(redacted[j:])
-	prefix, suffix := redacted[:i], redacted[j+size:]
-	return suffix != "" && len(secret) >= len(prefix)+len(suffix) &&
-		strings.HasPrefix(secret, prefix) && strings.HasSuffix(secret, suffix)
+	return len(secret) >= len(h.Prefix)+len(h.Tail) && strings.HasPrefix(secret, h.Prefix) && strings.HasSuffix(secret, h.Tail)
 }
 
 // Unix converts Unix seconds to a time; 0 or nil means the provider did not say.
@@ -162,7 +160,7 @@ func ParseTime(s *string) *time.Time {
 func Days(now, t time.Time) int { return int(now.Sub(t).Hours() / 24) }
 
 // USD formats a dollar amount for titles.
-func USD(v float64) string { return fmt.Sprintf("$%.2f", v) }
+func USD(v float64) string { return textfmt.USD(v) }
 
 // Assessment accumulates why something is risky; Severity is the worst reason seen.
 type Assessment struct {
