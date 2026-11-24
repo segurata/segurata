@@ -1,0 +1,1009 @@
+[
+    {
+        "message": "API key demo-key does not have restrictions configured.",
+        "metadata": {
+            "event_code": "apikeys_api_restrictions_configured",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 4,
+        "severity": "High",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "API key demo-key does not have restrictions configured.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "secrets",
+                "identity-access"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-2.0": [
+                    "1.14"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of apikeys_api_restrictions_configured",
+            "title": "API key is restricted to specific Google APIs",
+            "types": [],
+            "uid": "prowler-gcp-apikeys_api_restrictions_configured-demo-proj-alpha-global-demo-key",
+            "name": "demo-key"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-key"
+                    }
+                },
+                "group": {
+                    "name": "apikeys"
+                },
+                "labels": [],
+                "name": "demo-key",
+                "type": "apikeys.googleapis.com/Key",
+                "uid": "projects/111111111111/locations/global/keys/0000test-key"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Apply **least privilege** to API keys.",
+            "references": [
+                "https://hub.prowler.com/check/apikeys_api_restrictions_configured"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Account builder@demo-proj-alpha.iam.gserviceaccount.com has administrative privileges with roles/editor.",
+        "metadata": {
+            "event_code": "iam_sa_no_administrative_privileges",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 4,
+        "severity": "High",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Account builder@demo-proj-alpha.iam.gserviceaccount.com has administrative privileges with roles/editor.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "identity-access"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-2.0": [
+                    "1.5"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of iam_sa_no_administrative_privileges",
+            "title": "Service account has no administrative privileges",
+            "types": [],
+            "uid": "prowler-gcp-iam_sa_no_administrative_privileges-demo-proj-alpha-global-builder@demo-proj-alpha.iam.gserviceaccount.com",
+            "name": "builder@demo-proj-alpha.iam.gserviceaccount.com"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "builder@demo-proj-alpha.iam.gserviceaccount.com"
+                    }
+                },
+                "group": {
+                    "name": "iam"
+                },
+                "labels": [],
+                "name": "builder@demo-proj-alpha.iam.gserviceaccount.com",
+                "type": "iam.googleapis.com/ServiceAccount",
+                "uid": "builder@demo-proj-alpha.iam.gserviceaccount.com"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Remove admin roles from service accounts.",
+            "references": [
+                "https://hub.prowler.com/check/iam_sa_no_administrative_privileges"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Account uploader@demo-proj-alpha.iam.gserviceaccount.com has administrative privileges with roles/storage.admin.",
+        "metadata": {
+            "event_code": "iam_sa_no_administrative_privileges",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 4,
+        "severity": "High",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Account uploader@demo-proj-alpha.iam.gserviceaccount.com has administrative privileges with roles/storage.admin.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "identity-access"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-2.0": [
+                    "1.5"
+                ],
+                "CIS-3.0": [
+                    "1.5"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of iam_sa_no_administrative_privileges",
+            "title": "Service account has no administrative privileges",
+            "types": [],
+            "uid": "prowler-gcp-iam_sa_no_administrative_privileges-demo-proj-alpha-global-uploader@demo-proj-alpha.iam.gserviceaccount.com",
+            "name": "uploader@demo-proj-alpha.iam.gserviceaccount.com"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "uploader@demo-proj-alpha.iam.gserviceaccount.com"
+                    }
+                },
+                "group": {
+                    "name": "iam"
+                },
+                "labels": [],
+                "name": "uploader@demo-proj-alpha.iam.gserviceaccount.com",
+                "type": "iam.googleapis.com/ServiceAccount",
+                "uid": "uploader@demo-proj-alpha.iam.gserviceaccount.com"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Remove **admin** roles from service accounts.",
+            "references": [
+                "https://hub.prowler.com/check/iam_sa_no_administrative_privileges"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Bucket demo-public-assets is publicly accessible.",
+        "metadata": {
+            "event_code": "cloudstorage_bucket_public_access",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 5,
+        "severity": "Critical",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Bucket demo-public-assets is publicly accessible.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "internet-exposed"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-2.0": [
+                    "5.1"
+                ],
+                "CIS-3.0": [
+                    "5.1"
+                ],
+                "MITRE-ATTACK": [
+                    "T1530"
+                ],
+                "SOC2": [
+                    "cc_6_1"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of cloudstorage_bucket_public_access",
+            "title": "Cloud Storage bucket is not publicly accessible",
+            "types": [],
+            "uid": "prowler-gcp-cloudstorage_bucket_public_access-demo-proj-alpha-europe-west1-demo-public-assets",
+            "name": "demo-public-assets"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "europe-west1",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-public-assets"
+                    }
+                },
+                "group": {
+                    "name": "cloudstorage"
+                },
+                "labels": [],
+                "name": "demo-public-assets",
+                "type": "storage.googleapis.com/Bucket",
+                "uid": "demo-public-assets"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "europe-west1"
+        },
+        "remediation": {
+            "desc": "Remove allUsers and allAuthenticatedUsers from the bucket policy.",
+            "references": [
+                "https://hub.prowler.com/check/cloudstorage_bucket_public_access"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "User-managed key 0000test0key0id for Service Account uploader@demo-proj-alpha.iam.gserviceaccount.com was not used over the last 180 days.",
+        "metadata": {
+            "event_code": "iam_sa_user_managed_key_unused",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 3,
+        "severity": "Medium",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "User-managed key 0000test0key0id for Service Account uploader@demo-proj-alpha.iam.gserviceaccount.com was not used over the last 180 days.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "secrets"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {},
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of iam_sa_user_managed_key_unused",
+            "title": "User-managed service account key is used",
+            "types": [],
+            "uid": "prowler-gcp-iam_sa_user_managed_key_unused-demo-proj-alpha-global-uploader@demo-proj-alpha.iam.gserviceaccount.com",
+            "name": "uploader@demo-proj-alpha.iam.gserviceaccount.com"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "uploader@demo-proj-alpha.iam.gserviceaccount.com"
+                    }
+                },
+                "group": {
+                    "name": "iam"
+                },
+                "labels": [],
+                "name": "uploader@demo-proj-alpha.iam.gserviceaccount.com",
+                "type": "iam.googleapis.com/ServiceAccountKey",
+                "uid": "0000test0key0id"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Delete unused keys.",
+            "references": [
+                "https://hub.prowler.com/check/iam_sa_user_managed_key_unused"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Snapshot demo-snap is older than 90 days.",
+        "metadata": {
+            "event_code": "compute_snapshot_not_outdated",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 2,
+        "severity": "Low",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Snapshot demo-snap is older than 90 days.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "resilience"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {},
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of compute_snapshot_not_outdated",
+            "title": "Compute snapshot is recent",
+            "types": [],
+            "uid": "prowler-gcp-compute_snapshot_not_outdated-demo-proj-alpha-global-demo-snap",
+            "name": "demo-snap"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-snap"
+                    }
+                },
+                "group": {
+                    "name": "compute"
+                },
+                "labels": [],
+                "name": "demo-snap",
+                "type": "compute.googleapis.com/Snapshot",
+                "uid": "1234567890123456789"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Delete or refresh old snapshots.",
+            "references": [
+                "https://hub.prowler.com/check/compute_snapshot_not_outdated"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Project demo-proj-alpha has no essential contacts.",
+        "metadata": {
+            "event_code": "iam_organization_essential_contacts_configured",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 1,
+        "severity": "Informational",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Project demo-proj-alpha has no essential contacts.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {},
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of iam_organization_essential_contacts_configured",
+            "title": "Essential contacts are configured",
+            "types": [],
+            "uid": "prowler-gcp-iam_organization_essential_contacts_configured-demo-proj-alpha-global-demo-proj-alpha",
+            "name": "demo-proj-alpha"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-proj-alpha"
+                    }
+                },
+                "group": {
+                    "name": "iam"
+                },
+                "labels": [],
+                "name": "demo-proj-alpha",
+                "type": "cloudresourcemanager.googleapis.com/Project",
+                "uid": "demo-proj-alpha"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Configure essential contacts.",
+            "references": [
+                "https://hub.prowler.com/check/iam_organization_essential_contacts_configured"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Project demo-proj-alpha has OS Login enabled.",
+        "metadata": {
+            "event_code": "compute_project_os_login_enabled",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 2,
+        "severity": "Low",
+        "status": "New",
+        "status_code": "PASS",
+        "status_detail": "Project demo-proj-alpha has OS Login enabled.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "identity-access"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {},
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of compute_project_os_login_enabled",
+            "title": "OS Login is enabled",
+            "types": [],
+            "uid": "prowler-gcp-compute_project_os_login_enabled-demo-proj-alpha-global-demo-proj-alpha",
+            "name": "demo-proj-alpha"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-proj-alpha"
+                    }
+                },
+                "group": {
+                    "name": "compute"
+                },
+                "labels": [],
+                "name": "demo-proj-alpha",
+                "type": "compute.googleapis.com/Project",
+                "uid": "demo-proj-alpha"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Enable OS Login.",
+            "references": [
+                "https://hub.prowler.com/check/compute_project_os_login_enabled"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Key demo-kms is not rotated.",
+        "metadata": {
+            "event_code": "kms_key_rotation_enabled",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 2,
+        "severity": "Low",
+        "status": "Suppressed",
+        "status_code": "FAIL",
+        "status_detail": "Key demo-kms is not rotated.",
+        "status_id": 3,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "encryption"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {},
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of kms_key_rotation_enabled",
+            "title": "KMS key rotation is enabled",
+            "types": [],
+            "uid": "prowler-gcp-kms_key_rotation_enabled-demo-proj-alpha-global-demo-kms",
+            "name": "demo-kms"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-kms"
+                    }
+                },
+                "group": {
+                    "name": "kms"
+                },
+                "labels": [],
+                "name": "demo-kms",
+                "type": "cloudkms.googleapis.com/CryptoKey",
+                "uid": "projects/demo-proj-alpha/locations/global/keyRings/r/cryptoKeys/demo-kms"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Enable rotation.",
+            "references": [
+                "https://hub.prowler.com/check/kms_key_rotation_enabled"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Review log sinks manually.",
+        "metadata": {
+            "event_code": "logging_sink_created",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 3,
+        "severity": "Medium",
+        "status": "New",
+        "status_code": "MANUAL",
+        "status_detail": "Review log sinks manually.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "logging"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {},
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-alpha",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of logging_sink_created",
+            "title": "Log sink exists",
+            "types": [],
+            "uid": "prowler-gcp-logging_sink_created-demo-proj-alpha-global-demo-proj-alpha",
+            "name": "demo-proj-alpha"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-proj-alpha"
+                    }
+                },
+                "group": {
+                    "name": "logging"
+                },
+                "labels": [],
+                "name": "demo-proj-alpha",
+                "type": "logging.googleapis.com/LogSink",
+                "uid": "demo-proj-alpha"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-alpha",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-alpha",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Create a sink.",
+            "references": [
+                "https://hub.prowler.com/check/logging_sink_created"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    }
+]

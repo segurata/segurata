@@ -1,0 +1,201 @@
+# segurata-prowler
+
+An external segurata connector in Python 3 (standard library only) that runs
+[Prowler](https://github.com/prowler-cloud/prowler) (Apache-2.0) against Google Cloud and reports its
+failed checks as segurata findings. Prowler 5.51.0 has 117 GCP checks (Cloud Storage, Cloud SQL,
+Compute, IAM, KMS, logging, DNS, BigQuery, GKE, Vertex AI and others); this connector wraps them
+instead of rewriting them in segurata. It speaks protocol 1 of the external protocol
+([docs/connectors.md](../../docs/connectors.md)) and only inventories: Prowler reads, nothing is
+changed.
+
+Only the `gcp` provider is implemented. `aws`, `azure` and `kubernetes` are accepted in the config
+and reported as `unsupported` until they are.
+
+## Install
+
+### Prowler
+
+Pin the exact version this connector was checked against, published more than four days ago, and
+install it in its own environment. Prowler 5.51.0 (uploaded to PyPI on 2026-11-19) needs Python
+3.10 to 3.13:
+
+```bash
+pipx install --python python3.13 \
+  --pip-args="--only-binary=:all: --exclude-newer=$(date -u -v-4d +%Y-%m-%dT00:00:00Z)" \
+  prowler==5.51.0
+```
+
+(`date -d '4 days ago'` on Linux. pipx 1.12 installs through uv, so `--exclude-newer` is uv's flag
+and applies the quarantine to every dependency, not only to Prowler.) Never `--upgrade` to the
+latest version: move the pin after checking the release's upload date at
+<https://pypi.org/pypi/prowler/json> and re-running the tests.
+
+**Known blocker under a wheels-only policy.** Prowler 5.51.0 depends on packages published only
+as source distributions: `alibabacloud-gateway-oss-util` 0.0.3, `shodan` 1.31.0, `polling` 0.3.2
+and nine other `alibabacloud-*` packages (`alibabacloud-tea`, `-tea-xml`, `-endpoint-util`,
+`-oss-util`, `-darabonba-string`, `-darabonba-signature-util`, `-darabonba-map`,
+`-darabonba-array`, `-darabonba-time`). With `only-binary = :all:` the install fails at
+resolution. Building those packages runs their `setup.py`, which the policy exists to avoid.
+Possible ways through, each a decision for the owner:
+
+1. Read the twelve sdists, then install once without `--only-binary`, keeping `--exclude-newer`
+   and the exact Prowler pin.
+2. Run the official image pinned by digest (`docker pull prowlercloud/prowler:5.51.0`) and point
+   `prowler_path` at a wrapper script that runs it with the token in its environment and the
+   output folder mounted.
+
+### The connector
+
+segurata finds external connectors on `PATH`:
+
+```bash
+ln -s "$PWD/plugins/prowler/segurata-prowler" ~/.local/bin/segurata-prowler   # any directory on PATH
+segurata connectors | grep prowler                                             # describe loaded
+segurata doctor -connector prowler                                             # prowler and gcloud found
+```
+
+## Authentication
+
+Prowler's GCP provider reads `CLOUDSDK_AUTH_ACCESS_TOKEN` before it falls back to Application
+Default Credentials (`setup_session` in `prowler/providers/gcp/gcp_provider.py`). For each project
+the connector asks gcloud for a short-lived token of the account that lists the project:
+
+```
+gcloud auth print-access-token --account=<account>
+```
+
+and starts Prowler with that token in its environment, `GOOGLE_APPLICATION_CREDENTIALS` removed,
+and `GOOGLE_CLOUD_PROJECT` set to the project. So:
+
+- ADC (`~/.config/gcloud/application_default_credentials.json`) is never read, replaced or
+  refreshed; another tool can keep using it.
+- No service-account key is created, no login is started, gcloud config is not changed
+  (`--account` is passed on every call, with `CLOUDSDK_CORE_DISABLE_PROMPTS=1`).
+- The token lives only in the connector's memory and Prowler's environment. Every record the
+  connector writes is scrubbed of it, and of anything shaped like a Google access token
+  (`ya29.…`).
+- A gcloud token lasts an hour and Prowler cannot refresh one. Each project gets a fresh token,
+  so only a single project taking longer than that fails; keep `timeout` under 3300 s.
+
+Accounts gcloud has no credentials for are reported as `missing_credentials` with the
+`gcloud auth login <account>` to run; expired logins as `reauth`.
+
+## Configuration
+
+In `~/.config/segurata/config.json`; every key is optional:
+
+```json
+"prowler": {
+  "config": {
+    "providers": ["gcp"],
+    "accounts": ["me@example.com", "work@example.org"],
+    "projects": ["my-project", "other-project"],
+    "skip_projects": ["someone-elses-project"],
+    "checks": [],
+    "excluded_checks": ["compute_instance_preemptible_vm_disabled"],
+    "severity_min": "low",
+    "include_overlaps": false,
+    "prowler_path": "/Users/me/.local/bin/prowler",
+    "timeout": 1800,
+    "parallel": 1
+  }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `providers` | `["gcp"]` | Prowler providers to run; only `gcp` is implemented |
+| `accounts` | every account in `gcloud auth list` except service accounts | Accounts to scan as. People left out are declared as skipped scopes |
+| `projects` | every active project the accounts list | Restrict to these projects |
+| `skip_projects` | none | Never scanned; declared as skipped scopes so earlier findings there are not taken as resolved |
+| `checks` | all | Only these Prowler check ids (`prowler gcp --list-checks`) |
+| `excluded_checks` | none | Never run these |
+| `severity_min` | none | `info`, `low`, `medium`, `high` or `critical`: Prowler runs only checks at or above it |
+| `include_overlaps` | `false` | Also run and report the checks segurata's `gcp` connector makes (table below) |
+| `prowler_path`, `gcloud_path` | `PATH` (and the SDK folders for gcloud) | Absolute paths to the CLIs |
+| `timeout` | 1800 | Seconds one project may take |
+| `parallel` | 1 | Projects scanned at once; Prowler is already multi-threaded inside a run |
+
+Each project is scanned once, with the first account that lists it. When Prowler is denied, the
+next account that lists the project is tried; findings keep the first account either way, so their
+ids do not depend on who answered.
+
+## What it runs
+
+Per project, in a fresh 0700 temporary folder deleted afterwards:
+
+```
+prowler gcp --project-id P --output-formats json-ocsf --output-directory D --output-filename prowler \
+  --log-level ERROR --log-file D/prowler.log --no-banner --no-color --ignore-exit-code-3 \
+  [--checks …] [--excluded-checks …] [--severity …]
+```
+
+No HTML or CSV report is asked for. The connector reads `D/prowler.ocsf.json` (OCSF Detection
+Findings) and `D/prowler.log`.
+
+## What it reports
+
+One finding per **FAIL** result and resource. PASS, MANUAL and muted results, overlaps and
+results below `severity_min` are counted in the project's `ok` status, for example
+`12 FAIL, 80 PASS, 0 MANUAL; 0 muted, 3 already checked by gcp, 0 below severity_min; APIs disabled
+(nothing to check there): dataproc, notebooks`.
+
+| Field | From |
+|---|---|
+| `account` | The gcloud account that lists the project first |
+| `scope` | The project id |
+| `resource` | `type` `prowler_check`, `id` `<check id>:<project>:<resource uid>`, `name` the resource name |
+| `kind` | `exposure` when the check's categories include `internet-exposed`, `credential` for `secrets`, `setting` otherwise |
+| `severity` | Prowler's: critical, high, medium, low as they are, informational as `info` |
+| `title` | Prowler's result text, which names the resource (`Bucket x is publicly accessible.`). The check title states the passing condition, so it goes to the evidence |
+| `remediation` | Prowler's recommendation text; `url` its page on hub.prowler.com |
+| `evidence` | `check_id`, `check_title`, `service`, `resource_uid`, `resource_type`, `region`, `project`, `compliance` (CIS benchmark versions and requirement ids), `categories`, `prowler_version` |
+
+Prowler's per-resource raw data (`resources[].data`) is never copied: it holds whole API objects.
+
+## Overlap with the gcp connector
+
+Checked against Prowler 5.51.0 and [docs/gcp-connector.md](../../docs/gcp-connector.md). Unless
+`include_overlaps` is true, full overlaps are passed to Prowler as `--excluded-checks` and partial
+ones are run with the overlapping failures dropped.
+
+| Prowler check | segurata `gcp` | Here |
+|---|---|---|
+| `apikeys_api_restrictions_configured` | API key without an API restriction: high | Not run |
+| `apikeys_key_exists` | Every API key is a finding (restricted ones info) | Not run |
+| `apikeys_api_restricted_with_gemini_api` | Unrestricted keys: high | Run; "does not have restrictions configured" dropped, "Gemini as well as other APIs" kept |
+| `apikeys_key_rotated_in_90_days` | Shows `createTime`, no age rule | Run |
+| `iam_sa_no_user_managed_keys` | Each user-managed key: medium | Not run |
+| `iam_sa_user_managed_key_rotate_90_days` | User-managed key older than 90 days: high | Not run |
+| `iam_sa_user_managed_key_unused` | Not reported (`last_used_at` stays null) | Run |
+| `iam_sa_no_administrative_privileges` | Service account with `roles/owner` or `roles/editor`: high | Run; failures naming Owner or Editor dropped, other `*admin*` roles kept. Prowler names only the last matching binding; an account that also has Owner or Editor is already a high finding in `gcp`, and that role implies the narrower one |
+| `iam_service_account_unused`, `compute_instance_default_service_account_in_use*` | Not reported | Run |
+
+Not in Prowler, only in `gcp`: billing budgets and local credential files (ADC, key files).
+
+## Coverage and statuses
+
+| Record | When |
+|---|---|
+| `status ok` (account) | gcloud listed the account's projects |
+| `status ok` (account, scope = project) | Prowler finished on the project; the detail is the summary |
+| `status noscope` (scope = project) | Every account that lists the project was denied, or Google refused one of Prowler's project-level calls (HTTP 403 in its log, including reading whether an API is enabled), so those checks saw nothing; the detail names the services and the roles to grant. Findings from what was read are still reported |
+| `status error` (scope = project) | Prowler timed out, crashed, or wrote output that is not JSON |
+| `status reauth` | gcloud's login for the account expired, or Prowler was refused its token |
+| `status missing_credentials` | An account in `accounts` that gcloud has no credentials for |
+| `status unsupported` (scope `*`) | Prowler or gcloud not found; a provider not implemented yet |
+| `scope` inspected false | Projects in `skip_projects`, projects in `projects` no account lists, people `accounts` leaves out |
+
+A disabled API leaves nothing of that service to check, so it does not make the run partial; the
+project's summary names it.
+
+## Test
+
+```bash
+cd plugins/prowler && python3 -m unittest
+```
+
+The tests put a fake `prowler` and a fake `gcloud` (shell scripts in `testdata/fakebin`) on `PATH`
+and feed a synthetic OCSF fixture (`testdata/ocsf`, invented projects and resources). Nothing
+reaches Google Cloud. The fixture follows the OCSF writer of Prowler 5.51.0
+(`prowler/lib/outputs/ocsf/ocsf.py`).

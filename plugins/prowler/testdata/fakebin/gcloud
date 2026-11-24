@@ -1,0 +1,22 @@
+#!/bin/sh
+# Fake gcloud for the tests. State lives in $FAKE_DIR:
+#   accounts.json              what `auth list --format=json` prints
+#   notoken/<account>          `auth print-access-token` fails for it (expired login)
+#   projects/<account>.json    what `projects list` prints for it
+set -eu
+echo "gcloud $*" >> "$FAKE_DIR/calls.log"
+account=""
+for a in "$@"; do
+  case "$a" in --account=*) account="${a#--account=}" ;; esac
+done
+case "$1 $2" in
+  "auth list") cat "$FAKE_DIR/accounts.json" ;;
+  "auth print-access-token")
+    if [ -e "$FAKE_DIR/notoken/$account" ]; then
+      echo "ERROR: (gcloud.auth.print-access-token) Reauthentication failed. Please run: gcloud auth login $account" >&2
+      exit 1
+    fi
+    echo "ya29.TEST-not-a-real-token-for-$account" ;;
+  "projects list") cat "$FAKE_DIR/projects/$account.json" ;;
+  *) echo "fake gcloud: unexpected command: $*" >&2; exit 2 ;;
+esac
