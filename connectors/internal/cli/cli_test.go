@@ -102,7 +102,7 @@ func TestExecTimeout(t *testing.T) {
 }
 
 func TestExecMissingBinary(t *testing.T) {
-	_, err := Exec{Path: "securizame-no-such-cli", Timeout: time.Second}.Run(context.Background(), "x")
+	_, err := Exec{Path: "segurata-no-such-cli", Timeout: time.Second}.Run(context.Background(), "x")
 	if !errors.Is(err, exec.ErrNotFound) {
 		t.Fatalf("want exec.ErrNotFound in the chain, got %v", err)
 	}

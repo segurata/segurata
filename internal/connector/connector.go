@@ -17,7 +17,7 @@ const (
 	MinProtocolVersion = 1
 )
 
-// Description is what `securizame-<name> describe` prints.
+// Description is what `segurata-<name> describe` prints.
 type Description struct {
 	Name     string   `json:"name"`
 	Version  string   `json:"version"`

@@ -95,7 +95,7 @@ func TestMissingTokenExplainsSetup(t *testing.T) {
 	if err := (&Connector{}).Inventory(context.Background(), connector.Request{}, rec); err != nil {
 		t.Fatal(err)
 	}
-	if st := rec.Statuses[0]; st.State != finding.StateMissingCredentials || !strings.Contains(st.Detail, "keychain:securizame-supabase") {
+	if st := rec.Statuses[0]; st.State != finding.StateMissingCredentials || !strings.Contains(st.Detail, "keychain:segurata-supabase") {
 		t.Fatalf("status: %+v", st)
 	}
 }

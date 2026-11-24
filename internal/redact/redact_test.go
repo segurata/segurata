@@ -68,7 +68,7 @@ func newFixture(t testing.TB) *fixture {
 		t.Skip("ripgrep not installed")
 	}
 	home := t.TempDir()
-	keyPath := filepath.Join(home, ".config", "securizame", "fingerprint.key")
+	keyPath := filepath.Join(home, ".config", "segurata", "fingerprint.key")
 	key, err := fingerprint.Load(keyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func newFixture(t testing.TB) *fixture {
 	conn := localsecrets.New()
 	conn.Home = func() (string, error) { return home, nil }
 	conn.KeyPath = func(string) string { return keyPath }
-	fx := &fixture{t: t, home: home, key: key, conn: conn, state: filepath.Join(home, ".securizame", "tracker.json"),
+	fx := &fixture{t: t, home: home, key: key, conn: conn, state: filepath.Join(home, ".segurata", "tracker.json"),
 		secrets: map[string]string{}, old: time.Now().Add(-3 * time.Hour).Truncate(time.Second)}
 	return fx
 }
@@ -503,7 +503,7 @@ func TestBackupIsOptInAndLoud(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "WARNING: --backup") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	matches, _ := filepath.Glob(p + ".securizame-bak-*")
+	matches, _ := filepath.Glob(p + ".segurata-bak-*")
 	if len(matches) != 1 || fx.read(matches[0]) != before {
 		t.Fatalf("backup: %v", matches)
 	}

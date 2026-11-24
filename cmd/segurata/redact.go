@@ -14,7 +14,7 @@ import (
 	"github.com/segurata/segurata/internal/remediate"
 )
 
-// redactCmd is `securizame redact`: replace the secrets local-secrets finds in trail files.
+// redactCmd is `segurata redact`: replace the secrets local-secrets finds in trail files.
 func redactCmd(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

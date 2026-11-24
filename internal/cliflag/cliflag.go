@@ -1,4 +1,4 @@
-// Package cliflag holds the flag parsing the securizame subcommands share.
+// Package cliflag holds the flag parsing the segurata subcommands share.
 package cliflag
 
 import "flag"

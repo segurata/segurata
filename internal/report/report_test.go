@@ -213,8 +213,8 @@ func TestRenderEveryFormatSaysTheSame(t *testing.T) {
 	for _, f := range []Format{Text, Markdown, HTML} {
 		out := render(t, r, f)
 		for _, want := range []string{
-			"securizame remediate " + x.f.ID, // automatable
-			"reauth", "missing_credentials", "securizame inventory aws", "securizame inventory openrouter:work",
+			"segurata remediate " + x.f.ID, // automatable
+			"reauth", "missing_credentials", "segurata inventory aws", "segurata inventory openrouter:work",
 			"Was medium", "Firewall off", // severity change
 			"Gone (was high)", "Port 5000 open", // resolved
 			"New login item",
@@ -300,7 +300,7 @@ func TestCLIWritesPrivateFile(t *testing.T) {
 		}
 	}
 	stdout.Reset()
-	if code := c.Run([]string{"--dir", x.out}); code != 0 || !strings.HasPrefix(stdout.String(), "SECURIZAME REPORT") {
+	if code := c.Run([]string{"--dir", x.out}); code != 0 || !strings.HasPrefix(stdout.String(), "SEGURATA REPORT") {
 		t.Errorf("text to stdout: exit %d", code)
 	}
 	if code := c.Run([]string{"--dir", filepath.Join(x.dir, "missing")}); code != 1 {

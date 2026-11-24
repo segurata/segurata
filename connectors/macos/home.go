@@ -57,7 +57,7 @@ func (c *Connector) homeCheck(ctx context.Context) check {
 	ch := check{id: "home-private", sev: finding.SevMedium,
 		title: "Your home folder can be read by other accounts on this Mac",
 		rem: finding.Remediation{Action: ActionHomePrivate,
-			Summary: "Make it private with `securizame remediate <id> --apply` (chmod 700, no sudo), or in Finder > Get Info > Sharing & Permissions."}}
+			Summary: "Make it private with `segurata remediate <id> --apply` (chmod 700, no sudo), or in Finder > Get Info > Sharing & Permissions."}}
 	home, err := c.homeDir()
 	if err != nil {
 		ch.skip = err.Error()

@@ -279,9 +279,9 @@ func (p *proposal) finish(itemID string) {
 		n.Action = "Review the linked findings."
 	}
 	if len(p.findings) == 1 && w.Remediation.Automatable {
-		n.Who, n.Command = Securizame, "securizame remediate "+w.ID
+		n.Who, n.Command = Segurata, "segurata remediate "+w.ID
 	} else {
-		n.Command = "securizame track show " + itemID
+		n.Command = "segurata track show " + itemID
 	}
 	p.next = n
 }

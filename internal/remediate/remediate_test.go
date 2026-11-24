@@ -344,7 +344,7 @@ func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
 	want := "Finding  abc123 [" + string(finding.SevMedium) + "] macos · mac · Firewall off\n" +
 		"Action   macos.firewall.enable\n" +
 		"Plan     Turn on the firewall.\n" +
-		"\nRuns (sudo asks for your password on this terminal; securizame never sees it):\n" +
+		"\nRuns (sudo asks for your password on this terminal; segurata never sees it):\n" +
 		"  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on\n" +
 		"\nChanges:\n" +
 		"  chmod 600 '/tmp/a b' (now 644)\n" +

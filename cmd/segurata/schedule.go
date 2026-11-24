@@ -16,9 +16,9 @@ import (
 	"github.com/segurata/segurata/internal/schedule"
 )
 
-const scheduleUsage = "usage: securizame schedule install|uninstall|status|run [--every 24h] [--connectors a,b] [--apply] [--yes]"
+const scheduleUsage = "usage: segurata schedule install|uninstall|status|run [--every 24h] [--connectors a,b] [--apply] [--yes]"
 
-// scheduleCmd is `securizame schedule`. install and uninstall are dry runs unless --apply; run is
+// scheduleCmd is `segurata schedule`. install and uninstall are dry runs unless --apply; run is
 // what the installed agent executes.
 func scheduleCmd(args []string) int {
 	fs := flag.NewFlagSet("schedule", flag.ContinueOnError)

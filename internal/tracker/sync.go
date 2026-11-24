@@ -198,7 +198,7 @@ func (s *SecretReport) add(o SecretReport) {
 	s.HistoryOnly += o.HistoryOnly
 }
 
-// trail are the local-secrets location kinds `securizame redact` cleans.
+// trail are the local-secrets location kinds `segurata redact` cleans.
 var trail = map[string]bool{"transcript": true, "history": true, "log": true}
 
 func (r *run) isSecrets() bool { return isSecretsLabel(r.label) }
@@ -209,7 +209,7 @@ func isSecretsLabel(l string) bool {
 
 func transcriptsProposal() proposal {
 	return proposal{theme: "transcripts", kind: KindFix, connector: SecretsConnector, maxSeverity: finding.SevMedium,
-		next: &Next{Who: Securizame, Command: "securizame redact --trails",
+		next: &Next{Who: Segurata, Command: "segurata redact --trails",
 			Action: "Review the dry run, then run it again with --apply. Rotation is still needed: these copies already reached the model provider or wherever the trail went."}}
 }
 
@@ -261,7 +261,7 @@ var statePhrase = map[finding.State]string{
 // Connectors usually put the exact fix in the detail (a command to run, a page to open); then the
 // action points there instead of guessing from the state alone.
 func StatusAction(st finding.Status, label string) (string, string) {
-	rerun := "securizame inventory " + label
+	rerun := "segurata inventory " + label
 	if detailHasFix(st.Detail) {
 		return "Do what the status detail says.", rerun
 	}
@@ -269,9 +269,9 @@ func StatusAction(st finding.Status, label string) (string, string) {
 	case finding.StateReauth:
 		return "Sign in to this account again (in the browser for browser connectors, with the provider's CLI otherwise).", rerun
 	case finding.StateSignedOut:
-		return "Sign in to this account in the browser securizame drives, or drop it from the config if it is gone.", rerun
+		return "Sign in to this account in the browser segurata drives, or drop it from the config if it is gone.", rerun
 	case finding.StateMissingCredentials:
-		return "Check the secret reference for " + label + " in ~/.config/securizame/config.json (Keychain item, 1Password field or environment variable).", rerun
+		return "Check the secret reference for " + label + " in ~/.config/segurata/config.json (Keychain item, 1Password field or environment variable).", rerun
 	case finding.StateNoScope:
 		return "Grant the permission the detail names to the credential this connector uses.", rerun
 	case finding.StateUnsupported:
@@ -584,7 +584,7 @@ func (t *Tracker) Unaccept(ref string, now time.Time) (*Item, error) {
 		}
 	}
 	if hit == nil {
-		return nil, fmt.Errorf("no accepted finding %q (see securizame accept --list)", ref)
+		return nil, fmt.Errorf("no accepted finding %q (see segurata accept --list)", ref)
 	}
 	hit.Unaccept(now)
 	return hit, nil

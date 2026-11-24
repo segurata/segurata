@@ -34,7 +34,7 @@ func (s pageOnly) run(ctx context.Context, e *env) {
 	case s.empty != nil && s.empty.MatchString(p.Text):
 		e.status("", finding.StateOK, "no connected apps")
 	default:
-		e.status("", finding.StateUnverified, "signed in, but securizame has never seen this page with apps on it, so it does not parse it: review %s by hand", s.url)
+		e.status("", finding.StateUnverified, "signed in, but segurata has never seen this page with apps on it, so it does not parse it: review %s by hand", s.url)
 	}
 }
 

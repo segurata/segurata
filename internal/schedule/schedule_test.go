@@ -17,7 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// fakeRunner records every command. launchctl print succeeds when loaded is set; the securizame
+// fakeRunner records every command. launchctl print succeeds when loaded is set; the segurata
 // inventory writes the findings in inventory to the --out directory.
 type fakeRunner struct {
 	calls     [][]string
@@ -74,7 +74,7 @@ func (desc) Inventory(context.Context, connector.Request, connector.Emitter) err
 func testEnv(t *testing.T, goos string) (Env, *fakeRunner, *bytes.Buffer) {
 	t.Helper()
 	home := t.TempDir()
-	exe := filepath.Join(home, "bin", "securizame")
+	exe := filepath.Join(home, "bin", "segurata")
 	r := &fakeRunner{exe: exe}
 	out := &bytes.Buffer{}
 	return Env{
@@ -95,14 +95,14 @@ func TestInstallDryRunPrintsThePlistAndCommandAndChangesNothing(t *testing.T) {
 	}
 	s := out.String()
 	for _, want := range []string{
-		"<string>com.securizame.inventory</string>",
+		"<string>com.segurata.inventory</string>",
 		"<string>" + env.Exe + "</string>\n\t\t<string>schedule</string>\n\t\t<string>run</string>\n\t\t<string>--connectors</string>\n\t\t<string>macos,local-secrets</string>",
 		"<integer>86400</integer>",
 		"<false/>",
-		filepath.Join(env.Home, ".local/state/securizame"),
-		filepath.Join(env.Home, "Library/Logs/securizame/inventory.log"),
+		filepath.Join(env.Home, ".segurata"),
+		filepath.Join(env.Home, "Library/Logs/segurata/inventory.log"),
 		"<string>/opt/homebrew/bin:/usr/bin:/bin</string>",
-		"/bin/launchctl bootstrap gui/501 " + filepath.Join(env.Home, "Library/LaunchAgents/com.securizame.inventory.plist"),
+		"/bin/launchctl bootstrap gui/501 " + filepath.Join(env.Home, "Library/LaunchAgents/com.segurata.inventory.plist"),
 		"Dry run",
 	} {
 		if !strings.Contains(s, want) {
@@ -160,7 +160,7 @@ func TestInstallApplyWritesLoadsAndReplaces(t *testing.T) {
 	if err := env.Install(context.Background(), Options{Apply: true, Yes: true}); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.ran(launchctl, "bootout"); len(got) != 1 || got[0][2] != "gui/501/com.securizame.inventory" {
+	if got := r.ran(launchctl, "bootout"); len(got) != 1 || got[0][2] != "gui/501/com.segurata.inventory" {
 		t.Fatalf("bootout calls %v", got)
 	}
 	if raw, _ := os.ReadFile(p.Plist); !strings.Contains(string(raw), "<integer>86400</integer>") {
@@ -170,7 +170,7 @@ func TestInstallApplyWritesLoadsAndReplaces(t *testing.T) {
 
 func TestInstallRefusesABinaryThatWillNotStay(t *testing.T) {
 	env, _, _ := testEnv(t, "darwin")
-	env.Exe = filepath.Join(env.TmpDir, "go-build123", "exe", "securizame")
+	env.Exe = filepath.Join(env.TmpDir, "go-build123", "exe", "segurata")
 	if err := env.Install(context.Background(), Options{}); err == nil || !strings.Contains(err.Error(), "go run") {
 		t.Fatalf("want refusal, got %v", err)
 	}
@@ -181,7 +181,7 @@ func TestInstallRefusesABinaryThatWillNotStay(t *testing.T) {
 
 func TestUninstall(t *testing.T) {
 	env, r, out := testEnv(t, "darwin")
-	if err := env.Uninstall(context.Background(), Options{Apply: true, Yes: true}); err != nil || !strings.Contains(out.String(), "No securizame agent") {
+	if err := env.Uninstall(context.Background(), Options{Apply: true, Yes: true}); err != nil || !strings.Contains(out.String(), "No segurata agent") {
 		t.Fatalf("nothing installed: %v %s", err, out)
 	}
 	if err := env.Install(context.Background(), Options{Apply: true, Yes: true}); err != nil {
@@ -224,8 +224,8 @@ func TestLinuxPrintsSystemdUnitsAndNeverApplies(t *testing.T) {
 	}
 	s := out.String()
 	for _, want := range []string{
-		"securizame-inventory.service", "Type=oneshot", "ExecStart=" + env.Exe + " schedule run --connectors local-secrets",
-		"OnUnitActiveSec=86400s", "WantedBy=timers.target", "systemctl --user enable --now securizame-inventory.timer",
+		"segurata-inventory.service", "Type=oneshot", "ExecStart=" + env.Exe + " schedule run --connectors local-secrets",
+		"OnUnitActiveSec=86400s", "WantedBy=timers.target", "systemctl --user enable --now segurata-inventory.timer",
 		"Environment=PATH=/opt/homebrew/bin:/usr/bin:/bin",
 	} {
 		if !strings.Contains(s, want) {
@@ -273,7 +273,7 @@ func TestRunNotifiesOnlyNewHighOrCriticalFindings(t *testing.T) {
 		t.Fatalf("report calls %v", rep)
 	}
 	notes := r.ran(osascript, "-e")
-	if len(notes) != 1 || notes[0][2] != `display notification "Firewall is off" with title "securizame" subtitle "1 new high finding"` {
+	if len(notes) != 1 || notes[0][2] != `display notification "Firewall is off" with title "segurata" subtitle "1 new high finding"` {
 		t.Fatalf("notifications %v", notes)
 	}
 	if !strings.Contains(out.String(), "1 new high or critical findings") {
@@ -326,7 +326,7 @@ func TestNotificationNamesAtMostThreeTitles(t *testing.T) {
 		fs = append(fs, high(id, "t"+id+"\nline"))
 	}
 	got := notification(fs)
-	want := `display notification "t1 line; t2 line; t3 line; and 2 more" with title "securizame" subtitle "5 new high or critical findings"`
+	want := `display notification "t1 line; t2 line; t3 line; and 2 more" with title "segurata" subtitle "5 new high or critical findings"`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -334,13 +334,13 @@ func TestNotificationNamesAtMostThreeTitles(t *testing.T) {
 
 func TestUnitFilesQuoteWhatTheyEmbed(t *testing.T) {
 	env, _, _ := testEnv(t, "darwin")
-	env.Exe, env.Path = "/Users/a b/bin/securizame", "/x&y:/<z>"
+	env.Exe, env.Path = "/Users/a b/bin/segurata", "/x&y:/<z>"
 	plist, err := env.Plist(Options{})
 	if err != nil || !strings.Contains(plist, "<string>/x&amp;y:/&lt;z&gt;</string>") {
 		t.Fatalf("plist not escaped: %v\n%s", err, plist)
 	}
 	svc, _, err := env.SystemdUnits(Options{})
-	if err != nil || !strings.Contains(svc, `ExecStart="/Users/a b/bin/securizame" schedule run`) {
+	if err != nil || !strings.Contains(svc, `ExecStart="/Users/a b/bin/segurata" schedule run`) {
 		t.Fatalf("unit not quoted: %v\n%s", err, svc)
 	}
 	if got := systemdQuote(`50%$"`); got != `"50%%$$\""` {

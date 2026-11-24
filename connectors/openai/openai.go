@@ -30,8 +30,8 @@ const (
 )
 
 const setupHint = "set " + secretName + ": create an Admin API key at " + adminURL +
-	`, store it with: security add-generic-password -s securizame-openai-admin -a "$USER" -w` +
-	` and reference it as "keychain:securizame-openai-admin" under connectors.openai.secrets in ~/.config/securizame/config.json (docs/ai-connectors.md)`
+	`, store it with: security add-generic-password -s segurata-openai-admin -a "$USER" -w` +
+	` and reference it as "keychain:segurata-openai-admin" under connectors.openai.secrets in ~/.config/segurata/config.json (docs/ai-connectors.md)`
 
 // Connector is the built-in OpenAI connector. Zero values use the real API and clock.
 type Connector struct {

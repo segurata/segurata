@@ -30,7 +30,7 @@ type Client struct {
 func New(baseURL string, header http.Header) *Client {
 	h := header.Clone()
 	h.Set("Accept", "application/json")
-	h.Set("User-Agent", "securizame")
+	h.Set("User-Agent", "segurata")
 	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Header: h, HTTP: &http.Client{Timeout: 60 * time.Second}}
 }
 

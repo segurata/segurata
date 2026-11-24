@@ -82,7 +82,7 @@ func adminArgv(u string) []string {
 }
 func lastArgv(u string) []string { return []string{lastBin, "-1", u} }
 
-// accountChecks reports every human account other than the one running securizame. The guest
+// accountChecks reports every human account other than the one running segurata. The guest
 // account is the guest-account check; a deleted account's File Sharing record is the share point
 // check (shareCheck names the deleted account).
 func (c *Connector) accountChecks(ctx context.Context, users []localUser) []check {

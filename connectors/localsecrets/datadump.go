@@ -273,7 +273,7 @@ func (h dumpHit) remediation() string {
 	if h.Remote {
 		b.WriteString(" and force-push every branch and tag; collaborators must re-clone, and the host may keep cached copies until support purges them")
 	}
-	b.WriteString(". securizame never rewrites history or pushes. ")
+	b.WriteString(". segurata never rewrites history or pushes. ")
 	fmt.Fprintf(&b, "If it holds personal data of customers or staff, check the GDPR breach notification duty (72 hours): %s, %s. See %s.", urlAEPDBreaches, urlEDPBBreaches, dumpFixDocument)
 	return b.String()
 }

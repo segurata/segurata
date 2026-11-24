@@ -20,8 +20,8 @@ const (
 	secretName     = "SUPABASE_ACCESS_TOKEN"
 	DefaultBaseURL = "https://api.supabase.com"
 	setupHint      = "create a personal access token at https://supabase.com/dashboard/account/tokens, store it with " +
-		"`security add-generic-password -s securizame-supabase -a \"$USER\" -w` and reference it in " +
-		"~/.config/securizame/config.json as connectors.supabase.secrets.SUPABASE_ACCESS_TOKEN = \"keychain:securizame-supabase\""
+		"`security add-generic-password -s segurata-supabase -a \"$USER\" -w` and reference it in " +
+		"~/.config/segurata/config.json as connectors.supabase.secrets.SUPABASE_ACCESS_TOKEN = \"keychain:segurata-supabase\""
 )
 
 // Connector is the built-in Supabase connector. A zero BaseURL uses the real API.

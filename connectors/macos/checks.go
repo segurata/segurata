@@ -41,13 +41,13 @@ func (c *Connector) systemChecks(ctx context.Context) []check {
 	out = append(out, check{id: "firewall", ok: strings.Contains(s, "enabled"), detail: s, sev: finding.SevMedium,
 		title: "The macOS application firewall is off",
 		rem: finding.Remediation{Action: ActionFirewallEnable,
-			Summary: "Turn on the firewall (System Settings > Network > Firewall), or run `securizame remediate <id> --apply`."}})
+			Summary: "Turn on the firewall (System Settings > Network > Firewall), or run `segurata remediate <id> --apply`."}})
 
 	s, _ = c.text(ctx, socketfilterfw, "--getstealthmode")
 	out = append(out, check{id: "firewall-stealth", ok: strings.Contains(s, " on") || strings.Contains(s, "enabled"), detail: s, sev: finding.SevLow,
 		title: "Firewall stealth mode is off: the Mac answers probes and pings",
 		rem: finding.Remediation{Action: ActionFirewallStealth,
-			Summary: "Turn on stealth mode (System Settings > Network > Firewall > Options), or run `securizame remediate <id> --apply`."}})
+			Summary: "Turn on stealth mode (System Settings > Network > Firewall > Options), or run `segurata remediate <id> --apply`."}})
 
 	updates := manual("Turn on every automatic update option in System Settings > General > Software Update > Automatic Updates.")
 	for _, k := range updateKeys {

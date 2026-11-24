@@ -1,19 +1,19 @@
-// securizame inventories a personal digital footprint. See docs/architecture.md.
+// segurata inventories a personal digital footprint. See docs/architecture.md.
 //
-//	securizame connectors                     list built-in and external connectors
-//	securizame inventory [name|name:label ...] run connectors (all when none given)
+//	segurata connectors                     list built-in and external connectors
+//	segurata inventory [name|name:label ...] run connectors (all when none given)
 //	    --min-severity=low  --out=out  --verbose
-//	securizame status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]   the briefing
-//	securizame track list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync   tracker items
-//	securizame report [--format text|md|html] [--out file]   latest runs, changes, secrets, accepted risks
-//	securizame remediate --list               automatable findings of the latest run
-//	securizame remediate <finding-id>         show the plan; --apply [--yes] to apply it
-//	securizame rotations sync|list|next|show|replace|done|snooze|ignore|reopen   ledger of secrets to rotate
-//	securizame redact --trails|--path p|--item id   replace secrets in trail files; --apply [--yes] to rewrite
-//	securizame accept <finding-id> --reason text [--until YYYY-MM-DD]   keep a risk on purpose
-//	securizame accept --list | securizame unaccept <finding-id>
-//	securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply]   scheduled runs
-//	securizame doctor [--connector name]      check prerequisites, read-only
+//	segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]   the briefing
+//	segurata track list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync   tracker items
+//	segurata report [--format text|md|html] [--out file]   latest runs, changes, secrets, accepted risks
+//	segurata remediate --list               automatable findings of the latest run
+//	segurata remediate <finding-id>         show the plan; --apply [--yes] to apply it
+//	segurata rotations sync|list|next|show|replace|done|snooze|ignore|reopen   ledger of secrets to rotate
+//	segurata redact --trails|--path p|--item id   replace secrets in trail files; --apply [--yes] to rewrite
+//	segurata accept <finding-id> --reason text [--until YYYY-MM-DD]   keep a risk on purpose
+//	segurata accept --list | segurata unaccept <finding-id>
+//	segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply]   scheduled runs
+//	segurata doctor [--connector name]      check prerequisites, read-only
 package main
 
 import (
@@ -81,7 +81,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] | securizame track <list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync> | securizame report [--format text|md|html] [--out file] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id> | securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | securizame redact [--trails] [--path prefix] [--item id] [--apply] | securizame doctor [--connector name]")
+	fmt.Fprintln(os.Stderr, "usage: segurata connectors | segurata inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] | segurata track <list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync> | segurata report [--format text|md|html] [--out file] | segurata remediate --list | <finding-id> [--apply] [--yes] | segurata rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | segurata accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | segurata unaccept <finding-id> | segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | segurata redact [--trails] [--path prefix] [--item id] [--apply] | segurata doctor [--connector name]")
 }
 
 func all() []connector.Connector {

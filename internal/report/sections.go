@@ -17,7 +17,7 @@ var severities = []finding.Severity{finding.SevCritical, finding.SevHigh, findin
 
 // document lays the report out section by section.
 func (r *Report) document() *doc.Doc {
-	d := &doc.Doc{Title: "securizame report"}
+	d := &doc.Doc{Title: "segurata report"}
 	d.H(1, d.Title)
 	d.P(fmt.Sprintf("Generated %s from the latest run of each connector instance under %s. Findings below %s and accepted risks are left out of the lists.",
 		r.Generated.Format("2006-01-02 15:04"), r.OutDir, r.MinSev))
@@ -242,7 +242,7 @@ func findingItem(f finding.Finding) doc.Item {
 		it.Details = append(it.Details, doc.Detail{Label: "Where", Text: u, Kind: doc.DLink})
 	}
 	if f.Remediation.Automatable {
-		it.Details = append(it.Details, doc.Detail{Label: "Automatable", Text: "securizame remediate " + f.ID, Kind: doc.DCode})
+		it.Details = append(it.Details, doc.Detail{Label: "Automatable", Text: "segurata remediate " + f.ID, Kind: doc.DCode})
 	}
 	return it
 }
@@ -251,7 +251,7 @@ func (r *Report) rotations(d *doc.Doc) {
 	d.H(2, "Rotation ledger")
 	s := r.Rotations
 	if s.Total == 0 {
-		d.P("No secrets in the tracker yet ("+s.Path+"): after a local-secrets inventory, run ", doc.Code("securizame rotations sync"), ".")
+		d.P("No secrets in the tracker yet ("+s.Path+"): after a local-secrets inventory, run ", doc.Code("segurata rotations sync"), ".")
 		return
 	}
 	d.P(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored.",
@@ -275,9 +275,9 @@ func (r *Report) rotations(d *doc.Doc) {
 			items = append(items, rotationItem(it, "snoozed until "+it.SnoozedUntil))
 		}
 		d.List(items)
-		d.P("They count as open again; ", doc.Code("securizame rotations sync"), " records it.")
+		d.P("They count as open again; ", doc.Code("segurata rotations sync"), " records it.")
 	}
-	d.P("Full list: ", doc.Code("securizame rotations list"), "; one item: ", doc.Code("securizame rotations show <id>"), ".")
+	d.P("Full list: ", doc.Code("segurata rotations list"), "; one item: ", doc.Code("segurata rotations show <id>"), ".")
 }
 
 // rotationItem shows an item by its redacted hint only, never a location's content.
@@ -294,7 +294,7 @@ func rotationItem(it *tracker.Item, when string) doc.Item {
 	if s.RotateURL != "" {
 		out.Details = append(out.Details, doc.Detail{Label: "Rotate at", Text: s.RotateURL, Kind: doc.DLink})
 	}
-	out.Details = append(out.Details, doc.Detail{Label: "Then", Text: "securizame rotations done " + s.ID, Kind: doc.DCode})
+	out.Details = append(out.Details, doc.Detail{Label: "Then", Text: "segurata rotations done " + s.ID, Kind: doc.DCode})
 	return out
 }
 
@@ -325,10 +325,10 @@ func (r *Report) accepted(d *doc.Doc) {
 	d.Table([]string{"ID", "Connector", "State", "Until", "Reason", "Title"}, rows)
 	if expired > 0 {
 		d.P(fmt.Sprintf("%d expired: those findings show in the lists again. Fix them, or accept again with a new date: ", expired),
-			doc.Code("securizame accept <id> --reason \"…\" --until YYYY-MM-DD"), ".")
+			doc.Code("segurata accept <id> --reason \"…\" --until YYYY-MM-DD"), ".")
 	}
 	if gone > 0 {
-		d.P(fmt.Sprintf("%d no longer reported by the latest run of their connector: ", gone), doc.Code("securizame unaccept <id>"), " tidies them up.")
+		d.P(fmt.Sprintf("%d no longer reported by the latest run of their connector: ", gone), doc.Code("segurata unaccept <id>"), " tidies them up.")
 	}
 }
 

@@ -1,4 +1,4 @@
-// Package accept is `securizame accept` and `securizame unaccept`: keep a risk on purpose, such as
+// Package accept is `segurata accept` and `segurata unaccept`: keep a risk on purpose, such as
 // a browser debugging port that local agents need. An accepted finding is still inventoried and
 // written to the JSONL (with an "accepted" field) but left out of the summary and of `remediate
 // --list` until its acceptance expires. Acceptances live in the tracker, as items with status
@@ -17,11 +17,11 @@ import (
 )
 
 const (
-	acceptUsage   = "usage: securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | securizame accept --list"
-	unacceptUsage = "usage: securizame unaccept <finding-id>"
+	acceptUsage   = "usage: segurata accept <finding-id> --reason text [--until YYYY-MM-DD] | segurata accept --list"
+	unacceptUsage = "usage: segurata unaccept <finding-id>"
 )
 
-// CLI is `securizame accept` and `securizame unaccept`.
+// CLI is `segurata accept` and `segurata unaccept`.
 type CLI struct {
 	Out, Err io.Writer
 	Paths    tracker.Paths // zero means tracker.DefaultPaths
@@ -122,7 +122,7 @@ func (c CLI) list(t *tracker.Tracker, now time.Time) {
 		fmt.Fprintf(c.Out, "%s  %-18s %-22s %-16s %s\n", findingID(it), state, untilText(it.Accepted), connectorOf(it), it.Title)
 		fmt.Fprintf(c.Out, "%18s reason: %s (accepted %s, item %s)\n", "", it.Accepted.Reason, it.Accepted.AcceptedAt.In(now.Location()).Format(time.DateOnly), it.ID)
 	}
-	fmt.Fprintf(c.Out, "\n%d accepted findings. Show them again with: securizame unaccept <id>\n", len(items))
+	fmt.Fprintf(c.Out, "\n%d accepted findings. Show them again with: segurata unaccept <id>\n", len(items))
 }
 
 // findingID names an accepted item by its finding, as `accept` was given it.

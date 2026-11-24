@@ -1,4 +1,4 @@
-// Package redact is `securizame redact`: it rewrites local trail files (agent transcripts, shell
+// Package redact is `segurata redact`: it rewrites local trail files (agent transcripts, shell
 // histories, logs) so the secrets local-secrets finds in them are replaced by
 // [REDACTED:<type>:<fingerprint8>]. Those copies already went wherever they went (a transcript
 // reached the model provider), so rotation is still needed; redaction removes the copy that
@@ -35,7 +35,7 @@ import (
 // DefaultMinAge keeps files an agent or a shell may still be writing out of reach.
 const DefaultMinAge = 2 * time.Hour
 
-const usage = `usage: securizame redact (--trails | --path <prefix> | --item <rotation id>) [options]
+const usage = `usage: segurata redact (--trails | --path <prefix> | --item <rotation id>) [options]
   --trails            every trail local-secrets scans: agent transcripts, shell histories, logs
   --path <prefix>     only trail files under this path
   --item <id>         only this rotation item's secret, everywhere it appears in trails
@@ -48,7 +48,7 @@ const usage = `usage: securizame redact (--trails | --path <prefix> | --item <ro
 // Runner runs a program and returns its stdout. Tests inject a fake.
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
-// CLI is the `securizame redact` command.
+// CLI is the `segurata redact` command.
 type CLI struct {
 	Out, Err io.Writer
 	In       io.Reader

@@ -431,7 +431,7 @@ func TestParseSettings(t *testing.T) {
 		}
 	}
 	s, err := parseSettings(map[string]any{"domain": domain}, "/home/u")
-	if err != nil || s.inactiveDays != 90 || s.cloudsdkConfig != "/home/u/.config/securizame/gcloud-example.com" {
+	if err != nil || s.inactiveDays != 90 || s.cloudsdkConfig != "/home/u/.config/segurata/gcloud-example.com" {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 }

@@ -55,7 +55,7 @@ func Targets(cfg config.Config, conns []connector.Connector, selectors []string)
 			}
 		}
 		if len(out) == n {
-			return nil, fmt.Errorf("unknown connector or instance %q (see: securizame connectors)", sel)
+			return nil, fmt.Errorf("unknown connector or instance %q (see: segurata connectors)", sel)
 		}
 	}
 	return out, nil

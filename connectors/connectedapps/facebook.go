@@ -142,7 +142,7 @@ func facebook(ctx context.Context, e *env) {
 	}
 	more := ""
 	if p.More {
-		more = `; Facebook lists more behind "See more", which securizame does not click: review the rest at ` + fbURL
+		more = `; Facebook lists more behind "See more", which segurata does not click: review the rest at ` + fbURL
 	}
 	e.status("", finding.StateOK, "%d apps, %d without details%s", len(p.Rows), failed, more)
 }

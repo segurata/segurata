@@ -1,11 +1,11 @@
-// Package tracker keeps securizame's single local record of what to do: one item per thing a
+// Package tracker keeps segurata's single local record of what to do: one item per thing a
 // person would act on (a secret to rotate, five GitHub orgs that do not require 2FA, a data dump in
 // git, a connector that needs a fresh sign-in, an open decision), with its status, priority, the
 // findings it links, the next action and its history. Runs and findings are ephemeral; items are
 // not. It absorbs the former rotation ledger (rotate items) and accepted-risks file (accepted
 // items).
 //
-// The file is ~/.securizame/tracker.json (SECURIZAME_HOME names another directory), mode 0600 in a
+// The file is ~/.segurata/tracker.json (SEGURATA_HOME names another directory), mode 0600 in a
 // 0700 directory, written atomically with the previous good version kept as tracker.json.bak. It
 // never holds a secret value: rotate items carry redacted hints and HMAC fingerprints only, and
 // findings carry none. See docs/architecture.md, "Tracker".
@@ -28,7 +28,7 @@ const (
 	KindFix    Kind = "fix"    // change a setting, remove a file, revoke a grant
 	KindRotate Kind = "rotate" // rotate one secret (one fingerprint)
 	KindDecide Kind = "decide" // answer a question before anything else can happen
-	KindSetup  Kind = "setup"  // let securizame see: sign in, add a credential, grant a scope
+	KindSetup  Kind = "setup"  // let segurata see: sign in, add a credential, grant a scope
 	KindReview Kind = "review" // look at a list and keep or remove each entry
 )
 
@@ -52,9 +52,9 @@ var statuses = []Status{Open, InProgress, Done, Accepted, Ignored, Snoozed}
 type Who string
 
 const (
-	You        Who = "you"
-	Securizame Who = "securizame" // a securizame command does it, after your confirmation
-	Agent      Who = "agent"
+	You      Who = "you"
+	Segurata Who = "segurata" // a segurata command does it, after your confirmation
+	Agent    Who = "agent"
 )
 
 // History event categories. Event.Action keeps the precise verb (done, auto-reopen,

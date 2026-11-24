@@ -1,4 +1,4 @@
-"""Tests for securizame-hibp against a fake HIBP server on 127.0.0.1. No real network."""
+"""Tests for segurata-hibp against a fake HIBP server on 127.0.0.1. No real network."""
 
 import importlib.machinery
 import importlib.util
@@ -14,10 +14,10 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.join(HERE, "securizame-hibp")
+SCRIPT = os.path.join(HERE, "segurata-hibp")
 
-_loader = importlib.machinery.SourceFileLoader("securizame_hibp", SCRIPT)
-_spec = importlib.util.spec_from_loader("securizame_hibp", _loader)
+_loader = importlib.machinery.SourceFileLoader("segurata_hibp", SCRIPT)
+_spec = importlib.util.spec_from_loader("segurata_hibp", _loader)
 hibp = importlib.util.module_from_spec(_spec)
 _loader.exec_module(hibp)
 
@@ -86,7 +86,7 @@ def request(server, emails, **config):
 class DescribeTest(unittest.TestCase):
     def test_describe_speaks_protocol_2_and_needs_the_key(self):
         out = io.StringIO()
-        self.assertEqual(hibp.main(["securizame-hibp", "describe"], stdout=out), 0)
+        self.assertEqual(hibp.main(["segurata-hibp", "describe"], stdout=out), 0)
         d = json.loads(out.getvalue())
         self.assertEqual((d["name"], d["protocol"], d["needs"]), ("hibp", 2, ["secret:HIBP_API_KEY"]))
         self.assertNotIn("remediates", d)
@@ -131,7 +131,7 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(path, "/api/v3/breachedaccount/me%2Btag%40example.com")
         self.assertEqual(query, {"truncateResponse": ["false"]})
         self.assertEqual(headers.get("hibp-api-key"), KEY)
-        self.assertEqual(headers.get("user-agent"), "securizame-hibp")
+        self.assertEqual(headers.get("user-agent"), "segurata-hibp")
 
         findings = {r["resource"]["id"]: r for r in records if r["type"] == "finding"}
         self.assertEqual({k: f["severity"] for k, f in findings.items()}, {

@@ -160,7 +160,7 @@ func staleFinding(f finding.Finding, a account, inactiveDays int) (finding.Findi
 			state = "archived"
 		}
 		f.Severity, f.Title = finding.SevLow, fmt.Sprintf("%s is %s (last sign-in %s)", a.email, state, a.lastLoginText())
-		f.Remediation.Summary = "Delete the account after transferring its data, or keep it on purpose with securizame accept"
+		f.Remediation.Summary = "Delete the account after transferring its data, or keep it on purpose with segurata accept"
 	case a.idleDays > inactiveDays:
 		f.Severity = finding.SevMedium
 		if a.admin() {

@@ -19,7 +19,7 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-const trackUsage = `usage: securizame track <command>
+const trackUsage = `usage: segurata track <command>
   list       [--all] [--theme t] [--kind k] [--priority P0,P1] [--status s]   items (secrets: --kind rotate)
   show       <id>
   start      <id> [--note text]
@@ -35,9 +35,9 @@ const trackUsage = `usage: securizame track <command>
   sync       [--out out] [--from out/<date>/local-secrets.jsonl] [--include-noise]
 <id> is T-0012 (or T-12), or a secret's short id.`
 
-const statusUsage = "usage: securizame status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]"
+const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]"
 
-// CLI is `securizame track` and `securizame status`.
+// CLI is `segurata track` and `segurata status`.
 type CLI struct {
 	Out, Err io.Writer
 	Paths    Paths // zero means DefaultPaths
@@ -84,7 +84,7 @@ func set(s string, upper bool) map[string]bool {
 	return m
 }
 
-// Track runs one `securizame track` subcommand.
+// Track runs one `segurata track` subcommand.
 func (c CLI) Track(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(c.Err, trackUsage)
@@ -173,14 +173,14 @@ func (c CLI) list(t *Tracker, args []string, now time.Time) int {
 	tw.Flush()
 	fmt.Fprintf(c.Out, "%s\n", count(len(items), "item", "items"))
 	if secrets > 0 {
-		fmt.Fprintf(c.Out, "Plus %s to rotate: securizame rotations list (or --kind rotate).\n", count(secrets, "secret", "secrets"))
+		fmt.Fprintf(c.Out, "Plus %s to rotate: segurata rotations list (or --kind rotate).\n", count(secrets, "secret", "secrets"))
 	}
 	return 0
 }
 
 func (c CLI) show(t *Tracker, args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(c.Err, "usage: securizame track show <id>")
+		fmt.Fprintln(c.Err, "usage: segurata track show <id>")
 		return 2
 	}
 	it, err := t.Find(args[0])
@@ -215,7 +215,7 @@ func (c CLI) show(t *Tracker, args []string) int {
 	}
 	if n := it.Next; n != nil {
 		fmt.Fprintf(w, "\nnext (%s): %s\n", n.Who, n.Action)
-		if n.Command != "" && n.Command != "securizame track show "+it.ID {
+		if n.Command != "" && n.Command != "segurata track show "+it.ID {
 			fmt.Fprintf(w, "  $ %s\n", n.Command)
 		}
 		if n.URL != "" {
@@ -223,7 +223,7 @@ func (c CLI) show(t *Tracker, args []string) int {
 		}
 	}
 	if s := it.Secret; s != nil {
-		fmt.Fprintf(w, "\nsecret %s %s/%s %s, %s; details: securizame rotations show %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted),
+		fmt.Fprintf(w, "\nsecret %s %s/%s %s, %s; details: segurata rotations show %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted),
 			count(len(s.Locations), "location", "locations"), s.ID)
 	}
 	if len(it.Findings) > 0 {
@@ -257,7 +257,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 		want = 2
 	}
 	if err != nil || len(pos) < 1 || (cmd != "note" && len(pos) != want) {
-		fmt.Fprintf(c.Err, "usage: securizame track %s <id> (see: securizame track)\n", cmd)
+		fmt.Fprintf(c.Err, "usage: segurata track %s <id> (see: segurata track)\n", cmd)
 		return 2
 	}
 	it, err := t.Find(pos[0])

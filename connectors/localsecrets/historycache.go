@@ -38,9 +38,9 @@ const historyCacheVersion = 1
 // maxLogOpts bounds the commit list passed to gitleaks, well under any OS argument limit.
 var maxLogOpts = 256 << 10
 
-// DefaultCacheDir is ~/.cache/securizame/gitleaks.
+// DefaultCacheDir is ~/.cache/segurata/gitleaks.
 func DefaultCacheDir(home string) string {
-	return filepath.Join(home, ".cache", "securizame", "gitleaks")
+	return filepath.Join(home, ".cache", "segurata", "gitleaks")
 }
 
 // historyCache is one repository's cache file.
@@ -214,7 +214,7 @@ func (s *scan) rulesKey(repo string) (string, error) {
 }
 
 // cacheKeyProbe changes whenever the fingerprint key does, which invalidates cached fingerprints.
-func (s *scan) cacheKeyProbe() string { return s.fp.Of("securizame git history cache") }
+func (s *scan) cacheKeyProbe() string { return s.fp.Of("segurata git history cache") }
 
 func (s *scan) cachePath(repo string) string { return repoCacheFile(s.c.CacheDir(s.home), repo) }
 

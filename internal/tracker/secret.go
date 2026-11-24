@@ -13,7 +13,7 @@ import (
 )
 
 // Rotate items: one per secret fingerprint, fed by local-secrets findings. This is the former
-// rotation ledger; `securizame rotations` is its command family. The risk model it shares with
+// rotation ledger; `segurata rotations` is its command family. The risk model it shares with
 // the connector lives in internal/secretrisk, so a finding's severity and an item's priority never
 // disagree. See docs/architecture.md, "Rotation ledger".
 
@@ -214,7 +214,7 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	rep.Reopened++
 }
 
-// NoteRedaction records that `securizame redact` replaced the value in some trail files. The
+// NoteRedaction records that `segurata redact` replaced the value in some trail files. The
 // locations stay: the copies reached wherever they went before the local file was cleaned.
 func (it *Item) NoteRedaction(at time.Time, files int) {
 	it.Log(at, EvNote, actRedacted, fmt.Sprintf("redacted from %d trail %s", files, textfmt.Plural(files, "file", "files")))
@@ -411,7 +411,7 @@ func (it *Item) secretTitleAndNext() {
 	if s.RotateURL != "" {
 		where = "at " + s.RotateURL
 	}
-	n := &Next{Who: You, URL: s.RotateURL, Command: "securizame rotations done " + s.ID}
+	n := &Next{Who: You, URL: s.RotateURL, Command: "segurata rotations done " + s.ID}
 	_, single := secretrisk.ParseHint(s.Redacted)
 	switch {
 	case len(s.UsedIn) == 0:
@@ -419,8 +419,8 @@ func (it *Item) secretTitleAndNext() {
 	case !single:
 		n.Action = fmt.Sprintf("Rotate it %s, put the new value in %s by hand, then mark it done.", where, count(len(s.UsedIn), "file", "files"))
 	default:
-		n.Action = fmt.Sprintf("Rotate it %s and copy the new value; securizame puts it in %s.", where, count(len(s.UsedIn), "file", "files"))
-		n.Command = "securizame rotations replace " + s.ID
+		n.Action = fmt.Sprintf("Rotate it %s and copy the new value; segurata puts it in %s.", where, count(len(s.UsedIn), "file", "files"))
+		n.Command = "segurata rotations replace " + s.ID
 	}
 	it.Next = n
 }

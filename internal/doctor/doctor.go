@@ -1,6 +1,6 @@
-// Package doctor checks, read-only, everything securizame needs before an inventory: the config
+// Package doctor checks, read-only, everything segurata needs before an inventory: the config
 // and its secret references, the browser's debugging port for connectors that drive it, each
-// connector's CLIs and sign-ins, and the modes of securizame's own state files. It prints OK, WARN
+// connector's CLIs and sign-ins, and the modes of segurata's own state files. It prints OK, WARN
 // or FAIL with the exact fix, and never a secret: references are resolved and the values dropped.
 // See docs/architecture.md, "Doctor".
 package doctor
@@ -130,7 +130,7 @@ func (e Env) config() (config.Config, []connector.Check, bool) {
 	for _, key := range slices.Sorted(maps.Keys(cfg.Connectors)) {
 		if name, _, _ := strings.Cut(key, ":"); !names[name] {
 			checks = append(checks, connector.Check{Level: connector.Warn, What: "connectors." + key, Detail: "no connector is called " + name,
-				Fix: "rename or remove it (see: securizame connectors)"})
+				Fix: "rename or remove it (see: segurata connectors)"})
 		}
 	}
 	return cfg, checks, true
@@ -153,10 +153,10 @@ func (e Env) cdp(ctx context.Context, cfg config.Config, targets []run.Target) [
 	needed := "needed by " + strings.Join(users, ", ")
 	if err != nil {
 		return []connector.Check{{Level: connector.Fail, What: cfg.CDPURL, Detail: "not reachable (" + needed + "): " + err.Error(),
-			Fix: "start the browser with --remote-debugging-port=9222, or set cdp_url (or SECURIZAME_CDP) to its address"}}
+			Fix: "start the browser with --remote-debugging-port=9222, or set cdp_url (or SEGURATA_CDP) to its address"}}
 	}
 	return []connector.Check{{Level: connector.OK, What: cfg.CDPURL, Detail: v.Browser + " (" + needed + "). Accepted-risk tradeoff: " +
-		"while the port is open, any local process can drive the signed-in browser; keep it on 127.0.0.1 and see securizame accept"}}
+		"while the port is open, any local process can drive the signed-in browser; keep it on 127.0.0.1 and see segurata accept"}}
 }
 
 // connectors checks every target at once and returns each target's checks in order.
@@ -192,7 +192,7 @@ func (e Env) target(ctx context.Context, cfg config.Config, t run.Target) []conn
 		case kind == "secret":
 			if _, set := t.Instance.Secrets[arg]; !set {
 				checks = append(checks, connector.Check{Level: connector.Warn, What: "secret " + arg, Detail: "not configured: the connector is skipped",
-					Fix: fmt.Sprintf(`add "secrets": {"%s": "keychain:securizame-%s"} to connectors.%s in the config, and the Keychain item`, arg, d.Name, t.Label())})
+					Fix: fmt.Sprintf(`add "secrets": {"%s": "keychain:segurata-%s"} to connectors.%s in the config, and the Keychain item`, arg, d.Name, t.Label())})
 			}
 		}
 	}
@@ -241,28 +241,28 @@ func (e Env) cliNeed(arg string) connector.Check {
 	return connector.Check{Level: level, What: name, Detail: "not found in PATH", Fix: "install " + name + ", respecting the 4-day quarantine"}
 }
 
-// state checks securizame's own files: present where needed, readable, closed to other users.
+// state checks segurata's own files: present where needed, readable, closed to other users.
 func (e Env) state() []connector.Check {
 	var checks []connector.Check
 	if _, err := fingerprint.Open(e.KeyPath); errors.Is(err, fs.ErrNotExist) {
 		checks = append(checks, connector.Check{Level: connector.Warn, What: "fingerprint key " + e.KeyPath,
-			Detail: "not created yet", Fix: "securizame inventory local-secrets creates it; back it up: losing it changes every fingerprint"})
+			Detail: "not created yet", Fix: "segurata inventory local-secrets creates it; back it up: losing it changes every fingerprint"})
 	} else {
 		checks = append(checks, fileCheck("fingerprint key", e.KeyPath, err, 0o600))
 	}
 	_, err := tracker.Load(e.Tracker.Tracker)
-	checks = append(checks, optionalFile("tracker", e.Tracker.Tracker, err, 0o600, "securizame track sync creates it"))
+	checks = append(checks, optionalFile("tracker", e.Tracker.Tracker, err, 0o600, "segurata track sync creates it"))
 	for _, legacy := range []string{e.Tracker.LegacyLedger, e.Tracker.LegacyAccepted} {
 		if legacy == "" {
 			continue
 		}
 		if _, err := os.Stat(legacy); err == nil {
 			checks = append(checks, connector.Check{Level: connector.Warn, What: "old state file " + legacy,
-				Detail: "not imported into the tracker yet", Fix: "securizame status imports it (the old file is kept as " + legacy + ".migrated-<date>)"})
+				Detail: "not imported into the tracker yet", Fix: "segurata status imports it (the old file is kept as " + legacy + ".migrated-<date>)"})
 		}
 	}
 	checks = append(checks, dirCheck("tracker dir", filepath.Dir(e.Tracker.Tracker), "the first command that saves the tracker creates it"))
-	checks = append(checks, dirCheck("output dir", e.OutDir, "securizame inventory creates it"))
+	checks = append(checks, dirCheck("output dir", e.OutDir, "segurata inventory creates it"))
 	return checks
 }
 
@@ -289,7 +289,7 @@ func fileCheck(label, path string, loadErr error, want fs.FileMode) connector.Ch
 	return connector.Check{Level: connector.OK, What: what, Detail: fmt.Sprintf("readable, mode %#o", want)}
 }
 
-// dirCheck checks one of securizame's folders. Its files are 0600 already, so a looser folder is a
+// dirCheck checks one of segurata's folders. Its files are 0600 already, so a looser folder is a
 // warning: it only shows which files exist and when they changed.
 func dirCheck(label, dir, creator string) connector.Check {
 	what := label + " " + dir

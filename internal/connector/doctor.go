@@ -11,7 +11,7 @@ const (
 	Fail Level = "FAIL" // the connector cannot do its job until this is fixed
 )
 
-// Check is one prerequisite checked by `securizame doctor`. Detail and Fix never hold a secret:
+// Check is one prerequisite checked by `segurata doctor`. Detail and Fix never hold a secret:
 // a token or key is at most obtained and discarded.
 type Check struct {
 	Level  Level

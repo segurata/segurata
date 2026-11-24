@@ -17,7 +17,7 @@ import (
 // local-secrets run holding one Stripe key, and a tracker path in a fresh home.
 type cliFixture struct {
 	dir, out, path string
-	value          string // the Stripe key: must appear nowhere securizame writes
+	value          string // the Stripe key: must appear nowhere segurata writes
 	now            time.Time
 }
 
@@ -160,7 +160,7 @@ func TestTrackCommands(t *testing.T) {
 		t.Error("unknown subcommand")
 	}
 	// A secret's short id works too.
-	if o, _, code := x.run(t, "show", "ffffeeee"); code != 0 || !strings.Contains(o, "securizame rotations show ffffeeee") {
+	if o, _, code := x.run(t, "show", "ffffeeee"); code != 0 || !strings.Contains(o, "segurata rotations show ffffeeee") {
 		t.Errorf("show by short id: %d\n%s", code, o)
 	}
 	x.noSecret(t)
@@ -187,7 +187,7 @@ func TestStatusBriefing(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s: %d %s", f, code, e)
 		}
-		for _, want := range []string{"Headline", "Do next", "Rotate 1 P0 secret", "securizame rotations next --priority P0",
+		for _, want := range []string{"Headline", "Do next", "Rotate 1 P0 secret", "segurata rotations next --priority P0",
 			"Two-factor authentication not required in 2 GitHub orgs", "Pending decisions", "Which password manager is primary?",
 			"Setup blockers", "github · github:me: lacks a permission", "gh lacks read:org", "Accepted risks"} {
 			if !strings.Contains(o, want) {

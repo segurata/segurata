@@ -139,7 +139,7 @@ func TestDumpSeverity(t *testing.T) {
 	if f.Kind != finding.KindExposure || f.Resource.Type != "data_dump" || f.Resource.ID != "~/src/shop:db/production_latest_backup.sql" || f.Remediation.Action != "" {
 		t.Errorf("finding %+v", f)
 	}
-	for _, want := range []string{"git filter-repo --path 'db/production_latest_backup.sql' --invert-paths", "force-push", "re-clone", "securizame never rewrites history", urlAEPDBreaches, urlEDPBBreaches} {
+	for _, want := range []string{"git filter-repo --path 'db/production_latest_backup.sql' --invert-paths", "force-push", "re-clone", "segurata never rewrites history", urlAEPDBreaches, urlEDPBBreaches} {
 		if !strings.Contains(f.Remediation.Summary, want) {
 			t.Errorf("remediation lacks %q: %s", want, f.Remediation.Summary)
 		}
@@ -378,7 +378,7 @@ func TestDataDumpCacheReuse(t *testing.T) {
 		t.Fatalf("first run did not read the history: %v", c)
 	}
 	head.reset()
-	files, _ := filepath.Glob(filepath.Join(r.home, ".cache", "securizame", "datadumps", "*.json"))
+	files, _ := filepath.Glob(filepath.Join(r.home, ".cache", "segurata", "datadumps", "*.json"))
 	if len(files) != 1 {
 		t.Fatalf("dump cache files %v", files)
 	}
@@ -430,7 +430,7 @@ func TestDataDumpsOnlyRunsNothingElse(t *testing.T) {
 		Git: cli.Exec{Path: "git", Timeout: time.Minute}, GitHead: headExec{Path: "git", Limit: dumpPeekSize, Timeout: time.Minute}, GH: publicGH(&ghCalls),
 		LookPath: func(string) (string, error) { return "", errors.New("RG, gitleaks and ssh-keygen must not be needed") },
 		Home:     func() (string, error) { return r.home, nil },
-		KeyPath:  func(home string) string { return filepath.Join(home, ".config", "securizame", "fingerprint.key") },
+		KeyPath:  func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") },
 		CacheDir: DefaultCacheDir,
 		Now:      time.Now,
 	}

@@ -1,7 +1,7 @@
 // Package fingerprint turns a raw secret into a stable identifier that is useless outside this
 // machine: HMAC-SHA256 under a random per-machine key, truncated to 16 hex characters. A plain hash
 // of a short or structured secret could be brute-forced from the output; an HMAC cannot without the
-// key. The local-secrets connector fingerprints what it finds; `securizame rotations replace`
+// key. The local-secrets connector fingerprints what it finds; `segurata rotations replace`
 // fingerprints the old and new values to tell them apart without ever storing either.
 package fingerprint
 
@@ -26,9 +26,9 @@ const keyBytes = 32
 // FromBytes builds a key from raw bytes, for tests and callers that hold the key already.
 func FromBytes(b []byte) Key { return Key{key: append([]byte(nil), b...)} }
 
-// DefaultPath is ~/.config/securizame/fingerprint.key.
+// DefaultPath is ~/.config/segurata/fingerprint.key.
 func DefaultPath(home string) string {
-	return filepath.Join(home, ".config", "securizame", "fingerprint.key")
+	return filepath.Join(home, ".config", "segurata", "fingerprint.key")
 }
 
 // Load reads the key, creating it with mode 0600 on first use. Losing the key changes every

@@ -16,18 +16,18 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-const externalPrefix = "securizame-"
+const externalPrefix = "segurata-"
 
 // RemediationProtocol is the first protocol version with `plan` and `apply`.
 const RemediationProtocol = 2
 
-// External wraps a securizame-<name> executable so it behaves like a built-in connector.
+// External wraps a segurata-<name> executable so it behaves like a built-in connector.
 type External struct {
 	Path string
 	desc Description
 }
 
-// Discover finds securizame-<name> executables on PATH. Built-in names win over external ones.
+// Discover finds segurata-<name> executables on PATH. Built-in names win over external ones.
 func Discover() []*External {
 	seen := map[string]bool{}
 	for _, c := range Builtins() {
@@ -43,7 +43,7 @@ func Discover() []*External {
 			}
 			e, err := LoadExternal(p)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "securizame: ignoring %s: %v\n", p, err)
+				fmt.Fprintf(os.Stderr, "segurata: ignoring %s: %v\n", p, err)
 				continue
 			}
 			seen[name] = true
@@ -95,7 +95,7 @@ func (d Description) validate() error {
 
 func (e *External) Describe() Description { return e.desc }
 
-// Inventory runs `securizame-<name> inventory`. The request carries the protocol version the
+// Inventory runs `segurata-<name> inventory`. The request carries the protocol version the
 // connector declared, so a version 1 connector never sees a version it does not know.
 func (e *External) Inventory(ctx context.Context, req Request, emit Emitter) error {
 	req.Protocol = e.desc.Protocol
@@ -118,7 +118,7 @@ type RemediationRequest struct {
 	Plan    *Plan           `json:"plan,omitempty"`
 }
 
-// PlanReply is what `securizame-<name> plan` prints: the fields of a Plan, plus needs_sudo, which a
+// PlanReply is what `segurata-<name> plan` prints: the fields of a Plan, plus needs_sudo, which a
 // connector may set and the core refuses.
 type PlanReply struct {
 	Plan
@@ -128,7 +128,7 @@ type PlanReply struct {
 // maxPlanBytes bounds what the core reads from `plan`; a plan is a few hundred bytes.
 const maxPlanBytes = 1 << 20
 
-// RequestPlan runs `securizame-<name> plan` and decodes its reply strictly: an unknown field or
+// RequestPlan runs `segurata-<name> plan` and decodes its reply strictly: an unknown field or
 // trailing data is an error, never ignored. It vets nothing else; the core does.
 func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (PlanReply, error) {
 	if e.desc.Protocol < RemediationProtocol {
@@ -158,7 +158,7 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	return reply, nil
 }
 
-// RequestApply runs `securizame-<name> apply` with the confirmed plan. Its `log` records go to
+// RequestApply runs `segurata-<name> apply` with the confirmed plan. Its `log` records go to
 // out, its stderr to errw; a non-zero exit is a failed apply.
 func (e *External) RequestApply(ctx context.Context, req RemediationRequest, out, errw io.Writer) error {
 	if e.desc.Protocol < RemediationProtocol {

@@ -115,7 +115,7 @@ func TestCommands(t *testing.T) {
 	if _, _, code := run("bogus"); code != 2 {
 		t.Error("unknown subcommand accepted")
 	}
-	if _, e, code := run("sync", "--out", filepath.Join(dir, "none")); code != 1 || !strings.Contains(e, "securizame inventory") {
+	if _, e, code := run("sync", "--out", filepath.Join(dir, "none")); code != 1 || !strings.Contains(e, "segurata inventory") {
 		t.Errorf("sync without runs: %d %q", code, e)
 	}
 	other := filepath.Join(dir, "other")
@@ -123,7 +123,7 @@ func TestCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(filepath.Join(other, "2026-11-23", "macos.jsonl"), []byte(`{"type":"status","connector":"macos","state":"ok"}`+"\n"), 0o600)
-	if _, e, code := run("sync", "--out", other); code != 1 || !strings.Contains(e, "securizame inventory local-secrets") {
+	if _, e, code := run("sync", "--out", other); code != 1 || !strings.Contains(e, "segurata inventory local-secrets") {
 		t.Errorf("sync without a local-secrets run: %d %q", code, e)
 	}
 }

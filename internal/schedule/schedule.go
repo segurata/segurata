@@ -1,4 +1,4 @@
-// Package schedule is `securizame schedule`: it installs a per-user agent that runs an inventory
+// Package schedule is `segurata schedule`: it installs a per-user agent that runs an inventory
 // and writes a report on a fixed interval, and notifies about new high or critical findings. On
 // macOS the agent is a launchd user agent; on Linux the equivalent systemd user timer is printed
 // only. Install and uninstall are dry runs unless --apply. See docs/architecture.md, "Scheduled runs".
@@ -23,9 +23,9 @@ import (
 
 const (
 	// Label names the launchd agent and its plist.
-	Label = "com.securizame.inventory"
+	Label = "com.segurata.inventory"
 	// Unit names the systemd user service and timer.
-	Unit = "securizame-inventory"
+	Unit = "segurata-inventory"
 
 	DefaultEvery = 24 * time.Hour
 	MinEvery     = time.Hour
@@ -54,7 +54,7 @@ type Env struct {
 	GOOS   string
 	Home   string
 	UID    int
-	Exe    string // absolute path of the securizame binary the agent runs
+	Exe    string // absolute path of the segurata binary the agent runs
 	Path   string // PATH the agent runs with, so connectors find their CLIs and external connectors
 	TmpDir string // a binary under it was built by `go run` and will not survive
 	Runner Runner
@@ -67,19 +67,19 @@ type Env struct {
 
 // Paths are the files the schedule uses, all under the owner's home.
 type Paths struct {
-	Plist     string // ~/Library/LaunchAgents/com.securizame.inventory.plist
-	Logs      string // ~/Library/Logs/securizame
-	State     string // ~/.local/state/securizame, the agent's working directory
+	Plist     string // ~/Library/LaunchAgents/com.segurata.inventory.plist
+	Logs      string // ~/Library/Logs/segurata
+	State     string // ~/.segurata, the agent's working directory
 	Out       string // inventory output of scheduled runs, under State
 	Report    string // the last report, under State
 	SystemdTo string // ~/.config/systemd/user
 }
 
 func (e Env) Paths() Paths {
-	state := filepath.Join(e.Home, ".local", "state", "securizame")
+	state := filepath.Join(e.Home, ".segurata")
 	return Paths{
 		Plist:     filepath.Join(e.Home, "Library", "LaunchAgents", Label+".plist"),
-		Logs:      filepath.Join(e.Home, "Library", "Logs", "securizame"),
+		Logs:      filepath.Join(e.Home, "Library", "Logs", "segurata"),
 		State:     state,
 		Out:       filepath.Join(state, "out"),
 		Report:    filepath.Join(state, "last-report.md"),
@@ -117,8 +117,8 @@ func (e Env) runArgs(o Options) []string {
 func (e Env) domain() string  { return "gui/" + strconv.Itoa(e.UID) }
 func (e Env) service() string { return e.domain() + "/" + Label }
 
-// Plist is the launchd agent: run `securizame schedule run` every interval, from the state
-// directory, with logs in ~/Library/Logs/securizame. It does not run at load, so installing it
+// Plist is the launchd agent: run `segurata schedule run` every interval, from the state
+// directory, with logs in ~/Library/Logs/segurata. It does not run at load, so installing it
 // starts nothing until the first interval passes.
 func (e Env) Plist(o Options) (string, error) {
 	every, err := o.every()
@@ -180,7 +180,7 @@ func (e Env) SystemdUnits(o Options) (service, timer string, err error) {
 		quoted = append(quoted, systemdQuote(a))
 	}
 	service = fmt.Sprintf(`[Unit]
-Description=securizame scheduled inventory and report
+Description=segurata scheduled inventory and report
 
 [Service]
 Type=oneshot
@@ -189,7 +189,7 @@ Environment=%s
 ExecStart=%s
 `, e.Paths().State, systemdQuote("PATH="+e.Path), strings.Join(quoted, " "))
 	timer = fmt.Sprintf(`[Unit]
-Description=Run securizame inventory every %s
+Description=Run segurata inventory every %s
 
 [Timer]
 OnBootSec=15min
@@ -214,10 +214,10 @@ var ErrDarwinOnly = errors.New("--apply works on macOS only; on this system, ins
 
 func (e Env) checkExe() error {
 	if !filepath.IsAbs(e.Exe) {
-		return fmt.Errorf("cannot tell where the securizame binary lives (%q)", e.Exe)
+		return fmt.Errorf("cannot tell where the segurata binary lives (%q)", e.Exe)
 	}
 	if e.TmpDir != "" && strings.HasPrefix(e.Exe, filepath.Clean(e.TmpDir)+string(filepath.Separator)) {
-		return fmt.Errorf("%s is in a temporary directory (go run?): build securizame and run it from where it will stay", e.Exe)
+		return fmt.Errorf("%s is in a temporary directory (go run?): build segurata and run it from where it will stay", e.Exe)
 	}
 	return nil
 }
@@ -246,7 +246,7 @@ func (e Env) Install(ctx context.Context, o Options) error {
 		fmt.Fprintf(out, "  %s bootout %s   (the agent is loaded now; it is replaced)\n", launchctl, e.service())
 	}
 	fmt.Fprintf(out, "  write %s (mode 644)\n  %s bootstrap %s %s\n", p.Plist, launchctl, e.domain(), p.Plist)
-	fmt.Fprintf(out, "\nUndo: securizame schedule uninstall --apply\n")
+	fmt.Fprintf(out, "\nUndo: segurata schedule uninstall --apply\n")
 	if !o.Apply {
 		fmt.Fprintln(out, "\nDry run: nothing was changed. Run again with --apply to install this agent.")
 		return nil
@@ -299,7 +299,7 @@ func (e Env) Uninstall(ctx context.Context, o Options) error {
 	exists := statErr == nil
 	loaded := e.loaded(ctx)
 	if !exists && !loaded {
-		fmt.Fprintln(out, "No securizame agent is installed.")
+		fmt.Fprintln(out, "No segurata agent is installed.")
 		return nil
 	}
 	fmt.Fprintln(out, "Commands:")

@@ -48,10 +48,10 @@ const setupHint = secretName + " is not configured. Create a user API token at "
 	" (Create Token > Create Custom Token) with only these permissions: " + Permissions +
 	". Account Resources: Include > All accounts; Zone Resources: Include > All zones. Set an expiry" +
 	" (TTL) and, if you can, Client IP Address Filtering. Store it with" +
-	` security add-generic-password -s securizame-cloudflare -a "$USER" -w` +
-	` and reference it in ~/.config/securizame/config.json as` +
-	` {"connectors": {"cloudflare": {"secrets": {"` + secretName + `": "keychain:securizame-cloudflare"}}}}` +
-	` (one instance per login: "cloudflare:<label>" with keychain:securizame-cloudflare-<label>).` +
+	` security add-generic-password -s segurata-cloudflare -a "$USER" -w` +
+	` and reference it in ~/.config/segurata/config.json as` +
+	` {"connectors": {"cloudflare": {"secrets": {"` + secretName + `": "keychain:segurata-cloudflare"}}}}` +
+	` (one instance per login: "cloudflare:<label>" with keychain:segurata-cloudflare-<label>).` +
 	" See docs/cloud-connectors.md."
 
 // Connector is the built-in Cloudflare connector. Zero values use the real API, clock and pacing.

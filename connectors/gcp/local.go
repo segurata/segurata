@@ -130,7 +130,7 @@ func credFinding(path, source string, c credFile, mode os.FileMode, modTime *tim
 		}
 	case "authorized_user":
 		ev["account"], ev["quota_project_id"], ev["client_id"] = c.Account, c.QuotaProjectID, c.ClientID
-		ev["scopes"] = "not stored in the file; learning them would mean exchanging the refresh token, which securizame does not do"
+		ev["scopes"] = "not stored in the file; learning them would mean exchanging the refresh token, which segurata does not do"
 		defaultClient := c.ClientID == gcloudADCClientID
 		ev["gcloud_default_client"] = defaultClient
 		who := c.Account

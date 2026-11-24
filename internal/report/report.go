@@ -1,7 +1,7 @@
-// Package report builds `securizame report`: the latest run of every connector instance, what
+// Package report builds `segurata report`: the latest run of every connector instance, what
 // changed since each one's previous run, the statuses that need action, the rotation ledger and
 // the accepted risks, as terminal text, Markdown or a self-contained HTML page. It reads only
-// securizame's own files and never holds a secret value: findings carry none, and the tracker's
+// segurata's own files and never holds a secret value: findings carry none, and the tracker's
 // rotate items only redacted hints. See docs/architecture.md, "Report".
 package report
 
@@ -200,7 +200,7 @@ func visible(fs []finding.Finding, minSev finding.Severity) []finding.Finding {
 	return out
 }
 
-// Format is an output format of `securizame report`.
+// Format is an output format of `segurata report`.
 type Format = doc.Format
 
 const (
