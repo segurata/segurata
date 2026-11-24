@@ -76,13 +76,25 @@ func msStepUpMethod(text string) string {
 	return ""
 }
 
-// msReady passes once the page is on the sign-in host with something on it, or has fetched what
-// fetchedJS looks for, two reads in a row: My Apps passes through the sign-in host on every load.
+// msReady passes once the page has fetched what fetchedJS looks for, or shows the same text on the
+// sign-in host, two reads in a row: My Apps passes through the sign-in host on every load, and a
+// prompt fills in after its URL is set.
 func msReady() func(json.RawMessage) bool {
-	return twice(func(raw json.RawMessage) bool {
+	var prev *fetchPage
+	return func(raw json.RawMessage) bool {
 		p, ok := decode[fetchPage](raw)
-		return ok && p.URL != "" && (p.Fetched || msLoginState(p) != "" && strings.TrimSpace(p.Text) != "")
-	})
+		was := prev
+		prev = nil
+		if !ok || p.URL == "" {
+			return false
+		}
+		login := !p.Fetched && msLoginState(p) != "" && strings.TrimSpace(p.Text) != ""
+		if !p.Fetched && !login {
+			return false
+		}
+		prev = &p
+		return was != nil && (p.Fetched && was.Fetched || login && was.URL == p.URL && was.Text == p.Text)
+	}
 }
 
 func microsoftWork(ctx context.Context, e *env) {

@@ -145,15 +145,21 @@ func TestMSReadyWaitsOutTheSignInHop(t *testing.T) {
 	for i, c := range []struct {
 		raw  []byte
 		want bool
-	}{{hop, false}, {hop, false}, {form, false}, {loading, false}, {done, false}, {done, true}} {
+	}{{hop, false}, {hop, false}, {form, false}, {loading, false}, {done, false}, {done, true}, {form, false}, {form, true}} {
 		if got := ready(c.raw); got != c.want {
 			t.Errorf("read %d: %v, want %v", i, got, c.want)
 		}
 	}
+	prompt, _ := json.Marshal(fetchPage{URL: msStepUpURL, Text: "someone@example.com"})
+	filled, _ := json.Marshal(fetchPage{URL: msStepUpURL, Text: "someone@example.com\nEnter code"})
 	ready = msReady()
-	ready(form)
-	if !ready(form) {
-		t.Error("a sign-in form shown twice is ready")
+	for i, c := range []struct {
+		raw  []byte
+		want bool
+	}{{prompt, false}, {filled, false}, {filled, true}} {
+		if got := ready(c.raw); got != c.want {
+			t.Errorf("prompt read %d: %v, want %v", i, got, c.want)
+		}
 	}
 }
 
