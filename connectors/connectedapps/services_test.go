@@ -57,7 +57,7 @@ func TestXReadsTheListResponseOnceAndDropsTokens(t *testing.T) {
 	if reader.Severity != finding.SevMedium || reader.Evidence["publisher"] != "Reader Co" || reader.Evidence["expires_at"] == nil {
 		t.Errorf("reader: %+v", reader)
 	}
-	if login := rec.byName(t, "Login Only"); login.Severity != finding.SevLow || login.CreatedAt != nil {
+	if login := rec.byName(t, "Login Only"); login.Severity != finding.SevLow || login.CreatedAt != nil || login.Scope != "x" {
 		t.Errorf("login only: %+v", login)
 	}
 	if got := rec.state("x:@chirper"); !reflect.DeepEqual(got, []finding.State{finding.StateOK}) {
@@ -83,6 +83,24 @@ func TestXRateLimitedAndSignedOut(t *testing.T) {
 	rec = run(t, b, nil, "x")
 	if !reflect.DeepEqual(rec.state("x"), []finding.State{finding.StateSignedOut}) {
 		t.Errorf("statuses %+v", rec.statuses)
+	}
+
+	// Signed out of X, and only X selected: last run's findings of every service stay unresolved.
+	if len(rec.skipped) != len(services)-1 || rec.skipped[0] != (finding.Skipped{Scope: "github", Reason: `not in the "services" config`}) {
+		t.Errorf("services left out of the config must be declared skipped: %+v", rec.skipped)
+	}
+	var tally finding.Tally
+	for _, s := range rec.statuses {
+		tally.Status(s)
+	}
+	for _, s := range rec.skipped {
+		tally.Declare(s.Scope, false, s.Reason)
+	}
+	end := tally.End(name, "", time.Now(), time.Now(), nil)
+	for _, f := range []finding.Finding{{Account: "x:@chirper", Scope: "x"}, {Account: "github:octo", Scope: "github"}} {
+		if _, unchecked := finding.CoverageOf(&end).UncheckedFinding(f); !unchecked {
+			t.Errorf("%s counted as inspected", f.Account)
+		}
 	}
 }
 

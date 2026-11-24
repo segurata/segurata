@@ -120,14 +120,25 @@ func TestHealthyMacEmitsOnlyInformationalFindings(t *testing.T) {
 	rec.ByResource(t, "macos_setting", "screensaver")
 	rec.ByResource(t, "background_item", "btm:16.com.example.helper")
 	// systemsetup needs admin: it is reported as a skipped check.
+	// It leaves only that check uninspected: the machine itself was.
 	var skipped []string
+	ok := 0
 	for _, s := range rec.Statuses {
-		if s.State == finding.StateUnsupported {
-			skipped = append(skipped, s.Detail)
+		switch s.State {
+		case finding.StateUnsupported:
+			skipped = append(skipped, s.Scope+" "+s.Detail)
+		case finding.StateOK:
+			ok++
 		}
 	}
-	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], "remote-login:") {
-		t.Fatalf("skipped %v", skipped)
+	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], "check:remote-login remote-login:") || ok != 1 {
+		t.Fatalf("skipped %v, ok statuses %d", skipped, ok)
+	}
+	if f := rec.ByResource(t, "background_item", "btm:16.com.example.helper"); f.Scope != "check:btm" {
+		t.Errorf("background items share one scope, got %q", f.Scope)
+	}
+	if f := rec.ByResource(t, "macos_setting", "screensaver"); f.Scope != "check:screensaver" {
+		t.Errorf("a check's finding is scoped to the check, got %q", f.Scope)
 	}
 }
 

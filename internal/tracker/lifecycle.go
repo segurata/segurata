@@ -30,6 +30,7 @@ const (
 	actUnaccept    = "unaccept"
 	actAcceptLapse = "acceptance-expired"
 	actNote        = "note"
+	actNotChecked  = "not-checked"
 	actDecide      = "decide"
 	actPrioritize  = "prioritize"
 	actHistory     = "history-only"

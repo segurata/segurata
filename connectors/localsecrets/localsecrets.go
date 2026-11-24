@@ -143,6 +143,8 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		return fmt.Errorf("fingerprint key: %w", err)
 	}
 	if cfg.dumps == dumpsOnly {
+		emit.Scope(filesScope, false, `data_dumps is "only"`)
+		emit.Scope(historyScope("*"), false, `data_dumps is "only"`)
 		s := newScan(ctx, c, home, cfg, fp, emit)
 		s.dumpsAll()
 		return s.emitDumps(finding.Status{Account: localAccount, State: finding.StateOK, Detail: "data_dumps only"})
@@ -154,6 +156,15 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 	_, glErr := c.LookPath("gitleaks")
 	history := !cfg.skipHistory && glErr == nil
+	switch {
+	case cfg.skipHistory:
+		emit.Scope(historyScope("*"), false, "skip_git_history is set")
+	case glErr != nil:
+		emit.Scope(historyScope("*"), false, "gitleaks is not installed")
+	}
+	if cfg.dumps == dumpsOff {
+		emit.Scope(dumpsScope("*"), false, "data_dumps is false")
+	}
 
 	s := newScan(ctx, c, home, cfg, fp, emit)
 	var wg sync.WaitGroup
@@ -479,6 +490,7 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 	_ = json.Unmarshal(raw, &evidence)
 	return finding.Finding{
 		Account:     localAccount,
+		Scope:       secretScope(ev),
 		Resource:    finding.Resource{Type: "secret", ID: ev.Source + ":" + ev.Path + "#" + ev.Fingerprint, Name: t.Label},
 		Kind:        kind,
 		Severity:    secretrisk.SeverityOf(prio),
@@ -486,6 +498,21 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 		Evidence:    evidence,
 		Remediation: finding.Remediation{Summary: summary, URL: t.RotateURL, Action: action(ev)},
 	}
+}
+
+// Scopes of local-secrets findings, so a run that leaves part of the machine unread says which
+// part: the files ripgrep and the name scan read, one repository's git history, one repository's
+// data dumps. A failed gitleaks or dump scan names its repository's scope in its status.
+const filesScope = "files"
+
+func historyScope(repo string) string { return "history:" + repo }
+func dumpsScope(repo string) string   { return "dumps:" + repo }
+
+func secretScope(ev secretrisk.Evidence) string {
+	if ev.Source == "gitleaks" {
+		return historyScope(ev.Repo)
+	}
+	return filesScope
 }
 
 // action offers `segurata remediate` a chmod 600 for a working file other users can read. It

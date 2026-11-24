@@ -32,7 +32,7 @@ func (r *run) account2FA(u user, ownsOrgs bool) {
 	acct := account(u.Login)
 	switch {
 	case u.TwoFactor == nil:
-		r.status(acct, finding.StateNoScope, "two-factor authentication not checked: gh's token lacks read:user; run: %s", refresh("read:user"))
+		r.scopedStatus(acct, userScope(u.Login), finding.StateNoScope, "two-factor authentication not checked: gh's token lacks read:user; run: %s", refresh("read:user"))
 		return
 	case *u.TwoFactor:
 		return
@@ -43,6 +43,7 @@ func (r *run) account2FA(u user, ownsOrgs bool) {
 	}
 	r.emit.Finding(finding.Finding{
 		Account:  acct,
+		Scope:    userScope(u.Login),
 		Resource: finding.Resource{Type: "github_account", ID: "two-factor-authentication", Name: u.Login},
 		Kind:     finding.KindSetting,
 		Severity: severities[c],

@@ -89,7 +89,7 @@ func TestInventoryGradesAnAccountAndSkipsDuplicateProfiles(t *testing.T) {
 		t.Fatalf("got %d findings: %+v", len(rec.Findings), rec.Findings)
 	}
 	for _, f := range rec.Findings {
-		if want[f.Resource.Type] != f.Severity || f.Account != "example-alias" || f.Evidence["profile"] != "dev" {
+		if want[f.Resource.Type] != f.Severity || f.Account != "example-alias" || f.Evidence["profile"] != "dev" || f.Scope != "profile dev" {
 			t.Errorf("unexpected finding %s %s %s %v", f.Resource.Type, f.Severity, f.Account, f.Evidence)
 		}
 	}

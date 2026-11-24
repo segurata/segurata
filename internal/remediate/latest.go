@@ -2,12 +2,15 @@ package remediate
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,10 +18,21 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// LatestFiles returns, for every connector instance, its output file from the most recent
-// out/<YYYY-MM-DD> run that has one. Runs are per connector, so the newest day alone is not
-// enough: after midnight it may hold only the connectors run since.
-func LatestFiles(outDir string) ([]string, error) {
+// Latest is the run of one connector instance that consumers read, and the run it is compared with.
+type Latest struct {
+	File string // out/<date>/<name>.jsonl
+	// Prev is the run before File by the same rule, or "" when File is the first.
+	Prev string
+	// Unfinished is a newer file without run_end that was passed over for File, or "".
+	Unfinished string
+}
+
+// LatestRuns picks, for every connector instance, the newest out/<YYYY-MM-DD> run that finished
+// (ends with a run_end record), so a run that was killed or is still running never stands in for
+// the last good one. An instance with no finished run at all (only files from before run_end
+// records) gets its newest file. Runs are per connector, so the newest day alone is not enough:
+// after midnight it may hold only the connectors run since.
+func LatestRuns(outDir string) ([]Latest, error) {
 	entries, err := os.ReadDir(outDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
@@ -33,95 +47,177 @@ func LatestFiles(outDir string) ([]string, error) {
 		}
 	}
 	sort.Strings(dates)
-	newest := map[string]string{} // file name -> path in the newest run that has it
+	history := map[string][]string{} // file name -> its paths, oldest first
 	for _, d := range dates {
 		files, err := filepath.Glob(filepath.Join(outDir, d, "*.jsonl"))
 		if err != nil {
 			return nil, err
 		}
 		for _, f := range files {
-			newest[filepath.Base(f)] = f
+			history[filepath.Base(f)] = append(history[filepath.Base(f)], f)
 		}
 	}
-	if len(newest) == 0 {
+	if len(history) == 0 {
 		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
 	}
-	out := make([]string, 0, len(newest))
-	for _, f := range newest {
-		out = append(out, f)
+	var out []Latest
+	for _, paths := range history {
+		l, err := pick(paths)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
 	return out, nil
 }
 
-// PreviousFile returns the same connector instance's output in the newest out/<YYYY-MM-DD> run
-// before the one file belongs to, or "" when file is its first run. file is a path LatestFiles
-// returned: out/<date>/<name>.jsonl.
-func PreviousFile(file string) (string, error) {
-	dateDir := filepath.Dir(file)
-	date, base := filepath.Base(dateDir), filepath.Base(file)
-	entries, err := os.ReadDir(filepath.Dir(dateDir))
+// pick applies the LatestRuns rule to one instance's files, oldest first.
+func pick(paths []string) (Latest, error) {
+	newest := func(paths []string) (string, error) { // newest finished, else newest
+		for i := len(paths) - 1; i >= 0; i-- {
+			done, err := Finished(paths[i])
+			if err != nil {
+				return "", err
+			}
+			if done {
+				return paths[i], nil
+			}
+		}
+		return paths[len(paths)-1], nil
+	}
+	file, err := newest(paths)
 	if err != nil {
-		return "", err
+		return Latest{}, err
 	}
-	prev := ""
-	for _, e := range entries { // sorted by name, so by date
-		if _, err := time.Parse("2006-01-02", e.Name()); !e.IsDir() || err != nil || e.Name() >= date {
-			continue
-		}
-		p := filepath.Join(filepath.Dir(dateDir), e.Name(), base)
-		if _, err := os.Stat(p); err == nil {
-			prev = p
+	l := Latest{File: file}
+	if last := paths[len(paths)-1]; last != file {
+		l.Unfinished = last
+	}
+	if i := slices.Index(paths, file); i > 0 {
+		if l.Prev, err = newest(paths[:i]); err != nil {
+			return Latest{}, err
 		}
 	}
-	return prev, nil
+	return l, nil
+}
+
+// LatestFiles is the File of every LatestRuns entry.
+func LatestFiles(outDir string) ([]string, error) {
+	runs, err := LatestRuns(outDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(runs))
+	for i, r := range runs {
+		out[i] = r.File
+	}
+	return out, nil
+}
+
+// maxTail bounds what Finished reads from the end of a file: a run_end record is a few KB.
+const maxTail = 1 << 20
+
+// Finished reports whether a run's output ends with a run_end record.
+func Finished(name string) (bool, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	n := min(st.Size(), maxTail)
+	buf := make([]byte, n)
+	if _, err := f.ReadAt(buf, st.Size()-n); err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	buf = bytes.TrimRight(buf, "\n")
+	last := buf[bytes.LastIndexByte(buf, '\n')+1:]
+	var head struct{ Type string }
+	return json.Unmarshal(last, &head) == nil && head.Type == "run_end", nil
 }
 
 // Load reads every finding in the given files, skipping status and log records.
 func Load(files []string) ([]finding.Finding, error) {
 	var out []finding.Finding
 	for _, name := range files {
-		got, _, err := ReadRun(name)
+		got, err := ReadRun(name)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, got...)
+		out = append(out, got.Findings...)
 	}
 	return out, nil
 }
 
-// ReadRun reads one connector instance's output: its findings and statuses, skipping log records.
-func ReadRun(name string) ([]finding.Finding, []finding.Status, error) {
+// RunFile is one connector instance's output.
+type RunFile struct {
+	Findings []finding.Finding
+	Statuses []finding.Status
+	End      *finding.RunEnd // nil: no run_end, so the run's completeness is unknown
+}
+
+// Coverage is what the run proves about each scope; see finding.Coverage.
+func (r RunFile) Coverage() finding.Coverage { return finding.CoverageOf(r.End) }
+
+// ReadRun reads one connector instance's output, skipping log records. A file without run_end
+// may end in a half-written line (the run was killed mid-record): that line is dropped.
+func ReadRun(name string) (RunFile, error) {
+	var r RunFile
 	f, err := os.Open(name)
 	if err != nil {
-		return nil, nil, err
+		return r, err
 	}
 	defer f.Close()
-	var findings []finding.Finding
-	var statuses []finding.Status
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	var torn error // an unparseable line, fatal unless it turns out to be the last one
 	for sc.Scan() {
-		var head struct{ Type string }
-		if err := json.Unmarshal(sc.Bytes(), &head); err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", name, err)
+		if torn != nil {
+			return RunFile{}, torn
 		}
-		switch head.Type {
-		case "finding":
-			var rec finding.Finding
-			if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", name, err)
-			}
-			findings = append(findings, rec)
-		case "status":
-			var st finding.Status
-			if err := json.Unmarshal(sc.Bytes(), &st); err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", name, err)
-			}
-			statuses = append(statuses, st)
+		if err := r.decode(sc.Bytes()); err != nil {
+			torn = fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	return findings, statuses, sc.Err()
+	if err := sc.Err(); err != nil {
+		return RunFile{}, err
+	}
+	if torn != nil && r.End != nil {
+		return RunFile{}, torn
+	}
+	return r, nil
+}
+
+func (r *RunFile) decode(line []byte) error {
+	var head struct{ Type string }
+	if err := json.Unmarshal(line, &head); err != nil {
+		return err
+	}
+	switch head.Type {
+	case "finding":
+		var rec finding.Finding
+		if err := json.Unmarshal(line, &rec); err != nil {
+			return err
+		}
+		r.Findings = append(r.Findings, rec)
+	case "status":
+		var st finding.Status
+		if err := json.Unmarshal(line, &st); err != nil {
+			return err
+		}
+		r.Statuses = append(r.Statuses, st)
+	case "run_end":
+		var end finding.RunEnd
+		if err := json.Unmarshal(line, &end); err != nil {
+			return err
+		}
+		r.End = &end
+	}
+	return nil
 }
 
 // Find returns the finding with that id, or the only one whose id starts with it.
