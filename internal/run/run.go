@@ -4,6 +4,7 @@ package run
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -155,13 +156,16 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	name, label := t.Connector.Describe().Name, t.Label()
 	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
-	// 0600: the output names accounts, apps and services.
-	f, err := os.OpenFile(res.File, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	// The run writes to <file>.partial and renames it over <file> only once run_end is written, so
+	// a killed run never truncates an earlier finished run of the same day. The partial file does
+	// not match *.jsonl, so readers never pick it up. 0600: the output names accounts, apps and
+	// services.
+	partial := res.File + ".partial"
+	f, err := os.OpenFile(partial, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		res.Err = err
 		return res
 	}
-	defer f.Close()
 	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, res: res}
 
 	req, errs := NewRequest(cfg, t.Instance)
@@ -170,6 +174,13 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	}
 	res.Err = t.Connector.Inventory(ctx, req, s)
 	s.end(ctx, started, res.Err)
+	if err := f.Close(); err != nil {
+		res.Err = errors.Join(res.Err, err)
+		return res
+	}
+	if err := os.Rename(partial, res.File); err != nil {
+		res.Err = errors.Join(res.Err, err)
+	}
 	return res
 }
 

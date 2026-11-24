@@ -2,6 +2,7 @@ package run
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -296,4 +297,46 @@ func TestRunEndCapsLists(t *testing.T) {
 	if _, none := finding.CoverageOf(&end).NoneChecked(); !none {
 		t.Fatal("a truncated skipped list must not let anything count as inspected")
 	}
+}
+
+// While a run is in progress (or if it dies before run_end), the day's earlier finished file must
+// stay as it was; the new run only replaces it once finished.
+func TestUnfinishedRunKeepsTheEarlierFile(t *testing.T) {
+	out := t.TempDir()
+	cfg := config.Config{}
+	first, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, &fake{}), out, nil, nil)
+	if err != nil || first[0].Err != nil {
+		t.Fatalf("first run: %v %v", err, first[0].Err)
+	}
+	before, _ := os.ReadFile(first[0].File)
+
+	var during []byte
+	probe := probingFake{check: func() { during, _ = os.ReadFile(first[0].File) }}
+	second, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, probe), out, nil, nil)
+	if err != nil || second[0].Err != nil {
+		t.Fatalf("second run: %v %v", err, second[0].Err)
+	}
+	if !bytes.Equal(before, during) {
+		t.Fatal("the finished file changed while the next run was still writing")
+	}
+	after, _ := os.ReadFile(first[0].File)
+	if bytes.Equal(before, after) || !bytes.Contains(after, []byte("run_end")) {
+		t.Fatal("the finished second run did not replace the file")
+	}
+	if _, err := os.Stat(first[0].File + ".partial"); err == nil {
+		t.Fatal("the partial file was left behind")
+	}
+}
+
+type probingFake struct{ check func() }
+
+func (probingFake) Describe() connector.Description {
+	return connector.Description{Name: "fake", Version: "0", Protocol: 1}
+}
+
+func (p probingFake) Inventory(_ context.Context, _ connector.Request, emit connector.Emitter) error {
+	emit.Status(finding.Status{Account: "acct", State: finding.StateOK})
+	emit.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "new"}, Severity: finding.SevLow, Title: "new"})
+	p.check()
+	return nil
 }
