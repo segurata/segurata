@@ -35,7 +35,7 @@ const trackUsage = `usage: segurata track <command>
   sync       [--out out] [--from out/<date>/local-secrets.jsonl] [--include-noise]
 <id> is T-0012 (or T-12), or a secret's short id.`
 
-const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]"
+const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] [--mark-seen]"
 
 // CLI is `segurata track` and `segurata status`.
 type CLI struct {
@@ -349,14 +349,16 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 }
 
 // Status prints the briefing, and with --write also writes status.md and status.html next to the
-// tracker (mode 0600). An unfiltered status remembers when it ran, for "Since the last status".
+// tracker (mode 0600). It is read-only unless asked: an unfiltered status with --mark-seen (or
+// --write, which implies it) remembers when it ran, for "Since the last status".
 func (c CLI) Status(args []string) int {
 	fs := flags("status", c.Err)
 	theme := fs.String("theme", "", "comma-separated themes")
 	kind := fs.String("kind", "", "comma-separated kinds")
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0,P1")
 	format := fs.String("format", string(doc.Text), "text, md or html")
-	write := fs.Bool("write", false, "also write status.md and status.html next to the tracker (mode 0600)")
+	write := fs.Bool("write", false, "also write status.md and status.html next to the tracker (mode 0600); implies --mark-seen")
+	markSeen := fs.Bool("mark-seen", false, "remember this status as the start of the next \"Since the last status\" (unfiltered only)")
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil || len(pos) > 0 || !doc.Format(*format).Valid() {
 		fmt.Fprintln(c.Err, statusUsage)
@@ -385,7 +387,7 @@ func (c CLI) Status(args []string) int {
 			fmt.Fprintf(c.Err, "Wrote %s (mode 0600).\n", name)
 		}
 	}
-	if f.empty() {
+	if (*markSeen || *write) && f.empty() {
 		at := now.UTC()
 		t.LastStatusAt = &at
 		if err := t.Save(path); err != nil {

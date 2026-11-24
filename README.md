@@ -52,9 +52,10 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 ## Tracker and status
 
 ```bash
-./segurata status                         # the briefing: what to do next, decisions, blockers, changes
+./segurata status                         # the briefing: what to do next, decisions, blockers, changes (read-only)
+./segurata status --mark-seen             # same, and start "Since the last status" from now
 ./segurata status --priority P0,P1 --theme github-orgs
-./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600)
+./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600); implies --mark-seen
 ./segurata track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
 ./segurata track show T-0042
 ./segurata track start|done|reopen T-0042 [--note "..."]
@@ -352,7 +353,7 @@ every secret as new.
 ```bash
 ./segurata rotations sync                    # from the latest out/<date>/local-secrets.jsonl
 ./segurata rotations list --priority P0,P1   # what to rotate first
-./segurata rotations next --priority P0      # the most urgent item and exactly what to do
+./segurata rotations next --priority P0      # the most urgent item and exactly what to do (--log records it was shown)
 ./segurata rotations show <id>               # locations, where the new value goes, rotate URL
 ./segurata rotations replace <id>            # after rotating: plan with the new value from the clipboard
 ./segurata rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]

@@ -35,7 +35,7 @@ type CLI struct {
 const usage = `usage: segurata rotations <command>
   sync    [--from out/<date>/local-secrets.jsonl] [--out out] [--include-noise]
   list    [--all] [--priority P0,P1] [--service stripe,aws]
-  next    [--priority P0] [--service stripe]   the most urgent item, with what to do
+  next    [--priority P0] [--service stripe] [--log]   the most urgent item, with what to do (--log records it was shown)
   show    <id>
   replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
           put the new value in every used_in file (see: segurata rotations replace --help)

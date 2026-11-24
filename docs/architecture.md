@@ -26,7 +26,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `inventory` | Lists what exists: grants, keys, settings, spend | Never |
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
-| `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Only segurata's own `tracker.json` (the "since" mark) and, with `--write`, `status.md` and `status.html` |
+| `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Nothing by default; with `--mark-seen` segurata's own `tracker.json` (the "since" mark); with `--write` that mark plus `status.md` and `status.html` |
 | `track` | Lists, shows and changes tracker items; `track sync` folds the latest runs in | Only segurata's own `tracker.json` |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only segurata's own `tracker.json` |
 | `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
@@ -267,7 +267,7 @@ replace --to-keychain`.
 ### `segurata status`
 
 ```
-segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]
+segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] [--mark-seen]
 ```
 
 The briefing, built with the report's document model and renderers (`internal/doc`), so text,
@@ -275,9 +275,10 @@ Markdown and HTML say the same thing: a headline (open items by priority and the
 verified in the last 7 days, accepted, ignored, snoozed), "Do next" (the ten most urgent entries
 with their next step, command and page; secrets count as one entry per priority pointing to
 `segurata rotations next`), pending decisions, setup blockers, the changes since the last
-unfiltered status (events counted, the latest listed) and the accepted risks. `--write` also
-writes `status.md` and `status.html` next to the tracker, mode 0600. `report` stays the per-run
-view.
+seen status (events counted, the latest listed) and the accepted risks. Reading it changes
+nothing: an unfiltered `status --mark-seen` records the "since" mark, and `--write` (which implies
+`--mark-seen`) also writes `status.md` and `status.html` next to the tracker, mode 0600. `report`
+stays the per-run view. Likewise `rotations next` only logs a `next` history event with `--log`.
 
 ## Remediation
 
