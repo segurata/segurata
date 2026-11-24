@@ -233,6 +233,7 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	}
 	emitAll := func(fs []finding.Finding) {
 		for _, f := range fs {
+			f.Scope = t.project
 			emit.Finding(f)
 		}
 	}
@@ -275,7 +276,8 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		failed = append([]string{"permission denied for " + strings.Join(denied, ", ")}, failed...)
 	}
 	if len(failed) > 0 {
-		emit.Status(finding.Status{Account: t.account, State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
+		// Scoped to the project: the account's other projects were read.
+		emit.Status(finding.Status{Account: t.account, Scope: t.project, State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
 	}
 }
 
@@ -306,7 +308,8 @@ func (b *billing) discover(ctx context.Context, account string, emit connector.E
 	var list []billingAccount
 	if err := b.g.json(ctx, &list, "billing", "accounts", "list", "--account="+account); err != nil {
 		state, why := classify(err)
-		emit.Status(finding.Status{Account: account, State: state, Detail: "billing accounts list: " + why})
+		// Budgets are judged per billing account; without the list any of them may be missed.
+		emit.Status(finding.Status{Account: account, Scope: billingScope("*"), State: state, Detail: "billing accounts list: " + why})
 		return
 	}
 	b.mu.Lock()
@@ -338,15 +341,21 @@ func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 		var budgets []budget
 		if err := b.g.json(ctx, &budgets, args...); err != nil {
 			state, why := classify(err)
-			emit.Status(finding.Status{Account: st.account, State: state,
+			emit.Status(finding.Status{Account: st.account, Scope: billingScope(id), State: state,
 				Detail: fmt.Sprintf("billing account %s: cannot read budgets, so spend alerts are unknown for %s: %s", id, projectList(st.linked), why)})
 			continue
 		}
 		for _, f := range billingFindings(st.account, id, budgets, st.linked) {
+			f.Scope = billingScope(id)
 			emit.Finding(f)
 		}
 	}
 }
+
+// Findings and failures carry a scope narrower than the gcloud account, so one project the account
+// cannot read leaves only that project's findings unresolved: the project id for project checks,
+// "billing:<id>" for a billing account's budgets.
+func billingScope(id string) string { return "billing:" + id }
 
 func projectList(ps []linkedProject) string {
 	if len(ps) == 0 {

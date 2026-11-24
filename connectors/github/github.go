@@ -160,7 +160,12 @@ func splitInclude(out []byte) (textproto.MIMEHeader, []byte) {
 }
 
 func (r *run) status(account string, state finding.State, format string, args ...any) {
-	r.emit.Status(finding.Status{Account: account, State: state, Detail: fmt.Sprintf(format, args...)})
+	r.scopedStatus(account, "", state, format, args...)
+}
+
+// scopedStatus is a status about one part of an account; see finding.Status.
+func (r *run) scopedStatus(account, scope string, state finding.State, format string, args ...any) {
+	r.emit.Status(finding.Status{Account: account, Scope: scope, State: state, Detail: fmt.Sprintf(format, args...)})
 }
 
 func account(name string) string { return "github:" + name }

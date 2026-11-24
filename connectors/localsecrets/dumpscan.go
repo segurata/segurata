@@ -157,7 +157,7 @@ func (s *scan) dumpsAll() {
 			defer wg.Done()
 			for repo := range jobs {
 				if d := s.dumpsIn(repo); d.err != nil {
-					s.emit.Status(finding.Status{Account: s.tilde(repo), State: finding.StateError, Detail: "data dumps: " + d.err.Error()})
+					s.emit.Status(finding.Status{Account: s.tilde(repo), Scope: dumpsScope(s.tilde(repo)), State: finding.StateError, Detail: "data dumps: " + d.err.Error()})
 				}
 			}
 		}()

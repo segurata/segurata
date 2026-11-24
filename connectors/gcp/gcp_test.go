@@ -281,6 +281,35 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		}
 	}
 
+	// Permission denied on demo-blog leaves only demo-blog's findings unresolved.
+	var tally finding.Tally
+	for _, s := range rec.statuses {
+		tally.Status(s)
+	}
+	end := tally.End(connectorName, "", time.Now(), time.Now(), nil)
+	cov := finding.CoverageOf(&end)
+	if key.Scope != "demo-shop" || adc.Scope != "" {
+		t.Errorf("scopes: project finding %q, local finding %q", key.Scope, adc.Scope)
+	}
+	if b := rec.byTitle(t, "no budget with alerts covers it"); b.Scope != "billing:000000-AAAAAA-111111" {
+		t.Errorf("billing finding scope %q", b.Scope)
+	}
+	for _, c := range []struct {
+		f         finding.Finding
+		unchecked bool
+	}{
+		{key, false},
+		{adc, false},
+		{finding.Finding{Account: "owner@example.com", Scope: "demo-blog"}, true},
+		{finding.Finding{Account: "owner@example.com", Scope: "billing:000000-BBBBBB-222222"}, true},
+		{finding.Finding{Account: "work@example.org", Scope: "any-project"}, true}, // reauth: the whole account
+		{rec.byTitle(t, "has 1 budget(s) with alerts"), true},                      // ci@ could not list billing accounts
+	} {
+		if _, got := cov.UncheckedFinding(c.f); got != c.unchecked {
+			t.Errorf("%s %s: unchecked %v, want %v", c.f.Account, finding.ScopeOf(c.f), got, c.unchecked)
+		}
+	}
+
 	for _, call := range runner.calls {
 		if readOnly.Check(strings.Fields(call)) != nil {
 			t.Errorf("non read-only call reached gcloud: %s", call)
