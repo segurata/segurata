@@ -14,10 +14,10 @@ import (
 // through. Each page is through on the same tests the run applies (signed-out URL gone, list or
 // empty message shown). A status about the gh CLI has no page: its detail names the command.
 func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
-	service, who, _ := strings.Cut(st.Account, ":")
 	if st.State != finding.StateSignedOut && st.State != finding.StateReauth {
 		return connector.SignInPage{}, false
 	}
+	service, who, _ := strings.Cut(st.Account, ":")
 	signedOut := st.State == finding.StateSignedOut
 	switch service {
 	case "github":

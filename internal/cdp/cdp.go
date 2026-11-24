@@ -296,7 +296,6 @@ func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error)
 // that tab brings the window to the front each time. A browser that refuses hidden targets gets
 // background tabs, as before.
 func (c *Client) scanTarget(ctx context.Context) (string, error) {
-	params := map[string]any{"url": "about:blank", "background": true}
 	if !c.visibleScan.Load() {
 		raw, err := c.Send(ctx, "Target.createTarget", map[string]any{"url": "about:blank", "background": true, "hidden": true}, "")
 		if err == nil {
@@ -307,6 +306,11 @@ func (c *Client) scanTarget(ctx context.Context) (string, error) {
 		}
 		c.visibleScan.Store(true)
 	}
+	return c.createTarget(ctx, map[string]any{"url": "about:blank", "background": true})
+}
+
+// createTarget creates a target with params and returns its id.
+func (c *Client) createTarget(ctx context.Context, params map[string]any) (string, error) {
 	raw, err := c.Send(ctx, "Target.createTarget", params, "")
 	if err != nil {
 		return "", err
@@ -314,6 +318,7 @@ func (c *Client) scanTarget(ctx context.Context) (string, error) {
 	return targetID(raw)
 }
 
+// targetID reads the id of the target Target.createTarget created.
 func targetID(raw json.RawMessage) (string, error) {
 	var t struct {
 		TargetID string `json:"targetId"`
@@ -384,11 +389,7 @@ func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*
 // stays open after the connection closes. For pages where the user has to act (sign in, confirm
 // a password); scans use WithPage.
 func (c *Client) OpenTab(ctx context.Context, url string) (*Page, error) {
-	raw, err := c.Send(ctx, "Target.createTarget", map[string]any{"url": url}, "")
-	if err != nil {
-		return nil, err
-	}
-	id, err := targetID(raw)
+	id, err := c.createTarget(ctx, map[string]any{"url": url})
 	if err != nil {
 		return nil, err
 	}

@@ -79,7 +79,7 @@ func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accoun
 		return Item{}, false
 	}
 	st := sts[0]
-	lbl := label(st)
+	lbl := tracker.StatusLabel(st)
 	conn, ok := byLabel[lbl]
 	if !ok || !watched(accounts, lbl, st.Account) {
 		return Item{}, false
@@ -106,13 +106,6 @@ func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accoun
 		return x, true
 	}
 	return Item{}, false
-}
-
-func label(st finding.Status) string {
-	if st.Instance == "" {
-		return st.Connector
-	}
-	return st.Connector + ":" + st.Instance
 }
 
 // watched reports whether the config watches the account: true unless the instance has an
@@ -194,10 +187,12 @@ func Wait(ctx context.Context, b Browser, items []Item, o WaitOptions) []Outcome
 			fmt.Fprintf(o.Progress, "  %d. could not open %s: %v\n", i+1, it.Page.URL, out[i].Err)
 		}
 	}
+	// waiting reports whether item i has an open tab that is not done yet.
+	waiting := func(i int) bool { return tabs[i] != nil && !out[i].Done && !out[i].Closed }
 	pending := func() (auto, manual int) {
 		for i, it := range items {
 			switch {
-			case tabs[i] == nil || out[i].Done || out[i].Closed:
+			case !waiting(i):
 			case it.Page.Done == nil:
 				manual++
 			default:
@@ -222,7 +217,7 @@ func Wait(ctx context.Context, b Browser, items []Item, o WaitOptions) []Outcome
 		case <-tick.C:
 		}
 		for i, it := range items {
-			if tabs[i] == nil || out[i].Done || out[i].Closed || it.Page.Done == nil {
+			if !waiting(i) || it.Page.Done == nil {
 				continue
 			}
 			v, err := tabs[i].Evaluate(ctx, it.Page.Expr)

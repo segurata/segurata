@@ -60,7 +60,7 @@ func (p *proposal) finishSetup(itemID string) {
 		return
 	}
 	st := reported(p.statuses[0])
-	lbl := label(st.Connector, st.Instance)
+	lbl := StatusLabel(st)
 	p.title = setupTitle(lbl, st.Account, st.State, p.statuses)
 	if reasons := p.expectedReasons(); reasons != nil {
 		p.next = &Next{Who: You, Action: "Nothing: expected by your config (" + strings.Join(reasons, "; ") + ")."}
@@ -280,6 +280,9 @@ func (it *Item) BrowserSignIn(browser func(connector string) bool, now time.Time
 	sts := it.SetupStatuses()
 	return len(sts) > 0 && browser(sts[0].Connector) && len(it.StatusCommands()) == 0
 }
+
+// StatusLabel is the connector instance a status is about, as the command line names it.
+func StatusLabel(st finding.Status) string { return label(st.Connector, st.Instance) }
 
 // setupState is the state a setup item's key names: the last field of SetupKey.
 func (it *Item) setupState() finding.State {

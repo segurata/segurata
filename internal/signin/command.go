@@ -99,10 +99,12 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 		return 0
 	}
 	pages := c.printList(items)
+	// Every page item's target: what a full wait would run again.
+	pageTargets := Reruns(items, make([]Outcome, len(items)), nil)
 	if *list {
 		if pages > 0 {
 			fmt.Fprintf(c.Out, "\nsegurata signin would open %d %s in the browser at %s, wait up to %s, then run %s again.\n",
-				pages, textfmt.Plural(pages, "tab", "tabs"), cfg.CDPURL, *timeout, strings.Join(Reruns(items, make([]Outcome, len(items)), nil), ", "))
+				pages, textfmt.Plural(pages, "tab", "tabs"), cfg.CDPURL, *timeout, strings.Join(pageTargets, ", "))
 		}
 		return 0
 	}
@@ -113,7 +115,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	b, closeBrowser, err := c.Connect(ctx, cfg.CDPURL)
 	if err != nil {
 		fmt.Fprintf(c.Out, "\nThe browser at %s is not reachable (%v). segurata only opens tabs in that browser, never another one: open the pages above yourself, then run: segurata inventory %s\n",
-			cfg.CDPURL, err, strings.Join(Reruns(items, make([]Outcome, len(items)), nil), " "))
+			cfg.CDPURL, err, strings.Join(pageTargets, " "))
 		return 1
 	}
 	defer closeBrowser()

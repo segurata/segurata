@@ -19,21 +19,22 @@ func (GooglePersonal) SignInPage(st finding.Status) (connector.SignInPage, bool)
 		if !strings.Contains(st.Account, "@") {
 			return connector.SignInPage{}, false
 		}
-		return connector.SignInPage{
-			URL:  "https://myaccount.google.com/connections?authuser=" + url.QueryEscape(st.Account),
-			Do:   "sign in to " + st.Account + " again in Google (\"Verify it's you\")",
-			Expr: connectionsJS,
-			Done: func(raw json.RawMessage) bool { return connectionsShown(raw, st.Account) },
-		}, true
+		return connectionsSignIn("https://myaccount.google.com/connections?authuser="+url.QueryEscape(st.Account),
+			"sign in to "+st.Account+" again in Google (\"Verify it's you\")", st.Account), true
 	case finding.StateSignedOut:
-		return connector.SignInPage{
-			URL:  connectionsURL(0),
-			Do:   "sign in to your Google account",
-			Expr: connectionsJS,
-			Done: func(raw json.RawMessage) bool { return connectionsShown(raw, "") },
-		}, true
+		return connectionsSignIn(connectionsURL(0), "sign in to your Google account", ""), true
 	}
 	return connector.SignInPage{}, false
+}
+
+// connectionsSignIn is a sign-in page at u, through once connectionsShown holds for account.
+func connectionsSignIn(u, do, account string) connector.SignInPage {
+	return connector.SignInPage{
+		URL:  u,
+		Do:   do,
+		Expr: connectionsJS,
+		Done: func(raw json.RawMessage) bool { return connectionsShown(raw, account) },
+	}
 }
 
 // connectionsShown reports whether the page is the connections page of account (any account when
