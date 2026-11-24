@@ -9,8 +9,8 @@ import (
 
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/rotation"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 var severities = []finding.Severity{finding.SevCritical, finding.SevHigh, finding.SevMedium, finding.SevLow, finding.SevInfo}
@@ -84,46 +84,12 @@ func needsAttention(sts []finding.Status) []finding.Status {
 	return out
 }
 
-// statusAction is what to do about a status, and the command that checks it afterwards. Connectors
-// usually put the exact fix in the detail (a command to run, a page to open); then the action
-// points there instead of guessing from the state alone.
-func statusAction(st finding.Status, label string) (string, string) {
-	rerun := "securizame inventory " + label
-	if detailHasFix(st.Detail) {
-		return "Do what the detail above says.", rerun
-	}
-	switch st.State {
-	case finding.StateReauth:
-		return "Sign in to this account again (in the browser for browser connectors, with the provider's CLI otherwise).", rerun
-	case finding.StateSignedOut:
-		return "Sign in to this account in the browser securizame drives, or drop it from the config if it is gone.", rerun
-	case finding.StateMissingCredentials:
-		return "Check the secret reference for " + label + " in ~/.config/securizame/config.json (Keychain item, 1Password field or environment variable).", rerun
-	case finding.StateNoScope:
-		return "Grant the permission the detail names to the credential this connector uses.", rerun
-	case finding.StateUnsupported:
-		return "Install what the detail names (respecting the 4-day quarantine), or remove " + label + " from the config.", rerun
-	}
-	return "Run it again with connector logs to see what failed.", rerun + " --verbose"
-}
-
-// detailHasFix reports whether a status detail already carries a concrete step.
-func detailHasFix(detail string) bool {
-	d := strings.ToLower(detail)
-	for _, cue := range []string{"run:", "run gcloud", "run gh", "run aws", "run az", "; run ", "open http", "store it with", "raise ", "create an "} {
-		if strings.Contains(d, cue) {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *Report) attention(d *doc.Doc) {
 	d.H(2, "Needs attention")
 	var items []doc.Item
 	for _, run := range r.Runs {
 		for _, st := range needsAttention(run.Statuses) {
-			action, cmd := statusAction(st, run.Label)
+			action, cmd := tracker.StatusAction(st, run.Label)
 			text := run.Label
 			if st.Account != "" {
 				text += " · " + st.Account
@@ -285,17 +251,17 @@ func (r *Report) rotations(d *doc.Doc) {
 	d.H(2, "Rotation ledger")
 	s := r.Rotations
 	if s.Total == 0 {
-		d.P("No rotation ledger yet at "+s.Path+": after a local-secrets inventory, run ", doc.Code("securizame rotations sync"), ".")
+		d.P("No secrets in the tracker yet ("+s.Path+"): after a local-secrets inventory, run ", doc.Code("securizame rotations sync"), ".")
 		return
 	}
 	d.P(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored.",
 		s.Open[secretrisk.P0], s.Open[secretrisk.P1], s.Open[secretrisk.P2], s.Open[secretrisk.P3],
-		s.Total, s.ByStatus[rotation.Rotated], s.ByStatus[rotation.Snoozed], s.ByStatus[rotation.Ignored]))
+		s.Total, s.ByStatus[tracker.Done], s.ByStatus[tracker.Snoozed], s.ByStatus[tracker.Ignored]))
 	if len(s.TopP0) > 0 {
 		d.H(3, "Rotate first (P0)")
 		var items []doc.Item
 		for _, it := range s.TopP0 {
-			items = append(items, rotationItem(it, "since "+it.FirstSeen.Format(time.DateOnly)))
+			items = append(items, rotationItem(it, "since "+it.Secret.FirstSeen.Format(time.DateOnly)))
 		}
 		if m := more(s.Open[secretrisk.P0], len(s.TopP0), "P0 items"); m.Text != "" {
 			items = append(items, m)
@@ -315,19 +281,20 @@ func (r *Report) rotations(d *doc.Doc) {
 }
 
 // rotationItem shows an item by its redacted hint only, never a location's content.
-func rotationItem(it *rotation.Item, when string) doc.Item {
-	text := it.Service + "/" + it.Type
-	if it.Redacted != "" {
-		text += " " + it.Redacted
+func rotationItem(it *tracker.Item, when string) doc.Item {
+	s := it.Secret
+	text := s.Service + "/" + s.Type
+	if s.Redacted != "" {
+		text += " " + s.Redacted
 	}
-	out := doc.Item{Badge: string(it.Priority), Text: text, Meta: fmt.Sprintf("id %s · %s · %s · %s", it.ID, it.WorstLabel(), count(len(it.Locations), "location"), when)}
-	if len(it.Reasons) > 0 {
-		out.Details = append(out.Details, doc.Detail{Label: "Why", Text: it.Reasons[0]})
+	out := doc.Item{Badge: string(it.EffectivePriority()), Text: text, Meta: fmt.Sprintf("id %s · %s · %s · %s", s.ID, it.WorstLabel(), count(len(s.Locations), "location"), when)}
+	if len(s.Reasons) > 0 {
+		out.Details = append(out.Details, doc.Detail{Label: "Why", Text: s.Reasons[0]})
 	}
-	if it.RotateURL != "" {
-		out.Details = append(out.Details, doc.Detail{Label: "Rotate at", Text: it.RotateURL, Kind: doc.DLink})
+	if s.RotateURL != "" {
+		out.Details = append(out.Details, doc.Detail{Label: "Rotate at", Text: s.RotateURL, Kind: doc.DLink})
 	}
-	out.Details = append(out.Details, doc.Detail{Label: "Then", Text: "securizame rotations done " + it.ID, Kind: doc.DCode})
+	out.Details = append(out.Details, doc.Detail{Label: "Then", Text: "securizame rotations done " + s.ID, Kind: doc.DCode})
 	return out
 }
 

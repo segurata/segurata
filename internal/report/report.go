@@ -1,8 +1,8 @@
 // Package report builds `securizame report`: the latest run of every connector instance, what
 // changed since each one's previous run, the statuses that need action, the rotation ledger and
 // the accepted risks, as terminal text, Markdown or a self-contained HTML page. It reads only
-// securizame's own files and never holds a secret value: findings carry none, and the ledger only
-// redacted hints. See docs/architecture.md, "Report".
+// securizame's own files and never holds a secret value: findings carry none, and the tracker's
+// rotate items only redacted hints. See docs/architecture.md, "Report".
 package report
 
 import (
@@ -13,11 +13,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/segurata/segurata/internal/accept"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
-	"github.com/segurata/segurata/internal/rotation"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // Run is the latest run of one connector instance, compared with its previous one.
@@ -41,19 +40,19 @@ type Change struct {
 
 // Accepted is one accepted risk and where it stands today.
 type Accepted struct {
-	*accept.Entry
-	Expired bool
-	Gone    bool // its connector's latest run no longer reports it
+	ID, Connector, Title, Reason, Until string
+	Expired                             bool
+	Gone                                bool // its connector's latest run no longer reports it
 }
 
-// Rotations summarises the rotation ledger.
+// Rotations summarises the tracker's rotate items.
 type Rotations struct {
 	Path       string
 	Total      int
 	Open       map[secretrisk.Priority]int // active items by priority ("" for noise)
-	ByStatus   map[rotation.Status]int
-	TopP0      []*rotation.Item
-	SnoozesDue []*rotation.Item // snoozed past their date, not yet woken by a sync
+	ByStatus   map[tracker.Status]int
+	TopP0      []*tracker.Item
+	SnoozesDue []*tracker.Item // snoozed past their date, not yet woken by a sync
 }
 
 // Report is everything the renderers print.
@@ -69,26 +68,25 @@ type Report struct {
 
 // Inputs are the files and options a report reads.
 type Inputs struct {
-	OutDir     string
-	Now        time.Time
-	Accepted   *accept.Store
-	Ledger     *rotation.Ledger
-	LedgerPath string
-	MinSev     finding.Severity
-	Top        int // findings per connector in "Top findings"
+	OutDir      string
+	Now         time.Time
+	Tracker     *tracker.Tracker
+	TrackerPath string
+	MinSev      finding.Severity
+	Top         int // findings per connector in "Top findings"
 }
 
 // maxP0 is how many P0 rotation items the report names.
 const maxP0 = 5
 
 // Build reads the latest run of every connector instance and its previous run, and annotates
-// every finding with today's accepted-risks file.
+// every finding with the tracker's acceptances as of today.
 func Build(in Inputs) (*Report, error) {
 	files, err := remediate.LatestFiles(in.OutDir)
 	if err != nil {
 		return nil, err
 	}
-	annotate := in.Accepted.Annotator(func() time.Time { return in.Now })
+	annotate := in.Tracker.Annotator(func() time.Time { return in.Now })
 	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top}
 	reported := map[string]bool{} // finding ids in a latest run
 	ran := map[string]bool{}      // connectors with a latest run
@@ -107,10 +105,13 @@ func Build(in Inputs) (*Report, error) {
 		r.Runs = append(r.Runs, run)
 	}
 	sort.SliceStable(r.Runs, func(i, j int) bool { return r.Runs[i].Label < r.Runs[j].Label })
-	for _, e := range in.Accepted.Entries {
-		r.Accepted = append(r.Accepted, Accepted{Entry: e, Expired: e.Expired(in.Now), Gone: ran[e.Connector] && !reported[e.ID]})
+	for _, it := range in.Tracker.AcceptedItems() {
+		for _, f := range it.Findings {
+			r.Accepted = append(r.Accepted, Accepted{ID: f.ID, Connector: f.Connector, Title: it.Title, Reason: it.Accepted.Reason,
+				Until: it.Accepted.Until, Expired: it.AcceptanceExpired(in.Now), Gone: ran[f.Connector] && !reported[f.ID]})
+		}
 	}
-	r.Rotations = summarise(in.Ledger, in.LedgerPath, in.Now)
+	r.Rotations = summarise(in.Tracker, in.TrackerPath, in.Now)
 	return r, nil
 }
 
@@ -120,7 +121,7 @@ func readRun(file string, annotate func(*finding.Finding)) (*Run, error) {
 		return nil, err
 	}
 	run := &Run{File: file, Date: filepath.Base(filepath.Dir(file)), Findings: findings, Statuses: statuses}
-	run.Label = labelOf(file, findings, statuses)
+	run.Label = tracker.RunLabel(file, findings, statuses)
 	for i := range run.Findings {
 		annotate(&run.Findings[i])
 	}
@@ -156,49 +157,33 @@ func readRun(file string, annotate func(*finding.Finding)) (*Run, error) {
 	return run, nil
 }
 
-// labelOf names the connector instance from its records, which carry the exact connector name and
-// instance label; an empty run falls back to the file name.
-func labelOf(file string, findings []finding.Finding, statuses []finding.Status) string {
-	switch {
-	case len(findings) > 0:
-		return label(findings[0].Connector, findings[0].Instance)
-	case len(statuses) > 0:
-		return label(statuses[0].Connector, statuses[0].Instance)
-	}
-	base := filepath.Base(file)
-	return base[:len(base)-len(filepath.Ext(base))]
-}
-
-func label(connector, instance string) string {
-	if instance == "" {
-		return connector
-	}
-	return connector + ":" + instance
-}
-
-func summarise(l *rotation.Ledger, path string, now time.Time) Rotations {
-	s := Rotations{Path: path, Open: map[secretrisk.Priority]int{}, ByStatus: map[rotation.Status]int{}}
-	if l == nil {
+func summarise(t *tracker.Tracker, path string, now time.Time) Rotations {
+	s := Rotations{Path: path, Open: map[secretrisk.Priority]int{}, ByStatus: map[tracker.Status]int{}}
+	if t == nil {
 		return s
 	}
-	var p0 []*rotation.Item
-	for _, it := range l.Items {
+	var p0 []*tracker.Item
+	for _, it := range t.Items {
+		if it.Kind != tracker.KindRotate {
+			continue
+		}
 		s.Total++
 		s.ByStatus[it.Status]++
 		if !it.Active(now) {
 			continue
 		}
-		s.Open[it.Priority]++
-		if it.Priority == secretrisk.P0 {
+		p := it.EffectivePriority()
+		s.Open[p]++
+		if p == secretrisk.P0 {
 			p0 = append(p0, it)
 		}
-		if it.Status == rotation.Snoozed {
+		if it.Status == tracker.Snoozed {
 			s.SnoozesDue = append(s.SnoozesDue, it)
 		}
 	}
-	rotation.Sort(p0)
+	tracker.Sort(p0)
 	s.TopP0 = p0[:min(len(p0), maxP0)]
-	rotation.Sort(s.SnoozesDue)
+	tracker.Sort(s.SnoozesDue)
 	return s
 }
 

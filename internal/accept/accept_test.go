@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 var now = time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
@@ -35,64 +36,77 @@ func firewall() finding.Finding {
 }
 
 func TestAcceptValidatesAndReplaces(t *testing.T) {
-	s := &Store{}
+	tr := tracker.New(now)
 	f := debugPort()
-	if _, err := s.Accept(f, "  ", "", now); err == nil {
+	if _, err := tr.AcceptFinding(f, "  ", "", now); err == nil {
 		t.Error("accepted without a reason")
 	}
-	if _, err := s.Accept(f, "agents", "2026-13-01", now); err == nil {
+	if _, err := tr.AcceptFinding(f, "agents", "2026-13-01", now); err == nil {
 		t.Error("accepted with a bad date")
 	}
-	if _, err := s.Accept(f, "agents", "2026-11-23", now); err == nil {
+	if _, err := tr.AcceptFinding(f, "agents", "2026-11-23", now); err == nil {
 		t.Error("accepted until yesterday")
 	}
-	if _, err := s.Accept(f, "agents", "2026-11-24", now); err != nil {
+	if _, err := tr.AcceptFinding(f, "agents", "2026-11-24", now); err != nil {
 		t.Errorf("today is still in force: %v", err)
 	}
-	if _, err := s.Accept(f, "AI agents drive Brave", "", now); err != nil {
+	if _, err := tr.AcceptFinding(f, "AI agents drive Brave", "", now); err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Entries) != 1 || s.Entries[0].Reason != "AI agents drive Brave" || s.Entries[0].Until != "" || s.Entries[0].Title != f.Title || s.Entries[0].Connector != "macos" {
-		t.Fatalf("entries %+v", s.Entries)
+	items := tr.AcceptedItems()
+	if len(items) != 1 || items[0].Accepted.Reason != "AI agents drive Brave" || items[0].Accepted.Until != "" || items[0].Title != f.Title ||
+		items[0].Findings[0].Connector != "macos" || items[0].Status != tracker.Accepted {
+		t.Fatalf("items %+v", items)
 	}
 }
 
 func TestExpiryAndAnnotation(t *testing.T) {
-	s := &Store{}
+	tr := tracker.New(now)
 	f := debugPort()
-	if _, err := s.Accept(f, "agents", "2026-11-30", now); err != nil {
+	if _, err := tr.AcceptFinding(f, "agents", "2026-11-30", now); err != nil {
 		t.Fatal(err)
 	}
-	s.Annotate(&f, now)
+	at := now
+	annotate := tr.Annotator(func() time.Time { return at })
+	annotate(&f)
 	if !f.Hidden() || f.Accepted.Reason != "agents" || f.Accepted.Until != "2026-11-30" || f.DisplayTitle() != f.Title {
 		t.Fatalf("in force: %+v", f.Accepted)
 	}
-	lastDay := time.Date(2026, 11, 30, 23, 59, 0, 0, time.UTC)
-	if s.Annotate(&f, lastDay); f.Hidden() == false {
+	at = time.Date(2026, 11, 30, 23, 59, 0, 0, time.UTC)
+	if annotate(&f); !f.Hidden() {
 		t.Fatal("expired on its last day")
 	}
-	s.Annotate(&f, lastDay.Add(2*time.Minute))
+	at = at.Add(2 * time.Minute)
+	annotate(&f)
 	if f.Hidden() || !f.Accepted.Expired || !strings.HasSuffix(f.DisplayTitle(), "(acceptance expired)") {
 		t.Fatalf("after its last day: %+v %q", f.Accepted, f.DisplayTitle())
 	}
 	other := firewall()
 	other.Accepted = &finding.Acceptance{Reason: "stale, from an old run"}
-	s.Annotate(&other, now)
+	annotate(&other)
 	if other.Accepted != nil {
-		t.Fatal("the store is the source of truth: an entry it does not hold must clear the field")
+		t.Fatal("the tracker is the source of truth: a finding it does not hold accepted must have the field cleared")
 	}
 }
 
 func TestUnacceptByPrefix(t *testing.T) {
-	s := &Store{Entries: []*Entry{{ID: "aaaa1111"}, {ID: "aaaa2222"}, {ID: "bbbb0000"}}}
-	if _, err := s.Unaccept("aaaa"); err == nil {
+	tr := tracker.New(now)
+	for _, id := range []string{"aaaa1111", "aaaa2222", "bbbb0000"} {
+		f := debugPort()
+		f.ID = id
+		if _, err := tr.AcceptFinding(f, "kept", "", now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tr.Unaccept("aaaa", now); err == nil {
 		t.Error("ambiguous prefix removed something")
 	}
-	if _, err := s.Unaccept("cc"); err == nil {
+	if _, err := tr.Unaccept("cc", now); err == nil {
 		t.Error("unknown id removed something")
 	}
-	if e, err := s.Unaccept("bb"); err != nil || e.ID != "bbbb0000" || len(s.Entries) != 2 {
-		t.Fatalf("%v %v %v", e, err, s.Entries)
+	it, err := tr.Unaccept("bb", now)
+	if err != nil || it.Findings[0].ID != "bbbb0000" || it.Status != tracker.Open || len(tr.AcceptedItems()) != 2 {
+		t.Fatalf("%v %v %v", it, err, tr.AcceptedItems())
 	}
 }
 
@@ -114,12 +128,12 @@ func writeRun(t *testing.T, out string, fs ...finding.Finding) {
 
 func TestCommands(t *testing.T) {
 	tmp := t.TempDir()
-	out, state := filepath.Join(tmp, "out"), filepath.Join(tmp, "cfg", "accepted.json")
+	out, state := filepath.Join(tmp, "out"), filepath.Join(tmp, "home", "tracker.json")
 	dbg, fw := debugPort(), firewall()
 	writeRun(t, out, dbg, fw)
 	cli := func(cmd string, args ...string) (string, string, int) {
 		var o, e bytes.Buffer
-		c := CLI{Out: &o, Err: &e, Path: state, Now: func() time.Time { return now }}
+		c := CLI{Out: &o, Err: &e, Paths: tracker.Paths{Tracker: state}, Now: func() time.Time { return now }}
 		code := c.Unaccept
 		if cmd == "accept" {
 			code = c.Accept
@@ -147,26 +161,11 @@ func TestCommands(t *testing.T) {
 	if !strings.Contains(o, dbg.ID) || !strings.Contains(o, "reason: AI agents drive Brave") || !strings.Contains(o, "1 accepted findings") {
 		t.Errorf("list:\n%s", o)
 	}
-	t.Setenv("SECURIZAME_ACCEPTED", state)
-	if p, _ := DefaultPath(); p != state {
-		t.Errorf("SECURIZAME_ACCEPTED ignored: %s", p)
-	}
 	if _, _, code := cli("unaccept", dbg.ID[:4]); code != 0 {
 		t.Fatal("unaccept failed")
 	}
-	if s, _ := Load(state); len(s.Entries) != 0 {
-		t.Fatalf("still accepted: %+v", s.Entries)
-	}
-}
-
-func TestLoadRefusesABrokenFile(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "accepted.json")
-	if s, err := Load(p); err != nil || len(s.Entries) != 0 {
-		t.Fatalf("missing file: %v", err)
-	}
-	_ = os.WriteFile(p, []byte("{"), 0o600)
-	if _, err := Load(p); err == nil {
-		t.Fatal("a broken file loaded as empty")
+	if tr, _ := tracker.Load(state); len(tr.AcceptedItems()) != 0 {
+		t.Fatalf("still accepted: %+v", tr.AcceptedItems())
 	}
 }
 
@@ -185,12 +184,12 @@ func (e emits) Inventory(_ context.Context, _ connector.Request, emit connector.
 }
 
 func TestInventoryKeepsAcceptedFindingsInTheJSONLButHidesThemFromSummaryAndList(t *testing.T) {
-	s := &Store{}
+	tr := tracker.New(now)
 	dbg, fw := debugPort(), firewall()
-	if _, err := s.Accept(dbg, "AI agents drive Brave", "", now); err != nil {
+	if _, err := tr.AcceptFinding(dbg, "AI agents drive Brave", "", now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Accept(fw, "old", "2026-11-24", now); err != nil {
+	if _, err := tr.AcceptFinding(fw, "old", "2026-11-24", now); err != nil {
 		t.Fatal(err)
 	}
 	later := func() time.Time { return now.AddDate(0, 0, 2) } // the firewall acceptance has expired
@@ -200,7 +199,7 @@ func TestInventoryKeepsAcceptedFindingsInTheJSONLButHidesThemFromSummaryAndList(
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := run.Inventory(context.Background(), cfg, targets, t.TempDir(), nil, s.Annotator(later))
+	res, err := run.Inventory(context.Background(), cfg, targets, t.TempDir(), nil, tr.Annotator(later))
 	if err != nil || res[0].Err != nil {
 		t.Fatal(err, res[0].Err)
 	}
@@ -216,12 +215,13 @@ func TestInventoryKeepsAcceptedFindingsInTheJSONLButHidesThemFromSummaryAndList(
 		t.Errorf("summary:\n%s", got)
 	}
 
-	if _, err := s.Accept(fw, "kept off on purpose", "", now); err != nil {
+	if _, err := tr.AcceptFinding(fw, "kept off on purpose", "", now); err != nil {
 		t.Fatal(err)
 	}
 	all := []finding.Finding{dbg, fw}
+	annotate := tr.Annotator(func() time.Time { return now })
 	for i := range all {
-		s.Annotate(&all[i], now)
+		annotate(&all[i])
 	}
 	var list bytes.Buffer
 	remediate.List(&list, all, finding.SevInfo)

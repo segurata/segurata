@@ -15,6 +15,7 @@ import (
 
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // fakeKey is an obviously fake Anthropic-shaped key, generated at run time: no secret-looking
@@ -97,7 +98,7 @@ func newReplaceFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fx := &fixture{home: home, state: filepath.Join(home, "state", "rotations.json"), old: fakeKey(t), new: fakeKey(t), key: key,
+	fx := &fixture{home: home, state: filepath.Join(home, "state", "tracker.json"), old: fakeKey(t), new: fakeKey(t), key: key,
 		zshrc: filepath.Join(home, ".zshrc"), env: filepath.Join(home, "src", "app", ".env")}
 	fx.os = &fakeOS{clip: fx.new, items: map[string]string{}}
 	write(t, fx.zshrc, strings.ReplaceAll(zshrcOld, "%s", fx.old), 0o640)
@@ -109,12 +110,12 @@ func newReplaceFixture(t *testing.T) *fixture {
 		{Source: "scan", Kind: "repo", Type: "anthropic", Redacted: redacted, Path: "~/src/app/.env", Line: 1, Mode: "600", Fingerprint: key.Of(fx.old)},
 		{Source: "scan", Kind: "transcript", Type: "anthropic", Redacted: redacted, Path: "~/.claude/projects/p/s.jsonl", Line: 9, Mode: "600", Fingerprint: key.Of(fx.old)},
 	}
-	l := &Ledger{}
-	var s []Sighting
+	l := tracker.New(t0)
+	var s []tracker.Sighting
 	for _, e := range evs {
-		s = append(s, Sighting{Evidence: e})
+		s = append(s, tracker.Sighting{Evidence: e})
 	}
-	l.Sync(s, t0, false)
+	l.SyncSecrets(s, t0, false)
 	if err := l.Save(fx.state); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func (fx *fixture) id() string { return fx.key.Of(fx.old)[:8] }
 func (fx *fixture) run(t *testing.T, stdin string, tty bool, args ...string) (string, string, int) {
 	t.Helper()
 	var o, e bytes.Buffer
-	code := CLI{Out: &o, Err: &e, In: strings.NewReader(stdin), TTY: tty, StatePath: fx.state, User: "tester",
+	code := CLI{Out: &o, Err: &e, In: strings.NewReader(stdin), TTY: tty, Paths: tracker.Paths{Tracker: fx.state}, User: "tester",
 		Home: func() (string, error) { return fx.home, nil }, Exec: fx.os.run, Now: func() time.Time { return t0 }}.Run(args)
 	fx.noLeak(t, o.String()+e.String())
 	return o.String(), e.String(), code
@@ -177,13 +178,13 @@ func (fx *fixture) noLeak(t *testing.T, output string) {
 	}
 }
 
-func (fx *fixture) item(t *testing.T) *Item {
+func (fx *fixture) item(t *testing.T) *tracker.Item {
 	t.Helper()
-	l, err := Load(fx.state)
+	l, err := tracker.Load(fx.state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	it, err := l.Find(fx.id())
+	it, err := l.FindRotate(fx.id())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +214,7 @@ func TestReplaceDryRunChangesNothing(t *testing.T) {
 		t.Fatalf("dry run: %d %s", code, e)
 	}
 	after := secretrisk.Redact("anthropic", "sk-ant-", fx.new)
-	for _, want := range []string{fx.item(t).Redacted + " → " + after, "~/.zshrc  mode 640", "line 2:", "~/src/app/.env  mode 600", "line 1:", "line 3:", "No backup", "Dry run"} {
+	for _, want := range []string{fx.item(t).Secret.Redacted + " → " + after, "~/.zshrc  mode 640", "line 2:", "~/src/app/.env  mode 600", "line 1:", "line 3:", "No backup", "Dry run"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("plan lacks %q:\n%s", want, o)
 		}
@@ -221,7 +222,7 @@ func TestReplaceDryRunChangesNothing(t *testing.T) {
 	if read(t, fx.zshrc) != zBefore || read(t, fx.env) != eBefore {
 		t.Error("dry run changed a file")
 	}
-	if fx.lastAction(t) != actReplacePlan || fx.item(t).Status != Open {
+	if fx.lastAction(t) != tracker.ActReplacePlan || fx.item(t).Status != tracker.Open {
 		t.Errorf("history %v", fx.item(t).History)
 	}
 	if fx.cleared() {
@@ -264,11 +265,11 @@ func TestReplaceApply(t *testing.T) {
 		t.Errorf("temporary files left: %v", leftovers)
 	}
 	it := fx.item(t)
-	if it.Status != Rotated || !strings.Contains(it.History[len(it.History)-1].Note, "replaced in ~/.zshrc, ~/src/app/.env") {
+	if it.Status != tracker.Done || !strings.Contains(it.History[len(it.History)-1].Detail, "replaced in ~/.zshrc, ~/src/app/.env") {
 		t.Errorf("item %s %v", it.Status, it.History)
 	}
-	if len(it.RotatedLocations) != len(it.Locations) || len(it.RotatedLocations) == 0 {
-		t.Errorf("replace did not record the locations known at rotation: %v", it.RotatedLocations)
+	if len(it.Secret.RotatedLocations) != len(it.Secret.Locations) || len(it.Secret.RotatedLocations) == 0 {
+		t.Errorf("replace did not record the locations known at rotation: %v", it.Secret.RotatedLocations)
 	}
 	if !fx.cleared() || fx.os.clip != "" {
 		t.Error("clipboard not cleared")
@@ -365,7 +366,7 @@ func TestReplaceRefusals(t *testing.T) {
 			if read(t, fx.zshrc) != zBefore || read(t, fx.env) != eBefore {
 				t.Error("a refused replace changed a file")
 			}
-			if fx.item(t).Status != Open || fx.cleared() {
+			if fx.item(t).Status != tracker.Open || fx.cleared() {
 				t.Error("a refused replace marked the item or cleared the clipboard")
 			}
 		})
@@ -416,7 +417,7 @@ func TestReplaceToKeychain(t *testing.T) {
 	if !stored {
 		t.Error("security -i did not receive the add command on stdin")
 	}
-	if !strings.Contains(fx.item(t).History[len(fx.item(t).History)-1].Note, "Keychain as ANTHROPIC_API_KEY") {
+	if !strings.Contains(fx.item(t).History[len(fx.item(t).History)-1].Detail, "Keychain as ANTHROPIC_API_KEY") {
 		t.Error("history does not record the Keychain service")
 	}
 }
@@ -429,9 +430,9 @@ func TestReplaceToKeychainNeedsAPlainAssignment(t *testing.T) {
 		t.Errorf("%d %q", code, e)
 	}
 	fx = newReplaceFixture(t)
-	l, _ := Load(fx.state)
-	it, _ := l.Find(fx.id())
-	it.UsedIn = []string{"~/src/app/.env"} // no rc file left
+	l, _ := tracker.Load(fx.state)
+	it, _ := l.FindRotate(fx.id())
+	it.Secret.UsedIn = []string{"~/src/app/.env"} // no rc file left
 	_ = l.Save(fx.state)
 	if _, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--to-keychain", "X"); code != 1 || !strings.Contains(e, "no used_in file is one") {
 		t.Errorf("%d %q", code, e)
@@ -440,8 +441,8 @@ func TestReplaceToKeychainNeedsAPlainAssignment(t *testing.T) {
 
 func TestReplaceWriteRefusesAFileChangedAfterThePlan(t *testing.T) {
 	fx := newReplaceFixture(t)
-	l, _ := Load(fx.state)
-	it, _ := l.Find(fx.id())
+	l, _ := tracker.Load(fx.state)
+	it, _ := l.FindRotate(fx.id())
 	r, err := locate(it, fx.key, fx.home)
 	if err != nil {
 		t.Fatal(err)
@@ -460,14 +461,14 @@ func TestReplaceWriteRefusesAFileChangedAfterThePlan(t *testing.T) {
 }
 
 func TestReplaceRefusesItemsItCannotLocate(t *testing.T) {
-	l := &Ledger{}
+	l := tracker.New(t0)
 	key, _ := fingerprint.Load(filepath.Join(t.TempDir(), "k"))
-	l.Sync([]Sighting{
+	l.SyncSecrets([]tracker.Sighting{
 		{Evidence: secretrisk.Evidence{Source: "scan", Kind: "config", Type: "private-key", Redacted: "PEM", Path: "~/k.pem", Line: 1, Mode: "600", Fingerprint: "1111111111111111"}},
 		{Evidence: secretrisk.Evidence{Source: "scan", Kind: "transcript", Type: "anthropic", Redacted: "sk-ant-…abcd(60)", Path: "~/.claude/p.jsonl", Line: 1, Mode: "600", Fingerprint: "2222222222222222"}},
 	}, t0, false)
 	for id, want := range map[string]string{"11111111": "not a single value on one line", "22222222": "no working file holds"} {
-		it, _ := l.Find(id)
+		it, _ := l.FindRotate(id)
 		if _, err := locate(it, key, t.TempDir()); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", id, err)
 		}
@@ -497,13 +498,13 @@ func TestNext(t *testing.T) {
 			t.Errorf("next lacks %q:\n%s", want, o)
 		}
 	}
-	if fx.lastAction(t) != actNext {
+	if fx.lastAction(t) != tracker.ActNext {
 		t.Error("next not recorded")
 	}
 	fx.run(t, "", true, "next")
 	n := 0
 	for _, h := range fx.item(t).History {
-		if h.Action == actNext {
+		if h.Action == tracker.ActNext {
 			n++
 		}
 	}

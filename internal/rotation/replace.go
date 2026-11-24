@@ -18,6 +18,8 @@ import (
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
+	"github.com/segurata/segurata/internal/textfmt"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 const replaceUsage = `usage: securizame rotations replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
@@ -41,13 +43,6 @@ gone and the new one is in place, marks the item rotated and clears the clipboar
                            Other used_in files still get the plaintext value.
   --backup                 keep a 0600 copy of each file as it was, next to it. Off by default: a
                            backup holds the OLD value in plaintext, one more copy to delete.`
-
-// History actions of the guided flow.
-const (
-	actNext          = "next"
-	actReplacePlan   = "replace-plan"
-	actReplaceFailed = "replace-failed"
-)
 
 // A new value must survive being pasted unquoted into a shell line, a .env file or a JSON string.
 // Provider keys, base64, base64url and webhook URLs fit; anything else is edited by hand.
@@ -81,7 +76,7 @@ type fileEdit struct {
 
 // replacement is a whole replace run: the item, the old value located in its files, and the edits.
 type replacement struct {
-	item    *Item
+	item    *tracker.Item
 	hint    secretrisk.Hint
 	key     fingerprint.Key
 	old     string // located in the files, kept in memory only
@@ -94,20 +89,20 @@ type replacement struct {
 
 // locate finds the old value in every used_in file: on the line the scan recorded, and on any
 // other line of the same file. It refuses when the recorded line no longer holds it.
-func locate(it *Item, key fingerprint.Key, home string) (*replacement, error) {
+func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, error) {
 	switch it.Status {
-	case Rotated, Ignored:
-		return nil, fmt.Errorf("%s is %s; `securizame rotations reopen %s` first if it still needs replacing", it.ID, it.Status, it.ID)
+	case tracker.Done, tracker.Ignored, tracker.Accepted:
+		return nil, fmt.Errorf("%s is %s; `securizame rotations reopen %s` first if it still needs replacing", it.Secret.ID, stateOf(it), it.Secret.ID)
 	}
-	hint, ok := secretrisk.ParseHint(it.Redacted)
+	hint, ok := secretrisk.ParseHint(it.Secret.Redacted)
 	if !ok {
-		return nil, fmt.Errorf("%s (%s) is not a single value on one line; replace it by hand, then `securizame rotations done %s`", it.ID, it.Type, it.ID)
+		return nil, fmt.Errorf("%s (%s) is not a single value on one line; replace it by hand, then `securizame rotations done %s`", it.Secret.ID, it.Secret.Type, it.Secret.ID)
 	}
-	if len(it.UsedIn) == 0 {
-		return nil, fmt.Errorf("no working file holds %s, so there is nothing to replace; once rotated: `securizame rotations done %s`", it.ID, it.ID)
+	if len(it.Secret.UsedIn) == 0 {
+		return nil, fmt.Errorf("no working file holds %s, so there is nothing to replace; once rotated: `securizame rotations done %s`", it.Secret.ID, it.Secret.ID)
 	}
 	r := &replacement{item: it, hint: hint, key: key}
-	for _, p := range it.UsedIn {
+	for _, p := range it.Secret.UsedIn {
 		f, err := r.locateIn(p, home)
 		if err != nil {
 			return nil, err
@@ -119,7 +114,7 @@ func locate(it *Item, key fingerprint.Key, home string) (*replacement, error) {
 
 func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	var recorded []int
-	for _, loc := range r.item.Locations {
+	for _, loc := range r.item.Secret.Locations {
 		if loc.Path == p && loc.Line > 0 && loc.Source != "gitleaks" {
 			recorded = append(recorded, loc.Line)
 		}
@@ -280,8 +275,8 @@ func (r *replacement) rewrite(f *fileEdit, v string) string {
 // secret. Values appear only as redacted hints.
 func (r *replacement) print(w io.Writer, v string, backup bool) {
 	it := r.item
-	before, after := it.Redacted, secretrisk.Redact(it.Type, r.hint.Prefix, v)
-	fmt.Fprintf(w, "Replace %s  %s/%s  %s → %s\n", it.ID, it.Service, it.Type, before, after)
+	before, after := it.Secret.Redacted, secretrisk.Redact(it.Secret.Type, r.hint.Prefix, v)
+	fmt.Fprintf(w, "Replace %s  %s/%s  %s → %s\n", it.Secret.ID, it.Secret.Service, it.Secret.Type, before, after)
 	for _, f := range r.files {
 		where := f.path
 		if f.link {
@@ -382,7 +377,7 @@ func (r *replacement) note(written []string) string {
 	return n
 }
 
-func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
+func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Time) int {
 	fs := newFlags("replace", c.Err)
 	fs.Usage = func() { fmt.Fprintln(c.Err, replaceUsage) }
 	apply := fs.Bool("apply", false, "apply the plan after confirmation (default: dry run)")
@@ -398,7 +393,7 @@ func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, replaceUsage)
 		return 2
 	}
-	it, err := l.Find(pos[0])
+	it, err := t.FindRotate(pos[0])
 	if err != nil {
 		return c.fail(err)
 	}
@@ -441,8 +436,8 @@ func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
 	r.print(c.Out, v, *backup)
 
 	if !*apply {
-		it.log(now, actReplacePlan, fmt.Sprintf("planned for %d %s", len(r.files), plural(len(r.files), "file", "files")))
-		if err := l.Save(path); err != nil {
+		it.Log(now, tracker.EvNote, tracker.ActReplacePlan, fmt.Sprintf("planned for %d %s", len(r.files), textfmt.Plural(len(r.files), "file", "files")))
+		if err := t.Save(path); err != nil {
 			return c.fail(err)
 		}
 		fmt.Fprintf(c.Out, "\nDry run: nothing was changed. Run again with --apply to apply this plan (the new value is read again).\n")
@@ -462,8 +457,8 @@ func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
 		if len(written) > 0 {
 			note += "; already written: " + strings.Join(written, ", ")
 		}
-		it.log(now, actReplaceFailed, note)
-		if serr := l.Save(path); serr != nil {
+		it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, note)
+		if serr := t.Save(path); serr != nil {
 			fmt.Fprintln(c.Err, "rotations:", serr)
 		}
 		return c.fail(errors.New(note))
@@ -489,10 +484,10 @@ func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
 		return failed(fmt.Errorf("written, but the check failed: %w", err), written)
 	}
 	it.Done(now, r.note(written))
-	if err := l.Save(path); err != nil {
+	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
-	fmt.Fprintf(c.Out, "\nReplaced in %d %s and checked. %s is now rotated.\n", len(written), plural(len(written), "file", "files"), it.ID)
+	fmt.Fprintf(c.Out, "\nReplaced in %d %s and checked. %s is now rotated.\n", len(written), textfmt.Plural(len(written), "file", "files"), it.Secret.ID)
 	if !*fromStdin {
 		if err := clip.clear(ctx); err != nil {
 			fmt.Fprintln(c.Err, "rotations: could not clear the clipboard, clear it yourself:", err)
@@ -500,6 +495,6 @@ func (c CLI) replace(l *Ledger, path string, args []string, now time.Time) int {
 			fmt.Fprintln(c.Out, "Clipboard cleared.")
 		}
 	}
-	fmt.Fprintf(c.Out, "Restart whatever reads these files (open a new shell for rc files). Copies in history, transcripts and logs still hold the old value: `securizame rotations show %s`.\nNext: securizame rotations next\n", it.ID)
+	fmt.Fprintf(c.Out, "Restart whatever reads these files (open a new shell for rc files). Copies in history, transcripts and logs still hold the old value: `securizame rotations show %s`.\nNext: securizame rotations next\n", it.Secret.ID)
 	return 0
 }

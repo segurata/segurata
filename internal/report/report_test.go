@@ -11,22 +11,19 @@ import (
 
 	"github.com/segurata/segurata/internal/doc"
 
-	"github.com/segurata/segurata/internal/accept"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/rotation"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 var now = time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
 
 // fx is a synthetic out/ tree with two runs of macos, a first run of aws and a labelled
-// openrouter instance, plus an accepted-risks file and a rotation ledger.
+// openrouter instance, plus a tracker imported from an accepted-risks file and a rotation ledger
+// in their former formats.
 type fx struct {
-	dir                                   string
-	out, accepted, ledger                 string
-	a, b, c, d, e, f                      finding.Finding
-	ledgerPath                            string
-	p0, p1, dueSnooze, laterSnooze, done_ *rotation.Item
+	dir, out, tracker string
+	a, b, c, d, e, f  finding.Finding
 }
 
 func mk(connector, instance, resID string, sev finding.Severity, title string) finding.Finding {
@@ -79,44 +76,47 @@ func newFx(t *testing.T) *fx {
 		t.Fatal(err)
 	}
 
-	x.accepted = filepath.Join(x.dir, "accepted.json")
-	acc := &accept.Store{Version: 1, Entries: []*accept.Entry{
-		{ID: x.a.ID, Connector: "macos", Title: x.a.Title, Reason: "agents need it", AcceptedAt: now.AddDate(0, -1, 0)},
-		{ID: x.c.ID, Connector: "macos", Title: x.c.Title, Reason: "kids", AcceptedAt: now.AddDate(0, -2, 0), Until: "2026-11-01"},
-		{ID: "ffffffffffffffff", Connector: "macos", Title: "Something fixed since", Reason: "old", AcceptedAt: now.AddDate(0, -3, 0)},
-	}}
-	if err := acc.Save(x.accepted); err != nil {
-		t.Fatal(err)
+	accepted := filepath.Join(x.dir, "accepted.json")
+	writeJSON(t, accepted, map[string]any{"version": 1, "entries": []map[string]any{
+		{"id": x.a.ID, "connector": "macos", "title": x.a.Title, "reason": "agents need it", "accepted_at": now.AddDate(0, -1, 0)},
+		{"id": x.c.ID, "connector": "macos", "title": x.c.Title, "reason": "kids", "accepted_at": now.AddDate(0, -2, 0), "until": "2026-11-01"},
+		{"id": "ffffffffffffffff", "connector": "macos", "title": "Something fixed since", "reason": "old", "accepted_at": now.AddDate(0, -3, 0)},
+	}})
+	loc := []map[string]any{{"path": "~/src/shop/.env", "source": "gitleaks", "kind": "repo", "tracked": true, "remote": true, "last_seen": now}}
+	item := func(id string, p secretrisk.Priority, st, until string) map[string]any {
+		return map[string]any{"id": id, "fingerprint": id + "00000000", "service": "stripe", "type": "stripe-live", "redacted": "sk_live_…" + id[:4] + "(40)",
+			"impact": "high", "priority": p, "reasons": []string{"Stripe live secret key; pushed to a remote"}, "status": st, "snoozed_until": until,
+			"first_seen": now.AddDate(0, 0, -3), "last_seen": now, "locations": loc, "rotate_url": "https://dashboard.stripe.com/apikeys"}
 	}
-
-	x.ledgerPath = filepath.Join(x.dir, "state", "rotations.json")
-	loc := []rotation.Location{{Path: "~/src/shop/.env", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, LastSeen: now}}
-	item := func(id string, p secretrisk.Priority, st rotation.Status, until string) *rotation.Item {
-		return &rotation.Item{ID: id, Fingerprint: id + "00000000", Service: "stripe", Type: "stripe-live", Redacted: "sk_live_…" + id[:4] + "(40)",
-			Impact: "high", Priority: p, Reasons: []string{"Stripe live secret key; pushed to a remote"}, Status: st, SnoozedUntil: until,
-			FirstSeen: now.AddDate(0, 0, -3), LastSeen: now, Locations: loc, RotateURL: "https://dashboard.stripe.com/apikeys"}
-	}
-	x.p0 = item("aaaa1111", secretrisk.P0, rotation.Open, "")
-	x.dueSnooze = item("cccc3333", secretrisk.P2, rotation.Snoozed, "2026-11-01")
-	l := &rotation.Ledger{Version: 1, Items: []*rotation.Item{x.p0, item("bbbb2222", secretrisk.P1, rotation.Open, ""), x.dueSnooze,
-		item("dddd4444", secretrisk.P0, rotation.Snoozed, "2027-01-01"), item("eeee5555", secretrisk.P0, rotation.Rotated, "")}}
-	if err := l.Save(x.ledgerPath); err != nil {
+	ledger := filepath.Join(x.dir, "state", "rotations.json")
+	writeJSON(t, ledger, map[string]any{"version": 1, "items": []map[string]any{item("aaaa1111", secretrisk.P0, "open", ""),
+		item("bbbb2222", secretrisk.P1, "open", ""), item("cccc3333", secretrisk.P2, "snoozed", "2026-11-01"),
+		item("dddd4444", secretrisk.P0, "snoozed", "2027-01-01"), item("eeee5555", secretrisk.P0, "rotated", "")}})
+	x.tracker = filepath.Join(x.dir, "home", "tracker.json")
+	if _, err := tracker.LoadOrMigrate(tracker.Paths{Tracker: x.tracker, LegacyLedger: ledger, LegacyAccepted: accepted}, now, nil); err != nil {
 		t.Fatal(err)
 	}
 	return x
 }
 
+func writeJSON(t *testing.T, path string, v any) {
+	t.Helper()
+	raw, _ := json.Marshal(v)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (x *fx) build(t *testing.T) *Report {
 	t.Helper()
-	acc, err := accept.Load(x.accepted)
+	tr, err := tracker.Load(x.tracker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	led, err := rotation.Load(x.ledgerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := Build(Inputs{OutDir: x.out, Now: now, Accepted: acc, Ledger: led, LedgerPath: x.ledgerPath, MinSev: finding.SevLow, Top: 10})
+	r, err := Build(Inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,10 +190,10 @@ func TestBuildAcceptedAndLedger(t *testing.T) {
 	if s.Total != 5 || s.Open[secretrisk.P0] != 1 || s.Open[secretrisk.P1] != 1 || s.Open[secretrisk.P2] != 1 {
 		t.Errorf("open %v of %d", s.Open, s.Total)
 	}
-	if len(s.TopP0) != 1 || s.TopP0[0].ID != x.p0.ID {
+	if len(s.TopP0) != 1 || s.TopP0[0].Secret.ID != "aaaa1111" {
 		t.Errorf("top P0 %v", s.TopP0)
 	}
-	if len(s.SnoozesDue) != 1 || s.SnoozesDue[0].ID != x.dueSnooze.ID {
+	if len(s.SnoozesDue) != 1 || s.SnoozesDue[0].Secret.ID != "cccc3333" {
 		t.Errorf("snoozes due %v", s.SnoozesDue)
 	}
 }
@@ -278,7 +278,7 @@ func TestTopCapsEachConnector(t *testing.T) {
 func TestCLIWritesPrivateFile(t *testing.T) {
 	x := newFx(t)
 	var stdout, stderr bytes.Buffer
-	c := CLI{Out: &stdout, Err: &stderr, AcceptedPath: x.accepted, LedgerPath: x.ledgerPath, Now: func() time.Time { return now }}
+	c := CLI{Out: &stdout, Err: &stderr, Paths: tracker.Paths{Tracker: x.tracker}, Now: func() time.Time { return now }}
 	dest := filepath.Join(x.dir, "report.html")
 	if err := os.WriteFile(dest, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
@@ -305,25 +305,5 @@ func TestCLIWritesPrivateFile(t *testing.T) {
 	}
 	if code := c.Run([]string{"--dir", filepath.Join(x.dir, "missing")}); code != 1 {
 		t.Errorf("missing out dir: exit %d", code)
-	}
-}
-
-func TestStatusActionPrefersTheConnectorsOwnFix(t *testing.T) {
-	cases := []struct {
-		st   finding.Status
-		want string
-	}{
-		{finding.Status{State: finding.StateReauth, Detail: "projects list: credentials expired: run gcloud auth login for this account"}, "Do what the detail above says."},
-		{finding.Status{State: finding.StateNoScope, Detail: "gh lacks the admin:gpg_key scope; run: gh auth refresh -h github.com -s admin:gpg_key"}, "Do what the detail above says."},
-		{finding.Status{State: finding.StateNoScope, Detail: "the token lacks a permission"}, "Grant the permission the detail names to the credential this connector uses."},
-	}
-	for _, c := range cases {
-		if got, _ := statusAction(c.st, "x"); got != c.want {
-			t.Errorf("%s %q: got %q", c.st.State, c.st.Detail, got)
-		}
-	}
-	// A reauth without a fix must not assume a browser connector.
-	if got, _ := statusAction(finding.Status{State: finding.StateReauth, Detail: "InvalidClientTokenId"}, "aws"); strings.Contains(got, "drives over CDP") {
-		t.Errorf("aws reauth should not point to the browser only: %q", got)
 	}
 }
