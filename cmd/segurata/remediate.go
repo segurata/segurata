@@ -69,18 +69,18 @@ func remediateCmd(args []string) int {
 		return 1
 	}
 	conns := all()
-	request := func(f finding.Finding) (connector.Request, error) {
+	creds := func(f finding.Finding) (connector.Credentials, error) {
 		cfg, err := config.Load(config.DefaultPath())
 		if err != nil {
-			return connector.Request{}, err
+			return connector.Credentials{}, err
 		}
-		req, errs := run.InstanceRequest(cfg, f.Connector, f.Instance)
+		cs, errs := run.InstanceCredentials(cfg, f.Connector, f.Instance)
 		if len(errs) > 0 {
-			return connector.Request{}, fmt.Errorf("%s: %w", remediate.Selector(f), errors.Join(errs...))
+			return connector.Credentials{}, fmt.Errorf("%s: %w", remediate.Selector(f), errors.Join(errs...))
 		}
-		return req, nil
+		return cs, nil
 	}
-	r, err := remediate.For(f, conns, request)
+	r, err := remediate.For(f, conns, creds)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -100,7 +100,7 @@ func remediateCmd(args []string) int {
 		return run.Inventory(ctx, cfg, targets, *out, nil, annotate)
 	}
 	opt := remediate.Options{Apply: *apply, Yes: *yes, TTY: remediate.IsTerminal(os.Stdin),
-		IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}}
+		IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, Group: remediate.Members(findings, f)}
 	if err := remediate.Execute(ctx, f, r, opt, reinventory); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

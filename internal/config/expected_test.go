@@ -66,6 +66,8 @@ func TestLoadRejectsABadExpectedRule(t *testing.T) {
 		"bad regexp":  `{"connectors": {"aws": {"expected": [{"detail": "/(/", "reason": "r"}]}}}`,
 		"bad glob":    `{"connectors": {"aws": {"expected": [{"account": "[", "reason": "r"}]}}}`,
 		"ok expected": `{"connectors": {"aws": {"expected": [{"state": "ok", "reason": "r"}]}}}`,
+		// A write credential under secrets would be resolved by every inventory.
+		"write key as an inventory secret": `{"connectors": {"openai": {"secrets": {"OPENAI_ADMIN_WRITE_KEY": "env:X"}}}}`,
 	} {
 		p := filepath.Join(t.TempDir(), "config.json")
 		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {

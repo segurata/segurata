@@ -1,6 +1,7 @@
 // Package azure inventories Azure through the installed `az` CLI: consumption budgets per
 // subscription and client secrets of app registrations that never expire or are about to.
-// Read-only. See docs/cloud-connectors.md.
+// Read-only; the remediation in remediate.go deletes only after a confirmed plan. See
+// docs/cloud-connectors.md.
 package azure
 
 import (
@@ -16,6 +17,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/remediate"
 )
 
 // readOnly lists every az command this connector runs. Anything else is refused before it reaches
@@ -31,6 +33,8 @@ type Connector struct {
 	// Run executes az commands after the read-only guard. Tests replace it with canned output.
 	Run cli.Runner
 	Now func() time.Time
+	// Exec runs a confirmed remediation's allowlisted commands; nil is remediate.System.
+	Exec remediate.Executor
 }
 
 func New() *Connector {
@@ -161,10 +165,17 @@ type app struct {
 	PasswordCredentials []passwordCredential `json:"passwordCredentials"`
 }
 
-func (c *Connector) appSecrets(ctx context.Context, tenant string, now time.Time, emit connector.Emitter) {
+// listApps reads every app registration with its client secrets (metadata only).
+func (c *Connector) listApps(ctx context.Context) ([]app, error) {
 	var apps []app
 	query := "[].{appId:appId,displayName:displayName,passwordCredentials:passwordCredentials}"
-	if err := c.call(ctx, &apps, "ad", "app", "list", "--all", "--query", query); err != nil {
+	err := c.call(ctx, &apps, "ad", "app", "list", "--all", "--query", query)
+	return apps, err
+}
+
+func (c *Connector) appSecrets(ctx context.Context, tenant string, now time.Time, emit connector.Emitter) {
+	apps, err := c.listApps(ctx)
+	if err != nil {
 		emit.Status(finding.Status{Account: tenant, State: classify(err), Detail: "app registrations: " + err.Error()})
 		return
 	}
@@ -172,6 +183,9 @@ func (c *Connector) appSecrets(ctx context.Context, tenant string, now time.Time
 		for _, p := range a.PasswordCredentials {
 			f := secretFinding(a, p, now)
 			f.Account = tenant
+			if f.Remediation.Action != "" {
+				f.Remediation.Group = tenant
+			}
 			emit.Finding(f)
 		}
 	}

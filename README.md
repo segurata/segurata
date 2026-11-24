@@ -178,7 +178,8 @@ a year, the severity goes up one level.
   its token is yours, and a leaked copy is a local-secrets finding.
 - Grants segurata runs on are labelled "(segurata depends on it)" and never told to revoke: for the
   GitHub CLI the fix narrows it with `gh auth refresh -h github.com -r <scopes>` (`delete_repo`,
-  `admin:org`, `admin:enterprise`, whichever it holds) and a read-only token for segurata. In
+  `admin:org`, `admin:enterprise`, whichever it holds; `connected-apps.gh.drop-scopes` runs it) and
+  a read-only token for segurata. In
   google-personal, the Google Cloud SDK grant gets the same label and the Firebase CLI grant
   "(developer tool)", with the CLI's own sign-out command as the fix.
 
@@ -220,7 +221,9 @@ confirm, run again); `noscope` (`gh` lacks a scope; the detail carries the exact
 Reads, through the signed-in `gh` CLI, the security settings of the account, of every
 organization it owns and of every repository it administers. Apps, sessions and the account's own
 keys stay in `connected-apps`. Every request is `gh api --method GET` on a path from a fixed list
-(`connectors/github/allowlist.go`); anything else is refused before `gh` runs.
+(`connectors/github/allowlist.go`); anything else is refused before `gh` runs. The two
+remediations (`github.secret-scanning.enable`, `github.workflow-token.read`, see
+[Remediation](#remediation)) write only after a confirmed plan, through their own allowlist.
 
 | Finding | Severity |
 |---|---|
@@ -388,7 +391,10 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   [what counts against the owner](docs/architecture.md#what-counts-against-the-owner). Noise is
   not emitted by default: the run's status line counts it by type and by repository.
 - A finding in a working file that group or others can read carries the `file.chmod600` action:
-  `segurata remediate <finding-id>` closes the file. The secret still has to be rotated.
+  `segurata remediate <finding-id>` closes the file. The secret still has to be rotated. A file
+  whose own mode is open (644) but that a closed parent folder hides gets the same action as
+  low-severity hardening, one plan per top folder (`~/src/acme/app`), in case the folder is opened
+  later.
 - Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history; `gh` (optional) for
   the visibility of repositories holding a dump. The disk scan takes
   about a minute; the history scan of ~330 repositories takes most of the run.
@@ -637,16 +643,21 @@ because findings and the tracker never hold one.
 ## Remediation
 
 ```bash
-./segurata remediate --list                # automatable findings of the latest run
+./segurata remediate --list                # automatable findings of the latest run, one line per group
 ./segurata remediate <id>                  # the exact plan; changes nothing
 ./segurata remediate <id> --apply          # asks "Apply? [y/N]", applies, re-checks
 ```
 
-One finding at a time. The plan shows the commands, whether they need sudo, the side effects and
-how to undo them. With `--apply` it asks for confirmation (and refuses without a terminal unless
-`--yes`), then runs that connector again and says whether the finding is gone. Commands that need
-root run as `sudo <command>` on your terminal, so sudo asks for your password itself; segurata
-never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
+One finding at a time, or one group: some actions fix every finding of a group in one plan (all
+public repositories of a GitHub owner, every expired secret of an Azure tenant), which `--list`
+shows as one line and the plan lists finding by finding. The plan shows the commands or HTTP
+requests, whether they need sudo, the side effects and how to undo them, or that they cannot be
+undone. With `--apply` it asks for confirmation (and refuses without a terminal unless `--yes`),
+then runs that connector again and checks that no finding of the plan still offers the action.
+Commands that need root run as `sudo <command>` on your terminal, so sudo asks for your password
+itself; segurata never sees it. An interactive command (`gh auth refresh` opens a browser) runs on
+your terminal too and is refused without one, `--yes` or not. Design:
+[docs/architecture.md](docs/architecture.md#remediation).
 
 | Action | What it runs | Undo |
 |---|---|---|
@@ -655,7 +666,47 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 | `macos.smb.share-remove` | `sudo /usr/sbin/sharing -r <name>` (orphaned records and shared folders without guest access) | `sudo /usr/sbin/sharing -a <path> -n <name> -S <smb name> -s <flag> -g <flag> -R <0/1>` with the record's current flags; not applicable for an orphan, whose folder no longer exists |
 | `macos.smb.guest-off` | `sudo /usr/sbin/sharing -e <name> -g 000` (live shares open to guests) | `sudo /usr/sbin/sharing -e <name> -g 001` |
 | `macos.home.private` | `/bin/chmod 700 <home>`, no sudo, when group or others can read the home folder (every user is in `staff`, so 750 is as open as 755; 711 passes, as CIS allows) | `/bin/chmod <old mode> <home>` |
-| `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
+| `file.chmod600` | Makes the file in the finding's `evidence.path` private: mode 600, or 700 when its owner could execute it. With a group, every file of the group once | `chmod <old mode> <path>` per file |
+| `github.secret-scanning.enable` | Per GitHub owner: `gh api --method PATCH --silent /repos/<owner>/<repo> -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'` for each public repository you administer where either is off (only the fields that are off). Private repositories are left out: there it needs GitHub Secret Protection, a paid add-on | the same request with `disabled` |
+| `github.workflow-token.read` | Per GitHub owner: `gh api --method PUT --silent /orgs/<org>/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=<as it is>` for the organization first, then `/repos/<owner>/<repo>/actions/permissions/workflow` for each repository whose default is write | the same request with `write` |
+| `connected-apps.gh.drop-scopes` | `gh auth refresh -h github.com -r delete_repo,admin:org[,admin:enterprise]`, the removable scopes gh's token holds now, in your terminal (browser approval) | `gh auth refresh -h github.com -s <the same scopes>` |
+| `azure.app-secret.delete-expired` | Per tenant: `az ad app credential delete --id <appId> --key-id <keyId> --only-show-errors` for each client secret that is still registered and already expired | none: a deleted secret cannot be restored (it had expired) |
+| `openai.key.delete-unused` | `DELETE /v1/organization/projects/<project>/api_keys/<key>` or `DELETE /v1/organization/admin_api_keys/<key>`, for a key never used or idle for over 90 days, with `OPENAI_ADMIN_WRITE_KEY` | none |
+| `openrouter.key.delete-unused` | `DELETE /api/v1/keys/<hash>`, for an enabled key never used, idle for over 90 days or without recorded use since the end of 2025, with `OPENROUTER_MANAGEMENT_WRITE_KEY` | none |
+
+Every plan is computed from a fresh read (the repository, the token's scopes, the tenant's app
+registrations, the key's last use), not from the finding: what changed since the inventory is left
+out and named, and a key back in use, or the key segurata reads with, is refused. The allowlist of
+exact command lines and HTTP routes is built from that same read at apply time.
+
+Dropping `admin:org` from gh's token makes the github connector report each organization's
+settings as `noscope` ("organization settings need admin:org"), and `github.workflow-token.read`
+can then no longer change an organization's default. Give segurata a read-only fine-grained token
+in `GH_TOKEN` for its runs if it should hold no write scope at all; `gh auth refresh` cannot change
+a token that comes from the environment, and the plan refuses then.
+
+### Write credentials
+
+The inventory keys stay read-only. A remediation that writes through a provider's API uses a
+separate write key, referenced under `remediation_secrets` of the same connector instance. Only
+`remediate --apply` resolves it, after you confirmed the plan; no inventory ever reads it, and a
+`*_WRITE_KEY` under `secrets` is rejected when the config loads. Without it, the dry run shows the
+plan marked blocked, with these instructions, and `--apply` refuses before asking.
+
+```sh
+security add-generic-password -s segurata-openai-admin-write -a "$USER" -w      # admin key with write access to API keys
+security add-generic-password -s segurata-openrouter-admin-write -a "$USER" -w  # management key, access level read/write
+```
+
+```json
+"openai":              {"secrets": {"OPENAI_ADMIN_KEY": "keychain:segurata-openai-admin"},
+                        "remediation_secrets": {"OPENAI_ADMIN_WRITE_KEY": "keychain:segurata-openai-admin-write"}},
+"openrouter:personal": {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:segurata-openrouter-personal"},
+                        "remediation_secrets": {"OPENROUTER_MANAGEMENT_WRITE_KEY": "keychain:segurata-openrouter-personal-write"}}
+```
+
+You can create the write key for the session and delete it afterwards. A 401 or 403 on apply
+means the key cannot write; the error names it.
 
 External connectors speaking protocol 2 add their own actions (`segurata connectors` lists
 them after `remediates:`). The plan, the confirmation and the check afterwards are the same; the
@@ -686,8 +737,11 @@ AirPlay Receiver is manual because the Terminal remediation the CIS benchmarks g
 -currentHost write com.apple.controlcenter AirplayRecieverEnabled -bool false`, then restarting
 ControlCenter) left ports 5000 and 7000 open on macOS 15.6 (tried 2026-11-23).
 
-After `--apply`, the check waits 5 seconds and needs the finding gone in two inventories in a row:
-a restarted process can drop its ports for a moment and open them again.
+After `--apply`, the check waits 5 seconds and needs the finding fixed in two inventories in a row:
+a restarted process can drop its ports for a moment and open them again. Fixed means no fresh
+finding with the same id still offers the action: a GitHub repository finding that keeps a deploy
+key issue is fixed as far as secret scanning goes, and then offers the next action
+(`github.workflow-token.read`) if its workflow token is still writable.
 
 ## Accepted risks
 

@@ -423,3 +423,31 @@ func TestExpectedStatusesAreMarkedAndStayUninspected(t *testing.T) {
 		t.Errorf("summary:\n%s", b.String())
 	}
 }
+
+// Write credentials are references for the remediation to resolve at apply time: neither an
+// inventory request nor the remediation's credentials resolve them up front.
+func TestRemediationSecretsAreNeverResolvedForARequest(t *testing.T) {
+	t.Setenv("SEGURATA_TEST_READ", "read-value")
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"openai": {
+		Secrets:            map[string]string{"OPENAI_ADMIN_KEY": "env:SEGURATA_TEST_READ"},
+		RemediationSecrets: map[string]string{"OPENAI_ADMIN_WRITE_KEY": "env:SEGURATA_TEST_WRITE_UNSET"},
+	}}}
+	req, errs := NewRequest(cfg, cfg.Instances("openai")[0])
+	if len(errs) > 0 || req.Secrets["OPENAI_ADMIN_KEY"] != "read-value" || len(req.Secrets) != 1 {
+		t.Fatalf("inventory request: %v %v", req.Secrets, errs)
+	}
+	cs, errs := InstanceCredentials(cfg, "openai", "")
+	if len(errs) > 0 {
+		t.Fatalf("an unset write reference must not fail before apply: %v", errs)
+	}
+	if !cs.HasWrite("OPENAI_ADMIN_WRITE_KEY") || cs.HasWrite("OTHER_WRITE_KEY") {
+		t.Fatal("HasWrite must tell configured references from missing ones")
+	}
+	if _, err := cs.Write("OPENAI_ADMIN_WRITE_KEY"); err == nil || !strings.Contains(err.Error(), "SEGURATA_TEST_WRITE_UNSET") {
+		t.Fatalf("resolving an unset write reference: %v", err)
+	}
+	t.Setenv("SEGURATA_TEST_WRITE_UNSET", "write-value")
+	if v, err := cs.Write("OPENAI_ADMIN_WRITE_KEY"); err != nil || v != "write-value" {
+		t.Fatalf("Write resolves at call time: %q %v", v, err)
+	}
+}

@@ -606,12 +606,36 @@ func TestWorktreeRemoteIsReadFromTheCommonDir(t *testing.T) {
 func TestNoChmodFixForNoise(t *testing.T) {
 	readable := secretrisk.Evidence{Source: "scan", Kind: "config", Mode: "644"}
 	readable.Type = "assignment" // generic match: noise
-	if a := action(readable); a != "" {
-		t.Fatalf("noise in a readable file must not offer a fix, got %q", a)
+	if r := remedy("s", "", readable); r.Action != "" {
+		t.Fatalf("noise in a readable file must not offer a fix, got %q", r.Action)
 	}
 	readable.Type = "anthropic"
-	if a := action(readable); a != "file.chmod600" {
-		t.Fatalf("a real key in a readable file should offer chmod 600, got %q", a)
+	if r := remedy("s", "", readable); r.Action != "file.chmod600" || r.Severity != "" || r.Group != "" {
+		t.Fatalf("a real key in a readable file should offer chmod 600 ranked by the finding, got %+v", r)
+	}
+}
+
+// A file the home folder closes is still worth closing itself: the home folder may open later.
+func TestChmodHardeningForFilesOnlyAParentCloses(t *testing.T) {
+	ev := secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Mode: "600", FileMode: "644",
+		Path: "~/src/acme/app/config/.env"}
+	r := remedy("Move it to the Keychain.", "", ev)
+	if r.Action != "file.chmod600" || r.Severity != finding.SevLow || r.Group != "files in ~/src/acme/app" {
+		t.Fatalf("hardening: %+v", r)
+	}
+	if !strings.HasPrefix(r.Summary, "Move it to the Keychain.") || !strings.Contains(r.Summary, "mode 644") {
+		t.Fatalf("summary %q", r.Summary)
+	}
+	if g := hardeningGroup("~/.claude/history.jsonl"); g != "files in ~/.claude" {
+		t.Errorf("shallow file group: %q", g)
+	}
+	ev.FileMode = "" // the file itself is private
+	if r := remedy("s", "", ev); r.Action != "" {
+		t.Fatalf("a private file needs nothing: %+v", r)
+	}
+	ev.FileMode, ev.Type = "644", "assignment"
+	if r := remedy("s", "", ev); r.Action != "" {
+		t.Fatalf("noise gets no hardening either: %+v", r)
 	}
 }
 

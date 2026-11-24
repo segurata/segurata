@@ -72,8 +72,17 @@ func (e Expected) validate() error {
 	return nil
 }
 
+// WriteSecretSuffix ends the name of every write credential a remediation uses
+// (OPENAI_ADMIN_WRITE_KEY): such a name belongs under remediation_secrets.
+const WriteSecretSuffix = "_WRITE_KEY"
+
 func (c Config) validate() error {
 	for key, cc := range c.Connectors {
+		for name := range cc.Secrets {
+			if strings.HasSuffix(name, WriteSecretSuffix) {
+				return fmt.Errorf("connectors.%s: %s is a write credential: put it under remediation_secrets, which only remediate --apply resolves, not under secrets, which every inventory resolves", key, name)
+			}
+		}
 		for _, e := range cc.Expected {
 			if err := e.validate(); err != nil {
 				return fmt.Errorf("connectors.%s: %w", key, err)

@@ -436,7 +436,7 @@ func (r *run) reportRepos(repos []repo, results []repoResult) {
 			Severity:    severities[k.check],
 			Title:       fmt.Sprintf(ru.title, len(names), plural(len(names), "repository", "repositories"), k.owner),
 			Evidence:    map[string]any{"check": string(k.check), "count": len(names), "repositories": listed},
-			Remediation: finding.Remediation{Summary: ru.fix, URL: ru.url},
+			Remediation: remedy(ru.fix, ru.url, k.owner, k.check),
 		})
 	}
 }
@@ -445,21 +445,20 @@ func (r *run) emitRepo(rp repo, issues []issue) {
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Severity.Rank() > issues[j].Severity.Rank() })
 	details := make([]string, len(issues))
 	fixes := make([]string, len(issues))
+	checks := make([]check, len(issues))
 	for i, is := range issues {
 		details[i] = is.Detail
 		fixes[i] = is.fix
+		checks[i] = is.Check
 	}
 	r.emit.Finding(finding.Finding{
-		Account:  account(rp.Owner.Login),
-		Scope:    repoScope(rp.FullName),
-		Resource: finding.Resource{Type: "github_repo", ID: strconv.FormatInt(rp.ID, 10), Name: rp.FullName},
-		Kind:     finding.KindSetting,
-		Severity: issues[0].Severity,
-		Title:    rp.FullName + ": " + strings.Join(details, "; "),
-		Evidence: map[string]any{"repository": rp.FullName, "visibility": rp.Visibility, "issues": issues},
-		Remediation: finding.Remediation{
-			Summary: strings.Join(fixes, " "),
-			URL:     issues[0].url,
-		},
+		Account:     account(rp.Owner.Login),
+		Scope:       repoScope(rp.FullName),
+		Resource:    finding.Resource{Type: "github_repo", ID: strconv.FormatInt(rp.ID, 10), Name: rp.FullName},
+		Kind:        finding.KindSetting,
+		Severity:    issues[0].Severity,
+		Title:       rp.FullName + ": " + strings.Join(details, "; "),
+		Evidence:    map[string]any{"repository": rp.FullName, "visibility": rp.Visibility, "issues": issues},
+		Remediation: remedy(strings.Join(fixes, " "), issues[0].url, rp.Owner.Login, checks...),
 	})
 }

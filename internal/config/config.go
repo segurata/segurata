@@ -16,6 +16,10 @@ import (
 type ConnectorConfig struct {
 	Config  map[string]any    `json:"config,omitempty"`
 	Secrets map[string]string `json:"secrets,omitempty"` // key -> reference (env:, keychain:, op://)
+	// RemediationSecrets are write credentials (key -> reference) that only `segurata remediate
+	// --apply` resolves, after the owner confirmed a plan. Inventory never resolves them, so the
+	// inventory keys can stay read-only.
+	RemediationSecrets map[string]string `json:"remediation_secrets,omitempty"`
 	// Expected are the statuses other than ok this instance reports on purpose (see Expect).
 	Expected []Expected `json:"expected,omitempty"`
 }

@@ -570,7 +570,7 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 		Severity:    secretrisk.SeverityOf(prio),
 		Title:       title,
 		Evidence:    evidence,
-		Remediation: finding.Remediation{Summary: summary, URL: t.RotateURL, Action: action(ev)},
+		Remediation: remedy(summary, t.RotateURL, ev),
 	}
 }
 
@@ -589,18 +589,40 @@ func secretScope(ev secretrisk.Evidence) string {
 	return filesScope
 }
 
-// action offers `segurata remediate` a chmod 600 for a working file other users can read. It
-// closes the file; it does not make rotation unnecessary.
-func action(ev secretrisk.Evidence) string {
+// remedy offers `segurata remediate` a chmod 600 for a working file with a secret that other users
+// can read, or could: it closes the file; it does not make rotation unnecessary.
+//
+//   - Readable by others now (effective mode): the finding's own fix, ranked by the finding.
+//   - Closed only by a parent folder (a 644 file in a 700 home folder): a hardening step, ranked
+//     low, because the file opens again the day that folder does. One plan closes every such file
+//     under the same top folder (hardeningGroup).
+func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
+	r := finding.Remediation{Summary: summary, URL: url}
 	// Noise (generic matches, public or encrypted values) gets no fix: closing a third-party
 	// source file because it contains `password=` buys nothing.
 	if ev.Source == "gitleaks" || ev.Mode == "" || secretrisk.ImpactOf(ev) == secretrisk.Noise {
-		return ""
+		return r
 	}
-	if secretrisk.Where("", "", ev.Mode, false, false).Level != secretrisk.Shared {
-		return ""
+	switch {
+	case othersCanRead(ev.Mode):
+		r.Action = remediate.ActionChmod600
+	case othersCanRead(ev.FileMode):
+		r.Action, r.Severity, r.Group = remediate.ActionChmod600, finding.SevLow, hardeningGroup(ev.Path)
+		r.Summary += fmt.Sprintf(" The file itself is mode %s: only a closed parent folder keeps other users out, so `segurata remediate` can also close the file (chmod 600) in case that folder is opened later.", ev.FileMode)
 	}
-	return remediate.ActionChmod600
+	return r
+}
+
+// othersCanRead reports whether an octal mode lets the group or other accounts read.
+func othersCanRead(mode string) bool {
+	return secretrisk.Where("", "", mode, false, false).Level == secretrisk.Shared
+}
+
+// hardeningGroup is the top folder of a file for grouping hardening chmods: up to three levels
+// under the home folder (~/src/acme/app), or the file's folder when it is shallower (~/.claude).
+func hardeningGroup(path string) string {
+	parts := strings.Split(filepath.ToSlash(filepath.Dir(path)), "/")
+	return "files in " + strings.Join(parts[:min(len(parts), 4)], "/")
 }
 
 func remediation(p secretrisk.Priority, spot secretrisk.Spot, ev secretrisk.Evidence) string {

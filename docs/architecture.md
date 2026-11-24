@@ -395,7 +395,7 @@ stays the per-run view. Likewise `rotations next` only logs a `next` history eve
 ## Remediation
 
 ```
-segurata remediate --list                      automatable findings of the latest run
+segurata remediate --list                      automatable findings of the latest run, one line per group
 segurata remediate <finding-id>                print the plan; changes nothing
 segurata remediate <finding-id> --apply        print the plan, ask "Apply? [y/N]", apply, check
 segurata remediate <finding-id> --apply --yes  same without asking
@@ -405,24 +405,47 @@ The finding comes from the latest `out/<date>/*.jsonl` (a unique id prefix is en
 (`connector.Plan`) states the whole scope before anything runs: a summary, the exact commands, the
 file changes, whether it needs sudo, the side effects and the exact commands that undo it.
 
-- One finding per run. Without `--apply` it stops after the plan. With `--apply` it asks on the
-  terminal and refuses when stdin is not a terminal, unless `--yes`.
-- After applying, the core runs that connector instance's inventory again and reports whether the
-  finding is gone. A finding still reported, a check that could not run, or a check run that did
-  not inspect the finding's scope ("could not verify the fix") is an error.
+- One finding per run, or one group. A finding with `remediation.group` is planned with every
+  finding of the same connector instance that has the same action and group (`remediate.Members`,
+  accepted ones left out) by a `connector.GroupRemediator`; `--list` shows the group as one line,
+  under its worst member, and ranks every line by `remediation.severity` when set (a hardening
+  step on a finding graded for something else) or the finding's severity.
+- Without `--apply` it stops after the plan. With `--apply` it asks on the terminal and refuses
+  when stdin is not a terminal, unless `--yes`. A plan with `blocked` set (a write credential not
+  configured) is refused before asking; a plan with a `terminal` step (interactive: `gh auth
+  refresh` opens a browser) is refused without a terminal even with `--yes`.
+- After applying, the core runs that connector instance's inventory again and checks each finding
+  of the plan: it is fixed when no fresh finding with its id still offers its action. So the same
+  finding without that action (a repository that keeps other problems, a grant with fewer scopes)
+  counts as fixed for this action. A finding still offering it, a check that could not run, or a
+  check run that did not inspect a finding's scope ("could not verify the fix") is an error.
 - A built-in connector remediates by implementing the optional `connector.Remediator` interface
   (`Plan`, `Apply`). `Apply` recomputes the plan and refuses one that differs from what was shown.
 - Every command an action may run is on a per-action allowlist of exact argument lists, written by
   hand (`remediate.Allowlist`). There is no pattern matching; anything else is refused before the
-  first command runs. An action whose argument names a live object (an SMB share point, the home folder) gets its
-  entries at apply time from a fresh read of what exists, never from the finding: the finding only
-  says which object, and a name that matches nothing exactly is refused.
+  first command runs. An action whose argument names a live object (an SMB share point, the home
+  folder, a GitHub repository, gh's token scopes, an Azure client secret) gets its entries at apply
+  time from a fresh read of what exists, never from the finding: the finding only says which
+  object, and a name that matches nothing exactly is refused. The plan is built from the same
+  read, so what changed since the inventory is left out and named in the plan.
+- HTTP writes (`plan.calls`: method, URL and the name of the credential) go through
+  `connectors/internal/httpw`, a client separate from the GET-only `httpx`: it sends bodiless
+  requests only when method and path match one of its routes (`DELETE /keys/<id>`, ids limited to
+  `[A-Za-z0-9_-]+`) and follows no redirect. A test fails if any connector file other than
+  `remediate.go` imports it, so no inventory code path can reach it.
+- Write credentials are never inventory secrets. They live under `remediation_secrets` in the
+  instance's config; `run.InstanceCredentials` hands a remediator the inventory request plus their
+  unresolved references (`connector.Credentials`, for remediators implementing
+  `connector.CredentialedRemediator`), and only `Apply` resolves one, after the confirmation. A
+  name ending in `_WRITE_KEY` under `secrets` is rejected when the config loads, since every
+  inventory resolves `secrets`.
 - sudo: a command that needs root runs as `/usr/bin/sudo <argv>` with the terminal's stdin, stdout
   and stderr attached, so sudo asks for the password itself. segurata never reads, stores or
   pipes a password.
 - Generic actions belong to the core, so any connector can attach them. `file.chmod600` takes the
   file in `evidence.path` (absolute or `~/`), refuses symlinks and non-regular files, and changes the
-  mode in-process; the undo is `chmod <old mode> <path>`.
+  mode in-process to 600 (700 when the owner could execute it); the undo is `chmod <old mode>
+  <path>`. With a group it changes every file once and leaves out, by name, files already private.
 - An external connector remediates through protocol 2: it declares its actions in `describe`
   (`remediates`), returns a plan from `segurata-<name> plan` and runs it in
   `segurata-<name> apply` (`remediate.External`). The core shows the plan and confirms as for a

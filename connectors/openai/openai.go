@@ -457,10 +457,11 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 	created, lastUsed, expires := httpx.Unix(k.CreatedAt), httpx.Unix(k.LastUsedAt), httpx.Unix(k.ExpiresAt)
 	a := keyAssessment(lastUsed, expires, k.OwnerProjectAccess == "inactive", cover, now)
 	ev := map[string]any{
-		"redacted": k.RedactedValue,
-		"project":  p.label(),
-		"owner":    k.Owner.label(),
-		"issues":   a.Reasons,
+		"redacted":   k.RedactedValue,
+		"project":    p.label(),
+		"project_id": p.ID,
+		"owner":      k.Owner.label(),
+		"issues":     a.Reasons,
 	}
 	if cover.known {
 		ev["spend_capped"] = cover.set
@@ -486,6 +487,7 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 		Remediation: finding.Remediation{
 			Summary: "Revoke keys nobody uses or owns. Spend caps are set on the project or the organization, not on the key.",
 			URL:     keysURL,
+			Action:  unusedAction(lastUsed, expires, now),
 		},
 	}
 }
@@ -514,6 +516,7 @@ func adminKeyFinding(k adminKey, now time.Time) finding.Finding {
 		Remediation: finding.Remediation{
 			Summary: "Delete admin keys nobody uses; each one can create and revoke keys for the whole organization",
 			URL:     adminURL,
+			Action:  unusedAction(lastUsed, expires, now),
 		},
 	}
 }

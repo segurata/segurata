@@ -21,14 +21,59 @@ type Remediator interface {
 	Apply(ctx context.Context, f finding.Finding, p Plan, io IO) error
 }
 
+// GroupRemediator is implemented by a Remediator whose actions fix several findings in one plan:
+// those sharing finding.Remediation.Group (a GitHub owner's repositories, a tenant's expired
+// secrets). The core gathers the group, f first, and calls these instead of Plan and Apply.
+type GroupRemediator interface {
+	Remediator
+	PlanGroup(ctx context.Context, fs []finding.Finding) (Plan, error)
+	ApplyGroup(ctx context.Context, fs []finding.Finding, p Plan, io IO) error
+}
+
+// CredentialedRemediator is implemented by a built-in Remediator that talks to its provider with
+// the instance's credentials. The core hands them over before Plan.
+type CredentialedRemediator interface {
+	WithCredentials(c Credentials) Remediator
+}
+
+// Credentials are what a remediation of one connector instance may use: the inventory request
+// (read credentials, already resolved) and the references of the instance's remediation_secrets,
+// write credentials kept apart from the inventory's. Inventory never sees the latter; only Apply
+// resolves one, through Write.
+type Credentials struct {
+	Request   Request
+	WriteRefs map[string]string                // name -> reference, unresolved
+	Resolve   func(ref string) (string, error) // secrets.Resolve
+}
+
+// HasWrite reports whether the config names a reference for the write secret, without resolving it.
+func (c Credentials) HasWrite(name string) bool { return c.WriteRefs[name] != "" }
+
+// Write resolves one write secret. Only Apply calls it, after the owner confirmed.
+func (c Credentials) Write(name string) (string, error) {
+	ref := c.WriteRefs[name]
+	if ref == "" || c.Resolve == nil {
+		return "", fmt.Errorf("%s is not configured under remediation_secrets", name)
+	}
+	v, err := c.Resolve(ref)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	return v, nil
+}
+
 // Plan is the exact scope of one remediation, shown before anything runs.
 type Plan struct {
 	Action      string       `json:"action"`
 	Summary     string       `json:"summary"`
 	Commands    []Step       `json:"commands,omitempty"`
+	Calls       []Call       `json:"calls,omitempty"`
 	Files       []FileChange `json:"files,omitempty"`
 	Undo        []Step       `json:"undo,omitempty"`
 	SideEffects []string     `json:"side_effects,omitempty"`
+	// Blocked says why the plan cannot be applied now and what to set up first (a write credential
+	// that is not configured). A dry run shows it; --apply refuses before asking.
+	Blocked string `json:"blocked,omitempty"`
 }
 
 // NeedsSudo reports whether any command runs as root.
@@ -36,11 +81,18 @@ func (p Plan) NeedsSudo() bool {
 	return slices.ContainsFunc(p.Commands, func(s Step) bool { return s.Sudo })
 }
 
+// NeedsTerminal reports whether any command needs the owner at the terminal while it runs.
+func (p Plan) NeedsTerminal() bool {
+	return slices.ContainsFunc(p.Commands, func(s Step) bool { return s.Terminal })
+}
+
 // Step is one exact command line. A sudo step runs as `sudo <argv>` with the terminal attached, so
-// sudo asks for the password itself and segurata never sees it.
+// sudo asks for the password itself and segurata never sees it. A terminal step is interactive in
+// the same way (a browser sign-in, a prompt): it never runs without a terminal, --yes or not.
 type Step struct {
-	Argv []string `json:"argv"`
-	Sudo bool     `json:"sudo,omitempty"`
+	Argv     []string `json:"argv"`
+	Sudo     bool     `json:"sudo,omitempty"`
+	Terminal bool     `json:"terminal,omitempty"`
 }
 
 // String is the command as the owner would type it in a shell.
@@ -57,7 +109,19 @@ func (s Step) String() string {
 
 // Equal reports whether two steps are the same command line run the same way.
 func (s Step) Equal(o Step) bool {
-	return s.Sudo == o.Sudo && slices.Equal(s.Argv, o.Argv)
+	return s.Sudo == o.Sudo && s.Terminal == o.Terminal && slices.Equal(s.Argv, o.Argv)
+}
+
+// Call is one HTTP request without a body, made in-process with a write credential named by
+// Secret (never its value).
+type Call struct {
+	Method string `json:"method"`
+	URL    string `json:"url"`
+	Secret string `json:"secret"`
+}
+
+func (c Call) String() string {
+	return fmt.Sprintf("%s %s (with %s)", c.Method, c.URL, c.Secret)
 }
 
 func shellQuote(s string) string {

@@ -2,7 +2,9 @@
 
 Three built-in connectors look for keys and accounts that can spend money without a ceiling:
 `openai`, `anthropic` and `openrouter`. They send read-only `GET` requests and never print or store
-a key value; a key appears only as the redacted hint the provider itself returns.
+a key value; a key appears only as the redacted hint the provider itself returns. The remediations
+`openai.key.delete-unused` and `openrouter.key.delete-unused` delete a key only after a confirmed
+plan, with a separate write key under `remediation_secrets` (README, "Write credentials").
 
 Severity rules shared by the three:
 

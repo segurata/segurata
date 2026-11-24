@@ -312,6 +312,7 @@ func keyFinding(acct string, k apiKey, now time.Time) finding.Finding {
 		Remediation: finding.Remediation{
 			Summary: "Set a credit limit with a reset period on every key; disable or delete keys nobody uses",
 			URL:     keysURL,
+			Action:  unusedAction(k, now),
 		},
 	}
 }

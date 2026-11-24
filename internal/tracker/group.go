@@ -293,7 +293,8 @@ func (p *proposal) finish(itemID string) {
 	if n.Action == "" {
 		n.Action = "Review the linked findings."
 	}
-	if len(p.findings) == 1 && w.Remediation.Automatable {
+	// A hardening action (Remediation.Severity set) is a side step, not the fix of the item.
+	if len(p.findings) == 1 && w.Remediation.Automatable && w.Remediation.Severity == "" {
 		n.Who, n.Command = Segurata, "segurata remediate "+w.ID
 	} else {
 		n.Command = "segurata track show " + itemID

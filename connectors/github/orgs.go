@@ -173,7 +173,7 @@ func (r *run) org(ctx context.Context, org string) {
 			Severity:    severities[f.check],
 			Title:       f.title,
 			Evidence:    withCheck(f.evidence, f.check),
-			Remediation: finding.Remediation{Summary: f.fix, URL: f.url},
+			Remediation: remedy(f.fix, f.url, org, f.check),
 		})
 	}
 	state := finding.StateOK

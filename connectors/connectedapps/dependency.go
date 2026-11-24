@@ -8,8 +8,9 @@ import (
 // dependency is a grant segurata itself runs on: revoking it breaks the inventory, so the fix is
 // to narrow it.
 type dependency struct {
-	label string // shown in the title and the evidence
-	fix   string
+	label  string // shown in the title and the evidence
+	fix    string
+	remove []string // scopes to drop, as `gh auth refresh -r` names them; empty when none
 }
 
 // ghRemovable maps the GitHub CLI scopes nothing segurata reads needs, as GitHub words them on the
@@ -38,9 +39,10 @@ func dependencyOf(g grant) (dependency, bool) {
 	fix := "segurata reads GitHub through gh: do not revoke it."
 	if len(remove) > 0 {
 		fix += fmt.Sprintf(" Drop the scopes it does not need with `gh auth refresh -h github.com -r %s`", strings.Join(remove, ","))
+		fix += " (`segurata remediate` runs it in your terminal)"
 		fix += " and give segurata a read-only token (a fine-grained token with read-only permissions, in GH_TOKEN for its runs). Without admin:org the github connector reports the organization settings check as noscope."
 	} else {
 		fix += " Its scopes hold nothing segurata would drop; keep it."
 	}
-	return dependency{label: "segurata depends on it", fix: fix}, true
+	return dependency{label: "segurata depends on it", fix: fix, remove: remove}, true
 }
