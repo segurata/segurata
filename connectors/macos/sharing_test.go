@@ -10,7 +10,6 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 // sharingKey is how fakeRunner spells the share point listing.
@@ -195,7 +194,7 @@ func TestShareActionsRefuseANameThatNoLongerExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := remediate.Run(context.Background(), stale, allow, ex, termIO()); !errors.Is(err, remediate.ErrRefused) || len(ex.ran) != 0 {
+	if err := allow.Run(context.Background(), stale, ex, termIO()); !errors.Is(err, connector.ErrRefused) || len(ex.ran) != 0 {
 		t.Fatalf("allowlist let a missing share through: %v", err)
 	}
 	if err := allow.Check(ActionShareRemove, connector.Step{Argv: []string{sharingBin, "-r", "Other"}, Sudo: true}); err != nil {

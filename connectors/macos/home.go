@@ -10,7 +10,6 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 const (
@@ -111,12 +110,12 @@ func (c *Connector) homePlan() (connector.Plan, error) {
 
 // homeAllowlist is the one command line ActionHomePrivate may run, for the home folder the OS
 // reports now.
-func (c *Connector) homeAllowlist() (remediate.Allowlist, error) {
+func (c *Connector) homeAllowlist() (connector.Allowlist, error) {
 	home, err := c.homeDir()
 	if err != nil {
 		return nil, err
 	}
-	return remediate.Allowlist{ActionHomePrivate: {{Argv: []string{chmodBin, "700", home}}}}, nil
+	return connector.Allowlist{ActionHomePrivate: {{Argv: []string{chmodBin, "700", home}}}}, nil
 }
 
 // homeGuard lets inventory run `ls -led` on the home folder the OS reports and nothing else beyond

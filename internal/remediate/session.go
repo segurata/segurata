@@ -1,11 +1,14 @@
+// Package remediate is the core of `segurata remediate`: it shows the exact plan for a finding,
+// asks for confirmation, applies only the plan that was confirmed and checks afterwards that the
+// finding is gone. See docs/architecture.md, "Remediation".
 package remediate
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -13,11 +16,9 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
 )
-
-// ErrNotTTY is returned when confirmation would be needed but nobody can answer it.
-var ErrNotTTY = errors.New("stdin is not a terminal, so nobody can confirm: refusing to apply (pass --yes to apply without asking)")
 
 // ErrStillPresent means the remediation ran but the connector still reports the finding.
 var ErrStillPresent = errors.New("the finding is still reported after applying the remediation")
@@ -25,14 +26,6 @@ var ErrStillPresent = errors.New("the finding is still reported after applying t
 // ErrUnverified means the remediation ran but the check run did not inspect the finding's scope
 // (it stopped early, or skipped that account or repository), so its absence proves nothing.
 var ErrUnverified = errors.New("could not verify the fix")
-
-// Selector is the connector instance that produced f, spelled as on the command line.
-func Selector(f finding.Finding) string {
-	if f.Instance == "" {
-		return f.Connector
-	}
-	return f.Connector + ":" + f.Instance
-}
 
 // CredentialsFunc builds the credentials of the connector instance that produced a finding: its
 // request (config and resolved secrets) and its unresolved remediation_secrets. External connectors
@@ -141,11 +134,21 @@ func (p planner) plan(ctx context.Context) (connector.Plan, error) {
 	return p.r.Plan(ctx, p.group[0])
 }
 
-func (p planner) apply(ctx context.Context, plan connector.Plan, io connector.IO) error {
-	if g, ok := p.r.(connector.GroupRemediator); ok {
-		return g.ApplyGroup(ctx, p.group, plan, io)
+// apply carries out confirmed, the plan the owner saw and agreed to, and only that plan: it asks the
+// remediator for the plan again, from the state as it is now, and refuses when the two differ. A
+// remediator therefore never acts on a stale or altered plan, and none needs a guard of its own.
+func (p planner) apply(ctx context.Context, confirmed connector.Plan, io connector.IO) error {
+	now, err := p.plan(ctx)
+	if err != nil {
+		return err
 	}
-	return p.r.Apply(ctx, p.group[0], plan, io)
+	if !reflect.DeepEqual(now, confirmed) {
+		return errors.New("the plan changed since it was shown: run remediate again to see the current one")
+	}
+	if g, ok := p.r.(connector.GroupRemediator); ok {
+		return g.ApplyGroup(ctx, p.group, confirmed, io)
+	}
+	return p.r.Apply(ctx, p.group[0], confirmed, io)
 }
 
 // A fix often takes a moment to settle: a restarted process can drop its ports for a second and
@@ -186,7 +189,7 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 	if p.NeedsTerminal() && !opt.TTY {
 		return ErrNeedsTerminal
 	}
-	ok, err := Confirm(opt.IO.In, opt.IO.Out, opt.Yes, opt.TTY)
+	ok, err := prompt.Confirm(opt.IO.In, opt.IO.Out, opt.Yes, opt.TTY)
 	if err != nil {
 		return err
 	}
@@ -202,7 +205,7 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 		sleep = defaultSleep
 	}
 	fmt.Fprintf(opt.IO.Out, "Applied %s. Checking %d times with a fresh %s inventory, %s apart...\n",
-		p.Action, settleChecks, Selector(f), settleWait)
+		p.Action, settleChecks, f.Selector(), settleWait)
 	for i := 0; i < settleChecks; i++ {
 		sleep(settleWait)
 		results, err := reinventory(ctx)
@@ -221,9 +224,9 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 		}
 	}
 	if len(group) == 1 {
-		fmt.Fprintf(opt.IO.Out, "Fixed: %s no longer reports finding %s.\n", Selector(f), f.ID)
+		fmt.Fprintf(opt.IO.Out, "Fixed: %s no longer reports finding %s.\n", f.Selector(), f.ID)
 	} else {
-		fmt.Fprintf(opt.IO.Out, "Fixed: %s no longer reports any of the %d findings.\n", Selector(f), len(group))
+		fmt.Fprintf(opt.IO.Out, "Fixed: %s no longer reports any of the %d findings.\n", f.Selector(), len(group))
 	}
 	return nil
 }
@@ -238,28 +241,6 @@ func groupLines(group []finding.Finding) []string {
 		out[i] = fmt.Sprintf("%s [%s] %s", g.ID, g.Severity, g.Title)
 	}
 	return out
-}
-
-// Confirm asks "Apply? [y/N]" on out and reads the answer from in. yes skips the question; when in
-// is not a terminal nobody can answer, so it refuses with ErrNotTTY. Every command that changes
-// something on --apply confirms through here.
-func Confirm(in io.Reader, out io.Writer, yes, tty bool) (bool, error) {
-	if yes {
-		return true, nil
-	}
-	if !tty {
-		return false, ErrNotTTY
-	}
-	fmt.Fprint(out, "\nApply? [y/N] ")
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, err
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		return true, nil
-	}
-	return false, nil
 }
 
 // StillPresent reports whether a fresh run still needs the remediation of any target: it emits a
@@ -298,7 +279,7 @@ func StillPresent(results []*run.Result, targets ...finding.Finding) (bool, erro
 
 // Print shows the exact scope of a plan.
 func Print(w io.Writer, f finding.Finding, p connector.Plan) {
-	fmt.Fprintf(w, "Finding  %s [%s] %s · %s · %s\n", f.ID, f.Severity, Selector(f), f.Account, f.Title)
+	fmt.Fprintf(w, "Finding  %s [%s] %s · %s · %s\n", f.ID, f.Severity, f.Selector(), f.Account, f.Title)
 	fmt.Fprintf(w, "Action   %s\n", p.Action)
 	fmt.Fprintf(w, "Plan     %s\n", p.Summary)
 	runs := "Runs, as you:"
@@ -370,7 +351,7 @@ func List(w io.Writer, all []finding.Finding, minSev finding.Severity) {
 				title = fmt.Sprintf("%d findings of %s (first: %s)", n, f.Remediation.Group, title)
 			}
 		}
-		fmt.Fprintf(w, "%s  [%-8s] %-32s %-16s %s\n", f.ID, sev, f.Remediation.Action, Selector(f), title)
+		fmt.Fprintf(w, "%s  [%-8s] %-32s %-16s %s\n", f.ID, sev, f.Remediation.Action, f.Selector(), title)
 	}
 	fmt.Fprintf(w, "\n%d automatable findings or groups. Show a plan with: segurata remediate <id>\n", shown)
 	if below > 0 {

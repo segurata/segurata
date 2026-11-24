@@ -10,7 +10,6 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
@@ -323,8 +322,8 @@ func (st state) plan() (connector.Plan, error) {
 
 // allowlist is every command line the action may run on what was read: the fixed shapes, for the
 // repositories and organizations GitHub says are eligible now, never names taken from a finding.
-func (st state) allowlist() remediate.Allowlist {
-	allow := remediate.Allowlist{}
+func (st state) allowlist() connector.Allowlist {
+	allow := connector.Allowlist{}
 	for _, t := range st.targets {
 		if !t.eligible {
 			continue
@@ -361,23 +360,11 @@ func (c *Connector) PlanGroup(ctx context.Context, fs []finding.Finding) (connec
 	return st.plan()
 }
 
-// ApplyGroup reads again, refuses a plan that differs from the one shown, and runs it through the
-// allowlist built from that same read.
+// ApplyGroup reads again and runs the confirmed plan through the allowlist built from that read.
 func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p connector.Plan, io connector.IO) error {
 	st, err := c.read(ctx, fs)
 	if err != nil {
 		return err
 	}
-	want, err := st.plan()
-	if err != nil {
-		return err
-	}
-	if err := remediate.SamePlan(want, p); err != nil {
-		return err
-	}
-	ex := c.Exec
-	if ex == nil {
-		ex = remediate.System{}
-	}
-	return remediate.Run(ctx, p, st.allowlist(), ex, io)
+	return st.allowlist().Run(ctx, p, c.Exec, io)
 }

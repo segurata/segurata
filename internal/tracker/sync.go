@@ -12,7 +12,7 @@ import (
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
+	runfile "github.com/segurata/segurata/internal/run" // tracker has a type run of its own
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -334,7 +334,7 @@ func (p *proposal) finishTranscripts() {
 
 // RunLabel names a connector instance from its records, which carry the exact connector name and
 // instance label; a run with none falls back to the file name.
-func RunLabel(file string, rf remediate.RunFile) string {
+func RunLabel(file string, rf runfile.Output) string {
 	switch {
 	case rf.End != nil:
 		return label(rf.End.Connector, rf.End.Instance)
@@ -351,7 +351,7 @@ func RunLabel(file string, rf remediate.RunFile) string {
 // cannot be read is left out and returned with its error in unreadable: one torn file must not
 // stop the sync of every other connector, and an instance with no run folded closes nothing.
 func readRuns(opt SyncOptions, now time.Time) (runs []*run, unreadable []string, err error) {
-	files, err := remediate.LatestFiles(opt.OutDir, now)
+	files, err := runfile.LatestFiles(opt.OutDir, now)
 	if err != nil {
 		if opt.From == "" {
 			return nil, nil, err
@@ -381,7 +381,7 @@ func readRuns(opt SyncOptions, now time.Time) (runs []*run, unreadable []string,
 }
 
 func readRunFile(file string) (*run, error) {
-	rf, err := remediate.ReadRun(file)
+	rf, err := runfile.Read(file)
 	if err != nil {
 		return nil, err
 	}

@@ -53,6 +53,10 @@ func (t Target) Label() string {
 	return name + ":" + t.Instance.Label
 }
 
+// FileName is the name of the run file of the connector instance label (see Target.Label) in its
+// day's directory: "name.jsonl" or "name-label.jsonl".
+func FileName(label string) string { return strings.ReplaceAll(label, ":", "-") + ".jsonl" }
+
 // Targets expands connectors into their configured instances. A selector "name" picks every
 // instance of that connector, "name:label" just one; no selectors means everything. Each instance
 // appears once, however many selectors name it.
@@ -209,7 +213,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timed out after %s (raise connectors.%s.timeout)", timeout, label))
 	defer cancel()
 	started := time.Now()
-	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
+	res := &Result{Name: label, File: filepath.Join(dir, FileName(label))}
 	// The run writes to a partial file of its own and renames it over <file> only once run_end is
 	// written, so a killed run never truncates an earlier finished run of the same day, and two runs
 	// of the same instance at once never write into one file. The partial file does not match
@@ -354,11 +358,7 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 			hidden++
 			continue
 		}
-		who := f.Connector
-		if f.Instance != "" {
-			who += ":" + f.Instance
-		}
-		fmt.Fprintf(w, "[%-8s] %-20s %s · %s\n", f.Severity, who, f.Account, f.DisplayTitle())
+		fmt.Fprintf(w, "[%-8s] %-20s %s · %s\n", f.Severity, f.Selector(), f.Account, f.DisplayTitle())
 	}
 	fmt.Fprintf(w, "\n%d findings (%d below %s hidden).", len(all), hidden, minSev)
 	for _, r := range results {
