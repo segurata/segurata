@@ -522,7 +522,8 @@ For each repository under `repos_root`:
    `dump` in the name (those only above 1 MiB). Never: names containing `schema`, `structure` or
    `seed`, migration folders (`migrations`, `migrate`, `drizzle`, `flyway`, `alembic`,
    `liquibase`), vendored code (`vendor`, `third_party`, `node_modules`), `Thumbs.db`. Under test
-   folders (`test`, `spec`, `fixtures`, `testdata`) a file must exceed 1 MiB.
+   folders (`test`, `spec`, `fixtures`, `testdata`…) a file must exceed 1 MiB. The test and vendor
+   folders are those of `secretrisk.RoleOf`, the classifier secrets use too.
 2. History of the candidates: `git log --all --full-history --no-renames --diff-filter=AM --raw
    --no-abbrev -- :(literal)<path>…` gives every blob id and the commit that first added each
    path. `--full-history` matters: a dump added and deleted on a merged branch is otherwise
@@ -573,7 +574,7 @@ tracker's (`done` reads "rotated" in these commands):
 
 ```json
 {"id": "T-0007", "key": "rotate:3f9a12c4…", "kind": "rotate", "theme": "rotations",
- "title": "Stripe live secret key sk_live_…a1b2(107)", "status": "open", "priority": "P0", "severity": "critical",
+ "title": "Stripe live secret key sk_live_…a1b2(107) in ~/src/shop/.env", "status": "open", "priority": "P0", "severity": "critical",
  "fingerprint": "3f9a12c4…(16 hex)",
  "secret": {"id": "3f9a12c4", "service": "stripe", "type": "stripe-live", "redacted": "sk_live_…a1b2(107)",
    "impact": "high", "reasons": ["Stripe live secret key; pasted into an agent transcript, so it reached the model provider"],
@@ -597,7 +598,8 @@ Priority is impact × exposure, both table-driven:
 - Exposure is the worst location of the secret. An agent transcript counts as remote: whatever
   was pasted there was sent to the model provider.
 - Noise is left out by default: generic `NAME=value` matches, gitleaks `generic-api-key`, anon or
-  expired JWTs, encrypted private keys. `sync --include-noise` tracks them without a priority.
+  expired JWTs, encrypted private keys and the cases below. `sync --include-noise` tracks them
+  without a priority, but the connector emits noise only with `emit_noise: true`.
 - `sync` merges locations (never drops one: git history and transcripts do not forget) and
   refreshes `last_seen` only for secrets it saw. Expired snoozes go back to `open`.
 - After a real rotation the old value is revoked, so only a working file that still holds it
@@ -618,6 +620,74 @@ Priority is impact × exposure, both table-driven:
 - `done`, `snooze`, `ignore` and `reopen` also take `--path <prefix>` instead of an id: every item
   whose locations all lie under that path. A test log or a data file full of fixtures goes away in
   one command, while a secret that also appears elsewhere stays.
+
+### What counts against the owner
+
+`secretrisk.ImpactOf` adjusts a copy's impact by where it is, and the connector adds the facts it
+needs to the evidence. Every rule is a pure function of the evidence, so the finding's severity,
+the rotate item's priority and `segurata redact` agree, and cached git history is re-judged on
+every run without a new scan.
+
+- Repository origin (`origin`). From each repository's GitHub remotes, origin first, and the
+  owner's names: `owned_owners` in the config plus the login and organizations from `gh api user`
+  and `gh api user/orgs?per_page=100`, asked once a week and cached in
+  `~/.cache/segurata/github-owners.json` (both calls are on the gh guard's allowlist). `owned`
+  when origin's owner is one of them, `third-party` otherwise (a clone of instructure/canvas-lms).
+  A copy committed to a third-party repository is noise and its spot is local: the upstream's
+  secret. An owned repository with another remote whose owner is not the user is a fork: commits
+  reachable from that remote's branches (`git rev-list <leak commits> --not --remotes=<upstream>`)
+  are `fork-upstream`, judged like third-party, and so is the working copy of the same value at
+  the same path. Limits: a repository without a GitHub remote, or every repository when neither gh
+  nor `owned_owners` names anyone, has no origin and counts as the owner's; a fork's inherited
+  history is recognised only when its upstream remote has fetched branches.
+- Reused (`reused`). A third-party or inherited copy of a value that also sits in one of the
+  owner's own files (config, `.env`, a working file or commit of an owned repository) is the
+  owner's secret leaked into someone else's repository, and counts in full. Transcripts, logs and
+  histories do not make a value the owner's: an agent that read a third-party file leaves its
+  value there.
+- Paths (`secretrisk.RoleOf`, repository files only). Checksum lists (`*.md5`, `*.sha1`,
+  `*.sha256`, `*.sha512`, `*.sum`) and lockfiles are noise. Test folders and files (`test`, `spec`,
+  `fixtures`, `__tests__`, `cassettes`, `*_test.*`, `*.test.*`, `*.spec.*`, `test_*`), examples
+  (`examples`, `samples`, `demo`, `*.example`, `*.sample`, `*.template`, `*.dist`), documentation
+  (`docs`, `README*`, `*.md`) and vendored code lower the impact one level, to noise when the value
+  reads like test data (`sample`: "test", "fake", "demo", "1234", "abcd", a run of four equal
+  characters). The sample flag needs the value, so git history cached before it existed is judged
+  by path alone until its repository is scanned in full again.
+- segurata's own repositories (a `go.mod` declaring `github.com/segurata/segurata`, worktrees
+  included) are not scanned for secrets: their test corpus is synthetic. The status line counts
+  what was skipped.
+- AWS temporary credentials (`ASIA…`) live 36 hours at most: one whose commit date (end of that
+  day) or file modification time is older is expired (`public`, note "expired"). Pre-signed URLs
+  (`X-Amz-Credential=` or `AWSAccessKeyId=` before the key id) are their own type, low impact, and
+  the temporary keys and pre-signed URLs of one file collapse into one finding counting them all.
+- URL credentials (`url-credentials`, `url-token-param`) are judged by host, written into the
+  note (`postgresql://…@host`, `https://host/…?access_token=…`): localhost, loopback, `example.*`,
+  `.local`, `.test`, `.invalid` are noise; private, CGNAT and link-local addresses, single-label
+  names, `.internal` and `.lan` are low; public hosts keep medium, high for managed databases
+  (Neon, Supabase, RDS, MongoDB Atlas, Upstash, PlanetScale, Railway) or a `prod`, `production`,
+  `prd` or `live` label. ripgrep prints only the match, so the line of a query-string token is read
+  back from its file to find the URL it belongs to.
+- Jupyter notebooks: only cell source counts. A match on a line of the notebook's JSON that holds
+  no source text (outputs, metadata, attachments) is dropped; history reads the notebook as
+  committed (`git cat-file blob <commit>:<path>`).
+- Public OAuth clients: the client secrets of gcloud (`CLOUDSDK_CLIENT_NOTSOSECRET`) and of
+  `gcloud auth application-default login` are published in its source; they are recognised by
+  their first seven and last four characters and length, and are noise. The refresh token beside
+  them is not. `~/.config/gcloud/logs` is not scanned.
+- Bare 40-hex values matched by gitleaks' `sourcegraph-access-token` without the `sgp_` prefix
+  are noise. gitleaks 8.30 has no other rule that takes a bare hex value: `facebook-secret` and
+  `codecov-access-token` require the provider's name next to the value.
+- Noise is counted, not emitted, unless `emit_noise: true`: the run's status line ends with
+  `noise not emitted …: N; by type: …; by place: …` (the 25 largest places, the rest summed).
+
+Hints. Every value hint the connector writes is `secretrisk.Redact`'s: the known prefix, `…`, the
+last four characters when the value is long and random, and the length, `sk_live_…a1b2(107)`;
+`secretrisk.ParseHint` reads it back. Keys and whole files have no value hint (`PEM`, empty).
+
+Titles. A rotate item is named `<label> <hint> in <repo>:<file> (+N places), committed YYYY-MM`:
+the location that exposed it most (among equals the owner's repository, then the latest commit),
+the number of other locations, and the earliest commit date. Within a priority and exposure, items
+with a copy in an owned repository and with more recent commits come first.
 
 ### Guided rotation: `next` and `replace`
 
