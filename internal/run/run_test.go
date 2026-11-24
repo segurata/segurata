@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,8 +67,11 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 		t.Fatal("an unresolved secret reached the connector")
 	}
 	lines := readLines(t, res[0].File)
-	if len(lines) != 3 { // missing_credentials status, ok status, finding
+	if len(lines) != 4 { // missing_credentials status, ok status, finding, run_end
 		t.Fatalf("got %d lines: %v", len(lines), lines)
+	}
+	if end := lines[3]; end["type"] != "run_end" || end["complete"] != false || end["connector"] != "fake" {
+		t.Fatalf("an unresolved secret leaves the run incomplete: %v", end)
 	}
 	if lines[0]["state"] != "missing_credentials" || !strings.HasPrefix(lines[0]["detail"].(string), "BAD:") {
 		t.Fatalf("first line should report the missing secret: %v", lines[0])
@@ -101,6 +106,7 @@ inventory)
   echo '{"type":"status","account":"a","state":"reauth","detail":"sign in again"}'
   echo 'not json'
   echo '{"type":"finding","connector":"spoofed","account":"a","resource":{"type":"oauth_grant","id":"g","name":"App"},"kind":"grant","severity":"medium","title":"App has Drive"}'
+  echo '{"type":"scope","scope":"repo:a/b","inspected":false,"reason":"rate limit"}'
   echo '{"type":"log","msg":"done"}';;
 esac
 `
@@ -127,6 +133,11 @@ esac
 	}
 	if len(r.Findings) != 1 || r.Findings[0].Connector != "ext" || r.Findings[0].ID == "" {
 		t.Fatalf("findings: %+v (connector name must come from describe, not the record)", r.Findings)
+	}
+	// Nothing said ok, so everything is uninspected; the scope record still reaches run_end.
+	if sk := r.End.Scopes.Skipped; len(sk) != 3 || sk[0].Scope != finding.ScopeAll || sk[1].Scope != "a" ||
+		sk[2] != (finding.Skipped{Scope: "repo:a/b", Reason: "rate limit"}) {
+		t.Fatalf("run_end scopes: %+v", r.End.Scopes)
 	}
 }
 
@@ -192,4 +203,97 @@ func (r recordingFake) Inventory(_ context.Context, req connector.Request, emit 
 	r.onReq(req)
 	emit.Finding(finding.Finding{Account: "same-account-name", Resource: finding.Resource{Type: "key", ID: "k"}, Severity: finding.SevLow, Title: "t"})
 	return nil
+}
+
+// emitting is a connector whose inventory is a function.
+type emitting func(ctx context.Context, emit connector.Emitter) error
+
+func (emitting) Describe() connector.Description {
+	return connector.Description{Name: "fake", Version: "0", Protocol: 1}
+}
+
+func (e emitting) Inventory(ctx context.Context, _ connector.Request, emit connector.Emitter) error {
+	return e(ctx, emit)
+}
+
+// Every run ends with a run_end record: complete only when nothing was skipped and the connector
+// did not fail. A run killed before it is written has none (see remediate.ReadRun).
+func TestRunEndRecordsCoverage(t *testing.T) {
+	ok := func(emit connector.Emitter, account string) {
+		emit.Status(finding.Status{Account: account, State: finding.StateOK})
+	}
+	cases := []struct {
+		name     string
+		inv      emitting
+		cancel   bool
+		complete bool
+		skipped  []string
+	}{
+		{"complete", func(_ context.Context, e connector.Emitter) error { ok(e, "a"); ok(e, "b"); return nil }, false, true, nil},
+		{"account signed out", func(_ context.Context, e connector.Emitter) error {
+			ok(e, "a")
+			e.Status(finding.Status{Account: "b", State: finding.StateSignedOut, Detail: "sign in"})
+			return nil
+		}, false, false, []string{"b"}},
+		{"status narrowed to a project", func(_ context.Context, e connector.Emitter) error {
+			ok(e, "a")
+			e.Status(finding.Status{Account: "a", Scope: "proj-1", State: finding.StateError, Detail: "permission denied"})
+			return nil
+		}, false, false, []string{"proj-1"}},
+		{"declared skip", func(_ context.Context, e connector.Emitter) error {
+			ok(e, "a")
+			e.Scope("repo:a/x", false, "rate limit")
+			e.Scope("repo:a/y", true, "")
+			return nil
+		}, false, false, []string{"repo:a/x"}},
+		{"connector failed to start", func(context.Context, connector.Emitter) error { return errors.New("no browser") }, false, false, []string{finding.ScopeAll}},
+		{"no status said ok", func(context.Context, connector.Emitter) error { return nil }, false, false, []string{finding.ScopeAll}},
+		{"interrupted", func(_ context.Context, e connector.Emitter) error { ok(e, "a"); return nil }, true, false, []string{finding.ScopeAll}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if c.cancel {
+				cancel()
+			}
+			res, _ := Inventory(ctx, config.Config{}, mustTargets(t, config.Config{}, c.inv), t.TempDir(), nil, nil)
+			end := res[0].End
+			lines := readLines(t, res[0].File)
+			if last := lines[len(lines)-1]; last["type"] != "run_end" || last["complete"] != c.complete {
+				t.Fatalf("last line %v", last)
+			}
+			var got []string
+			for _, s := range end.Scopes.Skipped {
+				got = append(got, s.Scope)
+			}
+			if end.Complete != c.complete || strings.Join(got, ",") != strings.Join(c.skipped, ",") || end.Scopes.SkippedCount != len(c.skipped) {
+				t.Fatalf("run_end %+v", end)
+			}
+			if end.StartedAt.IsZero() || end.EndedAt.Before(end.StartedAt) {
+				t.Fatalf("times %v %v", end.StartedAt, end.EndedAt)
+			}
+		})
+	}
+}
+
+// A connector that skips thousands of scopes is capped in the record, and then counts as having
+// inspected nothing: the cut entries could be any of its findings.
+func TestRunEndCapsLists(t *testing.T) {
+	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+		for i := range 300 {
+			e.Status(finding.Status{Account: fmt.Sprintf("ok-%d", i), State: finding.StateOK})
+			e.Scope(fmt.Sprintf("repo:%d", i), false, "rate limit")
+		}
+		return nil
+	})
+	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, inv), t.TempDir(), nil, nil)
+	sc := res[0].End.Scopes
+	if len(sc.Inspected) != 50 || sc.InspectedCount != 300 || len(sc.Skipped) != 200 || sc.SkippedCount != 300 {
+		t.Fatalf("caps: %d/%d inspected, %d/%d skipped", len(sc.Inspected), sc.InspectedCount, len(sc.Skipped), sc.SkippedCount)
+	}
+	end := res[0].End
+	if _, none := finding.CoverageOf(&end).NoneChecked(); !none {
+		t.Fatal("a truncated skipped list must not let anything count as inspected")
+	}
 }

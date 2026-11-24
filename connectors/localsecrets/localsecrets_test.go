@@ -273,7 +273,8 @@ func (r *recorder) Status(s finding.Status) {
 	r.statuses = append(r.statuses, s)
 	r.mu.Unlock()
 }
-func (r *recorder) Log(string) {}
+func (r *recorder) Scope(string, bool, string) {}
+func (r *recorder) Log(string)                 {}
 
 func (fx *fixture) connector(t *testing.T, gitleaksReport string) *Connector {
 	rg, err := exec.LookPath("rg")

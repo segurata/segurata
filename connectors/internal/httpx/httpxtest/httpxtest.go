@@ -19,7 +19,21 @@ type Recorder struct {
 	mu       sync.Mutex
 	Findings []finding.Finding
 	Statuses []finding.Status
+	Scopes   []Scope
 	Logs     []string
+}
+
+// Scope is one Emitter.Scope call.
+type Scope struct {
+	ID        string
+	Inspected bool
+	Reason    string
+}
+
+func (r *Recorder) Scope(id string, inspected bool, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Scopes = append(r.Scopes, Scope{ID: id, Inspected: inspected, Reason: reason})
 }
 
 func (r *Recorder) Finding(f finding.Finding) {

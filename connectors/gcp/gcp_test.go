@@ -83,7 +83,8 @@ func (r *recorder) Status(s finding.Status) {
 	r.statuses = append(r.statuses, s)
 }
 
-func (r *recorder) Log(string) {}
+func (r *recorder) Scope(string, bool, string) {}
+func (r *recorder) Log(string)                 {}
 
 func (r *recorder) byTitle(t *testing.T, sub string) finding.Finding {
 	t.Helper()

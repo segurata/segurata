@@ -72,11 +72,17 @@ func (b *fakeBrowser) openedOnce(t *testing.T) {
 type recorder struct {
 	findings []finding.Finding
 	statuses []finding.Status
+	skipped  []finding.Skipped
 }
 
 func (r *recorder) Finding(f finding.Finding) { r.findings = append(r.findings, f) }
 func (r *recorder) Status(s finding.Status)   { r.statuses = append(r.statuses, s) }
-func (r *recorder) Log(string)                {}
+func (r *recorder) Scope(id string, inspected bool, reason string) {
+	if !inspected {
+		r.skipped = append(r.skipped, finding.Skipped{Scope: id, Reason: reason})
+	}
+}
+func (r *recorder) Log(string) {}
 
 func (r *recorder) byName(t *testing.T, name string) finding.Finding {
 	t.Helper()

@@ -43,9 +43,10 @@ type recorder struct {
 	logs     []string
 }
 
-func (r *recorder) Finding(f finding.Finding) { r.findings = append(r.findings, f) }
-func (r *recorder) Status(s finding.Status)   { r.statuses = append(r.statuses, s) }
-func (r *recorder) Log(m string)              { r.logs = append(r.logs, m) }
+func (r *recorder) Finding(f finding.Finding)  { r.findings = append(r.findings, f) }
+func (r *recorder) Status(s finding.Status)    { r.statuses = append(r.statuses, s) }
+func (r *recorder) Scope(string, bool, string) {}
+func (r *recorder) Log(m string)               { r.logs = append(r.logs, m) }
 
 const base = "https://myaccount.google.com/u/0/linkedapps/"
 
