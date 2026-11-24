@@ -108,9 +108,9 @@ func (r *remediator) read(ctx context.Context, f finding.Finding) (liveKey, erro
 			}
 		}
 	case "api_key":
-		project, _ := f.Evidence["project_id"].(string)
-		if project == "" {
-			return liveKey{}, fmt.Errorf("the finding names no project id: run the openai inventory again")
+		project, err := projectID(s, f)
+		if err != nil {
+			return liveKey{}, err
 		}
 		keys, err := list[projectKey](s, "/organization/projects/"+url.PathEscape(project)+"/api_keys", url.Values{"owner_project_access": {"any"}})
 		if err != nil {
@@ -132,6 +132,29 @@ func (r *remediator) read(ctx context.Context, f finding.Finding) (liveKey, erro
 		return liveKey{}, fmt.Errorf("openai cannot delete a %s", f.Resource.Type)
 	}
 	return liveKey{}, fmt.Errorf("key %s no longer exists: nothing to do; run the inventory again", id)
+}
+
+// projectID is the finding's project id, or for a finding recorded before it carried one, the id
+// of the only project with its name, read now.
+func projectID(s *scan, f finding.Finding) (string, error) {
+	if id, _ := f.Evidence["project_id"].(string); id != "" {
+		return id, nil
+	}
+	name, _ := f.Evidence["project"].(string)
+	projects, err := list[project](s, "/organization/projects", nil)
+	if err != nil {
+		return "", err
+	}
+	var ids []string
+	for _, p := range projects {
+		if p.label() == name {
+			ids = append(ids, p.ID)
+		}
+	}
+	if len(ids) != 1 {
+		return "", fmt.Errorf("%d projects are named %q now: run the openai inventory again, so the finding names its project id", len(ids), name)
+	}
+	return ids[0], nil
 }
 
 func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {

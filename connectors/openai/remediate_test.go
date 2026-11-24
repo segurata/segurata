@@ -29,6 +29,7 @@ func keysServer(t *testing.T) *httpxtest.Server {
 			key("key_stale", "stale", nil, "active"), // its last use is only in the admin listing
 			key("key_busy", "busy", ago(2), "active"),
 		)),
+		"/organization/projects": httpxtest.Static(listOf(map[string]any{"id": "proj_lab", "name": "lab"}, map[string]any{"id": "proj_prod", "name": "prod"})),
 		"/organization/admin_api_keys": httpxtest.Static(listOf(
 			map[string]any{"id": "key_stale", "redacted_value": "sk-proj-****stal", "last_used_at": ago(200)},
 			map[string]any{"id": "adm_old", "name": "old", "redacted_value": "sk-admin-****dead", "last_used_at": nil},
@@ -154,5 +155,21 @@ func TestReadOnlyWriteKeyIsExplained(t *testing.T) {
 	}
 	if err := r.Apply(context.Background(), f, p, quietIO()); err == nil || !strings.Contains(err.Error(), writeSecret+" was refused") {
 		t.Fatalf("want the read-only explanation, got %v", err)
+	}
+}
+
+// A finding recorded before it carried the project id finds its project by name, if only one has it.
+func TestDeletePlanFindsTheProjectOfAnOlderFindingByName(t *testing.T) {
+	srv := keysServer(t)
+	r := (&Connector{BaseURL: srv.URL, Now: func() time.Time { return now }}).WithCredentials(creds(true))
+	f := keyFindingFor("api_key", "key_never")
+	f.Evidence = map[string]any{"project": "lab"}
+	p, err := r.Plan(context.Background(), f)
+	if err != nil || p.Calls[0].URL != srv.URL+"/organization/projects/proj_lab/api_keys/key_never" {
+		t.Fatalf("plan %+v %v", p.Calls, err)
+	}
+	f.Evidence = map[string]any{"project": "missing"}
+	if _, err := r.Plan(context.Background(), f); err == nil {
+		t.Fatal("a project name that matches nothing must not be planned")
 	}
 }
