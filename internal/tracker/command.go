@@ -69,7 +69,7 @@ func (c CLI) open(now time.Time) (*Tracker, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	t, err := LoadOrMigrate(p, now, c.Err)
+	t, err := LoadOrNew(p, now)
 	return t, p.Tracker, err
 }
 

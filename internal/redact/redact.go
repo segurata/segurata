@@ -87,7 +87,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	ledger, err := tracker.LoadOrMigrate(paths, now, c.Err)
+	ledger, err := tracker.LoadOrNew(paths, now)
 	if err != nil {
 		return c.fail(err)
 	}

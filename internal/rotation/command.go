@@ -67,7 +67,7 @@ func (c CLI) Run(args []string) int {
 		return c.fail(err)
 	}
 	now := c.Now()
-	t, err := tracker.LoadOrMigrate(paths, now, c.Err)
+	t, err := tracker.LoadOrNew(paths, now)
 	if err != nil {
 		return c.fail(err)
 	}

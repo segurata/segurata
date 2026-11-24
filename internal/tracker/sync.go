@@ -591,6 +591,10 @@ func (t *Tracker) withFinding(id string) *Item {
 	return nil
 }
 
+// pinnedKey is the key of an item that holds one finding on its own (a finding grouped nowhere
+// else, or accepted apart from its group): sync attaches that finding to it before any grouping.
+func pinnedKey(findingID string) string { return "finding:" + findingID }
+
 // AcceptFinding keeps a finding's risk on purpose. When its item groups other findings too, the
 // finding moves to an item of its own first, so accepting one org's setting does not hide the
 // other orgs'.

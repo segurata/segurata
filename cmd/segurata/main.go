@@ -16,11 +16,7 @@
 //	segurata accept --list | segurata unaccept <finding-id>
 //	segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply]   scheduled runs
 //	segurata doctor [--connector name]      check prerequisites, read-only
-//	segurata keychain-migrate [--apply]     move Keychain items to their segurata-* names (internal/legacy)
 //	segurata version                        version, commit and build date
-//
-// Every command except version first moves a machine set up under the former name to the current layout (see
-// internal/legacy).
 package main
 
 import (
@@ -50,7 +46,6 @@ func main() {
 		fmt.Println(version.Get())
 		return
 	}
-	migrateLegacy()
 	switch os.Args[1] {
 	case "connectors":
 		for _, c := range all() {
@@ -91,8 +86,6 @@ func main() {
 		os.Exit(scheduleCmd(os.Args[2:]))
 	case "doctor":
 		os.Exit(doctorCmd(os.Args[2:]))
-	case "keychain-migrate":
-		os.Exit(keychainMigrateCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -100,7 +93,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: segurata connectors | segurata inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] | segurata track <list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync> | segurata report [--format text|md|html] [--out file] | segurata remediate --list | <finding-id> [--apply] [--yes] | segurata rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | segurata accounts <list|watch|unwatch|owned> | segurata signin [name ...] [--all] [--list] [--timeout 10m] | segurata accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | segurata unaccept <finding-id> | segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | segurata redact [--trails] [--path prefix] [--item id] [--apply] | segurata doctor [--connector name] | segurata keychain-migrate [--apply [--yes]] | segurata version")
+	fmt.Fprintln(os.Stderr, "usage: segurata connectors | segurata inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] | segurata track <list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync> | segurata report [--format text|md|html] [--out file] | segurata remediate --list | <finding-id> [--apply] [--yes] | segurata rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | segurata accounts <list|watch|unwatch|owned> | segurata signin [name ...] [--all] [--list] [--timeout 10m] | segurata accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | segurata unaccept <finding-id> | segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | segurata redact [--trails] [--path prefix] [--item id] [--apply] | segurata doctor [--connector name] | segurata version")
 }
 
 func all() []connector.Connector {

@@ -39,7 +39,7 @@ func (c CLI) load(now time.Time) (*tracker.Tracker, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	t, err := tracker.LoadOrMigrate(p, now, c.Err)
+	t, err := tracker.LoadOrNew(p, now)
 	return t, p.Tracker, err
 }
 

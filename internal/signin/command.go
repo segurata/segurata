@@ -87,7 +87,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 		return c.fail(err)
 	}
 	now := c.Now()
-	tr, err := tracker.LoadOrMigrate(paths, now, c.Err)
+	tr, err := tracker.LoadOrNew(paths, now)
 	if err != nil {
 		return c.fail(err)
 	}

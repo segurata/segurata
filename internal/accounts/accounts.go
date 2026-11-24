@@ -291,7 +291,7 @@ func (c CLI) moveSetup(lbl, account string, on bool) int {
 		return c.fail(err)
 	}
 	now := c.Now()
-	t, err := tracker.LoadOrMigrate(p, now, c.Err)
+	t, err := tracker.LoadOrNew(p, now)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -327,7 +327,7 @@ func (c CLI) owned(out string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	t, err := tracker.LoadOrMigrate(p, c.Now(), c.Err)
+	t, err := tracker.LoadOrNew(p, c.Now())
 	if err != nil {
 		return c.fail(err)
 	}

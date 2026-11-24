@@ -354,41 +354,6 @@ reached the model provider).
   the top-level `runs` (see "Coverage"). An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
-### Migration from the former state files
-
-The first command that opens the tracker when `tracker.json` does not exist but
-`rotations.json` in `~/.segurata` (`SEGURATA_STATE` names another folder) or
-`~/.config/segurata/accepted.json` (`SEGURATA_ACCEPTED`) does imports them:
-
-- every ledger item becomes a rotate item, ids in order of first sighting, with its locations,
-  `used_in`, reasons, priority, `rotated_locations`, snooze and full history (each event's time,
-  action and note kept; `rotated` becomes `done`, `ignored`, `snoozed` and `open` stay);
-- every accepted risk becomes an accepted item of its own linking that finding, with its reason,
-  end date and acceptance time.
-
-Stored values are imported as they are, not recomputed. The tracker is saved, then the old files
-are renamed to `<file>.migrated-<date>` (never deleted, never overwritten). A file that does not
-parse, or has an unknown version or status, stops the import and nothing is written or moved.
-
-### Directories of the former name
-
-`internal/legacy`, run by every command before config or state is read (what moves where: README,
-"Upgrading"). Each old directory is renamed only when the new one does not exist; when both exist
-it warns on stderr and the new one is used. A rename keeps modes and bytes, so the fingerprint key
-and every fingerprint survive. After moving the tracker it rewrites the binary's own words in it
-(who takes the next step, its action and command, decision questions and options, theme
-descriptions), never the owner's notes or a path. After moving the config it renames a Keychain
-reference only when the new item exists, checked from its attributes (`security
-find-generic-password -s <service>`, no `-w`).
-
-`segurata keychain-migrate [--apply [--yes]]` handles the rest, one item at a time: read the old
-value (`-w`, captured in memory), store it under the new name with `security -i` and the add command
-on stdin, read it back and compare, rewrite the reference in the config, and only then delete the
-old item. A failure before the rewrite leaves the config and the old item as they were; a new item
-that already holds a different value is left for the owner to resolve. Values never reach an
-argument list or the output. `internal/keychain` holds the Keychain calls it shares with `rotations
-replace --to-keychain`.
-
 ### `segurata status`
 
 ```
@@ -543,8 +508,7 @@ enough) and records it in the tracker (`internal/accept` on `internal/tracker`):
 links the finding gets status `accepted` with `{"reason", "until", "accepted_at"}`. When that item
 groups other findings too (one of five orgs), the finding first moves to an item of its own, so
 the others stay open. `unaccept` takes the finding id (or a unique prefix) or the item id and
-opens the item again. Acceptances recorded in the former `~/.config/segurata/accepted.json` are
-imported once (see "Tracker").
+opens the item again.
 
 - The core stamps every finding of an inventory with `"accepted": {"reason", "accepted_at",
   "until", "expired"}` when an item holding its id carries an acceptance. The finding stays in the JSONL; the summary
@@ -672,8 +636,7 @@ connector or instance (the config and state are always checked).
 | `local-secrets` | rg, gitleaks (optional; not needed with `skip_git_history`), git and ssh-keygen on `PATH`; `rg --version` and `gitleaks version` (added to the gitleaks guard) |
 
 - State: the fingerprint key exists (a warning before the first `local-secrets` run), is a valid
-  key and has mode 0600; `tracker.json` loads and has mode 0600 when present; a former
-  `rotations.json` or `accepted.json` still in place is a warning (not imported yet); the tracker
+  key and has mode 0600; `tracker.json` loads and has mode 0600 when present; the tracker
   folder and the output directory (`--out`) have mode 0700 (a warning otherwise, since their files
   are 0600).
 
@@ -894,8 +857,7 @@ priority, reopen rules); `internal/rotation` is the command family on top (list,
 replace, done, snooze, ignore, reopen). The risk model it shares with the connector lives in
 `internal/secretrisk`, so a finding's severity and an item's priority never disagree.
 
-State: in the tracker (see "Tracker"); the former `~/.segurata/rotations.json` is
-imported once. A rotate item holds redacted hints and fingerprints, never values. Its status is the
+State: in the tracker (see "Tracker"). A rotate item holds redacted hints and fingerprints, never values. Its status is the
 tracker's (`done` reads "rotated" in these commands):
 
 ```json
