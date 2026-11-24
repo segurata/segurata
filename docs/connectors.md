@@ -283,6 +283,8 @@ Prints one JSON object:
 - `name`: lowercase letters, digits and dashes, starting with a letter or digit, and equal to the
   file name without `segurata-`. The core never runs a `segurata-*` file whose suffix is not such a
   name (a stray `segurata-example.orig`), nor one whose name a built-in connector already has.
+- `describe` runs on every command that lists connectors, once per command: it must answer within
+  10 seconds and print less than 1 MiB.
 - A description whose name is not its file's, that speaks another protocol, or declares
   `remediates` on protocol 1, is ignored with a message on stderr.
 
@@ -300,7 +302,8 @@ above.
 
 - Exit 0 when it finished, even if some accounts reported error statuses. Non-zero only when the
   connector could not start at all.
-- stderr is for human diagnostics; the core shows it with `--verbose`.
+- stderr is for human diagnostics; the core shows it with `--verbose`. More than 1 MiB of it fails
+  the run.
 - The core takes the connector name from `describe`, never from the records, and computes ids.
 - Every stdout line must be a `finding`, `status`, `scope` or `log` record whose fields have the
   documented types, and every finding needs one of the five severities, in lowercase. The core

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/connector/connectortest"
@@ -83,6 +84,31 @@ func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
 	raw, _ := os.ReadFile(ran)
 	if strings.Contains(string(raw), "discoverbuiltin") || strings.Contains(string(raw), "orig") {
 		t.Fatalf("ran a plugin it should have skipped unseen:\n%s", raw)
+	}
+}
+
+// A plugin that hangs or floods its output must not hang or exhaust the core. The sleep runs in a
+// child that keeps the pipes open after the plugin itself is killed.
+func TestPluginSubprocessesAreBounded(t *testing.T) {
+	connector.SetDescribeTimeout(t, 200*time.Millisecond)
+	start := time.Now()
+	if _, err := connector.LoadExternal(connectortest.Script(t, "slow", `sleep 30; `+describing(`{"name":"slow","protocol":2}`))); err == nil {
+		t.Error("a describe that hangs loaded")
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("a hung describe held LoadExternal for %v", took)
+	}
+	big := `{"name":"big","protocol":2,"summary":"` + strings.Repeat("x", 2<<20) + `"}`
+	if _, err := connector.LoadExternal(connectortest.Script(t, "big", describing(big))); err == nil {
+		t.Error("a 2 MiB describe loaded")
+	}
+	noisy := connectortest.Plugin(t, "noisy", `case "$1" in
+describe) echo '{"name":"noisy","protocol":2}';;
+inventory) cat >/dev/null; head -c 3000000 /dev/zero | tr '\0' x >&2;;
+esac
+`)
+	if err := noisy.Inventory(context.Background(), connector.Request{}, &recorder{}); err == nil {
+		t.Error("3 MB of stderr was accepted")
 	}
 }
 

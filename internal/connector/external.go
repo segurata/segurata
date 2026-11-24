@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/searchpath"
@@ -75,15 +76,41 @@ func isExecutable(p string) bool {
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
 }
 
+// Bounds on a plugin's subprocesses, so one that hangs or floods its output cannot hang or exhaust
+// the core. describe runs on every command that lists connectors and prints a few hundred bytes.
+var describeTimeout = 10 * time.Second
+
+const (
+	maxDescribeBytes = 1 << 20
+	maxStderrBytes   = 1 << 20
+	// waitDelay bounds how long the core waits for a killed plugin's pipes, which a child it left
+	// behind may still hold open.
+	waitDelay = 2 * time.Second
+)
+
+// command prepares `<path> <sub>`, killed when ctx is done.
+func command(ctx context.Context, path, sub string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, path, sub)
+	cmd.WaitDelay = waitDelay
+	return cmd
+}
+
 // LoadExternal runs `<path> describe` and checks what it prints, including that the name it
 // declares is the one in its file name.
 func LoadExternal(path string) (*External, error) {
-	raw, err := exec.Command(path, "describe").Output()
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), describeTimeout)
+	defer cancel()
+	cmd := command(ctx, path, "describe")
+	var raw bytes.Buffer
+	cmd.Stdout = &limitedWriter{w: &raw, n: maxDescribeBytes}
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("no answer within %v", describeTimeout)
+		}
 		return nil, fmt.Errorf("describe: %w", err)
 	}
 	e := &External{Path: path}
-	if err := json.Unmarshal(raw, &e.desc); err != nil {
+	if err := json.Unmarshal(raw.Bytes(), &e.desc); err != nil {
 		return nil, fmt.Errorf("describe output is not JSON: %w", err)
 	}
 	if err := e.desc.validate(); err != nil {
@@ -128,7 +155,7 @@ func (e *External) Inventory(ctx context.Context, req Request, emit Emitter) err
 	var stderr bytes.Buffer
 	var malformed int
 	var first error
-	err := e.stream(ctx, "inventory", req, &stderr, func(line []byte) {
+	err := e.stream(ctx, "inventory", req, &limitedWriter{w: &stderr, n: maxStderrBytes}, func(line []byte) {
 		if err := decodeRecord(line, e.desc.Name, emit); err != nil {
 			if malformed++; first == nil {
 				first = err
@@ -177,10 +204,10 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	if err != nil {
 		return PlanReply{}, err
 	}
-	cmd := exec.CommandContext(ctx, e.Path, "plan")
+	cmd := command(ctx, e.Path, "plan")
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &stderr
+	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &limitedWriter{w: &stderr, n: maxStderrBytes}
 	if err := cmd.Run(); err != nil {
 		return PlanReply{}, fmt.Errorf("%s plan: %w: %s", e.desc.Name, err, strings.TrimSpace(stderr.String()))
 	}
@@ -229,7 +256,7 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, e.Path, sub)
+	cmd := command(ctx, e.Path, sub)
 	cmd.Stdin = bytes.NewReader(raw)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
