@@ -328,7 +328,7 @@ owner's after all. Ignoring it by hand afterwards sticks.
 
 ### Lifecycle: `segurata track sync`
 
-`track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
+`track sync` runs at the end of `inventory`, as `rotations sync`, or by hand. It reads the latest
 finished run of every connector instance (`remediate.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
@@ -913,7 +913,9 @@ check (with `skip_git_history: true`, no rg, gitleaks or ssh-keygen pass runs).
 `segurata rotations` turns `local-secrets` findings into a list of secrets to rotate, one item per
 fingerprint. The items are the tracker's rotate items (`internal/tracker/secret.go`: folding,
 priority, reopen rules); `internal/rotation` is the command family on top (list, next, show,
-replace, done, snooze, ignore, reopen). The risk model it shares with the connector lives in
+replace). `rotations sync`, `done`, `snooze`, `ignore` and `reopen` are `track`'s own verbs, run
+on rotate items only (`tracker.CLI.Rotations`): the same code and output, except that ids and
+`--path` name secrets only and `sync` refuses to save without a local-secrets run. The risk model it shares with the connector lives in
 `internal/secretrisk`, so a finding's severity and an item's priority never disagree.
 
 State: in the tracker (see "Tracker"). A rotate item holds redacted hints and fingerprints, never values. Its status is the
@@ -974,9 +976,11 @@ Priority is impact × exposure, both table-driven:
   private keys) have none.
 - `secret.id` is the first 8 characters of the fingerprint, longer on collision. Commands accept
   any unique prefix of it or of the fingerprint, or the tracker's `T-` id.
-- `done`, `snooze`, `ignore` and `reopen` also take `--path <prefix>` instead of an id: every item
-  whose current locations all lie under that path. A test log or a data file full of fixtures goes away in
-  one command, while a secret that also appears elsewhere stays.
+- `done`, `snooze`, `ignore` and `reopen` (of `track` and `rotations`) also take `--path <prefix>`
+  instead of an id: every item whose current locations (a secret's) or reported findings' paths
+  (any other item's) all lie under that path. A test log or a data file full of fixtures goes away
+  in one command, while a secret that also appears elsewhere stays. A secret answers with its own
+  line (`3f9a12c4 stripe/stripe-live sk_live_…: rotated`).
 
 ### What counts against the owner
 

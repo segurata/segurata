@@ -95,7 +95,7 @@ type replacement struct {
 // that resolve to one file (a symlink and its target) make one edit.
 func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, error) {
 	if it.Closed() {
-		return nil, fmt.Errorf("%s is %s; `segurata rotations reopen %s` first if it still needs replacing", it.Secret.ID, stateOf(it), it.Secret.ID)
+		return nil, fmt.Errorf("%s is %s; `segurata rotations reopen %s` first if it still needs replacing", it.Secret.ID, it.RotationStatus(), it.Secret.ID)
 	}
 	hint, ok := secretrisk.ParseHint(it.Secret.Redacted)
 	if !ok {

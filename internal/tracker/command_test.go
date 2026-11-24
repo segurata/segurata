@@ -69,7 +69,8 @@ func (x *cliFixture) item(t *testing.T, prefix string) *Item {
 func TestTrackCommands(t *testing.T) {
 	x := newCLIFixture(t)
 	o, e, code := x.run(t, "sync", "--out", x.out)
-	if code != 0 || !strings.Contains(o, "Secrets: 1 (1 new") || !strings.Contains(o, "3 runs folded; 4 new items") {
+	if code != 0 || !strings.Contains(o, "Synced: 1 secrets (1 new") || !strings.Contains(o, "Open: P0 1, P1 0, P2 0, P3 0. Tracker: "+x.path) ||
+		!strings.Contains(o, "3 runs folded; 4 new items") {
 		t.Fatalf("sync: %d %q %q", code, o, e)
 	}
 	o, _, _ = x.run(t, "list")
@@ -159,11 +160,51 @@ func TestTrackCommands(t *testing.T) {
 	if _, _, code := x.run(t, "bogus"); code != 2 {
 		t.Error("unknown subcommand")
 	}
-	// A secret's short id works too.
+	// A secret's short id works too, and a secret answers with its own line, as rotations does.
 	if o, _, code := x.run(t, "show", "ffffeeee"); code != 0 || !strings.Contains(o, "segurata rotations show ffffeeee") {
 		t.Errorf("show by short id: %d\n%s", code, o)
 	}
+	if o, _, code := x.run(t, "done", "ffffeeee", "--note", "rolled"); code != 0 || !strings.HasPrefix(o, "ffffeeee stripe/stripe-live sk_live_") || !strings.HasSuffix(o, ": rotated\n") {
+		t.Errorf("done on a secret: %d %q", code, o)
+	}
+	// --path picks every item whose locations all lie under it, instead of an id.
+	if o, e, code := x.run(t, "reopen", "--path", "~/.claude"); code != 0 || !strings.HasSuffix(o, ": open\n") {
+		t.Errorf("reopen --path: %d %q %q", code, o, e)
+	}
+	if _, e, code := x.run(t, "done", "ffffeeee", "--path", "~/.claude"); code != 2 || !strings.Contains(e, "usage: segurata track done <id> | --path <prefix>") {
+		t.Errorf("id and --path together: %d %q", code, e)
+	}
+	if _, e, code := x.run(t, "snooze", "--path", "~/nowhere", "--until", "2027-01-01"); code != 1 || !strings.Contains(e, "track: no open item lies entirely under ~/nowhere") {
+		t.Errorf("empty selection: %d %q", code, e)
+	}
 	x.noSecret(t)
+}
+
+// rotations runs track's own sync, done, snooze, ignore and reopen: ids and --path name secrets
+// only, sync needs a local-secrets run, and the messages name rotations.
+func TestRotationsRunsTracksVerbsOnSecretsOnly(t *testing.T) {
+	x := newCLIFixture(t)
+	run := func(args ...string) (string, string, int) {
+		var o, e bytes.Buffer
+		code := CLI{Out: &o, Err: &e, Paths: Paths{Tracker: x.path}, Now: func() time.Time { return x.now }}.Rotations(args, "usage: segurata rotations <command>")
+		return o.String(), e.String(), code
+	}
+	if o, e, code := run("sync", "--out", x.out); code != 0 || !strings.Contains(o, "Synced: 1 secrets (1 new") {
+		t.Fatalf("sync: %d %q %q", code, o, e)
+	}
+	backup := x.item(t, "No Time Machine")
+	if _, e, code := run("done", backup.ID); code != 1 || !strings.Contains(e, "rotations: no item") || !strings.Contains(e, "segurata rotations list --all") {
+		t.Errorf("done on a fix item: %d %q", code, e)
+	}
+	if _, e, code := run("start", backup.ID); code != 2 || !strings.Contains(e, "usage: segurata rotations") {
+		t.Errorf("a verb rotations does not have: %d %q", code, e)
+	}
+	if _, e, code := run("sync", "stray"); code != 2 || !strings.Contains(e, "usage: segurata rotations") {
+		t.Errorf("stray argument: %d %q", code, e)
+	}
+	if o, _, code := run("ignore", "ffffeeee", "--reason", "a test key"); code != 0 || !strings.HasSuffix(o, ": ignored\n") {
+		t.Errorf("ignore: %d %q", code, o)
+	}
 }
 
 func (x *cliFixture) noSecret(t *testing.T) {

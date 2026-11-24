@@ -587,13 +587,13 @@ func TestSyncAndSaveFoldsAgainIntoATrackerChangedMeanwhile(t *testing.T) {
 		}
 		return nil
 	}
-	if _, _, err := SyncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour), require); err != noSecrets {
+	if _, _, err := syncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour), require); err != noSecrets {
 		t.Fatalf("requirement: %v", err)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
 		t.Fatal("saved although the requirement failed")
 	}
-	saved, rep, err := SyncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour), nil)
+	saved, rep, err := syncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour), nil)
 	if err != nil || rep.Created != 1 || saved == stale {
 		t.Fatalf("sync: %+v %v", rep, err)
 	}

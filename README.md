@@ -64,6 +64,7 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 ./segurata track note T-0042 "ordered a backup disk"
 ./segurata track snooze T-0042 --until 2027-01-15
 ./segurata track ignore T-0042 --reason "test fixture"
+./segurata track ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
 ./segurata track expect T-3153 --reason "ephemeral key on purpose" [--dry-run]   # a setup item kept on purpose: config rule
 
 ./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
@@ -72,7 +73,7 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 ./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
 ./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
 ./segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no
-./segurata track sync [--out out]         # also run by inventory and rotations sync
+./segurata track sync [--out out]         # also run by inventory; rotations sync is the same, needing a local-secrets run
 ```
 
 `~/.segurata/tracker.json` (mode 0600 in a 0700 folder; `SEGURATA_HOME` names another folder)
@@ -484,6 +485,8 @@ every secret as new.
 ./segurata rotations reopen <id>
 ./segurata rotations ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
 ```
+
+`rotations sync`, `done`, `snooze`, `ignore` and `reopen` are `track`'s verbs on secrets only.
 
 One item per secret fingerprint, with its priority (P0 to P3), the reasons in plain words, every
 location, `used_in` (the config, `.env` and rc files that hold it, where the new value must go)
