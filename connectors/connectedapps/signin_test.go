@@ -62,7 +62,22 @@ func TestSignInPages(t *testing.T) {
 			{page("https://account.live.com/consent/Manage", "short", nil), false},
 			{page("https://account.live.com/consent/Manage", long, nil), true},
 		}},
-		{"dropbox", finding.Status{Account: "dropbox", State: finding.StateSignedOut}, "https://www.dropbox.com/account/connected_apps", false, nil},
+		{"microsoft-work", finding.Status{Account: "microsoft-work", State: finding.StateSignedOut}, msWorkAppsURL, false, []check{
+			{map[string]any{"url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize", "text": "Pick an account", "fetched": true}, false},
+			{map[string]any{"url": msWorkAppsURL, "text": "Apps", "fetched": false}, false},
+			{map[string]any{"url": msWorkAppsURL, "text": "Apps", "fetched": true}, true},
+		}},
+		{"microsoft-work security info", finding.Status{Account: "microsoft-work", Scope: msWorkSecurityScope, State: finding.StateReauth}, msWorkSecurityURL, false, []check{
+			{map[string]any{"url": msStepUpURL, "text": "Enter code"}, false},
+			{map[string]any{"url": msWorkSecurityURL, "text": ""}, false},
+			{map[string]any{"url": msWorkSecurityURL, "text": "Security info"}, true},
+		}},
+		{"microsoft-work reauth", finding.Status{Account: "microsoft-work", State: finding.StateReauth}, msWorkAppsURL, false, nil},
+		{"dropbox", finding.Status{Account: "dropbox", State: finding.StateSignedOut}, dropboxURL, false, []check{
+			{map[string]any{"url": "https://www.dropbox.com/login?cont=x", "fetched": true}, false},
+			{map[string]any{"url": dropboxURL, "fetched": false}, false},
+			{map[string]any{"url": dropboxURL, "fetched": true}, true},
+		}},
 	} {
 		p, ok := (&Connector{}).SignInPage(c.st)
 		if !ok || p.URL != c.url || p.Brief != c.brief || p.Do == "" || p.Expr == "" || p.Done == nil {

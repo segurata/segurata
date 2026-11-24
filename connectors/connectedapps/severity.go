@@ -61,6 +61,17 @@ var scopeRules = map[string][]rule{
 		{rx(`comments`), finding.SevLow, "read comments on the pages shared with it"},
 		{rx(`user information`), finding.SevLow, "see the workspace's members"},
 	},
+	// Dropbox scopes as scoped apps list them; private: ones are Dropbox's own and match too.
+	"dropbox": {
+		{rx(`files\.permanent_delete`), finding.SevHigh, "permanently delete your files"},
+		{rx(`files\.content\.write`), finding.SevHigh, "read and change the files in your Dropbox"},
+		{rx(`sharing\.write`), finding.SevHigh, "share your files and change who can open them"},
+		{rx(`\.write$`), finding.SevHigh, "change your Dropbox account and settings"},
+		{rx(`files\.content\.read`), finding.SevMedium, "read the files in your Dropbox"},
+		{rx(`files\.metadata\.read|sharing\.read|file_requests\.read|contacts\.read|comments\.read|activity\.read`), finding.SevMedium, "see your file names, sharing and contacts"},
+		{rx(`account_info\.read`), finding.SevLow, "see your account information"},
+		{rx(`^(openid|profile|email)$`), finding.SevInfo, "sign you in with Dropbox"},
+	},
 	"facebook": {
 		{rx(`publish|post (on|for) you|on your behalf|publicar|en tu nombre|manage .*pages|administrar .*páginas|\bads\b|anuncios`), finding.SevHigh, "post or manage pages and ads as you"},
 		{rx(`messages|mensajes`), finding.SevHigh, "read your messages"},
@@ -106,6 +117,10 @@ func base(service string, g grant) (finding.Severity, string) {
 		return finding.SevInfo, "sign commits as you"
 	case "slack_app":
 		return slackSeverity(g)
+	case "microsoft_work_app":
+		return finding.SevLow, "sign you in with your work account"
+	case "dropbox_app":
+		return dropboxSeverity(service, g)
 	}
 	if len(g.scopes) == 0 {
 		switch service {
@@ -118,8 +133,13 @@ func base(service string, g grant) (finding.Severity, string) {
 		}
 		return finding.SevMedium, "access your " + service + " account"
 	}
-	worst, wi := classify(service, g.scopes[0])
-	for _, s := range g.scopes[1:] {
+	return worstScope(service, g.scopes)
+}
+
+// worstScope is the severity and label of the worst of a non-empty list of scopes.
+func worstScope(service string, scopes []string) (finding.Severity, string) {
+	worst, wi := classify(service, scopes[0])
+	for _, s := range scopes[1:] {
 		r, i := classify(service, s)
 		if r.sev.Rank() > worst.sev.Rank() || r.sev == worst.sev && i < wi {
 			worst, wi = r, i

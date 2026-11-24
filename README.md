@@ -142,7 +142,8 @@ scope at each run, so its earlier findings are never taken as resolved. `gcp` an
 ```
 
 `signin` takes the open setup items where a browser connector reports `reauth` or `signedout`
-(Google asks you to verify it's you, GitHub wants sudo mode, Microsoft is signed out) and opens a
+(Google asks you to verify it's you, GitHub wants sudo mode, Microsoft Security info wants a fresh
+MFA sign-in, Dropbox is signed out) and opens a
 normal tab at each page where you act, in the browser at `cdp_url`. It prints a numbered list with
 what to do on each page, then reads the pages every few seconds, read-only, with the test the
 connector itself uses, until each shows what the connector reads (the list instead of the sign-in
@@ -204,9 +205,10 @@ deleting repositories, administering organizations and billing are `high`; broad
 `medium`; profile or email only is `low` or `info`. When the page gives a last-used date older than
 a year, the severity goes up one level.
 
-- X apps approved more than 10 years ago are one finding, "Revoke N X apps authorized before
-  <month year> (services mostly defunct)", as severe as the worst of them and listing each with
-  its date; newer apps are listed oldest first, each with `age_years`.
+- X and Dropbox apps approved more than 10 years ago are one finding per service ("Revoke N X apps
+  authorized before <month year> (services mostly defunct)", "Disconnect N Dropbox apps linked
+  before <month year>"), as severe as the worst of them and listing each with its date; newer apps
+  are listed oldest first, each with `age_years`.
 - A Notion integration whose owner is you ("(You)") is `low` and says "(your own integration)":
   its token is yours, and a leaked copy is a local-secrets finding.
 - Grants segurata runs on are labelled "(segurata depends on it)" and never told to revoke: for the
@@ -224,7 +226,9 @@ a year, the severity goes up one level.
 | Notion | Developer connections of the active workspace, with capabilities, owner and date. Settings › Connections is a dialog with no URL: review it by hand |
 | Facebook | Active apps under Settings › Apps and websites, with the information each one receives. Only the first page: the "See more" button is not clicked, and the status says so |
 | Instagram, LinkedIn | Whether any app or service is connected. Only the empty list has been seen; a non-empty one is reported as `unverified`, to review by hand |
-| Microsoft, Dropbox | Whether there is a session. The reader has never seen the signed-in page: `unverified` |
+| Dropbox | Apps under Settings › Apps › "View Dropbox content", with access type, permissions, publisher and link date. Full Dropbox access is `high` (`medium` if read-only), an app folder `low`, a scoped app by its scopes, an unknown access type `medium`. "Launch from Dropbox" is not read. A list in a shape segurata does not know is `unverified` |
+| Microsoft | Whether a personal Microsoft account has a session. The reader has never seen the signed-in page: `unverified`. Its sign-in form cannot tell "no personal account" from "signed out", so with only a work account leave `microsoft` out of `services` |
+| Microsoft work (`microsoft-work`) | Enterprise apps in My Apps (`myapplications.microsoft.com`), each `low`: My Apps shows no permissions, and no user page lists delegated consents (a tenant admin reads them in the Entra admin center). Microsoft 365's own tiles are counted, not listed. Then Security info (`mysignins.microsoft.com/security-info`): a tenant that wants a fresh MFA sign-in there gives `reauth` for the scope `microsoft-work:security-info` only, naming the method the prompt asks for; past the prompt the page has not been seen: `unverified` |
 
 Statuses: `ok`; `signedout`; `reauth` (the service wants identity confirmed: open the page,
 confirm, run again; `segurata signin` does both); `noscope` (`gh` lacks a scope; the detail carries the exact
@@ -244,6 +248,14 @@ confirm, run again; `segurata signin` does both); `noscope` (`gh` lacks a scope;
   app list from that page's own API response; the grant tokens in it are dropped on decode, never
   stored. Opening each app's page would exhaust the limit. If X answers "Rate limit exceeded", wait
   15 minutes.
+- Dropbox works the same way: the connected-apps page fetches its app list
+  (`account/get_linked_apps`) and the connector reads that response, because each app's details sit
+  in a collapsed panel that only a click opens.
+- `microsoft-work` reads My Apps' own tiles response the same way. Loading Security info lets the
+  tenant start its MFA prompt in a hidden page. When the prompt asks for a code from the
+  Authenticator app, nothing reaches you and the page closes unanswered. When your default method
+  is SMS or a push notification, Microsoft may send one on every run: do not approve a push you did
+  not start, and leave `microsoft-work` out of `services` if that happens.
 
 ## GitHub security settings (`github`)
 
