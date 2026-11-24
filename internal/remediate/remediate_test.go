@@ -277,7 +277,7 @@ func TestLatestFilesTakeEachConnectorsNewestRun(t *testing.T) {
 	// After midnight only another connector ran: macos must still come from 2026-11-23.
 	write("2026-11-24", "local-secrets.jsonl", finding.Finding{Type: "finding", ID: "cccc4444"})
 
-	files, err := LatestFiles(out)
+	files, err := LatestFiles(out, time.Now())
 	if err != nil || len(files) != 2 {
 		t.Fatalf("files=%v err=%v", files, err)
 	}
@@ -301,7 +301,7 @@ func TestLatestFilesTakeEachConnectorsNewestRun(t *testing.T) {
 	if len(auto) != 2 || auto[0].ID != "bbbb3333" {
 		t.Fatalf("automatable worst first: %+v", auto)
 	}
-	if _, err := LatestFiles(t.TempDir()); err == nil {
+	if _, err := LatestFiles(t.TempDir(), time.Now()); err == nil {
 		t.Fatal("empty out dir should explain how to run an inventory")
 	}
 }

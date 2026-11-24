@@ -111,7 +111,7 @@ func (e Env) prune(outDir string) {
 	if e.Keep <= 0 {
 		return
 	}
-	removed, err := remediate.Prune(outDir, e.Now().Add(-e.Keep))
+	removed, err := remediate.Prune(outDir, e.Now(), e.Now().Add(-e.Keep))
 	if len(removed) > 0 {
 		e.stamp(fmt.Sprintf("pruned %d run files older than %s", len(removed), e.Keep))
 	}
@@ -123,7 +123,7 @@ func (e Env) prune(outDir string) {
 // serious returns the high and critical findings of the latest run of each connector, leaving out
 // accepted ones. No run yet means none.
 func (e Env) serious(outDir string) (map[string]finding.Finding, error) {
-	files, err := remediate.LatestFiles(outDir)
+	files, err := remediate.LatestFiles(outDir, e.Now())
 	if err != nil {
 		return map[string]finding.Finding{}, nil // nothing inventoried yet
 	}

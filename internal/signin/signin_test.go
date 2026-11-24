@@ -301,7 +301,9 @@ func (x *fixture) sync(t testing.TB) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tr.Sync(tracker.SyncOptions{OutDir: x.out}, t0); err != nil {
+	// The reruns land in the next day's folder, so the sync runs as of that day: a sync never reads
+	// days after its own.
+	if _, err := tr.Sync(tracker.SyncOptions{OutDir: x.out}, t0.AddDate(0, 0, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.Save(x.trk); err != nil {

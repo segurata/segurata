@@ -95,7 +95,7 @@ const maxP0 = 5
 // Build reads the latest run of every connector instance and its previous run, and annotates
 // every finding with the tracker's acceptances as of today.
 func Build(in Inputs) (*Report, error) {
-	latest, err := remediate.LatestRuns(in.OutDir)
+	latest, err := remediate.LatestRuns(in.OutDir, in.Now)
 	if err != nil {
 		return nil, err
 	}

@@ -88,7 +88,7 @@ type Seen struct {
 // name and those its run_end declares skipped because the config's accounts list leaves them out,
 // each with what the latest run naming it said.
 func SeenAccounts(out, lbl string) ([]Seen, error) {
-	history, err := remediate.History(out)
+	history, err := remediate.History(out, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +381,7 @@ func (c CLI) owned(out string) int {
 // latestOwned is what attribution.Discover reads in the latest run of every connector instance
 // that reports accounts (local-secrets reports none, and its runs are large).
 func latestOwned(out string) (attribution.Owned, error) {
-	files, err := remediate.LatestFiles(out)
+	files, err := remediate.LatestFiles(out, time.Now())
 	if err != nil {
 		return attribution.Owned{}, err
 	}

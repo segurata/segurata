@@ -31,9 +31,10 @@ type Latest struct {
 // (ends with a run_end record), so a run that was killed or is still running never stands in for
 // the last good one. An instance with no finished run at all (only files from before run_end
 // records) gets its newest file. Runs are per connector, so the newest day alone is not enough:
-// after midnight it may hold only the connectors run since.
-func LatestRuns(outDir string) ([]Latest, error) {
-	history, err := History(outDir)
+// after midnight it may hold only the connectors run since. Days after now's are left out (see
+// History).
+func LatestRuns(outDir string, now time.Time) ([]Latest, error) {
+	history, err := History(outDir, now)
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +51,9 @@ func LatestRuns(outDir string) ([]Latest, error) {
 }
 
 // History lists every run file under out/<YYYY-MM-DD>/, by file name (one connector instance),
-// oldest first, leaving out days after today.
-func History(outDir string) (map[string][]string, error) {
+// oldest first, leaving out days after now's: one written while the clock was wrong would stand
+// in for every real run after it.
+func History(outDir string, now time.Time) (map[string][]string, error) {
 	entries, err := os.ReadDir(outDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
@@ -59,8 +61,7 @@ func History(outDir string) (map[string][]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A directory after today (a clock set wrong once) would stand in for every real run.
-	today := time.Now().Format(time.DateOnly)
+	today := now.Format(time.DateOnly)
 	var dates []string
 	for _, e := range entries {
 		if _, err := time.Parse(time.DateOnly, e.Name()); e.IsDir() && err == nil && e.Name() <= today {
@@ -84,12 +85,12 @@ func History(outDir string) (map[string][]string, error) {
 	return history, nil
 }
 
-// Prune removes the run files of days before cutoff that no LatestRuns entry needs (its File, Prev
-// or Unfinished), and partial files a killed run left in those days, then the days left empty. It
-// touches nothing else under outDir, and nothing at all when the runs cannot be read. It returns
-// what it removed.
-func Prune(outDir string, cutoff time.Time) ([]string, error) {
-	runs, err := LatestRuns(outDir)
+// Prune removes the run files of days before cutoff that no LatestRuns entry as of now needs (its
+// File, Prev or Unfinished), and partial files a killed run left in those days, then the days left
+// empty. It touches nothing else under outDir, and nothing at all when the runs cannot be read. It
+// returns what it removed.
+func Prune(outDir string, now, cutoff time.Time) ([]string, error) {
+	runs, err := LatestRuns(outDir, now)
 	if err != nil {
 		return nil, err
 	}
@@ -159,8 +160,8 @@ func pick(paths []string) (Latest, error) {
 }
 
 // LatestFiles is the File of every LatestRuns entry.
-func LatestFiles(outDir string) ([]string, error) {
-	runs, err := LatestRuns(outDir)
+func LatestFiles(outDir string, now time.Time) ([]string, error) {
+	runs, err := LatestRuns(outDir, now)
 	if err != nil {
 		return nil, err
 	}

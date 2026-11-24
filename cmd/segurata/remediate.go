@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
@@ -35,7 +36,7 @@ func remediateCmd(args []string) int {
 		return 2
 	}
 
-	files, err := remediate.LatestFiles(*out)
+	files, err := remediate.LatestFiles(*out, time.Now())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

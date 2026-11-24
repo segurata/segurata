@@ -109,7 +109,7 @@ func TestLatestRunsPreferFinishedRuns(t *testing.T) {
 	runtest.WriteUnfinished(t, path("2026-11-21", "macos.jsonl"), f("m1")) // legacy only
 	runtest.WriteUnfinished(t, path("2026-11-22", "macos.jsonl"), f("m2"))
 
-	runs, err := LatestRuns(out)
+	runs, err := LatestRuns(out, time.Now())
 	if err != nil || len(runs) != 2 {
 		t.Fatalf("runs %+v err %v", runs, err)
 	}
@@ -141,13 +141,14 @@ func TestLatestRunsPreferFinishedRuns(t *testing.T) {
 	}
 }
 
-// A date directory after today (a clock set wrong once) never stands in for the latest run.
+// A date directory after the day of now (a clock set wrong once) never stands in for the latest run.
 func TestHistorySkipsDaysAfterToday(t *testing.T) {
 	out := t.TempDir()
-	today := filepath.Join(out, time.Now().Format(time.DateOnly), "github.jsonl")
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.Local)
+	today := filepath.Join(out, "2026-11-24", "github.jsonl")
 	runtest.Write(t, today, finding.Finding{Type: "finding", Connector: "github", ID: "a"})
-	runtest.Write(t, filepath.Join(out, "2099-01-01", "github.jsonl"), finding.Finding{Type: "finding", Connector: "github", ID: "b"})
-	h, err := History(out)
+	runtest.Write(t, filepath.Join(out, "2026-11-25", "github.jsonl"), finding.Finding{Type: "finding", Connector: "github", ID: "b"})
+	h, err := History(out, now)
 	if err != nil || len(h["github.jsonl"]) != 1 || h["github.jsonl"][0] != today {
 		t.Fatalf("history %v, %v", h, err)
 	}
@@ -172,7 +173,7 @@ func TestPruneKeepsWhatLatestRunsNeed(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	removed, err := Prune(out, time.Date(2026, 11, 1, 0, 0, 0, 0, time.Local))
+	removed, err := Prune(out, time.Date(2026, 11, 24, 0, 0, 0, 0, time.Local), time.Date(2026, 11, 1, 0, 0, 0, 0, time.Local))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -107,7 +107,7 @@ func (r *run) notChecked(why string) string {
 // per run instead of closing. See docs/architecture.md, "Run completeness".
 func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	var rep SyncReport
-	runs, unreadable, err := readRuns(opt)
+	runs, unreadable, err := readRuns(opt, now)
 	if err != nil {
 		return rep, err
 	}
@@ -347,11 +347,11 @@ func RunLabel(file string, rf remediate.RunFile) string {
 	return base[:len(base)-len(filepath.Ext(base))]
 }
 
-// readRuns reads the latest run of every connector instance, and opt.From. A latest run that
+// readRuns reads the latest run of every connector instance as of now, and opt.From. A latest run that
 // cannot be read is left out and returned with its error in unreadable: one torn file must not
 // stop the sync of every other connector, and an instance with no run folded closes nothing.
-func readRuns(opt SyncOptions) (runs []*run, unreadable []string, err error) {
-	files, err := remediate.LatestFiles(opt.OutDir)
+func readRuns(opt SyncOptions, now time.Time) (runs []*run, unreadable []string, err error) {
+	files, err := remediate.LatestFiles(opt.OutDir, now)
 	if err != nil {
 		if opt.From == "" {
 			return nil, nil, err
