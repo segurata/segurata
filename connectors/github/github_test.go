@@ -239,7 +239,7 @@ func TestInventoryAccountAndOrganizations(t *testing.T) {
 		t.Errorf("members without 2FA: %q %v", members.Title, members.Evidence)
 	}
 
-	if s := statusOf(t, rec, "github:other-org"); s.State != finding.StateOK || !strings.Contains(s.Detail, "not owner") {
+	if s := statusOf(t, rec, "github:other-org"); s.State != finding.StateOK || !strings.HasPrefix(s.Detail, "member, not owner:") {
 		t.Errorf("member organization: %+v", s)
 	}
 	if s := statusOf(t, rec, "github:tidy-free"); s.State != finding.StateOK || !strings.Contains(s.Detail, "not available on the Free plan") {

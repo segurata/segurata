@@ -51,7 +51,7 @@ func (r *run) orgs(ctx context.Context, ms []membership) {
 	for _, m := range ms {
 		org := m.Organization.Login
 		if m.Role != "admin" {
-			r.status(account(org), finding.StateOK, "%s member, not owner: organization settings are visible only to owners", m.Role)
+			r.status(account(org), finding.StateOK, "%s, not owner: organization settings are visible only to owners", strings.ReplaceAll(m.Role, "_", " "))
 			continue
 		}
 		r.org(ctx, org)
