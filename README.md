@@ -296,7 +296,8 @@ atomically, checks the result, marks the item rotated and clears the clipboard. 
 
 Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
 update settings and pending updates (`softwareupdate -l`, capped at 120 s), screen lock, automatic
-login and guest account, whether other accounts can read your home folder, TCP ports listening
+login and guest account, whether other accounts can read your home folder, local accounts and
+what deleted ones left behind, Time Machine backups, endpoint security agents, TCP ports listening
 outside loopback (instead of `systemsetup -getremotelogin`, which needs admin), each SMB share
 point behind port 445 (from `sharing -l -f json`), login and background items (`sfltool dumpbtm`,
 flagging those without a developer signature), and whether Brave runs with
@@ -311,6 +312,36 @@ flagging those without a developer signature), and whether Brave runs with
   with its name, path, whether the path exists, guest access and read-only. A share open to guests
   is `high`; so is an orphaned record whose folder no longer exists (Migration Assistant leaves
   these behind for users that were never recreated); any other shared folder is `medium`.
+- Local accounts (`dscl . list /Users UniqueID` and `NFSHomeDirectory`, `dseditgroup -o
+  checkmember -m <user> admin`, `last -1 <user>`): every human account (UID 500 and up, not a
+  `_service` account) other than yours is a `local_account` finding naming it and its last login:
+  `high` when it is an administrator, `low` when it has no home folder or no login since wtmp
+  begins, `medium` otherwise. The fix is to delete temporary accounts and give the next repair
+  technician a standard account deleted afterwards, or the Guest User. The per-account commands are
+  allowed only for the accounts the same run's `dscl` listing returned. The guest account is the
+  existing `guest-account` check.
+- Leftovers of deleted accounts: an orphaned File Sharing record under `/Users/<name>` whose home
+  folder is gone is the share point finding above, which names the deleted account. Items owned by a
+  UID no local account has, in `/Users/Shared` and `/Library/Application Support` (two levels) and
+  in `/Library/LaunchAgents` and `/Library/LaunchDaemons`, are one `orphaned_files` finding per
+  folder listing up to 20 paths: `low`, or `high` in the launchd folders because those start a
+  program automatically. Outside the launchd folders only UIDs from 500 up count: an uninstalled
+  security agent leaves folders owned by its removed service account below 500 (ESET's 404).
+- Time Machine (`tmutil destinationinfo -X`, `tmutil latestbackup`, and
+  `/Library/Preferences/com.apple.TimeMachine.plist` through `plutil -convert xml1`, whose
+  `LastKnownEncryptionState` and `DiskImageKeychainUUID` say whether a destination is encrypted;
+  tmutil does not): no destination is `high`, an unencrypted destination is `high`, a set-up
+  destination that never completed a backup is `high`, a latest backup older than 7 days is
+  `medium`. When `latestbackup` cannot mount the destination, the preferences' snapshot dates date
+  the latest backup. If tmutil is refused (no Full Disk Access) the check is an `unsupported`
+  status; `securizame doctor --connector macos` says so with the fix.
+- FileVault's recovery key is not checked: `fdesetup haspersonalrecoverykey` and
+  `hasinstitutionalrecoverykey` need root (checked on macOS 15.6.1).
+- Endpoint agents (ESET, Sophos, CrowdStrike, SentinelOne, Microsoft Defender, Malwarebytes,
+  Bitdefender, Kaspersky, Avast/AVG, Norton/Symantec, Trend Micro, Intego, Jamf), from launchd
+  plists, `/Applications`, their folders, running processes and service accounts: an installed or
+  running agent is an `info` `endpoint_agent` finding; one with no app and nothing running is a
+  `low` leftover of an uninstall.
 - Every command it runs is on an exact allowlist in `connectors/macos`. Takes about half a minute
   because of `softwareupdate` and `sfltool`.
 

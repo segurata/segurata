@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -42,10 +43,11 @@ func (c *Connector) sharePoints(ctx context.Context) (map[string]sharePoint, err
 	return parseSharePoints(out)
 }
 
-// parseSharePoints decodes `sharing -l -f json`. Empty output means no share points.
+// parseSharePoints decodes `sharing -l -f json`. Empty output, or the text "No share point
+// records." that macOS 15 prints even with -f json, means no share points.
 func parseSharePoints(raw []byte) (map[string]sharePoint, error) {
 	shares := map[string]sharePoint{}
-	if len(bytes.TrimSpace(raw)) == 0 {
+	if t := bytes.TrimSpace(raw); len(t) == 0 || bytes.Equal(t, []byte("No share point records.")) {
 		return shares, nil
 	}
 	if err := json.Unmarshal(raw, &shares); err != nil {
@@ -90,6 +92,10 @@ func shareCheck(sp sharePoint) check {
 	case !exists:
 		ch.sev, ch.rem = finding.SevHigh, remove
 		ch.detail = fmt.Sprintf("share point %q points at %s, which does not exist (a record left behind, for example by Migration Assistant)", sp.Name, sp.Path)
+		if u := deletedAccount(sp.Path); u != "" {
+			ch.detail = fmt.Sprintf("share point %q points at %s, which does not exist: the account %q was deleted and its File Sharing record stayed", sp.Name, sp.Path, u)
+			ch.evidence["deleted_account"] = u
+		}
 		ch.title = fmt.Sprintf("Orphaned File Sharing record %q: it shares %s, which no longer exists", sp.Name, sp.Path)
 		if guest {
 			ch.title += ", with guest access"
@@ -107,6 +113,20 @@ func shareCheck(sp sharePoint) check {
 		ch.title = fmt.Sprintf("Folder %s is shared over SMB as %q", sp.Path, sp.Name)
 	}
 	return ch
+}
+
+// deletedAccount names the account a path under /Users/<name>/ belonged to when that home folder
+// is gone, or "" otherwise.
+func deletedAccount(p string) string {
+	rest, ok := strings.CutPrefix(p, "/Users/")
+	if !ok {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, "/")
+	if name == "" || name == "Shared" || pathExists("/Users/"+name) {
+		return ""
+	}
+	return name
 }
 
 // flag01 spells a sharing on/off flag: -g and -s take 000 or 001.

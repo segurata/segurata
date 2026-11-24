@@ -53,8 +53,10 @@ func TestParseSharePointsReadsTheJSONListing(t *testing.T) {
 	if sp.Name != quotedName || sp.Path != "/Users/repairtech/Public" || sp.Guest != 1 || sp.Shared != 1 || sp.SMBName != quotedName {
 		t.Fatalf("parsed %+v", shares)
 	}
-	if shares, err := parseSharePoints([]byte("\n")); err != nil || len(shares) != 0 {
-		t.Fatalf("empty listing: %v %v", shares, err)
+	for _, empty := range []string{"\n", "\nNo share point records.\n"} {
+		if shares, err := parseSharePoints([]byte(empty)); err != nil || len(shares) != 0 {
+			t.Fatalf("empty listing %q: %v %v", empty, shares, err)
+		}
 	}
 	if _, err := parseSharePoints([]byte("List of Share Points")); err == nil {
 		t.Fatal("text output accepted as JSON")
