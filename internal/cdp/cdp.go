@@ -1,6 +1,8 @@
 // Package cdp is a minimal Chrome DevTools Protocol client for the user's own running browser
-// (Brave or Chrome started with --remote-debugging-port). Pages open as background targets, so
-// the user's tabs and focus are never touched. Standard library only.
+// (Brave or Chrome started with --remote-debugging-port). Scan pages open as hidden targets: they
+// load with the browser's cookies but never appear in a window or the tab strip, so the user's
+// tabs and focus are never touched. OpenTab opens the one kind of page the user is meant to see.
+// Standard library only.
 package cdp
 
 import (
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,6 +32,9 @@ type Client struct {
 	listeners map[eventKey][]func(json.RawMessage)
 	done      chan struct{}
 	err       error // why the read loop stopped; valid once done is closed
+	// visibleScan is set once the browser refused a hidden target: scan pages then open as
+	// background tabs, as browsers without hidden targets need.
+	visibleScan atomic.Bool
 }
 
 // eventKey routes an event to the listeners of one page session.
@@ -185,7 +191,7 @@ func (c *Client) Send(ctx context.Context, method string, params any, sessionID 
 	}
 }
 
-// Page is one background target attached with a flat session.
+// Page is one target attached with a flat session.
 type Page struct {
 	c         *Client
 	sessionID string
@@ -276,45 +282,91 @@ func (p *Page) WaitFor(ctx context.Context, expr string, ready func(json.RawMess
 	return last, nil
 }
 
-// WithPage opens url in a new background target, hands fn the attached page and always closes
-// the target afterwards, even when ctx is already cancelled.
+// WithPage opens url in a new hidden target, hands fn the attached page and always closes the
+// target afterwards, even when ctx is already cancelled.
 func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error) error {
 	return c.WithPageSetup(ctx, url, nil, fn)
 }
 
-// WithPageSetup is WithPage with a setup step that runs on the attached page before it navigates:
-// the place to enable a domain such as Network and subscribe to its events with On.
-func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*Page) error) (err error) {
-	raw, err := c.Send(ctx, "Target.createTarget", map[string]any{"url": "about:blank", "background": true}, "")
-	if err != nil {
-		return err
+// scanTarget creates the blank target a scan page loads in. It is hidden: observable over CDP but
+// in no window and not in the tab strip, so a run never flashes tabs among the user's own or takes
+// focus (checked on Brave 156, 2026-11-24: it loads signed-in pages and reports itself visible).
+// Opening scan tabs in one dedicated window instead was tried and dropped: Target.createTarget
+// cannot name a window, so a window gets only the tab it is created with, and window.open from
+// that tab brings the window to the front each time. A browser that refuses hidden targets gets
+// background tabs, as before.
+func (c *Client) scanTarget(ctx context.Context) (string, error) {
+	if !c.visibleScan.Load() {
+		raw, err := c.Send(ctx, "Target.createTarget", map[string]any{"url": "about:blank", "background": true, "hidden": true}, "")
+		if err == nil {
+			return targetID(raw)
+		}
+		if ctx.Err() != nil {
+			return "", err
+		}
+		c.visibleScan.Store(true)
 	}
+	return c.createTarget(ctx, map[string]any{"url": "about:blank", "background": true})
+}
+
+// createTarget creates a target with params and returns its id.
+func (c *Client) createTarget(ctx context.Context, params map[string]any) (string, error) {
+	raw, err := c.Send(ctx, "Target.createTarget", params, "")
+	if err != nil {
+		return "", err
+	}
+	return targetID(raw)
+}
+
+// targetID reads the id of the target Target.createTarget created.
+func targetID(raw json.RawMessage) (string, error) {
 	var t struct {
 		TargetID string `json:"targetId"`
 	}
 	if err := json.Unmarshal(raw, &t); err != nil {
-		return err
+		return "", err
 	}
-	defer func() {
-		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DefaultTimeout)
-		defer cancel()
-		if _, cerr := c.Send(cctx, "Target.closeTarget", map[string]any{"targetId": t.TargetID}, ""); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
+	if t.TargetID == "" {
+		return "", errors.New("cdp: Target.createTarget: no targetId")
+	}
+	return t.TargetID, nil
+}
 
-	raw, err = c.Send(ctx, "Target.attachToTarget", map[string]any{"targetId": t.TargetID, "flatten": true}, "")
+// attach opens a flat session on a target.
+func (c *Client) attach(ctx context.Context, targetID string) (*Page, error) {
+	raw, err := c.Send(ctx, "Target.attachToTarget", map[string]any{"targetId": targetID, "flatten": true}, "")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var a struct {
 		SessionID string `json:"sessionId"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
+		return nil, err
+	}
+	return &Page{c: c, sessionID: a.SessionID}, nil
+}
+
+// WithPageSetup is WithPage with a setup step that runs on the attached page before it navigates:
+// the place to enable a domain such as Network and subscribe to its events with On.
+func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*Page) error) (err error) {
+	id, err := c.scanTarget(ctx)
+	if err != nil {
 		return err
 	}
-	p := &Page{c: c, sessionID: a.SessionID}
-	defer c.forgetListeners(a.SessionID)
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DefaultTimeout)
+		defer cancel()
+		if _, cerr := c.Send(cctx, "Target.closeTarget", map[string]any{"targetId": id}, ""); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+
+	p, err := c.attach(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer c.forgetListeners(p.sessionID)
 	if _, err := p.Send(ctx, "Runtime.enable", nil); err != nil {
 		return err
 	}
@@ -330,4 +382,16 @@ func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*
 		return err
 	}
 	return fn(p)
+}
+
+// OpenTab opens url in a normal foreground tab of the user's last active window and attaches to
+// it, so its state can be read with Evaluate. The tab is the user's: it is never closed, and it
+// stays open after the connection closes. For pages where the user has to act (sign in, confirm
+// a password); scans use WithPage.
+func (c *Client) OpenTab(ctx context.Context, url string) (*Page, error) {
+	id, err := c.createTarget(ctx, map[string]any{"url": url})
+	if err != nil {
+		return nil, err
+	}
+	return c.attach(ctx, id)
 }

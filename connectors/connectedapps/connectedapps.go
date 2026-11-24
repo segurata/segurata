@@ -1,6 +1,6 @@
 // Package connectedapps inventories the third-party apps connected to accounts outside Google:
 // GitHub, X, Slack, Notion, Microsoft, Dropbox, Facebook, Instagram and LinkedIn. It reads each
-// service's own settings pages over CDP, in background targets of the browser the user is
+// service's own settings pages over CDP, in hidden targets of the browser the user is
 // already signed in to, and lists GitHub keys with the `gh` CLI.
 //
 // Read-only by construction: it only navigates and reads. It never clicks a button (not even
@@ -62,11 +62,11 @@ var services = []service{
 	{"x", xService},
 	{"slack", slack},
 	{"notion", notion},
-	{"microsoft", microsoft},
-	{"dropbox", dropbox},
+	{"microsoft", microsoftPage.run},
+	{"dropbox", dropboxPage.run},
 	{"facebook", facebook},
-	{"instagram", instagram},
-	{"linkedin", linkedin},
+	{"instagram", instagramPage.run},
+	{"linkedin", linkedinPage.run},
 }
 
 // selectServices reads config "services": a list of service names, all of them when absent.
@@ -275,7 +275,7 @@ func (e *env) report(g grant) {
 // staleAfter is how long without use raises a grant's severity one level.
 const staleAfter = 365 * 24 * time.Hour
 
-// browser loads a page in a background target, polls a JavaScript expression until ready accepts
+// browser loads a page in a hidden target, polls a JavaScript expression until ready accepts
 // its value or tries run out, closes the target and returns the last value. The seam that lets
 // tests replace Brave with synthetic pages.
 type browser interface {

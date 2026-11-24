@@ -60,7 +60,7 @@ func (p *proposal) finishSetup(itemID string) {
 		return
 	}
 	st := reported(p.statuses[0])
-	lbl := label(st.Connector, st.Instance)
+	lbl := StatusLabel(st)
 	p.title = setupTitle(lbl, st.Account, st.State, p.statuses)
 	if reasons := p.expectedReasons(); reasons != nil {
 		p.next = &Next{Who: You, Action: "Nothing: expected by your config (" + strings.Join(reasons, "; ") + ")."}
@@ -235,4 +235,56 @@ func StatusURL(st finding.Status) string {
 		return m[1]
 	}
 	return ""
+}
+
+// SetupStatuses are the statuses a setup item still holds, one per ref not gone, as the connector
+// reported them: the state comes from the key, the detail from the ref.
+func (it *Item) SetupStatuses() []finding.Status {
+	if it.Kind != KindSetup {
+		return nil
+	}
+	state := it.setupState()
+	var out []finding.Status
+	for _, r := range it.Findings {
+		if r.Gone || !strings.HasPrefix(r.ID, "status:") {
+			continue
+		}
+		out = append(out, finding.Status{Type: "status", Connector: r.Connector, Instance: r.Instance, Account: r.Account, Scope: r.Scope, State: state, Detail: r.Title})
+	}
+	return out
+}
+
+// StatusCommands are the distinct commands a setup item's statuses name as their fix, in order
+// (StatusCommand of each).
+func (it *Item) StatusCommands() []string {
+	var out []string
+	for _, st := range it.SetupStatuses() {
+		if c := StatusCommand(st); c != "" && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// BrowserSignIn reports whether the owner clears an active setup item by signing in, or
+// confirming their identity, in the browser segurata drives: a reauth or signedout status of a
+// connector that browser says drives it, with no command to run instead. `segurata signin`
+// opens these.
+func (it *Item) BrowserSignIn(browser func(connector string) bool, now time.Time) bool {
+	if browser == nil || it.Kind != KindSetup || !it.Active(now) {
+		return false
+	}
+	if st := it.setupState(); st != finding.StateReauth && st != finding.StateSignedOut {
+		return false
+	}
+	sts := it.SetupStatuses()
+	return len(sts) > 0 && browser(sts[0].Connector) && len(it.StatusCommands()) == 0
+}
+
+// StatusLabel is the connector instance a status is about, as the command line names it.
+func StatusLabel(st finding.Status) string { return label(st.Connector, st.Instance) }
+
+// setupState is the state a setup item's key names: the last field of SetupKey.
+func (it *Item) setupState() finding.State {
+	return finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])
 }

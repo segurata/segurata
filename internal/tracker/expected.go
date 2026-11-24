@@ -88,7 +88,7 @@ func (it *Item) ExpectRule(reason, detail string) (key string, rule config.Expec
 		return "", rule, errors.New("expect needs --reason (why this status is expected)")
 	}
 	r := it.Findings[0]
-	state := finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])
+	state := it.setupState()
 	rule = config.Expected{State: state, Account: globEscape(r.Account), Detail: detail, Reason: strings.TrimSpace(reason)}
 	return r.Label(), rule, nil
 }

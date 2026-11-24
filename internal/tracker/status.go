@@ -54,6 +54,9 @@ type View struct {
 	// Instances are the configured connector instances, for the coverage line (one that never ran
 	// shows as such); instances that ran are listed anyway.
 	Instances []string
+	// Browser names the connectors that drive the browser, for the segurata signin line under
+	// Setup blockers; nil leaves it out.
+	Browser func(connector string) bool
 }
 
 // Status lays the briefing out: headline, what to do next, pending decisions, setup blockers,
@@ -80,7 +83,7 @@ func (t *Tracker) Status(path string, now time.Time, v View) *doc.Doc {
 	}
 	t.doNext(d, items, now, v.Explain)
 	t.decisions(d, items, now)
-	Blockers(d, items, now)
+	Blockers(d, items, now, v.Browser)
 	notAudited(d, items, now)
 	t.changes(d, items, now)
 	accepted(d, items, now)
@@ -314,8 +317,9 @@ func (t *Tracker) decisions(d *doc.Doc, items []*Item, now time.Time) {
 
 // Blockers lists the open setup items (what keeps segurata from seeing an account) with their
 // next step, and the statuses the config expects on one line. report shows it too, instead of
-// listing the runs' statuses again.
-func Blockers(d *doc.Doc, items []*Item, now time.Time) {
+// listing the runs' statuses again. browser, when set, names the connectors that drive the
+// browser: when one needs a sign-in there, a line points to segurata signin.
+func Blockers(d *doc.Doc, items []*Item, now time.Time, browser func(connector string) bool) {
 	d.H(2, "Setup blockers")
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Kind == KindSetup && it.Active(now) }) {
@@ -333,6 +337,9 @@ func Blockers(d *doc.Doc, items []*Item, now time.Time) {
 		d.P("None: every connector could inspect every account.")
 	}
 	d.List(list)
+	if slices.ContainsFunc(items, func(it *Item) bool { return it.BrowserSignIn(browser, now) }) {
+		d.P("`segurata signin` opens the pages that need you.")
+	}
 	if line := ExpectedLine(ExpectedReasons(items)); line != "" {
 		d.P(line)
 	}

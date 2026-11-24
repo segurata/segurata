@@ -14,7 +14,7 @@ import (
 func acceptCLI() accept.CLI { return accept.CLI{Out: os.Stdout, Err: os.Stderr, Now: time.Now} }
 
 func trackerCLI() tracker.CLI {
-	return tracker.CLI{Out: os.Stdout, Err: os.Stderr, Config: config.DefaultPath(), Now: time.Now, Instances: instances}
+	return tracker.CLI{Out: os.Stdout, Err: os.Stderr, Config: config.DefaultPath(), Now: time.Now, Instances: instances, Browser: browserConnector}
 }
 
 // instances are the connector instances an unfiltered inventory runs, by label; none when the
@@ -33,6 +33,16 @@ func instances() []string {
 		out = append(out, t.Label())
 	}
 	return out
+}
+
+// browserConnector reports whether the connector called name drives the browser over CDP.
+func browserConnector(name string) bool {
+	for _, c := range all() {
+		if d := c.Describe(); d.Name == name {
+			return d.NeedsCDP()
+		}
+	}
+	return false
 }
 
 // acceptedAnnotator loads the tracker's acceptances for an inventory or remediate run.

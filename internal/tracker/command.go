@@ -54,6 +54,9 @@ type CLI struct {
 	// Instances lists the configured connector instances, for status's coverage line; nil lists
 	// only the ones that ran.
 	Instances func() []string
+	// Browser names the connectors that drive the browser (status's segurata signin line); nil
+	// for none.
+	Browser func(connector string) bool
 }
 
 func (c CLI) fail(err error) int {
@@ -499,7 +502,7 @@ func (c CLI) Status(args []string) int {
 		return c.fail(err)
 	}
 	f := newFilter(*theme, *kind, *prio)
-	v := View{Filter: f, Explain: *explain}
+	v := View{Filter: f, Explain: *explain, Browser: c.Browser}
 	if c.Instances != nil {
 		v.Instances = c.Instances()
 	}

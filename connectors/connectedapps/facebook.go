@@ -98,10 +98,13 @@ func parseFacebookDetail(text string) fbDetail {
 	return d
 }
 
+// fbListed reports whether the page shows the app list: apps, or the section every list has.
+func fbListed(p fbListPage) bool { return len(p.Rows) > 0 || fbLoadedRE.MatchString(p.Text) }
+
 func facebook(ctx context.Context, e *env) {
 	raw, err := e.b.load(ctx, fbURL, fbListJS, func(raw json.RawMessage) bool {
 		p, ok := decode[fbListPage](raw)
-		return ok && (len(p.Rows) > 0 || fbSignedOutRE.MatchString(p.URL) || fbReauthRE.MatchString(p.URL) || fbLoadedRE.MatchString(p.Text))
+		return ok && (fbSignedOutRE.MatchString(p.URL) || fbReauthRE.MatchString(p.URL) || fbListed(p))
 	}, 40)
 	if err != nil {
 		e.fail("", err)

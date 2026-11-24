@@ -751,6 +751,48 @@ of a browser at once (duplicates, one finding per extension).
 Every connector is written in Go. The Node prototypes (`google/`, `connected-apps/`, `workspace/`,
 `secrets/`, `macos/`) were deleted once their connectors matched them on a live run.
 
+## Browser connectors
+
+`google-personal` and `connected-apps` read the browser the owner already uses (Brave or Chrome
+with `--remote-debugging-port`, address `cdp_url`) through `internal/cdp`, a standard-library CDP
+client. They never start a browser and never call the system's `open`; a source test
+(`internal/signin/nobrowser_test.go`) keeps `internal/cdp`, `internal/signin` and `cmd/segurata`
+from naming a launcher or a browser binary.
+
+- Scan pages (`Client.WithPage`) are hidden targets: `Target.createTarget` with `hidden: true`
+  and `background: true`. They load with the owner's cookies but sit in no window and not in the
+  tab strip, report themselves visible, and close when the page is read (or when the CDP
+  connection drops). A browser that refuses `hidden` gets background tabs, as before. Concurrency
+  is the connectors' own (six pages at once at most).
+- A dedicated scan window was tried first and dropped after checking Brave 156 (2026-11-24):
+  `Target.createTarget` has no window parameter, so a window made with `newWindow` gets only its
+  first tab and later targets land in the owner's last active window; `window.open` from the
+  window's tab does put tabs there, but brings the window to the front each time (and restores a
+  minimized one).
+- Pages where the owner acts (`Client.OpenTab`) are normal foreground tabs, never closed.
+
+### `segurata signin`
+
+A browser connector may implement `connector.SignInner`: for a `reauth` or `signedout` status it
+returns the page to open, what the owner does there, a read-only expression and a `Done` test,
+built from the same readiness predicates its run uses (GitHub: a settings URL without "Confirm
+access"; Google: that account's connections without "Verify it's you"). `Brief` marks what lasts
+minutes (GitHub sudo mode).
+
+`internal/signin` collects, from the tracker, the active setup items of the selected instances:
+an item whose statuses name a command (`tracker.Item.StatusCommands`) is a command for the owner's
+terminal, listed and never run (for `reauth`, `signedout` and `noscope`, or any state with
+`--all`); an item that is a browser sign-in (`tracker.Item.BrowserSignIn`: reauth or signedout of
+a connector that needs `cdp`, no command) gets the connector's page, or the item's URL with no
+`Done` test. Accounts outside an instance's `accounts` list are skipped. `Wait` opens the tabs and
+evaluates each page's expression every 3 seconds; a page is through after two passing reads in a
+row (one read can land mid-redirect). A tab that goes away stops being read. A brief page that is
+through runs its instance at once; `Reruns` then picks the instances to run at the end: every
+instance with a page, except one already run early whose pages were all through before that run
+or never through. The runs go through `run.Inventory`, then `track sync`, then each item is
+reported closed or still open. Commands are never run because `gcloud auth login` and
+`gh auth refresh` start the system's default browser.
+
 ## Incremental git history scan
 
 gitleaks over every repository under `repos_root` is most of a `local-secrets` run (about 30

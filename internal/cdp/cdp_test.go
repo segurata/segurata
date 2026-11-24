@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -246,7 +247,9 @@ type fakeBrowser struct {
 	evals    int
 	readyAt  int // Runtime.evaluate returns true from this call on
 	evalFail bool
-	failFor  int // the first failFor evaluations throw, as while a page loads
+	failFor  int              // the first failFor evaluations throw, as while a page loads
+	noHidden bool             // reject Target.createTarget with hidden, as a browser without hidden targets
+	creates  []map[string]any // Target.createTarget params, in order
 }
 
 func (b *fakeBrowser) serve(t *testing.T) *httptest.Server {
@@ -298,6 +301,10 @@ func (b *fakeBrowser) answer(s *srvConn, id int64, method string, params map[str
 			{"method": "Network.responseReceived", "sessionId": "S2", "params": map[string]any{"requestId": "R2"}},
 		}
 	case "Target.createTarget":
+		b.creates = append(b.creates, params)
+		if b.noHidden && params["hidden"] == true {
+			errObj = map[string]any{"code": -32602, "message": "Invalid parameters"}
+		}
 		result = map[string]any{"targetId": "T1"}
 	case "Target.attachToTarget":
 		result = map[string]any{"sessionId": "S1"}
@@ -536,5 +543,61 @@ func TestConnectNeedsDebuggerURL(t *testing.T) {
 	defer srv.Close()
 	if _, err := Connect(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected an error")
+	}
+}
+
+func TestScanPagesOpenAsHiddenTargets(t *testing.T) {
+	b := &fakeBrowser{}
+	c := connectT(t, b)
+	for range 2 {
+		if err := c.WithPage(context.Background(), "u", func(*Page) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range b.creates {
+		if p["hidden"] != true || p["background"] != true || p["newWindow"] != nil {
+			t.Fatalf("createTarget params %v, want a hidden background target", p)
+		}
+	}
+	if len(b.closed) != 2 {
+		t.Fatalf("closed %v", b.closed)
+	}
+}
+
+func TestScanFallsBackToBackgroundTabsWhenHiddenIsRefused(t *testing.T) {
+	b := &fakeBrowser{noHidden: true}
+	c := connectT(t, b)
+	for range 2 {
+		if err := c.WithPage(context.Background(), "u", func(*Page) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The first page asks for hidden once, then a background tab; the second asks straight away.
+	if len(b.creates) != 3 || b.creates[0]["hidden"] != true || b.creates[1]["hidden"] != nil || b.creates[2]["hidden"] != nil {
+		t.Fatalf("createTarget params %v", b.creates)
+	}
+	if b.creates[1]["background"] != true || b.creates[2]["background"] != true {
+		t.Fatalf("fallback is not a background tab: %v", b.creates)
+	}
+}
+
+func TestOpenTabIsAForegroundTabNeverClosed(t *testing.T) {
+	b := &fakeBrowser{readyAt: 1}
+	c := connectT(t, b)
+	p, err := c.OpenTab(context.Background(), "https://github.com/settings/apps/authorizations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Evaluate(context.Background(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	<-c.done
+	want := map[string]any{"url": "https://github.com/settings/apps/authorizations"}
+	if len(b.creates) != 1 || fmt.Sprint(b.creates[0]) != fmt.Sprint(want) {
+		t.Fatalf("createTarget params %v, want %v (foreground: no background, hidden or window)", b.creates, want)
+	}
+	if s := strings.Join(b.methods, " "); s != "Target.createTarget Target.attachToTarget Runtime.evaluate" {
+		t.Fatalf("methods %s", s)
 	}
 }

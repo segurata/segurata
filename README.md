@@ -131,6 +131,37 @@ previous file kept as `config.json.segurata-bak-<time>`. An unwatched account is
 scope at each run, so its earlier findings are never taken as resolved. `gcp` and
 `google-personal` take an accounts list.
 
+## Signing in
+
+```bash
+./segurata signin --list                 # what it would open and list; opens nothing
+./segurata signin                        # open the pages, wait, run those connectors again
+./segurata signin google-personal        # only this connector (or connector:label)
+./segurata signin --all --timeout 20m    # also the commands of other setup items; wait longer
+```
+
+`signin` takes the open setup items where a browser connector reports `reauth` or `signedout`
+(Google asks you to verify it's you, GitHub wants sudo mode, Microsoft is signed out) and opens a
+normal tab at each page where you act, in the browser at `cdp_url`. It prints a numbered list with
+what to do on each page, then reads the pages every few seconds, read-only, with the test the
+connector itself uses, until each shows what the connector reads (the list instead of the sign-in
+or "Confirm access" page). It stops once every page is through, when you press Enter, or after the
+timeout (10 minutes by default). Then it runs those connector instances again, syncs the tracker
+and says which setup items closed. It never types a password or clicks anything, and the tabs stay
+open: they are yours.
+
+- GitHub sudo mode lasts minutes, so `connected-apps` runs as soon as you confirm on GitHub, while
+  the other pages wait; it runs again at the end only if one of its pages was through after that.
+- Commands for your terminal (`gcloud auth login <account>`, `gh auth refresh -s <scope>`) are
+  listed with the rerun that follows them; `signin` never runs them, since they start a browser of
+  their own. `--all` also lists the commands of the other setup items, such as storing a
+  credential.
+- Accounts taken out with `segurata accounts unwatch` are skipped.
+- Tabs open only in the browser at `cdp_url`, through CDP. When it is not reachable, `signin`
+  prints the URLs and stops; it never opens another browser or calls the system's `open`.
+- `segurata status` ends the setup blockers with "`segurata signin` opens the pages that need
+  you" whenever one of them is a browser sign-in.
+
 ## Google: linked apps (`google-personal`)
 
 ```bash
@@ -154,8 +185,8 @@ statuses.
   get no status and are declared skipped scopes, so their earlier findings are not taken as resolved.
 
 - Requires Brave or Chrome started with `--remote-debugging-port=9222` (another address via
-  `cdp_url` in the config or `SEGURATA_CDP`). Pages open in the background and always close,
-  without touching your tabs.
+  `cdp_url` in the config or `SEGURATA_CDP`). Pages open as hidden targets, in no window and
+  not in the tab strip, and always close: your tabs and focus are never touched.
 - To remove access: the finding's remediation URL. On Google, "Remove all access" there also
   removes that app's Sign in with Google link.
 
@@ -195,7 +226,7 @@ a year, the severity goes up one level.
 | Microsoft, Dropbox | Whether there is a session. The reader has never seen the signed-in page: `unverified` |
 
 Statuses: `ok`; `signedout`; `reauth` (the service wants identity confirmed: open the page,
-confirm, run again); `noscope` (`gh` lacks a scope; the detail carries the exact
+confirm, run again; `segurata signin` does both); `noscope` (`gh` lacks a scope; the detail carries the exact
 `gh auth refresh` command); `unverified`; `error`.
 
 - Requires the browser setup of `google-personal`, plus a signed-in `gh` for GitHub keys.

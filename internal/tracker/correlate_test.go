@@ -34,8 +34,8 @@ func awsKeyRuns(t *testing.T, out string, at time.Time, connectorFP string) {
 	t.Helper()
 	cred := secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/.aws/credentials",
 		Source: "scan", Kind: "config", Mode: "600", Bucket: "3-local", Count: 1}
-	git := secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/example-org/data/s3.py",
-		Repo: "~/src/example-org/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2019-05-02"}
+	git := secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/legacyco/data/s3.py",
+		Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2019-05-02"}
 	writeRun(t, out, at, "local-secrets.jsonl", leak(cred, at), leak(git, at), okStatus(SecretsConnector, "local"))
 	key := withEvidence(fnd("aws", "", "local", "aws_local_credentials", "/x/.aws/credentials#default", "default", finding.SevMedium,
 		`Long-lived AWS access key for profile "default" stored in plain text; aws sts says it works for account 111122223333`, at),
@@ -62,7 +62,7 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	awsKeyRuns(t, out, day2, awsFP)
 	rep := syncOrDie(t, tr, out, day2.Add(time.Minute))
 	rot := mustRotate(t, tr, awsFP[:8])
-	if rot.Priority != secretrisk.P0 || len(rot.Secret.Reasons) == 0 || rot.Secret.Reasons[0] != "live key, leaked in example-org/data:s3.py" {
+	if rot.Priority != secretrisk.P0 || len(rot.Secret.Reasons) == 0 || rot.Secret.Reasons[0] != "live key, leaked in legacyco/data:s3.py" {
 		t.Errorf("rotate item: %s %q", rot.Priority, rot.Secret.Reasons)
 	}
 	if !strings.Contains(strings.Join(rot.Secret.Reasons, "; "), "live: aws: Long-lived AWS access key for profile \"default\" stored in plain text; aws sts says it works for account 111122223333") {
@@ -89,7 +89,7 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	// The hint still fits and the old key's locations still name the file (locations are never
 	// dropped), but the new key's fingerprint says it is another key.
 	writeRun(t, out, day3, "local-secrets.jsonl", leak(secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)",
-		Path: "~/src/example-org/data/s3.py", Repo: "~/src/example-org/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1}, day3),
+		Path: "~/src/legacyco/data/s3.py", Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1}, day3),
 		okStatus(SecretsConnector, "local"))
 	syncOrDie(t, tr, out, day3.Add(time.Minute))
 	if awsItem.Status != Open || awsItem.MergedInto != "" || len(awsItem.Findings) != 1 {
