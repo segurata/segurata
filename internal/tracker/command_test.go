@@ -197,7 +197,7 @@ func TestStatusBriefing(t *testing.T) {
 	}
 	// A filtered status does not move the "since" mark; a full one does, and --write writes both views.
 	o, e, code := x.run(t, "status", "--write")
-	if code != 0 || !strings.Contains(o, "first status: everything") || !strings.Contains(o, "found") || !strings.Contains(e, "status.html") {
+	if code != 0 || !strings.Contains(o, "first status: everything") || !strings.Contains(o, "Other items: 10 new.") || !strings.Contains(e, "status.html") {
 		t.Fatalf("status --write: %d %q\n%s", code, e, o)
 	}
 	for _, name := range []string{"status.md", "status.html"} {

@@ -17,6 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 )
 
 type fake struct{ got connector.Request }
@@ -53,6 +54,9 @@ func readLines(t *testing.T, path string) []map[string]any {
 
 func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 	t.Setenv("SEGURATA_TEST_SECRET", "s3cret")
+	key := fingerprint.FromBytes([]byte("0123456789abcdef0123456789abcdef"))
+	defer func(old func() (fingerprint.Key, bool)) { FingerprintKey = old }(FingerprintKey)
+	FingerprintKey = func() (fingerprint.Key, bool) { return key, true }
 	cfg := config.Config{CDPURL: "http://cdp", Connectors: map[string]config.ConnectorConfig{
 		"fake": {Secrets: map[string]string{"OK": "env:SEGURATA_TEST_SECRET", "BAD": "env:SEGURATA_TEST_UNSET"}},
 	}}
@@ -73,6 +77,11 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 	}
 	if end := lines[3]; end["type"] != "run_end" || end["complete"] != false || end["connector"] != "fake" {
 		t.Fatalf("an unresolved secret leaves the run incomplete: %v", end)
+	}
+	// run_end names the fingerprint of each resolved secret, never its value, so the tracker can
+	// match a leaked copy with the key a connector is using.
+	if fps, _ := lines[3]["secret_fingerprints"].(map[string]any); len(fps) != 1 || fps["OK"] != key.Of("s3cret") {
+		t.Fatalf("secret fingerprints in run_end: %v", lines[3]["secret_fingerprints"])
 	}
 	if lines[0]["state"] != "missing_credentials" || !strings.HasPrefix(lines[0]["detail"].(string), "BAD:") {
 		t.Fatalf("first line should report the missing secret: %v", lines[0])

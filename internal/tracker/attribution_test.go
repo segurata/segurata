@@ -210,3 +210,47 @@ func TestTrackDecideOwnerFromTheCLI(t *testing.T) {
 		t.Fatalf("decide: %q %q", o, e)
 	}
 }
+
+// Attribution wins over the repository: an AWS key decoding to one of the owner's accounts, found
+// only in a third-party repository or in history a fork inherited, is the owner's secret leaked
+// there and keeps its full impact (P0 for pushed history). The same copies naming someone else's
+// account, or no account, stay noise. A noise summary never reclassifies the owner's key either.
+func TestAttributionMineRestoresFullImpactInThirdPartyRepositories(t *testing.T) {
+	out := t.TempDir()
+	secret := func(fp, origin string, c attribution.Claims) finding.Finding {
+		path := "~/src/upstream/lib/s3.py"
+		f := fnd(SecretsConnector, "", "local", "secret", "gitleaks:"+path+"#"+fp, "AWS key", finding.SevInfo, "AWS key in "+path, t0)
+		raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: fp, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: path, Repo: "~/src/upstream",
+			Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "b", Origin: origin, Claims: c})
+		_ = json.Unmarshal(raw, &f.Evidence)
+		return f
+	}
+	writeRun(t, out, t0, "local-secrets.jsonl",
+		secret("1111aaaa1111aaaa", secretrisk.OriginThirdParty, attribution.Claims{AWSAccount: ownAWS}),
+		secret("4444dddd4444dddd", secretrisk.OriginForkUpstream, attribution.Claims{AWSAccount: ownAWS}),
+		secret("2222bbbb2222bbbb", secretrisk.OriginThirdParty, attribution.Claims{AWSAccount: foreignAWS}),
+		secret("3333cccc3333cccc", secretrisk.OriginThirdParty, attribution.Claims{}),
+		okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0, "aws.jsonl", finding.Status{Type: "status", Connector: "aws", Account: ownAWS, State: finding.StateOK})
+	tr := New(t0)
+	if _, err := tr.Sync(SyncOptions{OutDir: out}, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, fp := range []string{"1111", "4444"} {
+		it := mustRotate(t, tr, fp)
+		if it.Priority != secretrisk.P0 || it.WorstLabel() != "git+remote" || it.Owner() != attribution.Mine {
+			t.Errorf("%s: %s %s %s, want P0 git+remote mine", fp, it.Priority, it.WorstLabel(), it.Owner())
+		}
+		if r := strings.Join(it.Secret.Reasons, "; "); !strings.Contains(r, "yours by attribution (AWS account "+ownAWS+" is yours)") {
+			t.Errorf("%s: reasons %q", fp, r)
+		}
+	}
+	for _, fp := range []string{"2222", "3333"} {
+		if _, err := tr.FindRotate(fp); err == nil {
+			t.Errorf("%s: a third-party copy not attributed mine got an item", fp)
+		}
+	}
+	if rep := tr.SyncNoise(map[string]string{"1111aaaa1111aaaa": "aws-access-key-id"}, t0.Add(2*time.Hour)); rep.Reclassified != 0 || mustRotate(t, tr, "1111").Status != Open {
+		t.Error("a noise summary reclassified a key attributed mine")
+	}
+}

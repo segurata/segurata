@@ -19,6 +19,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secrets"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -122,13 +123,14 @@ func (s *sink) Scope(id string, inspected bool, reason string) {
 
 // end writes the run_end record. err is the connector's own error; a cancelled context counts as
 // one, since the connector may have stopped early without saying so.
-func (s *sink) end(ctx context.Context, started time.Time, err error) {
+func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[string]string) {
 	if err == nil && ctx.Err() != nil {
 		err = fmt.Errorf("interrupted: %w", ctx.Err())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.res.End = s.tally.End(s.name, s.inst, started, time.Now(), err)
+	s.res.End.SecretFingerprints = fps
 	_ = s.enc.Encode(s.res.End)
 }
 
@@ -178,7 +180,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	if missing := unresolved(t.Connector, errs, s); !missing {
 		res.Err = t.Connector.Inventory(ctx, req, s)
 	}
-	s.end(ctx, started, res.Err)
+	s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
 	if err := f.Close(); err != nil {
 		res.Err = errors.Join(res.Err, err)
 		return res
@@ -212,6 +214,28 @@ func unresolved(c connector.Connector, errs []error, emit connector.Emitter) boo
 		emit.Status(finding.Status{State: finding.StateMissingCredentials, Detail: detail})
 	}
 	return missing
+}
+
+// FingerprintKey is fingerprint.OpenDefault; a variable so tests use their own key.
+var FingerprintKey = fingerprint.OpenDefault
+
+// secretFingerprints fingerprints the resolved secrets by name, for run_end: the tracker matches
+// them with leaked copies of the same values (see finding.RunEnd). nil without secrets or key.
+func secretFingerprints(secrets map[string]string) map[string]string {
+	if len(secrets) == 0 {
+		return nil
+	}
+	k, ok := FingerprintKey()
+	if !ok {
+		return nil
+	}
+	out := map[string]string{}
+	for name, v := range secrets {
+		if fp := k.Of(v); fp != "" {
+			out[name] = fp
+		}
+	}
+	return out
 }
 
 // NewRequest builds the request for one connector instance, resolving its secret references.

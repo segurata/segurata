@@ -8,6 +8,8 @@ package doc
 import (
 	"fmt"
 	"strings"
+
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 type blockKind int
@@ -37,10 +39,19 @@ const (
 	DLink
 )
 
-// Detail is one labelled line under a list item.
+// Detail is one labelled line under a list item. More is text folded under it: HTML and Markdown
+// show it in a collapsed <details>, terminal text marks it with "[…]".
 type Detail struct {
 	Label, Text string
 	Kind        DetailKind
+	More        string
+}
+
+// Fold is a text detail whose head (at most n runes, cut at a sentence, never inside a code span)
+// shows and whose rest folds away (textfmt.Clip): long, multi-line steps stay one line in a list.
+func Fold(label, text string, n int) Detail {
+	head, more := textfmt.Clip(text, n)
+	return Detail{Label: label, Text: head, More: more}
 }
 
 // Item is one entry of a list: a badge (severity, priority or state), the text, a muted meta line

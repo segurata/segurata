@@ -40,8 +40,7 @@ func rulesFixture(t *testing.T) (*Tracker, string) {
 		_ = json.Unmarshal(raw, &f.Evidence)
 		return f
 	}
-	dump := fnd(SecretsConnector, "", "local", "data_dump", "~/src/old/api:crm.sql", "crm.sql", finding.SevHigh, "Database dump committed to ~/src/old/api: crm.sql", t0)
-	dump.Evidence = map[string]any{"repo": "~/src/old/api", "path": "crm.sql"}
+	dump := dumpFinding("~/src/old/api", "crm.sql", finding.SevHigh, 400<<10, t0)
 	repo := fnd("github", "", "github:acme", "github_repo", "1", "acme/legacy", finding.SevMedium, "acme/legacy: secret scanning is off", t0)
 	key := fnd("gcp", "", "a@x.com", "api_key", "k1", "Old key", finding.SevHigh, "API key \"Old key\" in old-proj has no restrictions", t0)
 	key.Evidence = map[string]any{"project": "old-proj"}
@@ -64,7 +63,7 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 		t.Fatalf("leverage %q", lev)
 	}
 	var b strings.Builder
-	_ = doc.Render(&b, tr.Status("tracker.json", now, Filter{}), doc.Text)
+	_ = doc.Render(&b, tr.Status("tracker.json", now, View{}), doc.Text)
 	if !strings.Contains(b.String(), `answering "yes" closes 3 open items`) {
 		t.Errorf("status lacks the leverage:\n%s", b.String())
 	}
@@ -79,7 +78,7 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 	if c, _ := tr.FindRotate("3333cccc"); c.Status != Open {
 		t.Error("a secret also in a live file was closed")
 	}
-	if byTitle(t, tr, "Database dump committed to ~/src/old/api").Status != Ignored {
+	if byTitle(t, tr, "1 database dump in the git history of ~/src/old/api").Status != Ignored {
 		t.Error("the dump under ~/src/old stayed open")
 	}
 	if it := byTitle(t, tr, "Restrict 1 API key in GCP project old-proj"); it.Status != Accepted || it.Accepted == nil {

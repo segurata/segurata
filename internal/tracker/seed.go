@@ -9,7 +9,7 @@ import (
 // themes are created in every tracker, in this order (the briefing follows it).
 var themes = []Theme{
 	{"rotations", "Secrets to rotate", "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."},
-	{"data-dumps", "Data dumps in git", "Database dumps committed to repositories, one item per file: purge from history, rotate what they hold, check breach duties."},
+	{"data-dumps", "Data dumps in git", "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."},
 	{"transcripts", "Secrets in trail files", "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."},
 	{"mac", "This Mac", "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."},
 	{"browser-extensions", "Browser extensions", "Extensions that can read or drive your pages, one item per extension."},
@@ -18,10 +18,15 @@ var themes = []Theme{
 	{"google", "Google", "Apps with access to your Google accounts, and Workspace tenants."},
 	{"cloud", "Cloud", "GCP, AWS, Azure, Cloudflare, Vercel and Supabase: keys, roles, budgets."},
 	{"ai-spend", "AI providers", "OpenAI, Anthropic and OpenRouter keys, limits and spend."},
+	{coverageTheme, "Not audited here", "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."},
 	{"setup", "Setup", "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."},
 	{"decisions", "Decisions", "Questions only you can answer before the related work can go ahead."},
 	{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."},
 }
+
+// coverageTheme holds the review items for what no connector audits on this machine (coverage.go);
+// status lists them apart from what is failing.
+const coverageTheme = "coverage"
 
 // connectorThemes maps a connector to its theme; local-secrets depends on the resource type.
 var connectorThemes = map[string]string{

@@ -8,8 +8,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 )
 
 // credentialProfile is what the scan keeps from one [section]: never the secret.
@@ -144,13 +146,21 @@ func providers(profiles []credentialProfile, cfg map[string]profileConfig) map[s
 }
 
 // credentialFindings flags long-lived keys stored in plain text, worse when other users can read them.
-func credentialFindings(path string, mode fs.FileMode, profiles []credentialProfile, cfg map[string]profileConfig) []finding.Finding {
+// Each names the key id by its redacted hint and, with key, by the fingerprint local-secrets gives
+// its copies; an AWS key id also names the account it belongs to, read offline from the id.
+func credentialFindings(path string, mode fs.FileMode, profiles []credentialProfile, cfg map[string]profileConfig, key *fingerprint.Key) []finding.Finding {
 	var out []finding.Finding
 	for _, p := range profiles {
 		if p.KeyID == "" || p.Temporary {
 			continue
 		}
 		f := localKeyFinding(path, mode, p, providerOf(p, cfg[p.Name]))
+		if key != nil {
+			f.Evidence["fingerprint"] = key.Of(p.KeyID)
+		}
+		if acct, ok := attribution.AWSAccountFromKeyID(p.KeyID); ok && f.Resource.Type == "aws_local_credentials" {
+			f.Evidence["aws_account"] = acct
+		}
 		if mode.Perm()&0o077 != 0 {
 			f.Severity = finding.SevHigh
 			f.Title += " and readable by other users"
@@ -194,9 +204,10 @@ func localKeyFinding(path string, mode fs.FileMode, p credentialProfile, by prov
 	return f
 }
 
-// scanLocalFiles reports plain-text keys in the shared credentials file and returns who issued
-// each profile's key, so profiles that are not AWS skip the STS and IAM calls.
-func (c *Connector) scanLocalFiles(emit connector.Emitter) map[string]provider {
+// scanLocalFiles returns the findings for plain-text keys in the shared credentials file, for
+// Inventory to emit, and who issued each profile's key, so profiles that are not AWS skip the STS
+// and IAM calls.
+func (c *Connector) scanLocalFiles(emit connector.Emitter) ([]finding.Finding, map[string]provider) {
 	cfg := map[string]profileConfig{}
 	if path := c.ConfigFile(); path != "" {
 		if fh, err := os.Open(path); err == nil {
@@ -208,24 +219,27 @@ func (c *Connector) scanLocalFiles(emit connector.Emitter) map[string]provider {
 	}
 	path := c.CredentialsFile()
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 	fh, err := os.Open(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			emit.Log(fmt.Sprintf("credentials file %s: %v", path, err))
 		}
-		return nil
+		return nil, nil
 	}
 	defer fh.Close()
 	st, err := fh.Stat()
 	if err != nil {
 		emit.Log(fmt.Sprintf("credentials file %s: %v", path, err))
-		return nil
+		return nil, nil
 	}
 	profiles := parseCredentials(fh)
-	for _, f := range credentialFindings(path, st.Mode(), profiles, cfg) {
-		emit.Finding(f)
+	var key *fingerprint.Key
+	if c.Fingerprint != nil {
+		if k, ok := c.Fingerprint(); ok {
+			key = &k
+		}
 	}
-	return providers(profiles, cfg)
+	return credentialFindings(path, st.Mode(), profiles, cfg, key), providers(profiles, cfg)
 }

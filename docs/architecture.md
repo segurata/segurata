@@ -68,7 +68,8 @@ before calling a finding gone.
 ```
 
 `complete` is true when nothing was skipped and the connector returned no error (then `error`
-holds it). The lists are capped (50 inspected, 200 skipped); the counts are not. A file without
+holds it). `secret_fingerprints` names, by key, the fingerprint of each secret the core resolved for
+the instance (never the value; see "Correlation"). The lists are capped (50 inspected, 200 skipped); the counts are not. A file without
 `run_end` was killed, is still running, or was written before this record existed.
 
 **Scopes.** A finding belongs to a scope: its `scope` field when the connector inspects the
@@ -156,12 +157,14 @@ truth, and every change goes through the CLI.
   - `status`: `open`, `in_progress`, `done`, `accepted` (with `accepted`: reason, until,
     accepted_at), `ignored` (by the owner), `snoozed` (with `snoozed_until`), `reclassified`
     (closed by segurata: every current sighting of the secret is now noise, see "Rotation
-    ledger") or `expected` (a setup item the config says to expect, see "Expected statuses").
+    ledger"), `expected` (a setup item the config says to expect, see "Expected statuses") or
+    `merged` (closed by segurata: another item, named by `merged_into`, owns the same problem, see
+    "Correlation").
   - `priority` is computed: a rotate item's comes from the rotation model below; others map the
     worst linked severity (critical P0, high P1, medium P2, low P3). `priority_override`
     (priority, reason, at) wins when set.
   - `history` events are `found`, `seen`, `status`, `note`, `verified`, `reopened`, `decided`,
-    `priority` or `reclassified`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
+    `priority`, `reclassified` or `merged`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
     `snooze-expired`, `acceptance-expired`, `history-only`, `redacted`, `next`, …).
 - **Theme**: `{id, title, description}`, seeded in every tracker: `rotations`, `data-dumps`,
   `transcripts`, `mac`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`,
@@ -177,7 +180,7 @@ connector and resource type, first match wins:
 |---|---|---|
 | local-secrets secrets | fingerprint (rotate items, below) | rotate |
 | local-secrets secrets in transcripts, shell histories and logs | local-secrets instance: "Redact secrets from N trail files", next step `segurata redact --trails`, severity capped at medium | fix |
-| local-secrets `data_dump` | file | fix |
+| local-secrets `data_dump` | repository: "3 database dumps in the git history of ~/src/api (11 MB)", one `git filter-repo` for all its files, the files and sizes listed, docs/secrets.md#data-dumps-in-git as the page and the AEPD and EDPB breach guidance as the secondary step | fix |
 | github org and repository-setting checks | check, across orgs ("Two-factor authentication not required in 5 GitHub orgs") | fix |
 | github repositories | organization | fix |
 | connected-apps Slack apps | workspace and severity | review |
@@ -203,8 +206,16 @@ for a signed-out service, and `segurata track expect <id>` (see "Expected status
 limitation kept on purpose. An `unsupported` check that needs administrator rights asks for no
 install.
 
-A finding that has an item of its own (key `finding:<id>`) always goes there before any rule: one
-accepted apart from its group, or one grouped per finding anyway. The title and next step come
+A finding that has an item of its own (key `finding:<id>`) goes there before any rule when it was
+accepted or ignored on its own, or when its rule groups per finding anyway. Otherwise its rule now
+groups it (data dumps were one item per file): the finding moves to the group and the old item,
+left with nothing reported, closes as `merged` into the group's item.
+
+An item can be blocked by a pending decision: the decision's option effects would close it, or it
+is a data-dump item and the decision is about dumps (its key or question names them, as
+"Purge the data dumps from git history?" does). Its next step then starts "Blocked by decision
+T-0001 (…): answer it first." until the decision is answered, and status counts what each
+decision unblocks (see "segurata status"). The title and next step come
 from the rule and the worst finding's remediation (`segurata remediate <id>` and `who:
 segurata` when the only finding is automatable). Only generic decisions are seeded, once each
 (whether to install the daily schedule). Questions about an owner's own projects are added with
@@ -243,7 +254,8 @@ substring of the status detail, or a regular expression between slashes; `reason
   expected, the item stays open. When a status no rule covers comes back the item opens again
   (`auto-reopen`); when the status is gone the item is done like any other.
 - `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
-  setup blockers and needs attention; `inventory` prints one line per instance and reason.
+  setup blockers (and the report's "Needs attention" before any sync); `inventory` prints one line
+  per instance and reason.
 - `segurata track expect <setup-id> --reason "…" [--detail text] [--dry-run]` writes the rule
   that matches the item (its instance's key, the reported state, the account with glob characters
   escaped, the detail only when given) into the config and closes the item as expected. The
@@ -334,11 +346,12 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
-- `schema_version` 3 is the current format. A format change adds an upgrade step from version n
+- `schema_version` 4 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
-  `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`. An
-  older file holds none of them, so it loads as it is and is saved as the current version (the
+  `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
+  status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
+  the top-level `runs` (see "Coverage"). An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### Migration from the former state files
@@ -379,18 +392,80 @@ replace --to-keychain`.
 ### `segurata status`
 
 ```
-segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] [--mark-seen]
+segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--explain] [--write] [--mark-seen]
 ```
 
 The briefing, built with the report's document model and renderers (`internal/doc`), so text,
 Markdown and HTML say the same thing: a headline (open items by priority and theme, done and
-verified in the last 7 days, accepted, ignored, snoozed), "Do next" (the ten most urgent entries
-with their next step, command and page; secrets count as one entry per priority pointing to
-`segurata rotations next`), pending decisions, setup blockers, the changes since the last
-seen status (events counted, the latest listed) and the accepted risks. Reading it changes
+verified in the last 7 days, accepted, ignored, merged, snoozed, and how many areas are not
+audited here), the coverage line (see "Coverage"), "Do next" (the ten entries worth most, see
+below), pending decisions, setup blockers, what is not audited on this machine, the changes since
+the last seen status (events counted, the latest listed) and the accepted risks. Long next steps show their first sentences
+and fold the rest (`doc.Fold`: a collapsed `<details>` in HTML and Markdown, `[…]` in text), never
+cut inside a `code span`.
+
+#### Do next
+
+Entries are ranked by a score (`internal/tracker/score.go`), every factor from a table, and
+`--explain` prints each entry's formula ("27.0 = impact 6 (P1) × blast 3 (one stolen password
+opens every repository of those orgs) ÷ effort 1 (one change) × quick win 1.5 (one fix closes 5
+findings)"):
+
+    score = impact × blast × exposure × liveness × confidence ÷ effort × quick win
+
+| Factor | Values |
+|---|---|
+| impact | the priority: P0 10, P1 6, P2 3, P3 1, none 0.5 |
+| blast | what is at stake beyond one finding's severity, first match: a Google account that is the login for other services 3, 2FA not required (or members without it) in GitHub orgs 3, no Time Machine backup 2.5, high-risk Google OAuth grants 2.5, a browser with a remote debugging port 2, data dumps 2, apps that can delete or write every repository 1.5, every org member can write every repository 1.5, spend limits and budgets 0.7, X apps 0.6, endpoint-agent leftovers 0.5; else 1 |
+| exposure (secrets) | worst copy remote 1.5, shared 1, local 0.7 |
+| liveness (secrets) | live and leaked 2 (see "Correlation"), live 1.5, attributed mine 1.3, attributed not-mine 0.3 |
+| confidence | a secret nothing shows still valid 0.8, a review list 0.8, a "possible" dump 0.7 |
+| effort | rotate with `rotations replace` 1, rotate by hand 1.5, a history rewrite (dumps) 3, a review list 1 + entries/20 (3 at most), else 1; doubled when a pending decision blocks the item |
+| quick win | 1.5 when segurata does it after confirmation, or one fix closes 3 findings or more |
+
+A pending decision that blocks items (see "Grouping") is an entry worth half of what it unblocks,
+as a quick win, with "Unblocks: 9 items (P1 9)". Secrets are one entry per priority, scored as the
+next secret: it names that secret, its first two reasons, its next step and command, and `segurata
+rotations next --priority P0` to go on. Coverage items (see "Coverage") and setup items have
+sections of their own. Reading it changes
 nothing: an unfiltered `status --mark-seen` records the "since" mark, and `--write` (which implies
 `--mark-seen`) also writes `status.md` and `status.html` next to the tracker, mode 0600. `report`
 stays the per-run view. Likewise `rotations next` only logs a `next` history event with `--log`.
+
+### Coverage
+
+What segurata looked at, and what it cannot look at here (`internal/tracker/coverage.go`).
+
+**Runs.** Each sync keeps, per connector instance, its newest folded run in the tracker's `runs`:
+when it ended, whether it has `run_end`, whether it was complete, the connector's error, and the
+first five scopes it skipped with the count. A scope left out by a status the config expects (when
+the run was written or by a rule added since) is counted as expected and does not make the run
+partial. `status` prints one line for every configured instance (the targets an unfiltered
+`inventory` runs) and any other that ran:
+
+```
+Coverage: aws: 3 h ago (1 scope left out as expected); cloudflare: never run; gcp: 9 h ago, failed: …; github: 3 h ago, partial: user:owner not checked.
+```
+
+**Gaps.** Areas of the plan ([plan.md](plan.md)) that no connector audits on this machine are
+review items of theme `coverage` (key `coverage:<slug>`, no priority), each with the step that
+would cover it:
+
+| Item | Open while | Step |
+|---|---|---|
+| your own GitHub account's 2FA | the github run reports a `user:<login>` scope other than ok (gh lacks `read:user`) | `gh auth refresh -h github.com -s read:user && segurata inventory github` |
+| Google recovery options and passkeys | always (no connector) | Security Checkup and passkeys on every account |
+| Apple Account devices and Sign in with Apple | always | account.apple.com, see manual-review.md |
+| Stripe API keys | always | restricted keys, delete unused ones |
+| breaches of your addresses (HIBP) | no hibp instance has run | install examples/hibp and run it |
+| the password manager's password report | always | 1Password Watchtower or Bitwarden Reports |
+| Google Workspace administration | a workspace tenant ran and none reported ok | README, "Google Workspace administration" |
+
+A sync opens the item when the gap is there and closes it as done and verified ("covered: the
+github run read your account") when a run covers it; one segurata closed opens again when the gap
+comes back. An item the owner marks done (the manual areas) stays done. They stay out of the
+headline counts and "Do next", in a section of their own, "Not audited on this machine": they say
+what is unknown, not what is failing.
 
 ## Remediation
 
@@ -495,6 +570,14 @@ changes:
 
 The only write is the one-time import of the former state files, when the tracker does not exist
 yet.
+
+Once a sync has filled the tracker (`last_sync_at` set), the report counts what `status` counts:
+its headline is the tracker's (`Tracker.Headline`: items by priority and theme), followed by the
+findings of the latest runs as a note ("an item groups the findings one action fixes") and the
+table by connector instance; its setup section is the tracker's setup blockers (`tracker.Blockers`)
+instead of the runs' statuses; and its changes are the items found, closed, verified and reopened
+in the last 7 days (`tracker.Changes`, the same counts `status` gives since the last status)
+instead of the file diff below, which only a report without a synced tracker shows.
 
 The diff is by finding id: an id only in the latest file is new, one only in the previous file is
 resolved if the latest run inspected its scope and "not checked this run" otherwise, one in both
@@ -853,6 +936,17 @@ every run without a new scan.
   owner's secret leaked into someone else's repository, and counts in full. Transcripts, logs and
   histories do not make a value the owner's: an agent that read a third-party file leaves its
   value there.
+- Attributed mine. Attribution wins over the repository: a secret whose claims name one of the
+  owner's accounts (an AWS key id decoding to an account the aws connector reaches, see
+  "Attribution") is the owner's leaked secret wherever it sits. `track sync` marks its third-party
+  and fork-upstream copies `reused`, so they keep full impact and exposure (a key pushed to a
+  clone of someone else's repository is P0, not noise), and its reasons say "yours by attribution
+  (AWS account … is yours), so its copies in other people's repositories count in full". For the
+  tracker to see such copies at all, the connector emits a third-party or fork-upstream copy that
+  would count if it were the owner's and that names an account (`aws_account`, `gcp_project`,
+  `slack_team`; the commit author is not enough) as a noise finding, instead of only counting it.
+  The tracker knows the owner's accounts before it folds secrets, so this holds from the first
+  sync, and a noise summary never reclassifies an item attributed mine that has such a copy.
 - Paths (`secretrisk.RoleOf`, repository files only). Checksum lists (`*.md5`, `*.sha1`,
   `*.sha256`, `*.sha512`, `*.sum`) and lockfiles are noise. Test folders and files (`test`, `spec`,
   `fixtures`, `__tests__`, `cassettes`, `*_test.*`, `*.test.*`, `*.spec.*`, `test_*`), examples
@@ -902,8 +996,10 @@ last four characters when the value is long and random, and the length, `sk_live
 
 Titles. A rotate item is named `<label> <hint> in <repo>:<file> (+N places), committed YYYY-MM`:
 the location that exposed it most (among equals the owner's repository, then the latest commit),
-the number of other locations, and the earliest commit date. Within a priority and exposure, items
-with a copy in an owned repository and with more recent commits come first.
+the number of other locations, and the earliest commit date. Within a priority, secrets that are
+live and leaked come first (see "Correlation"), then by exposure, then those a working file holds
+(`used_in`), with a copy in an owned repository, with the most recent commit, and found in more
+places. `rotations next` and the "Rotate N P0 secrets" entry of `status` follow that order.
 
 ### Guided rotation: `next` and `replace`
 
@@ -989,6 +1085,9 @@ run:
 - `unknown` (low) otherwise: no claim, or a claim of a kind where none of the owner's accounts is
   known ("run its connector or set owned.aws_accounts").
 
+A verdict of mine also restores full impact to copies in third-party repositories and inherited
+fork history (see "What counts against the owner").
+
 Not-mine is a comparison with the accounts known, not proof: an old AWS account the owner still
 holds but no profile reaches reads as someone else's until it is listed in `owned.aws_accounts`.
 Commit authorship ("committed by you (me@x.com)", "committed by someone else") and repository
@@ -998,6 +1097,52 @@ listed as hints and never change the verdict.
 `rotations show` prints the verdict, its reasons and the facts; `rotations list --owner
 mine|not-mine|unknown` filters by it and shows an OWNER column; `rotations sync` counts open
 secrets by owner. Decision rules use it through `owners` (see "Decisions and rules").
+
+## Correlation
+
+Two connectors can report one secret: the aws connector finds the long-lived key in
+`~/.aws/credentials`, and local-secrets finds the same key there and pushed to a repository's
+history. The rotate item owns the problem (`internal/tracker/correlate.go`). At every sync, before
+grouping, each credential finding of a folded run is matched with a rotate item:
+
+| Connector | Findings | Rotate items it may match |
+|---|---|---|
+| aws | `aws_local_credentials` | service aws |
+| aws | `r2_local_credentials`, `s3_local_credentials` | any |
+| gcp | `local_credential` (ADC, service-account key files) | services gcp, google, oauth, private-key |
+| openai, openrouter, anthropic | `api_key` (info ones too: a key in use) | the same service |
+
+The match is, in order: the fingerprint, when the finding carries one (the aws connector gives the
+key id's); a finding with a fingerprint matches nothing else, since the key in the file may have
+been rotated since the copy leaked. Else the redacted hint and the service: the hint forms of
+segurata (`AKIA…(20)`), OpenRouter (`sk-or-v1-27e...d4d`) and OpenAI (`sk-proj-****…xxkA`) are
+read into prefix, tail and length (`secretrisk.Hint`), and two fit when one prefix starts the
+other, one tail ends the other and known lengths agree; a hint match needs at least three
+characters of tail, enough to tell keys apart. Else the file: a rotate item with a location at the
+finding's path (`file`, `path`) whose hint, when both have one, fits. Among several candidates the
+most urgent wins. A finding whose item the owner accepted is left alone.
+
+A matched finding is not grouped: it goes on the rotate item as a finding ref with `match`
+(`fingerprint`, `hint` or `path`), replaced at every sync that folds its connector instance. The
+connector's item loses that ref; left with nothing reported, an open, in-progress, snoozed or done
+one closes as `merged` (history `merged`, "the same secret as T-0404, which owns it now",
+`merged_into` set, next step "Nothing here: T-0404 owns this secret"). When a later sync no longer
+matches the finding (another fingerprint, another key), it goes back to its item, which opens again
+(`auto-reopen`, "no longer the same secret as T-0404").
+
+The core also writes, in each run's `run_end`, the fingerprints of the secrets it resolved for the
+instance (`secret_fingerprints`, by name, never the value). A rotate item with one of them gets a
+ref `uses:<instance>:<name>`, "segurata's vercel connector signs in with it (VERCEL_TOKEN) and its
+run of 2026-11-24 worked": the token segurata uses is one of the leaked ones.
+
+On the rotate item, the refs still reported are evidence the secret is live:
+
+- its priority is the worse of its own and its refs' severities (critical P0, high P1, …);
+- a live secret whose worst copy left the machine (pushed history, a transcript) is P0, its first
+  reason is "live key, leaked in <repo>:<file>", and it sorts first among secrets;
+- each ref adds a reason "live: <instance>: <title>" ("live: aws: Long-lived AWS access key for
+  profile "default" stored in plain text; aws sts says it works for account 111122223333",
+  "live: openrouter:personal: API key "Claude Code": in use with a credit limit").
 
 ## Redaction
 

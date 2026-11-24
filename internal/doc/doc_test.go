@@ -45,3 +45,31 @@ func TestEveryFormatRendersTheSameContent(t *testing.T) {
 		t.Error("unknown format accepted")
 	}
 }
+
+func TestFoldShowsTheHeadAndFoldsTheRest(t *testing.T) {
+	dt := Fold("Next", "Treat it as exposed. Run `git filter-repo --path a.sql --invert-paths` and force-push.\nThen check the breach duty.", 30)
+	if dt.Text != "Treat it as exposed." || !strings.Contains(dt.More, "git filter-repo") || !strings.Contains(dt.More, "\nThen check") {
+		t.Fatalf("Fold = %+v", dt)
+	}
+	d := &Doc{Title: "t"}
+	d.List([]Item{{Text: "item", Details: []Detail{dt}}})
+	want := map[Format][]string{
+		Text:     {"Next: Treat it as exposed. […]"},
+		Markdown: {"<details><summary>Next: Treat it as exposed.</summary>", "Then check the breach duty.<br>", "</details>"},
+		HTML:     {`<details class="detail"><summary><b>Next:</b> Treat it as exposed.</summary>`, "force-push.<br>Then check"},
+	}
+	for f, ws := range want {
+		var b bytes.Buffer
+		if err := Render(&b, d, f); err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range ws {
+			if !strings.Contains(b.String(), w) {
+				t.Errorf("%s lacks %q:\n%s", f, w, b.String())
+			}
+		}
+		if f == Text && strings.Contains(b.String(), "filter-repo") {
+			t.Errorf("text shows the folded part:\n%s", b.String())
+		}
+	}
+}

@@ -199,3 +199,25 @@ func TestHexLookalikesAreNoiseUnlessPrefixed(t *testing.T) {
 		t.Fatal("a prefixed Sourcegraph token is a real secret")
 	}
 }
+
+func TestUpstreamOnly(t *testing.T) {
+	key := Evidence{Type: "aws-access-key-id", Redacted: "AKIA…(20)", Source: "gitleaks", Kind: "repo", Path: "~/src/lms/app.py", Tracked: true, Remote: true}
+	for _, c := range []struct {
+		origin string
+		reused bool
+		typ    string
+		want   bool
+	}{
+		{OriginThirdParty, false, "aws-access-key-id", true},
+		{OriginForkUpstream, false, "aws-access-key-id", true},
+		{OriginThirdParty, true, "aws-access-key-id", false}, // already the owner's
+		{OriginOwned, false, "aws-access-key-id", false},
+		{OriginThirdParty, false, "generic-api-key", false}, // noise wherever it is
+	} {
+		e := key
+		e.Origin, e.Reused, e.Type = c.origin, c.reused, c.typ
+		if got := UpstreamOnly(e); got != c.want {
+			t.Errorf("UpstreamOnly(%s, reused %v, %s) = %v", c.origin, c.reused, c.typ, got)
+		}
+	}
+}

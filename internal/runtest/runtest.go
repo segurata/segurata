@@ -15,15 +15,19 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
+// Fingerprints, among Write's records, are the secret fingerprints its run_end names.
+type Fingerprints map[string]string
+
 // Write writes one finished run to path. recs are finding.Finding and finding.Status records, plus
-// finding.Skipped for a scope the connector declared skipped and an error for a connector that
-// failed. The run counts as having inspected something, so only statuses, skips and errors make
+// finding.Skipped for a scope the connector declared skipped, an error for a connector that
+// failed and Fingerprints for the secrets the core resolved. The run counts as having inspected something, so only statuses, skips and errors make
 // it incomplete. Its times are the newest observed_at among the findings.
 func Write(t testing.TB, path string, recs ...any) {
 	t.Helper()
 	var tally finding.Tally
 	tally.Declare("", true, "")
 	var err error
+	var fps Fingerprints
 	var lines []any
 	var at time.Time
 	connector, instance := strings.TrimSuffix(filepath.Base(path), ".jsonl"), ""
@@ -49,11 +53,14 @@ func Write(t testing.TB, path string, recs ...any) {
 			tally.Declare(r.Scope, false, r.Reason)
 		case error:
 			err = errors.Join(err, r)
+		case Fingerprints:
+			fps = r
 		default:
 			lines = append(lines, r)
 		}
 	}
 	end := tally.End(connector, instance, at, at, err)
+	end.SecretFingerprints = fps
 	write(t, path, append(lines, end)...)
 }
 

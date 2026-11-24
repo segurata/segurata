@@ -34,6 +34,18 @@ func UpstreamSpot(origin string, reused bool) (Spot, bool) {
 	return Spot{Local, origin, "committed to a third-party repository (the upstream's secret)"}, true
 }
 
+// UpstreamOnly reports whether a copy is noise only because it sits in someone else's repository:
+// were it the owner's, it would count. Attribution can still make it the owner's (an AWS key id
+// decoding to one of the owner's accounts), so the connector emits such copies when they name an
+// account, and the tracker counts them in full when the secret is attributed mine.
+func UpstreamOnly(e Evidence) bool {
+	if !NotOwners(e.Origin, e.Reused) {
+		return false
+	}
+	e.Reused = true
+	return ImpactOf(e) != Noise
+}
+
 // STSLifetime is the longest an AWS temporary credential (key id ASIA…) lives: 36 hours for a
 // role session, less for most.
 const STSLifetime = 36 * time.Hour

@@ -141,7 +141,15 @@ type SecretReport struct {
 // with the same fingerprint is reopened only when a sighting is in a working file (see
 // rotatedSeen). Items not seen keep their history and last_seen: git history and transcripts do
 // not forget, and a redacted copy still reached the model provider.
+//
+// A secret attributed mine (a claim names one of the owner's accounts, known to the tracker) counts
+// in full wherever it sits: copies in third-party repositories and in history a fork inherited are
+// the owner's leaked secret, not the upstream's (see mineAfterAll).
 func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise bool) SecretReport {
+	return t.syncSecrets(sightings, now, includeNoise, t.OwnedAll(attribution.Owned{}))
+}
+
+func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise bool, owned attribution.Owned) SecretReport {
 	groups := map[string][]Sighting{}
 	var order []string
 	for _, s := range sightings {
@@ -155,10 +163,11 @@ func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise 
 	existing := t.byFingerprint()
 	for _, fp := range order {
 		g := groups[fp]
+		it, ok := existing[fp]
+		mineAfterAll(it, g, owned)
 		best := bestSighting(g)
 		impact := secretrisk.ImpactOf(best.Evidence)
 		noise := impact == secretrisk.Noise && !includeNoise
-		it, ok := existing[fp]
 		if noise && !ok {
 			rep.Skipped++
 			continue
@@ -202,6 +211,34 @@ func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise 
 	return rep
 }
 
+// mineAfterAll counts in full the copies of a secret attributed mine that sit in someone else's
+// repository: the claims of the sightings (and the facts the item already holds) name one of the
+// owner's accounts, so it is the owner's secret leaked there. Such a copy is marked Reused, as a
+// third-party copy of a value the owner holds elsewhere is, and so is never noise or local for
+// being there.
+func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
+	var facts attribution.Facts
+	if it != nil && it.Secret != nil && it.Secret.Attribution != nil {
+		facts = it.Secret.Attribution.Facts
+		facts.AWSAccounts = append([]string(nil), facts.AWSAccounts...)
+		facts.GCPProjects = append([]string(nil), facts.GCPProjects...)
+		facts.SlackTeams = append([]string(nil), facts.SlackTeams...)
+	}
+	upstream := false
+	for _, s := range g {
+		facts.Add(s.Evidence.Claims)
+		upstream = upstream || secretrisk.NotOwners(s.Evidence.Origin, s.Evidence.Reused)
+	}
+	if !upstream || attribution.Attribute(facts, owned).Owner != attribution.Mine {
+		return
+	}
+	for i := range g {
+		if secretrisk.NotOwners(g[i].Evidence.Origin, g[i].Evidence.Reused) {
+			g[i].Evidence.Reused = true
+		}
+	}
+}
+
 // NoiseOnly reads the noise summary of a local-secrets run: every fingerprint whose copies are all
 // noise, with its type. The connector emits it instead of the noise findings themselves (unless
 // emit_noise), so a secret a corrected rule made noise still reaches its item.
@@ -224,7 +261,9 @@ const noiseSummaryType = "noise_summary"
 
 // SyncNoise applies a noise summary to the items it names, as SyncSecrets does for a secret whose
 // every sighting is noise: impact noise, and open, in-progress, snoozed or ignored items closed as
-// reclassified. Fingerprints without an item are left alone: noise never creates one.
+// reclassified. Fingerprints without an item are left alone: noise never creates one. An item
+// attributed mine with a copy in someone else's repository is left alone too: that copy is noise
+// for the connector only because of where it sits, and attribution makes it the owner's.
 func (t *Tracker) SyncNoise(noise map[string]string, now time.Time) SecretReport {
 	var rep SecretReport
 	if len(noise) == 0 {
@@ -232,7 +271,7 @@ func (t *Tracker) SyncNoise(noise map[string]string, now time.Time) SecretReport
 	}
 	for fp, it := range t.byFingerprint() {
 		typ, ok := noise[fp]
-		if !ok {
+		if !ok || it.Owner() == attribution.Mine && it.upstreamCopy() {
 			continue
 		}
 		it.Secret.Impact = secretrisk.Noise.String()
@@ -476,10 +515,27 @@ func (it *Item) refreshSecret() {
 	if ok {
 		it.Priority = secretrisk.PriorityOf(impactByName(s.Impact), worst.Level)
 	}
-	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
+	// A connector that reports the same credential proves it live: the worse of the two priorities
+	// holds, and a live key that left the machine is P0 (see correlate.go).
+	live := it.live()
+	for _, r := range live {
+		if p := priorityOf(r.Severity); p != "" && p.Rank() < it.Priority.Rank() {
+			it.Priority = p
+		}
+	}
 	var reasons []string
+	if it.LiveAndLeaked() {
+		it.Priority = secretrisk.P0
+		if primary, ok := it.primaryLocation(); ok {
+			reasons = append(reasons, "live key, leaked in "+primary.Name())
+		}
+	}
+	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
 	if it.reopenedStillPresent() {
 		reasons = append(reasons, StillPresent)
+	}
+	for _, r := range live {
+		reasons = append(reasons, "live: "+r.Label()+": "+r.Title)
 	}
 	if ok {
 		reasons = append(reasons, secretrisk.Reason(t, worst))
@@ -504,6 +560,9 @@ func (it *Item) refreshSecret() {
 				reasons = append(reasons, fmt.Sprintf("also %s (%d %s)", phrase[lb], n, textfmt.Plural(n, "place", "places")))
 			}
 		}
+	}
+	if it.Owner() == attribution.Mine && it.upstreamCopy() {
+		reasons = append(reasons, "yours by attribution ("+it.Secret.Attribution.Reasons[0]+"), so its copies in other people's repositories count in full")
 	}
 	s.Reasons = reasons
 	seen := map[string]bool{}
@@ -626,6 +685,17 @@ func (it *Item) lastCommitted() string {
 		}
 	}
 	return last
+}
+
+// upstreamCopy reports whether a location is in someone else's repository or in history a fork
+// inherited.
+func (it *Item) upstreamCopy() bool {
+	for _, l := range it.Secret.Locations {
+		if l.Origin == secretrisk.OriginThirdParty || l.Origin == secretrisk.OriginForkUpstream {
+			return true
+		}
+	}
+	return false
 }
 
 // owned reports whether a location is in one of the owner's repositories.

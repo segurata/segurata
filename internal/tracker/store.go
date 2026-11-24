@@ -159,6 +159,9 @@ var upgrades = map[int]func(map[string]any) error{
 	// 3 adds the top-level owned, a rotate item's secret.attribution and a rule's owners; a version 2
 	// file has none, so it carries over as it is.
 	2: func(map[string]any) error { return nil },
+	// 4 adds the status merged with an item's merged_into, a finding ref's type, resource and match,
+	// and the top-level runs; a version 3 file has none, so it carries over as it is.
+	3: func(map[string]any) error { return nil },
 }
 
 func parse(raw []byte) (*Tracker, error) {
@@ -234,6 +237,8 @@ func (t *Tracker) validate() error {
 			return fmt.Errorf("rotate item %s has no secret or fingerprint", it.ID)
 		case it.Kind == KindDecide && it.Decision == nil:
 			return fmt.Errorf("decide item %s has no decision", it.ID)
+		case it.Status == Merged && it.MergedInto == "":
+			return fmt.Errorf("merged item %s does not say which item it merged into", it.ID)
 		}
 		ids[it.ID], keys[it.Key] = true, true
 	}

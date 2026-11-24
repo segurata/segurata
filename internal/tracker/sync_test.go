@@ -19,6 +19,14 @@ func fnd(connector, instance, account, resType, resID, name string, sev finding.
 	return f
 }
 
+// dumpFinding is a local-secrets data_dump finding of one file of a repository, as the connector
+// writes it.
+func dumpFinding(repo, path string, sev finding.Severity, size int64, at time.Time) finding.Finding {
+	f := fnd(SecretsConnector, "", "local", "data_dump", repo+":"+path, path, sev, "Database dump committed to "+repo+": "+path+" ("+secretrisk.HumanSize(size)+", pushed)", at)
+	f.Evidence = map[string]any{"source": "data-dump", "repo": repo, "path": path, "size_bytes": float64(size), "size": secretrisk.HumanSize(size), "remote": true}
+	return f
+}
+
 func okStatus(connector, account string) finding.Status {
 	return finding.Status{Type: "status", Connector: connector, Account: account, State: finding.StateOK}
 }
@@ -109,7 +117,7 @@ func TestGroupingRules(t *testing.T) {
 		okStatus("macos", "Mac"))
 
 	dump := func(path string, sev finding.Severity) finding.Finding {
-		return fnd(SecretsConnector, "", "local", "data_dump", "~/src/api:"+path, path, sev, "Database dump committed to ~/src/api: "+path+" (365 KB, pushed)", t0)
+		return dumpFinding("~/src/api", path, sev, 365<<10, t0)
 	}
 	secret := func(fp, kind, path string) finding.Finding {
 		f := fnd(SecretsConnector, "", "local", "secret", "scan:"+path+"#"+fp, "Stripe live key", finding.SevCritical, "Stripe live secret key in "+path, t0)
@@ -155,9 +163,17 @@ func TestGroupingRules(t *testing.T) {
 			t.Errorf("an info finding made an item: %s", it.Title)
 		}
 	}
-	a, b := byTitle(t, tr, "Database dump committed to ~/src/api: a.sql"), byTitle(t, tr, "Database dump committed to ~/src/api: b.sql")
-	if a.Theme != "data-dumps" || b.Priority != secretrisk.P0 || a.Priority != secretrisk.P1 {
-		t.Errorf("dumps %+v %+v", a, b)
+	// Data dumps: one item per repository, purged in one pass, worst file first; the guide is the
+	// page, the breach-notification duty the secondary step.
+	dumps := byTitle(t, tr, "2 database dumps in the git history of ~/src/api (730 KB)")
+	if dumps.Theme != "data-dumps" || dumps.Priority != secretrisk.P0 || len(dumps.Findings) != 2 || dumps.Next.URL != secretrisk.DumpFixDoc {
+		t.Errorf("dumps %+v %+v", dumps, dumps.Next)
+	}
+	for _, want := range []string{"`git filter-repo --invert-paths --path 'b.sql' --path 'a.sql'` and force-push", "\nFiles: b.sql (365 KB, pushed); a.sql (365 KB, pushed).\n",
+		secretrisk.URLAEPDBreaches, secretrisk.URLEDPBBreaches} {
+		if !strings.Contains(dumps.Next.Action, want) {
+			t.Errorf("dumps next step lacks %q: %s", want, dumps.Next.Action)
+		}
 	}
 	trails := byTitle(t, tr, "Redact secrets from 2 trail files")
 	if trails.Theme != "transcripts" || trails.Severity != finding.SevMedium || trails.Next.Who != Segurata || trails.Next.Command != "segurata redact --trails" {
@@ -426,5 +442,58 @@ func TestAnInstanceWideStatusCoversThePerAccountOne(t *testing.T) {
 	}
 	if len(inst.Findings) != 2 || reported != 1 {
 		t.Errorf("refs %+v", inst.Findings)
+	}
+}
+
+// Data dumps used to be one item per file. Those items move into their repository's item, closed
+// as merged into it, except one the owner ignored on its own; and a pending decision about purging
+// dumps blocks the repository's item, whose next step says so until it is answered.
+func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	a, b, c := dumpFinding("~/src/api", "a.sql", finding.SevHigh, 1<<20, t0), dumpFinding("~/src/api", "b.sql", finding.SevHigh, 2<<20, t0),
+		dumpFinding("~/src/api", "c.sql", finding.SevMedium, 3<<20, t0)
+	writeRun(t, out, t0, "local-secrets.jsonl", a, b, c, okStatus(SecretsConnector, "local"))
+	tr := New(t0)
+	// Per-file items as an older sync made them.
+	old := map[string]*Item{}
+	for _, f := range []finding.Finding{a, b, c} {
+		it := tr.newItem(KindFix, pinnedKey(f.ID), "data-dumps", f.Title, t0)
+		it.Findings = []FindingRef{refOf(f)}
+		old[f.ID] = it
+	}
+	if err := old[c.ID].Ignore(t0, "a fixture"); err != nil {
+		t.Fatal(err)
+	}
+	d := tr.AddDecision("decide:purge-data-dumps", "Purge the data dumps from git history?", []string{"yes", "no"}, t0)
+	rep := syncOrDie(t, tr, out, t0.Add(time.Hour))
+	repo := byTitle(t, tr, "2 database dumps in the git history of ~/src/api (3.0 MB)")
+	for _, f := range []finding.Finding{a, b} {
+		if it := old[f.ID]; it.Status != Merged || it.MergedInto != repo.ID || len(it.Findings) != 0 {
+			t.Errorf("%s: %s into %q, %d refs", it.ID, it.Status, it.MergedInto, len(it.Findings))
+		}
+	}
+	if it := old[c.ID]; it.Status != Ignored || len(it.Findings) != 1 {
+		t.Errorf("the dump ignored on its own moved: %s, %d refs", it.Status, len(it.Findings))
+	}
+	if rep.Merged != 2 {
+		t.Errorf("merged %d", rep.Merged)
+	}
+	if !strings.HasPrefix(repo.Next.Action, "Blocked by decision "+d.ID+" (Purge the data dumps from git history?): answer it first. ") {
+		t.Errorf("next step: %s", repo.Next.Action)
+	}
+	if got := tr.Unblocks(d, t0.Add(time.Hour)); len(got) != 1 || got[0] != repo {
+		t.Errorf("unblocks %v", got)
+	}
+	// Answered: the note goes away at the next sync, and is never doubled meanwhile.
+	syncOrDie(t, tr, out, t0.Add(2*time.Hour))
+	if strings.Count(repo.Next.Action, "Blocked by decision") != 1 {
+		t.Errorf("note doubled: %s", repo.Next.Action)
+	}
+	if err := d.Decide(t0.Add(3*time.Hour), "yes"); err != nil {
+		t.Fatal(err)
+	}
+	syncOrDie(t, tr, out, t0.Add(4*time.Hour))
+	if strings.Contains(repo.Next.Action, "Blocked by decision") || tr.BlockedBy(repo, t0.Add(4*time.Hour)) != nil {
+		t.Errorf("still blocked after the answer: %s", repo.Next.Action)
 	}
 }

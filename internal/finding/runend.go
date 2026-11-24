@@ -54,6 +54,10 @@ type RunEnd struct {
 	Complete  bool      `json:"complete"` // nothing skipped and no error
 	Error     string    `json:"error,omitempty"`
 	Scopes    Scopes    `json:"scopes"`
+	// SecretFingerprints are the fingerprints (internal/fingerprint) of the secrets the core resolved
+	// for this instance, by name (OPENAI_ADMIN_KEY): never the values. The tracker matches them with
+	// leaked copies, which the run proves are in use.
+	SecretFingerprints map[string]string `json:"secret_fingerprints,omitempty"`
 }
 
 // Tally collects a run's coverage as records arrive. It is not safe for concurrent use.

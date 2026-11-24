@@ -31,6 +31,18 @@ func DefaultPath(home string) string {
 	return filepath.Join(home, ".config", "segurata", "fingerprint.key")
 }
 
+// OpenDefault opens the key at DefaultPath of the user's home, never creating it: for readers
+// that match fingerprints local-secrets recorded (a connector naming the key it found, the core
+// naming the secrets it resolved). ok is false when there is no key yet.
+func OpenDefault() (k Key, ok bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Key{}, false
+	}
+	k, err = Open(DefaultPath(home))
+	return k, err == nil
+}
+
 // Load reads the key, creating it with mode 0600 on first use. Losing the key changes every
 // fingerprint, so the rotation ledger would see every secret as new.
 func Load(path string) (Key, error) {

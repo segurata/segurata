@@ -511,7 +511,9 @@ func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 	}
 	evs = collapseTemporaryAWS(markReused(inheritForkUpstream(evs)))
 	// A noise copy of a value that has a real copy elsewhere is emitted all the same: it is one more
-	// place the secret went (a generic match in pushed history of the key in ~/.aws/credentials).
+	// place the secret went (a generic match in pushed history of the key in ~/.aws/credentials). So
+	// is a copy in someone else's repository that names an account (an AWS key id): if the account
+	// is the owner's, the tracker attributes the secret mine and counts it in full.
 	fs := make([]finding.Finding, len(evs))
 	real := map[string]bool{}
 	for i, ev := range evs {
@@ -523,7 +525,8 @@ func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 	noise := noiseCounts{}
 	var out []finding.Finding
 	for i, ev := range evs {
-		if !s.cfg.emitNoise && isNoise(fs[i]) && !real[ev.Fingerprint] {
+		attributable := secretrisk.UpstreamOnly(ev) && ev.Claims.NamesAccount()
+		if !s.cfg.emitNoise && isNoise(fs[i]) && !real[ev.Fingerprint] && !attributable {
 			noise.add(ev)
 			continue
 		}

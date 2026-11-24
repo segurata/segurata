@@ -20,11 +20,10 @@ import (
 // once per file. dumpscan.go finds the candidates in each repository's tree and history.
 
 const (
-	dumpMinSize     = 4 << 10  // files up to this size are schemas, samples or empty databases (one SQLite page)
-	dumpRowsSize    = 64 << 10 // INSERT or COPY rows in a smaller file are a script, not a dump
-	dumpLargeSize   = 1 << 20  // data exports by name, fixtures under test folders, schema-only SQL
-	dumpPeekSize    = 4 << 10  // bytes of a blob read to recognise a dump header
-	dumpFixDocument = fixDoc + "#data-dumps-in-git"
+	dumpMinSize   = 4 << 10  // files up to this size are schemas, samples or empty databases (one SQLite page)
+	dumpRowsSize  = 64 << 10 // INSERT or COPY rows in a smaller file are a script, not a dump
+	dumpLargeSize = 1 << 20  // data exports by name, fixtures under test folders, schema-only SQL
+	dumpPeekSize  = 4 << 10  // bytes of a blob read to recognise a dump header
 )
 
 // dumpName is what a path's name says about a possible dump.
@@ -229,13 +228,13 @@ func (h dumpHit) toFinding() finding.Finding {
 	if h.Tracked {
 		where = "committed to"
 	}
-	title := fmt.Sprintf("%s %s %s: %s (%s, %s)", h.label(), where, h.Repo, h.Path, humanSize(h.Size), h.exposure())
+	title := fmt.Sprintf("%s %s %s: %s (%s, %s)", h.label(), where, h.Repo, h.Path, secretrisk.HumanSize(h.Size), h.exposure())
 	ev := map[string]any{
-		"source": "data-dump", "repo": h.Repo, "path": h.Path, "size_bytes": h.Size, "size": humanSize(h.Size),
+		"source": "data-dump", "repo": h.Repo, "path": h.Path, "size_bytes": h.Size, "size": secretrisk.HumanSize(h.Size),
 		"versions": h.Versions, "tracked": h.Tracked, "in_working_tree": h.InWorkingTree,
 		"first_commit": h.FirstCommit, "first_date": h.FirstDate, "remote": h.Remote,
 		"on_remote_branch": h.OnRemoteBranch, "content": h.Content, "header": h.Header,
-		"production_name": h.ProdName, "fix": dumpFixDocument,
+		"production_name": h.ProdName, "fix": secretrisk.DumpFixDoc,
 	}
 	if h.Visibility != "" {
 		ev["visibility"] = h.Visibility
@@ -251,16 +250,9 @@ func (h dumpHit) toFinding() finding.Finding {
 		Severity:    h.severity(),
 		Title:       title,
 		Evidence:    ev,
-		Remediation: finding.Remediation{Summary: h.remediation(), URL: urlAEPDBreaches},
+		Remediation: finding.Remediation{Summary: h.remediation(), URL: secretrisk.URLAEPDBreaches},
 	}
 }
-
-// Breach notification guidance: the Spanish authority's page and the EDPB guidelines, checked on
-// 2026-11-24.
-const (
-	urlAEPDBreaches = "https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales"
-	urlEDPBBreaches = "https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en"
-)
 
 func (h dumpHit) remediation() string {
 	var b strings.Builder
@@ -275,23 +267,6 @@ func (h dumpHit) remediation() string {
 		b.WriteString(" and force-push every branch and tag; collaborators must re-clone, and the host may keep cached copies until support purges them")
 	}
 	b.WriteString(". segurata never rewrites history or pushes. ")
-	fmt.Fprintf(&b, "If it holds personal data of customers or staff, check the GDPR breach notification duty (72 hours): %s, %s. See %s.", urlAEPDBreaches, urlEDPBBreaches, dumpFixDocument)
+	fmt.Fprintf(&b, "If it holds personal data of customers or staff, check the GDPR breach notification duty (72 hours): %s, %s. See %s.", secretrisk.URLAEPDBreaches, secretrisk.URLEDPBBreaches, secretrisk.DumpFixDoc)
 	return b.String()
-}
-
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	v := float64(n) / float64(div)
-	if v < 10 {
-		return fmt.Sprintf("%.1f %cB", v, "KMGTPE"[exp])
-	}
-	return fmt.Sprintf("%.0f %cB", v, "KMGTPE"[exp])
 }

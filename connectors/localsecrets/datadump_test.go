@@ -139,13 +139,10 @@ func TestDumpSeverity(t *testing.T) {
 	if f.Kind != finding.KindExposure || f.Resource.Type != "data_dump" || f.Resource.ID != "~/src/shop:db/production_latest_backup.sql" || f.Remediation.Action != "" || f.Scope != "dumps:~/src/shop" {
 		t.Errorf("finding %+v", f)
 	}
-	for _, want := range []string{"git filter-repo --path 'db/production_latest_backup.sql' --invert-paths", "force-push", "re-clone", "segurata never rewrites history", urlAEPDBreaches, urlEDPBBreaches} {
+	for _, want := range []string{"git filter-repo --path 'db/production_latest_backup.sql' --invert-paths", "force-push", "re-clone", "segurata never rewrites history", secretrisk.URLAEPDBreaches, secretrisk.URLEDPBBreaches} {
 		if !strings.Contains(f.Remediation.Summary, want) {
 			t.Errorf("remediation lacks %q: %s", want, f.Remediation.Summary)
 		}
-	}
-	if humanSize(3*1024+512) != "3.5 KB" || humanSize(900) != "900 B" || humanSize(1536<<20) != "1.5 GB" {
-		t.Error("humanSize")
 	}
 }
 

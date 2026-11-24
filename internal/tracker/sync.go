@@ -40,6 +40,10 @@ type SyncReport struct {
 	Expected int
 	// Ruled counts items closed by a decision's rule.
 	Ruled int
+	// Merged counts connector items closed because a rotate item owns their secret.
+	Merged int
+	// Coverage counts coverage items opened (positive) and closed as covered.
+	Coverage CoverageReport
 	// Every item.
 	Woken, Lapsed int
 }
@@ -52,6 +56,8 @@ type run struct {
 	statuses []finding.Status
 	cov      finding.Coverage // which scopes it inspected
 	failed   string           // the connector's own error, from run_end
+	// fingerprints are the secrets the core resolved for the instance, by name (run_end).
+	fingerprints map[string]string
 }
 
 // statusesUnproven reports, with the reason, a run whose statuses do not prove an earlier status
@@ -134,12 +140,22 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		order = append(order, key)
 		return &p
 	}
+	// The owner's accounts are known before secrets are folded, so a secret attributed mine counts in
+	// full from its first sync (see SyncSecrets).
+	t.discover(runs)
+	owned := t.OwnedAll(opt.Owned)
 	for _, l := range rep.Runs {
-		r := folded[l]
-		if r.isSecrets() {
-			rep.Secrets.add(t.SyncSecrets(Sightings(r.findings), now, opt.IncludeNoise))
+		if r := folded[l]; r.isSecrets() {
+			rep.Secrets.add(t.syncSecrets(Sightings(r.findings), now, opt.IncludeNoise, owned))
 			rep.Secrets.add(t.SyncNoise(NoiseOnly(r.findings), now))
 		}
+	}
+	// A connector's credential that is a rotate item's secret goes to that item, not to a group of
+	// its own (see correlate.go).
+	claims := t.correlate(folded)
+	regroup := map[string]string{} // finding id -> key of the group it moves to
+	for _, l := range rep.Runs {
+		r := folded[l]
 		for _, f := range r.findings {
 			if ev, ok := secretEvidence(f); ok {
 				if trail[ev.Kind] && secretrisk.ImpactOf(ev) != secretrisk.Noise {
@@ -147,14 +163,19 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 				}
 				continue
 			}
-			if f.Severity.Rank() < finding.SevLow.Rank() {
+			if _, claimed := claims[f.ID]; claimed || f.Severity.Rank() < finding.SevLow.Rank() {
 				continue
 			}
 			rl := ruleFor(f)
 			key, p := groupKey(f, rl)
-			if _, pinned := byKey[pinnedKey(f.ID)]; pinned {
-				// An item already holds this finding on its own: it stays there, titled by the finding.
-				key, p.rule = pinnedKey(f.ID), &rule{kind: rl.kind}
+			if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
+				if rl.by == perFinding || pin.keptApart() {
+					// An item already holds this finding on its own: it stays there, titled by the finding.
+					key, p.rule = pinnedKey(f.ID), &rule{kind: rl.kind}
+				} else {
+					// Its rule groups it now (data dumps per repository): it moves to the group.
+					regroup[f.ID] = key
+				}
 			}
 			propose(key, p).add(f)
 		}
@@ -178,6 +199,9 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 			if expected == nil {
 				rep.Created++
 			}
+		} else if it.Status == Merged {
+			it.reopenMerged(now)
+			rep.Reopened++
 		}
 		seen[it] = map[string]bool{}
 		if added := it.upsert(p.refs, seen[it]); added > 0 && existed {
@@ -203,8 +227,19 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		}
 	}
 
+	t.attachLive(claims, folded)
+	moved := claimedBy(claims)
+	for id, key := range regroup {
+		moved[id] = byKey[key].ID
+	}
 	for _, it := range t.Items {
 		if it.Kind == KindRotate || len(it.Findings) == 0 {
+			continue
+		}
+		if it.moveRefs(moved, now) {
+			rep.Merged++
+		}
+		if it.Status == Merged {
 			continue
 		}
 		held := it.markGone(seen[it], folded)
@@ -212,10 +247,10 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		it.noteHeld(held, now)
 	}
 	t.expireAll(now, &rep)
-	t.discover(runs)
 	t.collectClaims(folded)
-	t.Attribute(t.OwnedAll(opt.Owned))
+	t.Attribute(owned)
 	rep.Ruled = t.applyRules(now)
+	t.noteBlocked(now)
 	t.seed(now)
 	if t.Sources == nil {
 		t.Sources = map[string]time.Time{}
@@ -223,6 +258,8 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	for l, r := range folded {
 		t.Sources[l] = r.at
 	}
+	t.recordRuns(folded)
+	rep.Coverage = t.syncCoverage(folded, now)
 	at := now.UTC()
 	t.LastSyncAt = &at
 	return rep, nil
@@ -240,8 +277,8 @@ func (r SyncReport) FoldedSecrets() bool {
 
 // SyncLine is the one-line summary of what a sync did to items other than secrets.
 func SyncLine(r SyncReport) string {
-	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config, %d closed by decisions; %d snoozes and %d acceptances expired.\n",
-		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Woken, r.Lapsed)
+	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config, %d closed by decisions, %d merged into the secret they hold; %d snoozes and %d acceptances expired.\n",
+		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Merged, r.Woken, r.Lapsed)
 	if len(r.Stale) > 0 {
 		s += fmt.Sprintf("Skipped older runs than the tracker already holds: %s.\n", strings.Join(r.Stale, ", "))
 	}
@@ -336,7 +373,7 @@ func readRunFile(file string) (*run, error) {
 	}
 	r := &run{label: RunLabel(file, rf), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
 	if rf.End != nil {
-		r.at, r.failed = rf.End.EndedAt, rf.End.Error
+		r.at, r.failed, r.fingerprints = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints
 	}
 	for _, f := range rf.Findings {
 		if f.ObservedAt.After(r.at) {

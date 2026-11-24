@@ -40,7 +40,7 @@ func TestSyncNeverClosesWhatARunDidNotInspect(t *testing.T) {
 		return scoped(fnd("github", "", "github:"+owner, "github_repo", owner+"/"+name, owner+"/"+name, finding.SevMedium, owner+"/"+name+": secret scanning is off", day1), "repo:"+owner+"/"+name)
 	}
 	dump := func(repo string) finding.Finding {
-		return scoped(fnd(SecretsConnector, "", "local", "data_dump", repo+":db.sql", "db.sql", finding.SevHigh, "Database dump committed to "+repo, day1), repo)
+		return scoped(dumpFinding(repo, "db.sql", finding.SevHigh, 1<<20, day1), repo)
 	}
 	gcpKey := func(project string) finding.Finding {
 		f := fnd("gcp", "", "me@x.com", "api_key", project+"/k", "k", finding.SevHigh, "API key k in "+project+" has no API restrictions", day1)
