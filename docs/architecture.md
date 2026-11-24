@@ -1235,7 +1235,12 @@ On the rotate item, the refs still reported are evidence the secret is live:
   ignored: …"), since the connector's own item merged into it and the key would otherwise have no
   open item. A decision's rule that ignored it does not close it again. Ignoring it by hand after
   the proof sticks. An accepted item stays accepted (the risk was kept on purpose; the priority
-  still rises), and a done item is reopened only by the working-file sightings of "Rotation ledger".
+  still rises);
+- a done item opens again when a connector signs in with the old value itself (a fingerprint
+  match: a hint or a path would also fit the new key in the same file) in a run after it was marked
+  rotated: "proven live by aws; after it was marked rotated: …". Marking it rotated again holds
+  until a later run proves the old value live again. Otherwise a done item is reopened only by the
+  working-file sightings of "Rotation ledger".
 
 ## Redaction
 
