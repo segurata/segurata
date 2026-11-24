@@ -868,8 +868,8 @@ reported by id, and an info finding `aws_account` (`account_id`) when an alias s
 id; one info finding `gcp_projects` per gcp account with the id and number of each project it
 sees, and the gcp accounts (people, not service accounts) as emails; the google-personal accounts
 inspected (status `ok`) as emails; one info finding `slack_workspace` (`team_id`, read from the
-workspace page's boot data) per Slack workspace connected-apps reads; the GitHub login and every
-organization the github and connected-apps connectors name. Each sync adds what it finds to the
+links of its apps; a workspace with no app gives none) per Slack workspace connected-apps reads;
+the GitHub login and every organization the github and connected-apps connectors name. Each sync adds what it finds to the
 tracker's top-level `owned` and never drops a value, so a sync without an aws run still knows the
 account. Config `owned` (`aws_accounts`, `gcp_projects` (ids or numbers), `slack_teams`, `github`,
 `emails`) adds what no connector reaches, and `git config user.email` adds the commit email.

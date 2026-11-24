@@ -23,9 +23,7 @@ var slackSigninJS = inPage(`
 
 const slackAppSel = `a[href*="/integrations/profile/"]`
 
-// The workspace id (T…) is in the page's boot data, not in its text.
-var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `'),
-    team: (document.documentElement.innerHTML.match(/"team_?[iI]d":"(T[A-Z0-9]{6,})"/) || [])[1] || ""};`)
+var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `')};`)
 
 var (
 	slackScopesRE      = regexp.MustCompile(`^(\d+) (ámbitos?|scopes?)$`)
@@ -113,11 +111,24 @@ func slack(ctx context.Context, e *env) {
 			e.report(grant{who: host, scope: host, resType: "slack_app", name: a.name, count: a.count, note: a.note,
 				url: a.href, revoke: slackRevoke, extra: map[string]any{"pending_approval": a.pending}})
 		}
-		if p.Team != "" {
-			e.emit.Finding(slackWorkspaceFinding(e.account(host), host, p.Team))
+		if team := slackTeam(p.Rows); team != "" {
+			e.emit.Finding(slackWorkspaceFinding(e.account(host), host, team))
 		}
 		e.status(host, finding.StateOK, "%d apps", len(p.Rows))
 	}
+}
+
+// slackTeamRE reads the workspace id from an app's link: app.slack.com/apps-manage/<team>/integrations/….
+var slackTeamRE = regexp.MustCompile(`/apps-manage/(T[A-Z0-9]{6,})/`)
+
+// slackTeam is the workspace id the apps' links name, or "" for a workspace with no app listed.
+func slackTeam(rows []row) string {
+	for _, r := range rows {
+		if m := slackTeamRE.FindStringSubmatch(r.Href); m != nil {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 // slackWorkspaceFinding records, as an info finding, the id of a workspace signed in to, so

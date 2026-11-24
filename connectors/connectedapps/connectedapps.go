@@ -404,7 +404,6 @@ type listPage struct {
 	Title string `json:"title"`
 	Text  string `json:"text"`
 	Login string `json:"login"`
-	Team  string `json:"team"` // Slack: the workspace id
 	Rows  []row  `json:"rows"`
 	Next  string `json:"next"`
 }
