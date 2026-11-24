@@ -178,7 +178,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	}
 	p := connector.Plan{
 		Action:  ActionDeleteUnusedKey,
-		Summary: fmt.Sprintf("Delete the OpenAI %s (%s), %s.", k.label, k.redacted, used),
+		Summary: fmt.Sprintf("Delete the OpenAI %s (%s), %s.", k.label, shortRedacted(k.redacted), used),
 		Calls:   []connector.Call{{Method: http.MethodDelete, URL: r.base() + k.path, Secret: writeSecret}},
 		SideEffects: []string{
 			"No undo: a deleted key cannot be restored. Anything still holding it gets HTTP 401 and needs a new key.",
@@ -206,4 +206,13 @@ func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.P
 		return err
 	}
 	return httpw.Send(ctx, r.base(), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
+}
+
+// shortRedacted collapses the mask of a redacted key (sk-proj-****…****dYwA) to one ellipsis.
+func shortRedacted(r string) string {
+	i, j := strings.IndexByte(r, '*'), strings.LastIndexByte(r, '*')
+	if i < 0 {
+		return r
+	}
+	return r[:i] + "…" + r[j+1:]
 }

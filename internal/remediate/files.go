@@ -73,7 +73,10 @@ func (fs Files) PlanGroup(_ context.Context, group []finding.Finding) (connector
 		p.Summary = fmt.Sprintf("Make %d files readable and writable by their owner only.", len(p.Files))
 	}
 	p.SideEffects = []string{
-		"Other users and group members of this machine can no longer read these files; a program running as another user that reads one will fail.",
+		"Other users and group members of this machine can no longer read the file; a program running as another user that reads it will fail.",
+	}
+	if len(p.Files) > 1 {
+		p.SideEffects[0] = "Other users and group members of this machine can no longer read these files; a program running as another user that reads one will fail."
 	}
 	for _, why := range left {
 		p.SideEffects = append(p.SideEffects, "Left out: "+why+".")
