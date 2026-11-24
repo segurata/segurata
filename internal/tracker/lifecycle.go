@@ -32,6 +32,7 @@ const (
 	actNote        = "note"
 	actNotChecked  = "not-checked"
 	actDecide      = "decide"
+	actReanswer    = "reanswer"
 	actPrioritize  = "prioritize"
 	actHistory     = "history-only"
 	actRedacted    = "redacted"
@@ -39,6 +40,7 @@ const (
 	actExpected    = "expected"
 	actRule        = "rule"
 	actMerged      = "merged"
+	actProvenLive  = "proven-live"
 	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `segurata rotations`.
 	ActNext          = "next"
 	ActReplacePlan   = "replace-plan"
@@ -114,9 +116,9 @@ func (it *Item) Done(at time.Time, note string) {
 	it.derive()
 }
 
-// Snooze hides the item until a date (YYYY-MM-DD) after at.
+// Snooze hides the item until a date (YYYY-MM-DD, a day in at's zone, as Accept reads it) after at.
 func (it *Item) Snooze(at time.Time, until, note string) error {
-	d, err := time.Parse(time.DateOnly, until)
+	d, err := time.ParseInLocation(time.DateOnly, until, at.Location())
 	if err != nil {
 		return fmt.Errorf("--until %q is not a date (YYYY-MM-DD)", until)
 	}
@@ -288,8 +290,9 @@ func (it *Item) Active(today time.Time) bool {
 	return false
 }
 
+// snoozeOver reports whether today has reached the snooze's date, in today's zone.
 func (it *Item) snoozeOver(today time.Time) bool {
-	d, err := time.Parse(time.DateOnly, it.SnoozedUntil)
+	d, err := time.ParseInLocation(time.DateOnly, it.SnoozedUntil, today.Location())
 	return err != nil || !today.Before(d)
 }
 

@@ -60,6 +60,7 @@ type fixture struct {
 	open    []string          // files the fake lsof reports open
 	lsofErr error
 	old     time.Time
+	during  func() // runs when lsof is asked, mid-run: another command at work meanwhile
 }
 
 func newFixture(t testing.TB) *fixture {
@@ -112,6 +113,9 @@ func (fx *fixture) cli(in string, tty bool) (CLI, *bytes.Buffer, *bytes.Buffer) 
 		Lsof: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name != "lsof" || strings.Join(args, " ") != "-Fn -c claude -c codex" {
 				fx.t.Errorf("lsof called as %s %v", name, args)
+			}
+			if fx.during != nil {
+				fx.during()
 			}
 			var b strings.Builder
 			b.WriteString("p123\n")
@@ -434,6 +438,11 @@ func TestItemOnlyAndLedgerNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	fx.during = func() {
+		if err := tracker.Update(fx.state, time.Now(), func(l *tracker.Tracker) error { return l.Items[0].Note(time.Now(), "saved meanwhile") }); err != nil {
+			t.Fatal(err)
+		}
+	}
 	code, out := fx.run("", false, "--item", fp[:8], "--apply", "--yes")
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -458,6 +467,9 @@ func TestItemOnlyAndLedgerNote(t *testing.T) {
 	h := it.History
 	if len(h) == 0 || h[len(h)-1].Action != "redacted" || h[len(h)-1].Detail != "redacted from 2 trail files" {
 		t.Errorf("history: %+v", h)
+	}
+	if h := l.Items[0].History; h[len(h)-1].Detail != "saved meanwhile" {
+		t.Error("a change another command saved during the run was lost")
 	}
 }
 

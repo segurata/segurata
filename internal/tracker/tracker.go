@@ -12,6 +12,7 @@
 package tracker
 
 import (
+	"crypto/sha256"
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
@@ -20,7 +21,7 @@ import (
 )
 
 // SchemaVersion is the tracker.json format this binary writes.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // Kind says what sort of action an item asks for.
 type Kind string
@@ -234,6 +235,10 @@ type Tracker struct {
 	// Runs is, per connector instance, the newest run folded in and how complete it was: what the
 	// coverage line of status reports (see coverage.go).
 	Runs map[string]RunInfo `json:"runs,omitempty"`
+
+	// read is the digest of the file this tracker was loaded from or last saved; nil for a tracker
+	// not read from a file. Save compares it with the file it would replace (see ErrChanged).
+	read *[sha256.Size]byte
 }
 
 // RunInfo is what a sync keeps of a connector instance's newest run.

@@ -30,7 +30,8 @@ const trackUsage = `usage: segurata track <command>
   decide     <id> --answer text [--ignore-scope s]... [--accept-scope s]... [--owner not-mine] [--dry-run]
              s: path:~/src/old, repo:owner/name, account:<glob>, gcp-project:<id>; --owner narrows the
              scopes' rules to secrets attributed to those owners (mine, not-mine, unknown); --dry-run
-             prints what answering would close and keep open, and changes nothing
+             prints what answering would close and keep open, and changes nothing; answering again
+             replaces the previous answer and its rules
   snooze     <id> --until YYYY-MM-DD [--note text]
   ignore     <id> --reason text
   expect     <setup-id> --reason text [--detail text] [--dry-run]   write a config rule that expects its status, close it
@@ -61,15 +62,6 @@ type CLI struct {
 func (c CLI) fail(err error) int {
 	fmt.Fprintln(c.Err, "track:", err)
 	return 1
-}
-
-func (c CLI) open(now time.Time) (*Tracker, string, error) {
-	p, err := c.Paths.Resolve()
-	if err != nil {
-		return nil, "", err
-	}
-	t, err := LoadOrNew(p, now)
-	return t, p.Tracker, err
 }
 
 // multi is a flag given several times.
@@ -106,7 +98,8 @@ func (c CLI) Track(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.open(now)
+	t, path, unlock, err := LoadFor(c.Paths, now, cmd != "list" && cmd != "show")
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}
@@ -138,17 +131,32 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	rep, err := t.Sync(opt, now)
+	rep, err := syncAndSave(t, path, opt, now)
 	if err != nil {
-		return c.fail(err)
-	}
-	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
 	s := rep.Secrets
 	fmt.Fprintf(c.Out, "Secrets: %d (%d new, %d reopened, %d reclassified as noise, %d noise-only skipped).\n", s.Secrets, s.Created, s.Reopened, s.Reclassified, s.Skipped)
 	fmt.Fprint(c.Out, SyncLine(rep))
 	return 0
+}
+
+// syncAndSave folds the runs into t and saves it. When tracker.json changed after t was loaded
+// (saved by something that does not take the lock: an edit, an older binary), it folds the same
+// runs once more into that version instead of failing a scheduled sync or dropping the change.
+func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time) (SyncReport, error) {
+	for again := false; ; again = true {
+		rep, err := t.Sync(opt, now)
+		if err != nil {
+			return rep, err
+		}
+		if err = t.Save(path); again || !errors.Is(err, ErrChanged) {
+			return rep, err
+		}
+		if t, err = Load(path); err != nil {
+			return rep, err
+		}
+	}
 }
 
 // expect writes the config rule that expects a setup item's status and closes the item as
@@ -375,7 +383,11 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 		}
 		var added []Rule
 		var closed int
-		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes, owners); err == nil && len(added) > 0 {
+		again := it.Decision != nil && it.Decision.Answer != ""
+		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes, owners); err == nil && again {
+			fmt.Fprintf(c.Out, "This answer %s.\n", it.lastDetail(actReanswer))
+		}
+		if err == nil && len(added) > 0 {
 			for _, r := range added {
 				fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
 			}
@@ -490,7 +502,7 @@ func (c CLI) Status(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.open(now)
+	t, path, _, err := LoadFor(c.Paths, now, false)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -518,8 +530,7 @@ func (c CLI) Status(args []string) int {
 	}
 	if (*markSeen || *write) && f.empty() {
 		at := now.UTC()
-		t.LastStatusAt = &at
-		if err := t.Save(path); err != nil {
+		if err := Update(path, now, func(t *Tracker) error { t.LastStatusAt = &at; return nil }); err != nil {
 			return c.fail(err)
 		}
 	}

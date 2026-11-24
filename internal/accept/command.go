@@ -33,15 +33,6 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-func (c CLI) load(now time.Time) (*tracker.Tracker, string, error) {
-	p, err := c.Paths.Resolve()
-	if err != nil {
-		return nil, "", err
-	}
-	t, err := tracker.LoadOrNew(p, now)
-	return t, p.Tracker, err
-}
-
 // Accept records a finding of the latest run as an accepted risk, or lists the accepted ones.
 func (c CLI) Accept(args []string) int {
 	fs := cliflag.New("accept", c.Err)
@@ -55,7 +46,8 @@ func (c CLI) Accept(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.load(now)
+	t, path, unlock, err := tracker.LoadFor(c.Paths, now, !*list)
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}
@@ -95,7 +87,8 @@ func (c CLI) Unaccept(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.load(now)
+	t, path, unlock, err := tracker.LoadFor(c.Paths, now, true)
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}

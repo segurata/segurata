@@ -206,6 +206,25 @@ func TestSnoozeExpires(t *testing.T) {
 	}
 }
 
+// --until is a day in the owner's zone, as accept reads it: west of UTC, an evening snooze until
+// tomorrow is in the future, and the item comes back at local midnight, not UTC midnight.
+func TestSnoozeUntilIsALocalDate(t *testing.T) {
+	la := time.FixedZone("PST", -8*3600)
+	evening := time.Date(2026, 11, 24, 20, 0, 0, 0, la) // already 2026-11-25 in UTC
+	l := &Tracker{NextID: 1}
+	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, evening, false)
+	it, _ := l.FindRotate("aaaa")
+	if err := it.Snooze(evening, "2026-11-25", ""); err != nil {
+		t.Fatalf("snooze until tomorrow refused: %v", err)
+	}
+	if it.Active(time.Date(2026, 11, 24, 23, 0, 0, 0, la)) {
+		t.Error("awake before local midnight")
+	}
+	if !it.Active(time.Date(2026, 11, 25, 0, 0, 0, 0, la)) {
+		t.Error("still asleep at local midnight of --until")
+	}
+}
+
 func TestIDsGrowOnCollision(t *testing.T) {
 	l := &Tracker{NextID: 1}
 	l.SyncSecrets([]Sighting{
@@ -403,5 +422,66 @@ func TestNoiseSummaryReclassifies(t *testing.T) {
 	}
 	if rep := l.SyncNoise(noise, t0.Add(2*time.Hour)); rep.Reclassified != 0 {
 		t.Errorf("reclassified twice: %+v", rep)
+	}
+}
+
+// used_in follows the latest finished local-secrets run: a working file it inspected and no longer
+// found the secret in leaves used_in, the priority and path rules; history copies stay, a run that
+// skipped the files keeps the location, and a sighting there again brings it back.
+func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
+	out := t.TempDir()
+	const fp = "c7c7c7c7c7c7c7c7"
+	env := secretrisk.Evidence{Fingerprint: fp, Type: "stripe-live", Redacted: "sk_live_…(32)", Path: "~/src/shop/.env", Source: "scan",
+		Kind: "repo", Mode: "644", Tracked: true, Remote: true, Bucket: "b", Count: 1}
+	old := env
+	old.Path, old.Tracked, old.Remote = "~/src/old/.env", false, false
+	git := env
+	git.Path, git.Repo, git.Source, git.Date, git.Remote = "~/src/old/app.py", "~/src/old", "gitleaks", "2024-01-02", false
+	day := func(n int) time.Time { return t0.AddDate(0, 0, n) }
+	tr := New(t0)
+	sync := func(n int, recs ...any) {
+		t.Helper()
+		writeRun(t, out, day(n), "local-secrets.jsonl", append(recs, okStatus(SecretsConnector, "local"))...)
+		syncOrDie(t, tr, out, day(n).Add(time.Hour))
+	}
+	sync(0, leak(env, day(0)), leak(old, day(0)), leak(git, day(0)))
+	it := mustRotate(t, tr, fp[:8])
+	if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env ~/src/shop/.env" {
+		t.Fatalf("day 0 used_in %q", got)
+	}
+	if it.Under("~/src/old") {
+		t.Fatal("under ~/src/old while ~/src/shop/.env holds it")
+	}
+	if it.worst().Label != "git+remote" {
+		t.Fatalf("day 0 worst %q", it.worst().Label)
+	}
+
+	// The shop's .env no longer holds it, the scan read the files: only ~/src/old is left.
+	sync(1, leak(old, day(1)), leak(git, day(1)))
+	if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env" {
+		t.Errorf("day 1 used_in %q", got)
+	}
+	if len(it.Secret.Locations) != 3 {
+		t.Errorf("locations dropped: %+v", it.Secret.Locations)
+	}
+	if !it.Under("~/src/old") {
+		t.Error("a path rule over ~/src/old does not cover it")
+	}
+	if it.worst().Label == "git+remote" {
+		t.Errorf("exposure still from the gone pushed file: %s %s", it.Priority, it.worst().Label)
+	}
+
+	// A run that skipped the files proves nothing: ~/src/old/.env stays in used_in.
+	writeRun(t, out, day(2), "local-secrets.jsonl", leak(git, day(2)), finding.Skipped{Scope: "files", Reason: "ripgrep failed"},
+		okStatus(SecretsConnector, "local"))
+	syncOrDie(t, tr, out, day(2).Add(time.Hour))
+	if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env" {
+		t.Errorf("day 2 (files skipped) used_in %q", got)
+	}
+
+	// Found in the shop's .env again: back in used_in.
+	sync(3, leak(env, day(3)), leak(old, day(3)), leak(git, day(3)))
+	if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env ~/src/shop/.env" {
+		t.Errorf("day 3 used_in %q", got)
 	}
 }

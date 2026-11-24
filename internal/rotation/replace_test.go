@@ -48,6 +48,7 @@ type fakeOS struct {
 	clip      string
 	items     map[string]string // Keychain service → value
 	keepStale bool              // security -i "succeeds" but stores nothing
+	onPaste   func()            // runs when pbpaste is called: another command at work meanwhile
 }
 
 func (f *fakeOS) run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
@@ -56,6 +57,9 @@ func (f *fakeOS) run(_ context.Context, stdin []byte, name string, args ...strin
 	f.calls = append(f.calls, call{name, args, string(stdin)})
 	switch {
 	case name == pbpaste:
+		if f.onPaste != nil {
+			f.onPaste()
+		}
 		return []byte(f.clip + "\n"), nil
 	case name == pbcopy:
 		f.clip = string(stdin)
@@ -305,6 +309,100 @@ func TestReplaceFollowsSymlinks(t *testing.T) {
 	}
 }
 
+// A used_in file deleted since the scan: a new scan and sync take it out of used_in, as the
+// refusal advises, and replace goes ahead with the files left.
+func TestReplaceAfterAUsedInFileWasDeletedAndRescanned(t *testing.T) {
+	fx := newReplaceFixture(t)
+	if err := os.Remove(fx.env); err != nil {
+		t.Fatal(err)
+	}
+	if _, e, code := fx.run(t, "", false, "replace", fx.id()); code != 1 {
+		t.Fatalf("before the rescan: %d %s", code, e)
+	}
+	redacted := fx.item(t).Secret.Redacted
+	run := filepath.Join(fx.home, "out", "local-secrets.jsonl")
+	writeFindings(t, run,
+		secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted, Path: "~/.zshrc", Line: 2, Mode: "640", Fingerprint: fx.key.Of(fx.old)},
+		secretrisk.Evidence{Source: "scan", Kind: "transcript", Type: "anthropic", Redacted: redacted, Path: "~/.claude/projects/p/s.jsonl", Line: 9, Mode: "600", Fingerprint: fx.key.Of(fx.old)})
+	if _, e, code := fx.run(t, "", false, "sync", "--from", run, "--out", filepath.Join(fx.home, "none")); code != 0 {
+		t.Fatalf("sync: %s", e)
+	}
+	if got := strings.Join(fx.item(t).Secret.UsedIn, " "); got != "~/.zshrc" {
+		t.Fatalf("used_in after the rescan %q", got)
+	}
+	if _, e, code := fx.run(t, "", false, "replace", fx.id(), "--apply", "--yes"); code != 0 || fx.item(t).Status != tracker.Done {
+		t.Fatalf("apply: %d %s", code, e)
+	}
+}
+
+// The dotfiles layout: ~/.zshrc links to ~/dotfiles/zshrc and the scan found the key under both
+// names. The file is planned, written and checked once, under both names, and the item is rotated.
+func TestReplaceWritesAFileUsedUnderTwoNamesOnce(t *testing.T) {
+	fx := newReplaceFixture(t)
+	dot := filepath.Join(fx.home, "dotfiles", "zshrc")
+	write(t, dot, read(t, fx.zshrc), 0o640)
+	if err := os.Remove(fx.zshrc); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dot, fx.zshrc); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := tracker.Load(fx.state)
+	redacted := fx.item(t).Secret.Redacted
+	l.SyncSecrets([]tracker.Sighting{{Evidence: secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted,
+		Path: "~/dotfiles/zshrc", Line: 2, Mode: "640", Fingerprint: fx.key.Of(fx.old)}}}, t0, false)
+	if err := l.Save(fx.state); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(fx.item(t).Secret.UsedIn, " "); got != "~/.zshrc ~/dotfiles/zshrc ~/src/app/.env" {
+		t.Fatalf("used_in %q", got)
+	}
+	o, e, code := fx.run(t, "", false, "replace", fx.id(), "--apply", "--yes")
+	if code != 0 {
+		t.Fatalf("apply: %d %s\n%s", code, e, o)
+	}
+	if strings.Count(o, "line 2:") != 1 || !strings.Contains(o, "Replaced in 2 files and checked") {
+		t.Errorf("output:\n%s", o)
+	}
+	if got, want := read(t, dot), strings.ReplaceAll(zshrcOld, "%s", fx.new); got != want {
+		t.Error("link target not rewritten as planned")
+	}
+	if it := fx.item(t); it.Status != tracker.Done || !strings.Contains(it.History[len(it.History)-1].Detail, "~/.zshrc, ~/dotfiles/zshrc, ~/src/app/.env") {
+		t.Errorf("item %s %+v", it.Status, it.History[len(it.History)-1])
+	}
+	if !fx.cleared() {
+		t.Error("clipboard not cleared")
+	}
+}
+
+// replace holds its copy of the tracker across the clipboard, the confirmation and the file
+// writes; another command that saves meanwhile keeps its change, and the item is still rotated.
+func TestReplaceRecordsIntoTheTrackerAsItIsAfterTheWrites(t *testing.T) {
+	for _, apply := range []bool{false, true} {
+		fx := newReplaceFixture(t)
+		fx.os.onPaste = func() {
+			if err := tracker.Update(fx.state, t0, func(l *tracker.Tracker) error { return l.Items[0].Note(t0, "saved meanwhile") }); err != nil {
+				t.Fatal(err)
+			}
+		}
+		args := []string{"replace", fx.id()}
+		if apply {
+			args = append(args, "--apply", "--yes")
+		}
+		if _, e, code := fx.run(t, "", false, args...); code != 0 {
+			t.Fatalf("apply %v: %d %s", apply, code, e)
+		}
+		l, _ := tracker.Load(fx.state)
+		if h := l.Items[0].History; h[len(h)-1].Detail != "saved meanwhile" {
+			t.Errorf("apply %v: the other command's note was lost", apply)
+		}
+		want := map[bool]string{false: tracker.ActReplacePlan, true: "done"}[apply]
+		if got := fx.lastAction(t); got != want {
+			t.Errorf("apply %v: last action %q", apply, got)
+		}
+	}
+}
+
 func TestReplaceBackupIsPrivate(t *testing.T) {
 	fx := newReplaceFixture(t)
 	before := read(t, fx.zshrc)
@@ -451,9 +549,13 @@ func TestReplaceWriteRefusesAFileChangedAfterThePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, fx.env, read(t, fx.env)+"LATER=1\n", 0o600)
+	rc := read(t, fx.zshrc)
 	written, err := r.write(false, t0)
-	if err == nil || !strings.Contains(err.Error(), "changed since the plan") || strings.Join(written, ",") != "~/.zshrc" {
+	if err == nil || !strings.Contains(err.Error(), "changed since the plan") || len(written) != 0 {
 		t.Errorf("written %v err %v", written, err)
+	}
+	if read(t, fx.zshrc) != rc {
+		t.Error("a file was written before every file was checked")
 	}
 	if err := r.verify(fx.new); err == nil {
 		t.Error("verify passed with the old value still in a file")
