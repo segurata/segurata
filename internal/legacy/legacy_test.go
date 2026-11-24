@@ -290,7 +290,7 @@ func TestRenameText(t *testing.T) {
 		"-s securizame-vercel -a \"$USER\"":         "-s segurata-vercel -a \"$USER\"",
 		"in ~/.config/securizame/config.json":       "in ~/.config/segurata/config.json",
 		"~/.securizame/status.md":                   "~/.segurata/status.md",
-		"~/src/segurata/main.go":        "~/src/segurata/main.go",
+		"~/src/segurata/main.go":                    "~/src/segurata/main.go",
 		"/Users/me/securizame-test/.env":            "/Users/me/securizame-test/.env",
 		".env.securizame-bak-20261124T100000Z kept": ".env.securizame-bak-20261124T100000Z kept",
 	} {
