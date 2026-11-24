@@ -107,13 +107,20 @@ func (c Config) Expect(st *finding.Status) {
 }
 
 // AddExpected appends a rule to connectors.<key>.expected in the config file at path, unless an
-// equal rule is there already, and reports whether it changed the file. The file is rewritten
-// atomically (mode 0600) with two-space indentation and its keys in their original order; the
-// previous content is kept in a timestamped backup next to it, whose name it returns.
+// equal rule is there already, and reports whether it changed the file. The file is rewritten as
+// editFile says; the backup's name is returned.
 func AddExpected(file, key string, rule Expected, now time.Time) (bool, string, error) {
 	if err := rule.validate(); err != nil {
 		return false, "", err
 	}
+	return editFile(file, now, func(raw []byte) ([]byte, bool, error) { return withExpected(raw, key, rule) })
+}
+
+// editFile rewrites the config file at path with what edit makes of its text (empty when the file
+// does not exist), when edit reports a change and the result is a valid config: atomically, mode
+// 0600, two-space indentation and the keys in their original order; the previous content is kept
+// in a timestamped backup next to it, whose name it returns.
+func editFile(file string, now time.Time, edit func(raw []byte) ([]byte, bool, error)) (bool, string, error) {
 	raw, err := os.ReadFile(file)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -121,7 +128,7 @@ func AddExpected(file, key string, rule Expected, now time.Time) (bool, string, 
 	case err != nil:
 		return false, "", err
 	}
-	out, changed, err := withExpected(raw, key, rule)
+	out, changed, err := edit(raw)
 	if err != nil || !changed {
 		return false, "", err
 	}
@@ -143,6 +150,30 @@ func AddExpected(file, key string, rule Expected, now time.Time) (bool, string, 
 
 // withExpected is the config text with the rule added under connectors.<key>.expected.
 func withExpected(raw []byte, key string, rule Expected) ([]byte, bool, error) {
+	return editInstance(raw, key, func(inst *object) (bool, error) {
+		var rules []json.RawMessage
+		if v, ok := inst.get("expected"); ok {
+			if err := json.Unmarshal(v, &rules); err != nil {
+				return false, fmt.Errorf("connectors.%s.expected: %w", key, err)
+			}
+		}
+		for _, r := range rules {
+			var have Expected
+			if json.Unmarshal(r, &have) == nil && have == rule {
+				return false, nil
+			}
+		}
+		add, err := json.Marshal(rule)
+		if err != nil {
+			return false, err
+		}
+		return true, inst.encode("expected", append(rules, add))
+	})
+}
+
+// editInstance is the config text after edit changed the object under connectors.<key> (created
+// when missing); raw comes back as it was when edit reports no change.
+func editInstance(raw []byte, key string, edit func(inst *object) (bool, error)) ([]byte, bool, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		raw = []byte("{}")
 	}
@@ -156,25 +187,9 @@ func withExpected(raw []byte, key string, rule Expected) ([]byte, bool, error) {
 	if err := conns.decode(key, &inst); err != nil {
 		return nil, false, err
 	}
-	var rules []json.RawMessage
-	if v, ok := inst.get("expected"); ok {
-		if err := json.Unmarshal(v, &rules); err != nil {
-			return nil, false, fmt.Errorf("connectors.%s.expected: %w", key, err)
-		}
-	}
-	add, err := json.Marshal(rule)
-	if err != nil {
-		return nil, false, err
-	}
-	for _, r := range rules {
-		var have Expected
-		if json.Unmarshal(r, &have) == nil && have == rule {
-			return raw, false, nil
-		}
-	}
-	rules = append(rules, add)
-	if err := inst.encode("expected", rules); err != nil {
-		return nil, false, err
+	changed, err := edit(&inst)
+	if err != nil || !changed {
+		return raw, false, err
 	}
 	if err := conns.encode(key, inst); err != nil {
 		return nil, false, err
