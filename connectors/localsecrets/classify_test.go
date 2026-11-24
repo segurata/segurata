@@ -513,3 +513,30 @@ func TestEveryHintHasTheSharedFormat(t *testing.T) {
 		}
 	}
 }
+
+// A generic match is noise on its own, but not when the same value is a real secret elsewhere: it
+// is one more place that secret went, and stays in the output.
+func TestNoiseCopyOfARealSecretIsEmitted(t *testing.T) {
+	fx := newFixture(t)
+	key := fake("", 40)
+	fx.write(t, ".aws/credentials", "[default]\naws_secret_access_key = "+key+"\n", 0o600)
+	report, _ := json.Marshal([]map[string]any{
+		{"RuleID": "generic-api-key", "File": "lib/s3.py", "StartLine": 3, "Secret": key, "Commit": "0123456789ab", "Date": "2019-08-01T00:00:00Z"},
+		{"RuleID": "generic-api-key", "File": "lib/other.py", "StartLine": 3, "Secret": fake("", 32), "Commit": "0123456789ab", "Date": "2019-08-01T00:00:00Z"},
+	})
+	rec := &recorder{}
+	if err := fx.connector(t, string(report)).Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]finding.Finding{}
+	for _, f := range rec.findings {
+		got[evidence(f, "path")] = f
+	}
+	cred, git := got["~/.aws/credentials"], got["~/src/shop/lib/s3.py"]
+	if evidence(git, "fingerprint") == "<nil>" || evidence(git, "fingerprint") != evidence(cred, "fingerprint") || git.Severity != finding.SevInfo {
+		t.Errorf("the generic copy of the real key: %+v", git)
+	}
+	if _, ok := got["~/src/shop/lib/other.py"]; ok {
+		t.Error("a generic match with no real copy was emitted")
+	}
+}

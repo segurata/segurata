@@ -96,12 +96,11 @@ func collapseTemporaryAWS(evs []secretrisk.Evidence) []secretrisk.Evidence {
 
 // noiseCounts counts the noise findings left out of the output, by type and by place (the
 // repository for git history, else the kind of file), for the run's status line, and keeps the
-// fingerprints whose every copy is noise for the noise summary.
+// fingerprints of those values (all of whose copies are noise) for the noise summary.
 type noiseCounts struct {
 	total           int
 	byType, byPlace map[string]int
-	types           map[string]string // fingerprint -> type, for values with a noise copy
-	real            map[string]bool   // fingerprints with a copy that was emitted
+	types           map[string]string // fingerprint -> type
 }
 
 func (n *noiseCounts) add(ev secretrisk.Evidence) {
@@ -120,14 +119,6 @@ func (n *noiseCounts) add(ev secretrisk.Evidence) {
 	}
 }
 
-// emitted notes a value with a copy that is not noise: it is not listed as noise-only.
-func (n *noiseCounts) emitted(ev secretrisk.Evidence) {
-	if n.real == nil {
-		n.real = map[string]bool{}
-	}
-	n.real[ev.Fingerprint] = true
-}
-
 // NoiseSummaryType is the resource type of the one finding that stands for the noise left out:
 // its evidence maps every noise-only fingerprint to its type (noise_fingerprints), so the tracker
 // can close items whose secret a corrected rule made noise without every copy being emitted.
@@ -138,12 +129,6 @@ func (n noiseCounts) summary() (finding.Finding, bool) {
 	if n.total == 0 {
 		return finding.Finding{}, false
 	}
-	fps := map[string]string{}
-	for fp, t := range n.types {
-		if !n.real[fp] {
-			fps[fp] = t
-		}
-	}
 	return finding.Finding{
 		Account:  localAccount,
 		Resource: finding.Resource{Type: NoiseSummaryType, ID: "noise", Name: "noise left out"},
@@ -151,7 +136,7 @@ func (n noiseCounts) summary() (finding.Finding, bool) {
 		Severity: finding.SevInfo,
 		Title:    fmt.Sprintf("%d noise matches left out (emit_noise: true lists them)", n.total),
 		Evidence: map[string]any{"source": "noise", "total": n.total, "by_type": n.byType, "by_place": n.byPlace,
-			"noise_fingerprints": fps},
+			"noise_fingerprints": n.types},
 		Remediation: finding.Remediation{Summary: "Nothing to do: generic matches, public, expired or encrypted values, and copies that are not yours."},
 	}, true
 }

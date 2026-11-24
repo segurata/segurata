@@ -840,7 +840,10 @@ every run without a new scan.
 - Bare 40-hex values matched by gitleaks' `sourcegraph-access-token` without the `sgp_` prefix
   are noise. gitleaks 8.30 has no other rule that takes a bare hex value: `facebook-secret` and
   `codecov-access-token` require the provider's name next to the value.
-- Noise is counted, not emitted, unless `emit_noise: true`: the run's status line ends with
+- Noise is counted, not emitted, unless `emit_noise: true`, except a noise copy of a value that
+  has a real copy elsewhere (a generic gitleaks match in pushed history of the key in
+  `~/.aws/credentials`): that one is one more place the secret went and stays. The run's status
+  line ends with
   `noise not emitted …: N; by type: …; by place: …` (the 25 largest places, the rest summed), and
   one `info` finding of resource type `noise_summary` carries the same counts plus
   `noise_fingerprints`, every fingerprint whose copies are all noise with its type. `track sync`

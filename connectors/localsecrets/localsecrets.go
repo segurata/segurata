@@ -509,19 +509,33 @@ func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 		evs = append(evs, r.ev)
 	}
 	evs = collapseTemporaryAWS(markReused(inheritForkUpstream(evs)))
+	// A noise copy of a value that has a real copy elsewhere is emitted all the same: it is one more
+	// place the secret went (a generic match in pushed history of the key in ~/.aws/credentials).
+	fs := make([]finding.Finding, len(evs))
+	real := map[string]bool{}
+	for i, ev := range evs {
+		fs[i] = toFinding(ev)
+		if !isNoise(fs[i]) {
+			real[ev.Fingerprint] = true
+		}
+	}
 	noise := noiseCounts{}
 	var out []finding.Finding
-	for _, ev := range evs {
-		f := toFinding(ev)
-		if !s.cfg.emitNoise && f.Severity == finding.SevInfo && f.Kind == finding.KindExposure {
+	for i, ev := range evs {
+		if !s.cfg.emitNoise && isNoise(fs[i]) && !real[ev.Fingerprint] {
 			noise.add(ev)
 			continue
 		}
-		noise.emitted(ev)
-		out = append(out, f)
+		out = append(out, fs[i])
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Resource.ID < out[j].Resource.ID })
 	return out, noise
+}
+
+// isNoise reports whether a finding is noise: an exposure without a priority. An SSH key with a
+// passphrase is info too, but a setting worth showing.
+func isNoise(f finding.Finding) bool {
+	return f.Severity == finding.SevInfo && f.Kind == finding.KindExposure
 }
 
 func toFinding(ev secretrisk.Evidence) finding.Finding {
