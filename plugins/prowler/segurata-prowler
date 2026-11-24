@@ -5,7 +5,10 @@ Prowler (https://github.com/prowler-cloud/prowler) audits cloud posture with a h
 per provider. This connector runs it read-only, one project at a time, as each of the owner's
 gcloud accounts, reads its OCSF output and emits one segurata finding per failed check and
 resource. Checks segurata's own gcp connector already makes are left out unless the config asks
-for them (README.md, "Overlap with the gcp connector").
+for them (README.md, "Overlap with the gcp connector"). Each project also gets an activity profile
+(empty, light, production) from a few read-only gcloud calls, and hygiene checks are weighted by it
+so that CIS logging alerts repeated in forty idle projects do not bury a real exposure (README.md,
+"Relevance").
 
 Standard library only; speaks protocol 1 of the external connector protocol (docs/connectors.md).
 
@@ -64,6 +67,102 @@ OVERLAP_PARTIAL = {
     # The unrestricted-key half is gcp's; a key allowing Gemini next to other APIs is new.
     "apikeys_api_restricted_with_gemini_api": re.compile(r"does not have restrictions configured"),
 }
+
+# --- relevance ---------------------------------------------------------------------------------
+# Hygiene checks: monitoring, logging and governance settings whose absence matters in proportion to
+# what the project runs. A failure is lowered one level in a light project and set to info in an
+# empty one; production projects keep Prowler's severity. Checked against Prowler 5.51.0.
+HYGIENE_CHECKS = frozenset([
+    # CIS 2.4-2.11: a log-based metric and alert per kind of change.
+    "logging_log_metric_filter_and_alert_for_audit_configuration_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_bucket_permission_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_compute_configuration_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_custom_role_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_sql_instance_configuration_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_vpc_firewall_rule_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_vpc_network_changes_enabled",
+    "logging_log_metric_filter_and_alert_for_vpc_network_route_changes_enabled",
+    # Log export, audit and flow logs.
+    "logging_sink_created",
+    "iam_audit_logs_enabled",
+    "cloudstorage_audit_logs_enabled",
+    "cloudstorage_bucket_logging_enabled",
+    "compute_subnet_flow_logs_enabled",
+    "compute_network_dns_logging_enabled",
+    "compute_loadbalancer_logging_enabled",
+    # Inventory, image scanning and governance services.
+    "iam_cloud_asset_inventory_enabled",
+    "artifacts_container_analysis_enabled",
+    "gcr_container_scanning_enabled",
+    "iam_account_access_approval_enabled",
+    "iam_organization_essential_contacts_configured",
+])
+
+# Checks about real exposure or credentials: never lowered by the profile, whatever the project
+# runs. Findings of kind exposure or credential are protected too, even when they are not listed.
+PROTECTED_CHECKS = frozenset([
+    "compute_firewall_ssh_access_from_the_internet_allowed",
+    "compute_firewall_rdp_access_from_the_internet_allowed",
+    "compute_instance_public_ip",
+    "compute_instance_default_service_account_in_use",
+    "compute_instance_default_service_account_in_use_with_full_api_access",
+    "compute_image_not_publicly_shared",
+    "compute_public_address_shodan",
+    "cloudstorage_bucket_public_access",
+    "cloudsql_instance_public_ip",
+    "cloudsql_instance_public_access",
+    "bigquery_dataset_public_access",
+    "cloudfunction_function_not_publicly_accessible",
+    "kms_key_not_publicly_accessible",
+    "secretmanager_secret_not_publicly_accessible",
+    "vertexai_workbench_instance_public_ip_disabled",
+    "apikeys_api_restricted_with_gemini_api",
+    "apikeys_key_rotated_in_90_days",
+    "iam_sa_no_administrative_privileges",
+    "iam_sa_user_managed_key_unused",
+])
+
+OVERRIDES = ("keep", "info")
+NA_WHERE = ("any", "no_organization")
+# Failures that cannot be fixed where they occur: reported as info with the reason.
+DEFAULT_NOT_APPLICABLE = [{
+    "check": "iam_account_access_approval_enabled",
+    "where": "no_organization",
+    "reason": "Access Approval needs Access Transparency enabled for the project's organization, and this "
+              "project has none (https://cloud.google.com/assured-workloads/access-approval/docs/overview)",
+}]
+
+# --- activity profile ------------------------------------------------------------------------
+# Services Google enables on every new project (https://cloud.google.com/service-usage/docs/enabled-service,
+# "Services enabled by default"); they say nothing about what the project runs.
+DEFAULT_SERVICES = frozenset(s + ".googleapis.com" for s in (
+    "apptopology", "analyticshub", "bigquery", "bigqueryconnection", "bigquerydatapolicy",
+    "bigquerydatatransfer", "bigquerymigration", "bigqueryreservation", "bigquerystorage", "dataform",
+    "dataplex", "datastore", "logging", "monitoring", "sql-component", "storage-component", "storage",
+    "storage-api", "cloudtrace", "cloudapis", "servicemanagement", "serviceusage", "telemetry"))
+EMPTY_MAX_SERVICES = 5  # non-default services an empty project may still have enabled
+
+# Resources the profile counts: (key, enabling services, gcloud list command, runs workloads). A kind
+# is listed only when one of its services is enabled; otherwise it has none.
+RESOURCE_KINDS = (
+    ("compute_instances", ("compute.googleapis.com",), ("compute", "instances", "list"), True),
+    ("gke_clusters", ("container.googleapis.com",), ("container", "clusters", "list"), True),
+    ("sql_instances", ("sqladmin.googleapis.com",), ("sql", "instances", "list"), True),
+    ("run_services", ("run.googleapis.com",), ("run", "services", "list"), True),
+    ("functions", ("cloudfunctions.googleapis.com",), ("functions", "list"), True),
+    ("buckets", ("storage.googleapis.com", "storage-api.googleapis.com", "storage-component.googleapis.com"),
+     ("storage", "buckets", "list"), False),
+)
+
+# The only gcloud commands the connector runs; every one reads.
+READ_COMMANDS = (
+    ("auth", "list"),
+    ("auth", "print-access-token"),
+    ("projects", "list"),
+    ("services", "list"),
+    ("billing", "projects", "describe"),
+) + tuple(k[2] for k in RESOURCE_KINDS)
 
 DISABLED_API = re.compile(r"([\w.-]+) API has not been used in project ([^\s\"]+) before or it is disabled")
 # A call Prowler was refused. Each run covers one project, so any refused project-level call in its
@@ -141,6 +240,9 @@ class Emitter:
 class Config:
     def __init__(self, raw):
         raw = raw or {}
+        self.relevance = raw.get("relevance") is not False
+        self.overrides = overrides_of(raw.get("relevance_overrides"))
+        self.not_applicable = not_applicable_of(raw.get("not_applicable", DEFAULT_NOT_APPLICABLE))
         self.providers = strings(raw.get("providers")) or ["gcp"]
         self.accounts = strings(raw.get("accounts"))
         self.projects = strings(raw.get("projects"))
@@ -164,6 +266,32 @@ class Config:
         if not self.include_overlaps:
             out += [c for c in sorted(OVERLAP_FULL) if c not in out]
         return out
+
+
+def overrides_of(raw):
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ValueError("relevance_overrides must map check ids to \"keep\" or \"info\"")
+    for check, value in raw.items():
+        if value not in OVERRIDES:
+            raise ValueError("relevance_overrides.%s must be \"keep\" or \"info\", not %r" % (check, value))
+    return dict(raw)
+
+
+def not_applicable_of(raw):
+    """{check id: (where, reason)} from the not_applicable list."""
+    if not isinstance(raw, list):
+        raise ValueError("not_applicable must be a list of {check, reason, where}")
+    out = {}
+    for entry in raw:
+        check, reason = (entry.get("check"), entry.get("reason")) if isinstance(entry, dict) else (None, None)
+        if not all(isinstance(v, str) and v.strip() for v in (check, reason)):
+            raise ValueError("each not_applicable entry needs a check and a reason")
+        where = entry.get("where") or "any"
+        if where not in NA_WHERE:
+            raise ValueError("not_applicable %s: where must be one of %s" % (entry["check"], ", ".join(NA_WHERE)))
+        out[check.strip()] = (where, reason.strip())
+    return out
 
 
 def strings(v):
@@ -202,6 +330,8 @@ class Gcloud:
         self.env = dict(os.environ, CLOUDSDK_CORE_DISABLE_PROMPTS="1")
 
     def run(self, *args):
+        if not any(args[:len(c)] == c for c in READ_COMMANDS):
+            raise ValueError("gcloud %s is not a read command this connector may run" % " ".join(args[:3]))
         try:
             p = subprocess.run([self.path, *args], capture_output=True, text=True, env=self.env,
                                timeout=GCLOUD_TIMEOUT, stdin=subprocess.DEVNULL)
@@ -224,11 +354,30 @@ class Gcloud:
         return token
 
     def projects(self, account):
+        """{project id: whether it sits in an organization} for the active projects account lists.
+        A project in a folder is in an organization too: folders exist only under one."""
         code, out, err = self.run("projects", "list", "--account=" + account,
                                   "--filter=lifecycleState:ACTIVE", "--format=json")
         if code != 0:
             raise RuntimeError(first_line(err) or "gcloud projects list failed")
-        return [p["projectId"] for p in json.loads(out or "[]") if p.get("projectId")]
+        return {p["projectId"]: bool((p.get("parent") or {}).get("type"))
+                for p in json.loads(out or "[]") if p.get("projectId")}
+
+    def read_json(self, account, *args):
+        code, out, err = self.run(*args, "--account=" + account, "--format=json")
+        if code != 0:
+            raise RuntimeError(first_line(err) or "gcloud %s failed" % " ".join(args[:3]))
+        return json.loads(out or "null")
+
+    def enabled_services(self, account, project):
+        rows = self.read_json(account, "services", "list", "--enabled", "--project=" + project)
+        return {(r.get("config") or {}).get("name") or (r.get("name") or "").rsplit("/", 1)[-1] for r in rows or []}
+
+    def billing_enabled(self, account, project):
+        return bool((self.read_json(account, "billing", "projects", "describe", project) or {}).get("billingEnabled"))
+
+    def count(self, account, project, command):
+        return len(self.read_json(account, *command, "--project=" + project) or [])
 
 
 def first_line(text):
@@ -255,6 +404,108 @@ def classify(text):
 def login_hint(account):
     return ("sign in again with: gcloud auth login %s (this does not touch application default "
             "credentials)" % account)
+
+
+# --- activity profile ------------------------------------------------------------------------
+
+SERVICE_DISABLED = re.compile(r"SERVICE_DISABLED|has not been used in project|is disabled")
+
+
+def profile_project(gcloud, account, project, in_org):
+    """What the project runs, read as account. A value that could not be read is None and named in
+    unread; classify_profile treats it as possibly production."""
+    profile = {"services_enabled": None, "services_non_default": None, "billing_enabled": None,
+               "in_organization": in_org, "resources": {}, "unread": []}
+    try:
+        services = gcloud.enabled_services(account, project)
+        profile["services_enabled"] = len(services)
+        profile["services_non_default"] = len(services - DEFAULT_SERVICES)
+    except (RuntimeError, ValueError):
+        services = None
+        profile["unread"].append("services")
+    try:
+        profile["billing_enabled"] = gcloud.billing_enabled(account, project)
+    except (RuntimeError, ValueError):
+        profile["unread"].append("billing")
+    for key, enabling, command, _ in RESOURCE_KINDS:
+        if services is not None and not services.intersection(enabling):
+            profile["resources"][key] = 0
+            continue
+        try:
+            profile["resources"][key] = gcloud.count(account, project, command)
+        except (RuntimeError, ValueError) as e:
+            if isinstance(e, RuntimeError) and SERVICE_DISABLED.search(str(e)):
+                profile["resources"][key] = 0
+            else:
+                profile["resources"][key] = None
+                profile["unread"].append(key)
+    profile["class"] = classify_profile(profile)
+    return profile
+
+
+def classify_profile(profile):
+    """'production', 'light', 'empty', or 'unknown' when what was not read could change the answer.
+
+    production: a VM, GKE cluster, Cloud SQL instance, Cloud Run service or function, or billing on
+    with any counted resource. empty: no counted resource and at most EMPTY_MAX_SERVICES services
+    beyond Google's defaults. light: everything else."""
+    res = profile["resources"]
+    workloads = [k for k, _, _, runs in RESOURCE_KINDS if runs]
+    if any(res.get(k) for k in workloads):
+        return "production"
+    if profile["services_non_default"] is None or any(res.get(k) is None for k, _, _, _ in RESOURCE_KINDS):
+        return "unknown"
+    if any(res.values()):
+        if profile["billing_enabled"] is None:
+            return "unknown"
+        return "production" if profile["billing_enabled"] else "light"
+    return "empty" if profile["services_non_default"] <= EMPTY_MAX_SERVICES else "light"
+
+
+def profile_text(profile):
+    """The profile for the project's status line, e.g. 'light: 25 non-default services, 2 buckets, billing off'."""
+    parts = []
+    if profile["services_non_default"] is not None:
+        parts.append("%d non-default services" % profile["services_non_default"])
+    for key, count in profile["resources"].items():
+        if count:
+            parts.append("%d %s" % (count, key.replace("_", " ")))
+    if profile["billing_enabled"] is not None:
+        parts.append("billing " + ("on" if profile["billing_enabled"] else "off"))
+    if profile["unread"]:
+        parts.append("not read: " + ", ".join(profile["unread"]))
+    return profile["class"] + (": " + ", ".join(parts) if parts else "")
+
+
+UNKNOWN_PROFILE = {"class": "unknown", "services_enabled": None, "services_non_default": None,
+                   "billing_enabled": None, "in_organization": None, "resources": {}, "unread": ["profile"]}
+
+
+# --- relevance -------------------------------------------------------------------------------
+
+def lower(severity):
+    order = ["info", "low", "medium", "high", "critical"]
+    return order[max(0, order.index(severity) - 1)]
+
+
+def weigh(check_id, kind, severity, profile, config):
+    """(severity, why) for a failure: why is "" when Prowler's severity stands, "not applicable"
+    names the reason. Order: not_applicable, relevance_overrides, then the profile rules."""
+    na = config.not_applicable.get(check_id)
+    if na and (na[0] == "any" or profile.get("in_organization") is False):
+        return "info", "not applicable: " + na[1]
+    override = config.overrides.get(check_id)
+    if override == "info":
+        return "info", "relevance_overrides sets it to info"
+    if override == "keep" or not config.relevance:
+        return severity, ""
+    if check_id not in HYGIENE_CHECKS or check_id in PROTECTED_CHECKS or kind != "setting":
+        return severity, ""
+    if profile["class"] == "empty":
+        return "info", "hygiene check in an empty project"
+    if profile["class"] == "light" and severity != "info":
+        return lower(severity), "hygiene check in a light project, one level lower"
+    return severity, ""
 
 
 # --- OCSF to segurata ------------------------------------------------------------------------
@@ -284,7 +535,7 @@ def one_line(text, limit=300):
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def to_finding(rec, account, project):
+def to_finding(rec, account, project, profile=UNKNOWN_PROFILE):
     info = rec.get("finding_info") or {}
     meta = rec.get("metadata") or {}
     unmapped = rec.get("unmapped") or {}
@@ -316,6 +567,8 @@ def to_finding(rec, account, project):
             "compliance": compliance,
             "categories": unmapped.get("categories") or [],
             "prowler_version": (meta.get("product") or {}).get("version", ""),
+            "prowler_severity": severity_of(rec),
+            "profile": profile,
         },
         "created_at": None,
         "last_used_at": None,
@@ -332,9 +585,11 @@ def read_ocsf(path):
     return json.loads(text) if text else []
 
 
-def summarize(records, config, account, project):
-    """Findings for the FAIL records and the counts that go into the project's ok status."""
-    findings, counts = [], {"FAIL": 0, "PASS": 0, "MANUAL": 0, "muted": 0, "overlap": 0, "below_min": 0}
+def summarize(records, config, account, project, profile=UNKNOWN_PROFILE):
+    """Findings for the FAIL records, weighed by the project's profile, and the counts that go into
+    the project's ok status."""
+    findings, counts = [], {"FAIL": 0, "PASS": 0, "MANUAL": 0, "muted": 0, "overlap": 0, "below_min": 0,
+                            "lowered": 0, "not_applicable": 0}
     for rec in records:
         code = (rec.get("status_code") or "").upper()
         if code != "FAIL":
@@ -351,7 +606,13 @@ def summarize(records, config, account, project):
             counts["below_min"] += 1
             continue
         counts["FAIL"] += 1
-        findings.append(to_finding(rec, account, project))
+        f = to_finding(rec, account, project, profile)
+        severity, why = weigh(check_id, f["kind"], f["severity"], profile, config)
+        if why:
+            f["evidence"]["relevance"] = why
+            counts["not_applicable" if why.startswith("not applicable") else "lowered"] += 1
+            f["severity"] = severity
+        findings.append(f)
     return findings, counts
 
 
@@ -456,12 +717,15 @@ def inspect_project(project, candidates, ctx):
                 return
         finally:
             shutil.rmtree(outdir, ignore_errors=True)
-        findings, counts = summarize(records, config, owner, project)
+        profile = profile_project(gcloud, account, project, ctx["in_org"].get(project))
+        findings, counts = summarize(records, config, owner, project, profile)
         for f in findings:
             emit.finding(f)
         disabled, refused = log_problems(text, project)
         detail = "%d FAIL, %d PASS, %d MANUAL; %d muted, %d already checked by gcp, %d below severity_min" % (
             counts["FAIL"], counts["PASS"], counts["MANUAL"], counts["muted"], counts["overlap"], counts["below_min"])
+        detail += "; profile %s; %d lowered by relevance, %d not applicable" % (
+            profile_text(profile), counts["lowered"], counts["not_applicable"])
         if account != owner:
             detail += "; read as " + account
         if disabled:
@@ -521,10 +785,11 @@ def inventory_gcp(config, emit):
                 emit.status(account, "error", "gcloud could not list projects: %s" % e)
             continue
         emit.status(account, "ok", "%d active projects" % len(listing[account]))
-    owners = {}
+    owners, in_org = {}, {}
     for account, projects in listing.items():
-        for p in projects:
+        for p, org in projects.items():
             owners.setdefault(p, []).append(account)
+            in_org[p] = in_org.get(p, False) or org
     if config.projects:
         for p in config.projects:
             if p not in owners:
@@ -538,7 +803,7 @@ def inventory_gcp(config, emit):
         if skipped(p):
             emit.scope(p, False, "in connectors.prowler.config.skip_projects")
     todo = [(p, owners[p]) for p in sorted(owners) if not skipped(p)]
-    ctx = {"config": config, "emit": emit, "gcloud": gcloud, "prowler": prowler}
+    ctx = {"config": config, "emit": emit, "gcloud": gcloud, "prowler": prowler, "in_org": in_org}
     with ThreadPoolExecutor(max_workers=config.parallel) as pool:
         for fut in [pool.submit(inspect_project, p, cands, ctx) for p, cands in todo]:
             fut.result()

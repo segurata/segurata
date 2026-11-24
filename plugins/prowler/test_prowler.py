@@ -25,6 +25,8 @@ ALICE = "alice@example.com"
 BOB = "bob@example.org"
 ROBOT = "robot@demo-proj-alpha.iam.gserviceaccount.com"
 ALPHA, BETA, GAMMA = "demo-proj-alpha", "demo-proj-beta", "demo-proj-gamma"
+DELTA = "demo-proj-delta"  # hygiene failures next to exposures (testdata/ocsf/demo-proj-delta.json)
+DEFAULTS = ["bigquery.googleapis.com", "logging.googleapis.com", "storage.googleapis.com", "serviceusage.googleapis.com"]
 
 
 def token(account):
@@ -49,9 +51,31 @@ class Fake:
         with open(os.path.join(self.dir, "accounts.json"), "w") as f:
             json.dump([{"account": a, "status": ""} for a in accounts], f)
 
-    def projects(self, account, ids):
+    def projects(self, account, ids, parent=None):
+        """parent, e.g. {"type": "organization", "id": "1"}, for every project; None for none."""
+        rows = [{"projectId": p, "lifecycleState": "ACTIVE", "name": p} for p in ids]
+        for r in rows:
+            if parent:
+                r["parent"] = parent
         with open(os.path.join(self.dir, "projects", account + ".json"), "w") as f:
-            json.dump([{"projectId": p, "lifecycleState": "ACTIVE", "name": p} for p in ids], f)
+            json.dump(rows, f)
+
+    def profile(self, project, services=(), billing=False, **resources):
+        """What the fake gcloud answers about project: enabled services, billing, and per list
+        command group (compute, container, sql, run, functions, storage) a count of resources."""
+        d = os.path.join(self.dir, "profile", project)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "services.json"), "w") as f:
+            json.dump([{"name": "projects/1/services/" + s, "config": {"name": s}} for s in services], f)
+        with open(os.path.join(d, "billing.json"), "w") as f:
+            json.dump({"billingEnabled": billing, "projectId": project}, f)
+        for group, n in resources.items():
+            with open(os.path.join(d, group + ".json"), "w") as f:
+                json.dump([{"name": "%s-%d" % (group, i)} for i in range(n)], f)
+
+    def calls(self):
+        with open(os.path.join(self.dir, "calls.log")) as f:
+            return f.read()
 
     def flag(self, *parts):
         path = os.path.join(self.dir, *parts)
@@ -356,6 +380,204 @@ class InventoryTest(unittest.TestCase):
     def test_bad_config_is_an_error_status(self):
         _, records = self.fake.run({"severity_min": "severe"})
         self.assertEqual([(s["state"], s["scope"]) for s in of(records, "status")], [("error", "*")])
+
+
+def profile(cls="unknown", in_org=None, **over):
+    p = dict(prowler.UNKNOWN_PROFILE, **over)
+    p.update({"class": cls, "in_organization": in_org})
+    return p
+
+
+def known(services_non_default=0, billing=False, **resources):
+    p = {"services_enabled": services_non_default + 4, "services_non_default": services_non_default,
+         "billing_enabled": billing, "in_organization": True, "unread": [],
+         "resources": {k: 0 for k, _, _, _ in prowler.RESOURCE_KINDS}}
+    p["resources"].update(resources)
+    return p
+
+
+class ProfileTest(unittest.TestCase):
+    def test_classification(self):
+        c = prowler.classify_profile
+        self.assertEqual(c(known()), "empty")
+        self.assertEqual(c(known(services_non_default=5)), "empty")
+        self.assertEqual(c(known(services_non_default=6)), "light")
+        self.assertEqual(c(known(buckets=2)), "light", "buckets without billing")
+        self.assertEqual(c(known(buckets=2, billing=True)), "production", "billing on with resources")
+        self.assertEqual(c(known(billing=True)), "empty", "billing on with nothing to bill")
+        for kind in ("compute_instances", "gke_clusters", "sql_instances", "run_services", "functions"):
+            self.assertEqual(c(known(**{kind: 1})), "production", kind)
+
+    def test_what_was_not_read_never_makes_a_project_look_idle(self):
+        c = prowler.classify_profile
+        self.assertEqual(c(known(sql_instances=None)), "unknown")
+        self.assertEqual(c(known(sql_instances=None, run_services=3)), "production", "a workload is enough")
+        self.assertEqual(c(dict(known(), services_non_default=None)), "unknown")
+        self.assertEqual(c(dict(known(buckets=1), billing_enabled=None)), "unknown")
+        self.assertEqual(c(dict(known(), billing_enabled=None)), "empty", "billing only matters with resources")
+
+    def test_default_services_follow_googles_list(self):
+        self.assertEqual(len(prowler.DEFAULT_SERVICES), 23)
+        self.assertIn("serviceusage.googleapis.com", prowler.DEFAULT_SERVICES)
+        self.assertNotIn("compute.googleapis.com", prowler.DEFAULT_SERVICES)
+
+    def test_gcloud_runs_only_read_commands(self):
+        g = prowler.Gcloud("/nonexistent/gcloud")
+        for args in (("projects", "delete", "p"), ("services", "enable", "x"), ("config", "set", "account", "a"),
+                     ("compute", "instances", "delete", "vm"), ("storage", "rm", "gs://b")):
+            with self.assertRaises(ValueError, msg=args):
+                g.run(*args)
+        for command in prowler.READ_COMMANDS:
+            self.assertIn(command[-1], ("list", "describe", "print-access-token"), command)
+
+
+class RelevanceTest(unittest.TestCase):
+    LOG = "logging_sink_created"
+    SSH = "compute_firewall_ssh_access_from_the_internet_allowed"
+
+    def weigh(self, check, severity, prof, kind="setting", **config):
+        return prowler.weigh(check, kind, severity, prof, prowler.Config(config))
+
+    def test_hygiene_checks_follow_the_profile(self):
+        self.assertEqual(self.weigh(self.LOG, "medium", profile("empty")), ("info", "hygiene check in an empty project"))
+        self.assertEqual(self.weigh(self.LOG, "medium", profile("light"))[0], "low")
+        self.assertEqual(self.weigh("iam_cloud_asset_inventory_enabled", "high", profile("light"))[0], "medium")
+        self.assertEqual(self.weigh(self.LOG, "info", profile("light")), ("info", ""))
+        for cls in ("production", "unknown"):
+            self.assertEqual(self.weigh(self.LOG, "medium", profile(cls)), ("medium", ""), cls)
+
+    def test_exposure_is_never_lowered_by_the_profile(self):
+        self.assertEqual(self.weigh(self.SSH, "critical", profile("empty"), kind="exposure"), ("critical", ""))
+        self.assertEqual(self.weigh("compute_instance_default_service_account_in_use_with_full_api_access", "high",
+                                    profile("empty")), ("high", ""))
+        self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), kind="exposure"), ("medium", ""),
+                         "a hygiene check whose categories say internet-exposed is protected")
+        self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), kind="credential"), ("medium", ""))
+        self.assertFalse(prowler.HYGIENE_CHECKS & prowler.PROTECTED_CHECKS)
+
+    def test_toggle_and_overrides(self):
+        self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), relevance=False), ("medium", ""))
+        self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), relevance_overrides={self.LOG: "keep"}), ("medium", ""))
+        self.assertEqual(self.weigh("kms_key_rotation_enabled", "low", profile("production"),
+                                    relevance_overrides={"kms_key_rotation_enabled": "info"}),
+                         ("info", "relevance_overrides sets it to info"))
+        for bad in ({self.LOG: "drop"}, ["x"]):
+            with self.assertRaises(ValueError):
+                prowler.Config({"relevance_overrides": bad})
+
+    def test_not_applicable(self):
+        aa = "iam_account_access_approval_enabled"
+        sev, why = self.weigh(aa, "high", profile("production", in_org=False))
+        self.assertEqual(sev, "info")
+        self.assertIn("Access Transparency", why)
+        self.assertTrue(why.startswith("not applicable: "))
+        self.assertEqual(self.weigh(aa, "high", profile("production", in_org=True)), ("high", ""), "fixable inside an organization")
+        self.assertEqual(self.weigh(aa, "high", profile("production", in_org=None)), ("high", ""), "unknown parent: not assumed")
+        self.assertEqual(self.weigh(aa, "high", profile("light", in_org=True))[0], "medium", "still a hygiene check")
+        mine = {"not_applicable": [{"check": self.LOG, "reason": "logs go to the SIEM through the org sink"}]}
+        self.assertEqual(self.weigh(self.LOG, "medium", profile("production", in_org=True), **mine),
+                         ("info", "not applicable: logs go to the SIEM through the org sink"))
+        self.assertEqual(self.weigh(aa, "high", profile("production", in_org=False), **mine), ("high", ""),
+                         "a configured list replaces the default one")
+        self.assertEqual(self.weigh(aa, "high", profile("production", in_org=False), not_applicable=[]), ("high", ""))
+        for bad in ([{"check": "x"}], [{"reason": "y"}], [{"check": 5, "reason": "y"}], ["x"],
+                    [{"check": "x", "reason": "y", "where": "sometimes"}], {"x": "y"}):
+            with self.assertRaises(ValueError, msg=bad):
+                prowler.Config({"not_applicable": bad})
+
+
+class RelevanceInventoryTest(unittest.TestCase):
+    """A project's profile, read with gcloud, weighs its findings end to end."""
+
+    def setUp(self):
+        self.fake = Fake()
+        self.fake.projects(ALICE, [DELTA])
+        self.fake.projects(BOB, [])
+
+    def tearDown(self):
+        self.fake.close()
+
+    def run_delta(self, config=None):
+        _, records = self.fake.run(dict({"projects": [DELTA]}, **(config or {})))
+        findings = {f["evidence"]["check_id"]: f for f in of(records, "finding")}
+        status = [s for s in of(records, "status") if s.get("scope") == DELTA][0]
+        return findings, status
+
+    def test_empty_project_keeps_exposures_and_quiets_hygiene(self):
+        self.fake.profile(DELTA, services=DEFAULTS + ["generativelanguage.googleapis.com"])
+        findings, status = self.run_delta()
+        sev = {c: f["severity"] for c, f in findings.items()}
+        self.assertEqual(sev, {
+            "logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled": "info",
+            "logging_sink_created": "info",
+            "iam_cloud_asset_inventory_enabled": "info",
+            "iam_account_access_approval_enabled": "info",
+            "compute_firewall_rdp_access_from_the_internet_allowed": "critical",
+            "compute_instance_default_service_account_in_use_with_full_api_access": "high",
+        })
+        sink = findings["logging_sink_created"]["evidence"]
+        self.assertEqual((sink["prowler_severity"], sink["relevance"]), ("medium", "hygiene check in an empty project"))
+        self.assertEqual(sink["profile"]["class"], "empty")
+        self.assertEqual((sink["profile"]["services_non_default"], sink["profile"]["in_organization"]), (1, False))
+        aa = findings["iam_account_access_approval_enabled"]["evidence"]
+        self.assertTrue(aa["relevance"].startswith("not applicable: "))
+        self.assertEqual(aa["prowler_severity"], "high")
+        self.assertNotIn("relevance", findings["compute_firewall_rdp_access_from_the_internet_allowed"]["evidence"])
+        self.assertEqual(status["state"], "ok")
+        self.assertIn("profile empty: 1 non-default services, billing off; 3 lowered by relevance, 1 not applicable", status["detail"])
+        calls = self.fake.calls()
+        self.assertIn("storage buckets list --project=" + DELTA, calls)
+        for skipped in ("compute instances", "container clusters", "sql instances", "run services", "functions list"):
+            self.assertNotIn(skipped, calls, "a disabled API has nothing to list")
+
+    def test_light_project_lowers_hygiene_one_level(self):
+        self.fake.projects(ALICE, [DELTA], parent={"type": "organization", "id": "1"})
+        self.fake.profile(DELTA, services=DEFAULTS + ["firebase.googleapis.com"], storage=1)
+        findings, status = self.run_delta()
+        self.assertEqual(findings["logging_sink_created"]["severity"], "low")
+        self.assertEqual(findings["iam_cloud_asset_inventory_enabled"]["severity"], "medium")
+        self.assertEqual(findings["iam_account_access_approval_enabled"]["severity"], "medium", "in an organization: hygiene, not n/a")
+        self.assertEqual(findings["compute_firewall_rdp_access_from_the_internet_allowed"]["severity"], "critical")
+        self.assertIn("profile light: 1 non-default services, 1 buckets, billing off; 4 lowered", status["detail"])
+
+    def test_production_project_keeps_prowlers_severity(self):
+        self.fake.projects(ALICE, [DELTA], parent={"type": "folder", "id": "7"})
+        self.fake.profile(DELTA, services=DEFAULTS + ["run.googleapis.com"], run=2)
+        findings, status = self.run_delta()
+        self.assertTrue(all(f["severity"] == f["evidence"]["prowler_severity"] for f in findings.values()))
+        self.assertFalse([f for f in findings.values() if "relevance" in f["evidence"]])
+        self.assertTrue(findings["logging_sink_created"]["evidence"]["profile"]["in_organization"], "a folder is under an organization")
+        self.assertIn("profile production: 1 non-default services, 2 run services, billing off; 0 lowered", status["detail"])
+
+    def test_unreadable_profile_changes_nothing_but_not_applicable(self):
+        findings, status = self.run_delta()  # no services or billing answer; resource lists read as empty
+        self.assertEqual(findings["logging_sink_created"]["severity"], "medium")
+        self.assertEqual(findings["logging_sink_created"]["evidence"]["profile"]["class"], "unknown")
+        self.assertEqual(findings["iam_account_access_approval_enabled"]["severity"], "info", "the parent comes from projects list")
+        self.assertIn("profile unknown: not read: services, billing;", status["detail"])
+
+    def test_denied_resource_list_is_unknown_not_empty(self):
+        self.fake.profile(DELTA, services=DEFAULTS + ["sqladmin.googleapis.com"])
+        self.fake.flag("profile", DELTA, "deny-sql")
+        findings, status = self.run_delta()
+        self.assertEqual(findings["logging_sink_created"]["severity"], "medium")
+        self.assertEqual(findings["logging_sink_created"]["evidence"]["profile"]["unread"], ["sql_instances"])
+        self.assertIn("not read: sql_instances", status["detail"])
+
+    def test_relevance_off_still_records_the_profile(self):
+        self.fake.profile(DELTA, services=DEFAULTS)
+        findings, _ = self.run_delta({"relevance": False})
+        self.assertEqual(findings["logging_sink_created"]["severity"], "medium")
+        self.assertEqual(findings["logging_sink_created"]["evidence"]["profile"]["class"], "empty")
+
+    def test_profile_is_read_as_the_account_that_answered(self):
+        self.fake.projects(BOB, [DELTA])
+        self.fake.flag("deny", DELTA, ALICE)
+        self.fake.profile(DELTA, services=DEFAULTS)
+        findings, _ = self.run_delta()
+        self.assertEqual(findings["logging_sink_created"]["account"], ALICE)
+        self.assertIn("services list --enabled --project=%s --account=%s" % (DELTA, BOB), self.fake.calls())
+        self.assertNotIn("services list --enabled --project=%s --account=%s" % (DELTA, ALICE), self.fake.calls())
 
 
 class ScrubTest(unittest.TestCase):
