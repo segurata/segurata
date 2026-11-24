@@ -66,6 +66,7 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 
 ./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
 ./segurata track decide T-0003 --answer "yes" [--ignore-scope path:~/src/old] [--accept-scope repo:acme/site]
+./segurata track decide T-0002 --answer "rotate mine, ignore the rest" --ignore-scope path:~/src/i4a --owner not-mine [--dry-run]
 ./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
 ./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
 ./segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no
@@ -84,7 +85,11 @@ priority that `prioritize` can override, the findings they link, the next step a
 A decision can carry effects: answering it adds rules (`ignore` or `accept` a scope:
 `path:<dir>`, `repo:<owner/name>`, `account:<glob>`, `gcp-project:<id>`) that close the items in
 scope now and at every sync, with the decision named in the reason. A pending decision shows
-how many open items each answer would close. Details:
+how many open items each answer would close. `--owner not-mine` (or an option written
+`yes=ignore@not-mine:path:~/src/old`) narrows the rules to secrets attributed to someone else (see
+"Attribution" below): the owner's own and the unknown ones stay open, and `--dry-run` says so
+before anything changes ("closes 120 open items (P0 100, P1 20) attributed not-mine, keeps 8 open
+(mine 5, unknown 3)"). Details:
 [docs/architecture.md](docs/architecture.md#decisions-and-rules).
 
 A status other than `ok` that is kept on purpose (an ephemeral key, an IAM user limited by design,
@@ -96,7 +101,9 @@ counts as not inspected. Details:
 [docs/architecture.md](docs/architecture.md#expected-statuses).
 
 A done item is verified when a later run no longer reports its findings, and reopened if one does;
-an item whose findings vanish on their own is closed as "verified (no longer reported)". Expired
+an item whose findings vanish on their own is closed as "verified (no longer reported)", and a
+setup item whose status a finished run no longer reports as "verified (status no longer
+reported)", whatever that run inspected. Expired
 snoozes and acceptances open their items again. Every change goes through the CLI; the file is
 written atomically and the previous version kept as `tracker.json.bak`. A tracker that does not
 parse is never overwritten: fix it or restore the backup. It holds redacted hints and fingerprints,
@@ -106,6 +113,22 @@ The tracker absorbed the rotation ledger (`rotations.json` in `~/.segurata`, or 
 accepted risks (`~/.config/segurata/accepted.json`). The first command run without a tracker
 imports both, history included, and renames them to `*.migrated-<date>`. Details:
 [docs/architecture.md](docs/architecture.md#tracker).
+
+## Accounts
+
+```bash
+./segurata accounts list [gcp|google-personal] [--out out]   # accounts each connector saw: watched or not, last state, last seen
+./segurata accounts unwatch google-personal gabi@example.com  # take it out of connectors."google-personal".config.accounts
+./segurata accounts watch google-personal gabi@example.com    # put it back
+./segurata accounts owned [--out out]                         # the owner's accounts attribution compares secrets with
+```
+
+`unwatch` writes the connector's `accounts` list (from the accounts the runs saw, when there is no
+list yet) and closes the account's open setup items as ignored; `watch` adds it back and opens the
+items `unwatch` closed. The config is rewritten atomically (mode 0600, keys in their order) and the
+previous file kept as `config.json.segurata-bak-<time>`. An unwatched account is declared a skipped
+scope at each run, so its earlier findings are never taken as resolved. `gcp` and
+`google-personal` take an accounts list.
 
 ## Google: linked apps (`google-personal`)
 
@@ -393,8 +416,9 @@ every secret as new.
 ```bash
 ./segurata rotations sync                    # from the latest out/<date>/local-secrets.jsonl
 ./segurata rotations list --priority P0,P1   # what to rotate first
+./segurata rotations list --owner not-mine    # secrets that name someone else's account (mine, not-mine, unknown)
 ./segurata rotations next --priority P0      # the most urgent item and exactly what to do (--log records it was shown)
-./segurata rotations show <id>               # locations, where the new value goes, rotate URL
+./segurata rotations show <id>               # locations, where the new value goes, rotate URL, whose it is and why
 ./segurata rotations replace <id>            # after rotating: plan with the new value from the clipboard
 ./segurata rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]
 ./segurata rotations done <id> --note "rolled in the dashboard"
@@ -413,6 +437,29 @@ the same fingerprint in a working file (config, `.env`, rc, repo working tree) i
 program still reads the old value there. Copies only in git history, transcripts or logs are dead
 after revocation, so the item stays rotated with a one-time note. Generic matches are left out
 unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture.md#rotation-ledger).
+
+#### Attribution
+
+Each secret is attributed `mine`, `not-mine` or `unknown`, offline: segurata never sends a leaked
+secret to a provider to ask whose it is. At scan time `local-secrets` reads what the value itself
+names (the AWS account an access key id encodes, the Slack workspace of a webhook, the GCP project
+number of an OAuth client id) and, for AWS and Google credentials, what the file around it names
+(the key id next to a secret access key, `project_id` in a credentials file), plus the author of
+the commit that added it; only those identifiers are stored. Sync compares them with the owner's
+accounts: the AWS accounts, GCP projects, Slack workspaces, GitHub owners and emails the aws, gcp,
+connected-apps, github and google-personal connectors report, the git email, and config `owned`
+for what no connector reaches (an old AWS account):
+
+```json
+{"owned": {"aws_accounts": ["123456789012"], "gcp_projects": ["old-project"], "slack_teams": ["T0ABC1234"],
+           "github": ["my-old-org"], "emails": ["me@old-domain.com"]}}
+```
+
+A secret naming one of them is `mine`; one naming only accounts that are none of the owner's known
+ones is `not-mine`; anything else (no account named, or none of the owner's of that kind known) is
+`unknown`. Who committed it and whose repository holds it are shown as hints and never decide.
+`segurata accounts owned` lists every known account and where it comes from. Details:
+[docs/architecture.md](docs/architecture.md#attribution).
 
 The guided loop is `next`, rotate at the provider, `replace`, `next` again. `next` prints one item:
 what it is (redacted), why it is urgent, where it leaked, the provider page with a few checked

@@ -277,6 +277,20 @@ alone. Reopening the decision removes its rules; the items they closed stay as t
 decision with effects shows its leverage in `status` and `track show`: `answering "yes" closes 128
 open items (P0 120, P1 8) by ignore path:~/src/i4a`.
 
+A rule can be narrowed to owners (`"owners": ["not-mine"]`): it then closes only rotate items
+whose attribution (see "Attribution") is one of them, and its reason adds the attribution's first
+reason ("…; attributed not-mine: AWS account 999988887777 is none of your 1 known"). Items in
+scope with another attribution, and items that have none (anything but a secret), stay open. The
+flag says what the rule closes, like the effect and the scope: `track decide <id> --answer "rotate
+mine, ignore the rest" --ignore-scope path:~/src/i4a --owner not-mine` narrows the rules of the
+scopes given there; an option carries its own owners as `yes=ignore@not-mine:path:~/src/i4a`.
+`--dry-run` prints, per rule, what answering would close and keep open, and changes nothing:
+`closes 120 open items (P0 100, P1 20) attributed not-mine, keeps 8 open (mine 5, unknown 3) by
+ignore@not-mine path:~/src/i4a`; the leverage of pending decisions reads the same. An item a
+narrowed rule closed opens again (`auto-reopen`, "now attributed mine, which … leaves open") when
+a later sync attributes it to an owner the rule does not name: the key turned out to be the
+owner's after all. Ignoring it by hand afterwards sticks.
+
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
@@ -289,7 +303,7 @@ finished run of every connector instance (`remediate.LatestFiles`) and:
 3. Marks a linked finding `gone` when its connector instance ran and did not report it, unless
    that run did not inspect the finding's scope (see "Run completeness"); then it logs
    `not checked in run …` once per run on an item that would otherwise have closed.
-4. Moves items on:
+4. Moves items on (a setup item counts its status refs gone by the rule in "Run completeness"):
    - open, in progress, snoozed or expected, with every finding gone: done, `verified (no longer
      reported)`;
    - a setup item whose every current status is expected: `expected`; an expected one with a
@@ -301,8 +315,10 @@ finished run of every connector instance (`remediate.LatestFiles`) and:
    - a snooze past its date, or an acceptance past its last day, opens the item again. An
      expired acceptance stays on the item, so its findings show "(acceptance expired)" until the
      owner acts.
-5. Applies the decisions' rules (see "Decisions and rules").
-6. Adds any missing theme or seeded decision.
+5. Adds the owner's accounts the runs report to the tracker's `owned` and attributes every rotate
+   item (see "Attribution").
+6. Applies the decisions' rules (see "Decisions and rules").
+7. Adds any missing theme or seeded decision.
 
 Rotate items keep the rotation rules below instead: they are never closed because a secret
 stopped being reported (git history and transcripts do not forget, and a redacted copy still
@@ -318,11 +334,12 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
-- `schema_version` 2 is the current format. A format change adds an upgrade step from version n
+- `schema_version` 3 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
-  `effects`; a version 1 file holds none of them, so it loads as it is and is saved as version 2
-  (the version 1 file stays as `tracker.json.bak`).
+  `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`. An
+  older file holds none of them, so it loads as it is and is saved as the current version (the
+  older file stays as `tracker.json.bak`).
 
 ### Migration from the former state files
 
@@ -821,6 +838,65 @@ Priority is impact × exposure, both table-driven:
   holds the old value in plaintext.
 - History: `next` (once per run of consecutive calls), `replace-plan` (dry run),
   `replace-failed` (with what was already written), `done` (with the files and Keychain service).
+
+## Attribution
+
+The owner of old projects wants to rotate only what links to them personally. `internal/attribution`
+decides, for each secret, `mine`, `not-mine` or `unknown`, offline: no provider is asked about a
+leaked secret, not even with `sts get-access-key-info`, which takes only the key id but is still a
+call to AWS about it.
+
+**Claims, at scan time.** Only local-secrets has the raw value, so it derives the identifiers there
+(`connectors/localsecrets/attribution.go`) and stores them in the evidence (`aws_account`,
+`slack_team`, `gcp_project`, `author_email`), never the key id or the value:
+
+| Claim | From | How |
+|---|---|---|
+| `aws_account` | an access key id (AKIA, ASIA), alone or in a pre-signed URL | base32-decode the 16 characters after the prefix; the first 6 bytes, big-endian, masked with `0x7fffffffff80` and shifted right 7 bits, are the account id (Tal Be'ery, "A short note on AWS KEY ID", 2023; reproduced at [hackingthe.cloud](https://hackingthe.cloud/aws/enumeration/get-account-id-from-keys/); `AKIASP2TPHJSQH3FJXYZ` gives `171436882533`, the example of the [aws_account_id_from_key_id](https://docs.rs/aws_account_id_from_key_id) crate). Key ids of the older format, fifth character `I` or `J`, carry no account |
+| `aws_account` | a secret access key | the key id in the same file (or the matched line, in git history), when the file names one account only |
+| `slack_team` | an incoming webhook URL | its first path element (`hooks.slack.com/services/T…/…`); tokens (`xox…`) carry no documented team id |
+| `gcp_project` | an OAuth client id (`<number>-….apps.googleusercontent.com`) | the project number it starts with |
+| `gcp_project` | a Google API key, OAuth client secret or service-account key | the file around it: `project_id`, `project_number`, `GCM_SENDER_ID`, or a client id, when it names one project only. An API key alone names none |
+| `author_email` | a git history finding | the author of the commit gitleaks reports |
+
+History findings replayed from the incremental cache (see "Incremental git history scan") keep
+the claims of the run that first scanned them; ones cached before claims existed gain them at the
+next full scan.
+
+**The owner's accounts.** `attribution.Discover` reads them from connector runs: aws accounts
+reported by id, and an info finding `aws_account` (`account_id`) when an alias stands in for the
+id; one info finding `gcp_projects` per gcp account with the id and number of each project it
+sees, and the gcp accounts (people, not service accounts) as emails; the google-personal accounts
+inspected (status `ok`) as emails; one info finding `slack_workspace` (`team_id`, read from the
+workspace page's boot data) per Slack workspace connected-apps reads; the GitHub login and every
+organization the github and connected-apps connectors name. Each sync adds what it finds to the
+tracker's top-level `owned` and never drops a value, so a sync without an aws run still knows the
+account. Config `owned` (`aws_accounts`, `gcp_projects` (ids or numbers), `slack_teams`, `github`,
+`emails`) adds what no connector reaches, and `git config user.email` adds the commit email.
+`segurata accounts owned` prints them all, each with its source.
+
+**Verdict.** Every sync folds the claims of each sighting into the item's
+`secret.attribution.facts` (kept, like locations, when a later scan no longer sees them), adds the
+GitHub owner of each repository a location lies in (its `origin` remote in `.git/config`, worktrees
+followed to the main repository), and recomputes `secret.attribution` before the decisions' rules
+run:
+
+- `mine` (confidence high) when a claim names one of the owner's accounts, projects or workspaces;
+  medium when another claim names someone else's (a file holding two accounts);
+- `not-mine` (medium) when the claims name only accounts that are none of the owner's known ones,
+  and at least one of the owner's of each kind named is known;
+- `unknown` (low) otherwise: no claim, or a claim of a kind where none of the owner's accounts is
+  known ("run its connector or set owned.aws_accounts").
+
+Not-mine is a comparison with the accounts known, not proof: an old AWS account the owner still
+holds but no profile reaches reads as someone else's until it is listed in `owned.aws_accounts`.
+Commit authorship ("committed by you (me@x.com)", "committed by someone else") and repository
+ownership ("in a repository of instructure, none of your GitHub accounts or organizations") are
+listed as hints and never change the verdict.
+
+`rotations show` prints the verdict, its reasons and the facts; `rotations list --owner
+mine|not-mine|unknown` filters by it and shows an OWNER column; `rotations sync` counts open
+secrets by owner. Decision rules use it through `owners` (see "Decisions and rules").
 
 ## Redaction
 
