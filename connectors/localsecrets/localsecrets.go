@@ -421,6 +421,7 @@ func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secret
 	ev.Fingerprint = s.fp.Of(value)
 	ev.Bucket = bucketOf(ev)
 	ev.Fix = fixFor(ev)
+	s.attribute(abs, &ev, value)
 	if len(value) >= 6 {
 		raw, _ := json.Marshal(ev)
 		if strings.Contains(string(raw), value) {

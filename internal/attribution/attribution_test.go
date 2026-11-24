@@ -1,8 +1,6 @@
 package attribution
 
 import (
-	"encoding/base32"
-	"encoding/binary"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,20 +8,12 @@ import (
 	"testing"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/testcorpus"
 )
 
-// keyID builds a synthetic access key id that carries account: 48 bits holding the account
-// shifted left by 7 (and top, the bit the mask drops), then filler, base32-encoded after prefix.
 func keyID(t *testing.T, prefix string, account uint64, top bool, low7 byte) string {
 	t.Helper()
-	v := account<<7 | uint64(low7&0x7f)
-	if top {
-		v |= 1 << 47
-	}
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], v)
-	raw := append(b[2:8:8], 0xA5, 0x5A, 0x3C, 0xC3)
-	id := prefix + base32.StdEncoding.EncodeToString(raw)
+	id := testcorpus.AWSKeyID(prefix, account, top, low7)
 	if len(id) != 20 {
 		t.Fatalf("built %q", id)
 	}

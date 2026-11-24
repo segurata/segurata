@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -15,6 +16,10 @@ import (
 // most a redacted hint (known prefix, last four characters of long keys, length) and an HMAC
 // fingerprint that only this machine's key can reproduce.
 type Evidence struct {
+	// Claims are the account identifiers the value or its file names (aws_account, slack_team,
+	// gcp_project) and a commit's author_email, derived at scan time: see internal/attribution.
+	attribution.Claims
+
 	Source      string `json:"source"`              // scan | gitleaks | name | ssh
 	Kind        string `json:"kind"`                // config | repo | transcript | history | log
 	Type        string `json:"type"`                // a key of the catalog, or a gitleaks rule id
