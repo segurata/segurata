@@ -39,6 +39,7 @@ const (
 	actAutoReopen = "auto-reopen"
 	actWake       = "snooze-expired"
 	actHistory    = "history-only"
+	actRedacted   = "redacted"
 )
 
 // stillPresent is the reason given when a rotated secret shows up again, with the same value, in
@@ -238,6 +239,13 @@ func (it *Item) Done(at time.Time, note string) {
 	sort.Strings(it.RotatedLocations)
 	it.log(at, actDone, note)
 	it.refresh()
+}
+
+// NoteRedaction records that `securizame redact` replaced the value in some trail files. The
+// locations stay: the copies reached wherever they went (a transcript reached the model provider)
+// before the local file was cleaned.
+func (it *Item) NoteRedaction(at time.Time, files int) {
+	it.log(at, actRedacted, fmt.Sprintf("redacted from %d trail %s", files, plural(files, "file", "files")))
 }
 
 // Snooze hides the item until a date (YYYY-MM-DD).

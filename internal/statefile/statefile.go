@@ -1,6 +1,6 @@
 // Package statefile writes files atomically, so a crash never leaves half a file: securizame's
 // own files (rotation ledger, accepted risks, reports) with mode 0600 in a 0700 directory, and the
-// user's files that `securizame rotations replace` edits, keeping their mode.
+// user's files that `securizame rotations replace` and `securizame redact` edit, keeping their mode.
 package statefile
 
 import (
@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // WriteJSON writes v as indented JSON to path.
@@ -52,4 +53,19 @@ func Replace(path string, data []byte, mode fs.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// Backup writes data, the content of path before an edit, to a new 0600 file next to it named
+// <path>.securizame-bak-<UTC timestamp>, and returns that name. It never overwrites a file.
+func Backup(path string, data []byte, now time.Time) (string, error) {
+	name := path + ".securizame-bak-" + now.UTC().Format("20060102T150405Z")
+	b, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := b.Write(data); err != nil {
+		b.Close()
+		return "", err
+	}
+	return name, b.Close()
 }

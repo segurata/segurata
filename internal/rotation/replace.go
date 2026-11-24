@@ -323,7 +323,7 @@ func (r *replacement) write(backup bool, now time.Time) ([]string, error) {
 			return done, fmt.Errorf("%s changed since the plan; nothing more written", f.path)
 		}
 		if backup {
-			if err := writeBackup(f.abs, f.orig, now); err != nil {
+			if _, err := statefile.Backup(f.abs, f.orig, now); err != nil {
 				return done, err
 			}
 		}
@@ -333,18 +333,6 @@ func (r *replacement) write(backup bool, now time.Time) ([]string, error) {
 		done = append(done, f.path)
 	}
 	return done, nil
-}
-
-func writeBackup(path string, data []byte, now time.Time) error {
-	b, err := os.OpenFile(path+".securizame-bak-"+now.UTC().Format("20060102T150405Z"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := b.Write(data); err != nil {
-		b.Close()
-		return err
-	}
-	return b.Close()
 }
 
 // verify re-reads every file: the old fingerprint must be gone from all of it, each edited line

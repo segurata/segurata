@@ -60,7 +60,20 @@ and notes once "old value still in history/transcripts". It reopens the item onl
 file (config, `.env`, rc file, repo working tree) still holds the old value, because a program
 still reads it from there. Purging the dead copies is optional housekeeping:
 [git](#in-git-always-rotate) (step 3), [shell history](#shell-history),
-[agent transcripts](#agent-transcripts), [logs](#logs).
+[agent transcripts](#agent-transcripts), [logs](#logs). `securizame redact` does it for
+transcripts, shell histories and logs in one pass, rotated or not: each secret becomes
+`[REDACTED:<type>:<fingerprint8>]`, so the trail keeps its link to the rotation item
+([architecture](architecture.md#redaction)):
+
+```bash
+securizame redact --trails                 # dry run: files, matches per file and per type
+securizame redact --item <id> --apply      # one secret, everywhere it appears in trails
+securizame redact --trails --apply         # everything non-noise, after confirmation
+```
+
+It leaves alone files modified in the last two hours (`--min-age`) and files a running `claude`
+or `codex` holds open, keeps JSONL lines valid, mode and modification time unchanged, and makes
+no backup unless `--backup`.
 
 ## .env files
 
@@ -254,7 +267,10 @@ RSA keys:
 
 ## Shell history
 
-To delete lines with secrets, close the other terminals and, from a single one:
+`securizame redact --path ~/.zsh_history --apply` replaces each secret in place and keeps the
+`: <ts>:<d>;cmd` format. A shell still open holds the old lines in memory and may write them back
+when it exits: close the other terminals first and run `fc -R` in the one left afterwards. To
+delete whole lines instead, from a single terminal:
 
 ```bash
 fc -W                                                                        # flush in-memory history
@@ -278,7 +294,9 @@ or uploaded somewhere, [rotate](#in-git-always-rotate).
 A secret found in `~/.claude/projects`, `~/.codex/sessions` or `~/.cursor/projects` was sent to the
 model provider. Treat it as leaked: **rotate**.
 
-Then delete the transcripts that contain it (the list comes from the jsonl, without values):
+Then remove the local copies: `securizame redact --trails` (dry run, then `--apply`) replaces each
+secret inside the transcripts and keeps them readable. Or delete the transcripts that contain it
+(the list comes from the jsonl, without values):
 
 ```bash
 jq -r 'select(.evidence.kind=="transcript") | .evidence.path' out/*/local-secrets.jsonl | sort -u
@@ -296,7 +314,9 @@ To keep them from piling up:
 
 ## Logs
 
-- Truncate or delete logs with secrets (`: > log/development.log`).
+- Truncate or delete logs with secrets (`: > log/development.log`), or replace just the secrets:
+  `securizame redact --path ~/src/app/log/development.log --apply` (the logs `local-secrets` scans:
+  `*.log` under `repos_root`, `~/Library/Logs`, `~/.local/log`).
 - Filter parameters: Rails `config.filter_parameters += [:token, :api_key, :password, :secret]`;
   Phoenix `config :phoenix, :filter_parameters, ["password", "token", "api_key", "secret"]`.
 - If the log was uploaded somewhere (Sentry, CI, an issue), [rotate](#in-git-always-rotate).

@@ -287,6 +287,25 @@ atomically, checks the result, marks the item rotated and clears the clipboard. 
 [docs/secrets.md](docs/secrets.md#shell-variables-from-the-keychain) recommends. No backup unless
 `--backup`: a backup is one more plaintext copy of the old value.
 
+### Redacting trails
+
+```bash
+./securizame redact --trails                      # dry run: files, matches per file and per type
+./securizame redact --item <id> --apply           # one secret, in every transcript, history and log
+./securizame redact --trails --min-priority P1 --apply
+```
+
+Agent transcripts, shell histories and logs keep pasted secrets in plaintext. Rotation is still
+needed (a transcript already reached the model provider), but the local copy can go: `redact`
+replaces each secret `local-secrets` reports as non-noise with `[REDACTED:<type>:<fingerprint8>]`,
+which still points at its rotation item. Without `--apply` it only lists files, match counts per
+file and per type, and bytes replaced. With `--apply` it asks for confirmation, rewrites each
+file atomically keeping its mode and modification time, scans the result again and notes
+"redacted from N trail files" on each rotation item. It never touches working files (config,
+`.env`, rc), files modified in the last two hours (`--min-age`) or files a running `claude` or
+`codex` has open; JSONL lines stay valid JSON, zsh history keeps its `: <ts>:<d>;cmd` format. No
+backup unless `--backup`. Details: [docs/architecture.md](docs/architecture.md#redaction).
+
 ## macOS and Brave posture (`macos`)
 
 ```bash
