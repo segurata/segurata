@@ -186,6 +186,52 @@ next to a test, so every finding of a kind gets the same answer.
 - Never `high` or above for something the owner cannot act on.
 - A noise match (a generic pattern, a test fixture) is `info`, not `low`.
 
+## Spend and budgets
+
+A budget only notifies; it does not stop spend. Every connector that reads budgets judges them with
+the same rules, so a finding means the same on GCP, AWS and Azure. Built-in connectors map their
+provider's budgets to the model in `connectors/internal/budget` and call `budget.Evaluate`; they add
+nothing but the mapping and the provider's wording. An external connector cannot import Go: it
+applies the rules below itself and emits findings with the same resource types, severities and
+title shapes.
+
+### Model
+
+| Term | Meaning |
+|---|---|
+| Container | What the budgets belong to: a GCP billing account, an AWS account, an Azure subscription. It may have units (the GCP projects it pays for). |
+| Budget | `name`, `amount`, `currency`, `period` (`day`, `month`, `quarter`, `year`, `custom`), whether the amount follows last period's spend, thresholds, scope, notification channels, automatic actions. Only budgets that measure money count (not usage or reservation budgets). |
+| Threshold | A percentage of the amount (100 is the whole amount) and whether it fires on forecasted or actual spend. Absolute thresholds become a percentage of the amount. Alerts that fire below a value (AWS `LESS_THAN`) and disabled ones are left out. |
+| Scope | The units the budget is limited to (none: every unit), any other narrowing worded for people ("14 services", "tag env: prod"), and the exact narrowing those words leave out (the 14 service ids), compared but never shown. Filters narrow what is counted but never count as leaving a unit out, since they cannot be matched to units. |
+| Channels | Who is told: `email-admins`, `email-list`, `email-roles`, `email-project`, `monitoring`, `subscribers`, `pubsub`, `action-group`. |
+| Actions | Automatic hooks that can stop spend: `pubsub-topic` and `spend-cap` (GCP), `budget-action` (AWS), `azure-action-group` (Azure). |
+| Risk | A count of things this run found in the container, or in one of its units, that let someone run spend up: unrestricted API keys and user-managed service account keys (GCP, per project), active IAM user and root access keys (AWS), non-expiring client secrets (Azure, per tenant). |
+
+A budget *alerts* when it has a threshold and at least one channel or action.
+
+### Rules
+
+| Rule | Resource type | Severity | Title shape |
+|---|---|---|---|
+| No budget alerts | the connector's own (kept from earlier versions) | high | `<Container> has no budget with alerts: nothing warns you when spend runs away` |
+| Summary, when some budget alerts | same resource as above | info | `<Container> has 2 budgets: 'A' 110 EUR/month, all projects; 'B' …` (three shown) |
+| An alerting budget has no actual-spend threshold at or above 100% | `budget_thresholds` | medium | `Budget 'A' (110 EUR/month, all projects) alerts only at 50%: add 90%, 100% and a forecasted threshold` (90% is asked only when nothing reaches it; the forecast only when missing) |
+| An alerting budget reaches 100% but has no forecasted threshold | `budget_thresholds` | low | `Budget 'A' (…) has no forecasted threshold: add one at 100% to hear before the money is spent` |
+| Budgets with the same amount, currency, period and scope, exact filters included (thresholds ignored) | `budget_duplicates` | low | `2 budgets named 'A' on <container> are the same (…): delete one`, or the names listed when they differ; one finding per group |
+| Some budget alerts, none has an action, and the provider could say so | `budget_enforcement` | info, **medium** when the container has risks | `Budgets on <container> only notify: none is wired to <action>, so nothing stops spend; 2 unrestricted API keys in projects billed here` |
+| No budget covers every unit, and a filtered alerting budget leaves out units that have risks | `budget_scope` | low | `Budget 'A' (20 EUR/month, blog) leaves out shop (2 unrestricted API keys)` |
+| A unit no alerting budget covers | `<unit>_budget` | high | `Project shop is billed to <container> but no budget with alerts covers it` |
+
+Resource ids are `<container id>/<budget id>` for budget findings, the container id joined to the
+sorted budget ids for duplicates, and the container id for enforcement, so they are stable across
+runs. Evidence holds the budget as mapped (amount, thresholds, scope, channels, actions) and the
+risks counted. Remediations are manual and point to the provider's budget console, or for
+enforcement to the provider's guide on capping spend.
+
+Not judged: whether the code behind an action really stops spend (segurata sees the topic, the
+action or the action group, not what it does), and recipients the provider does not return (AWS
+subscriber kinds need one call per notification and are not read).
+
 ## Secrets
 
 - The config never holds a secret value, only a reference (`env:NAME`, `keychain:service`,
