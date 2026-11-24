@@ -32,11 +32,16 @@ func (t *Tracker) recordRuns(folded map[string]*run) {
 		// A scope left out by a status the config expects (when the run was written, or by a rule
 		// added since) is left out on purpose: counted, not listed, and not a partial run.
 		expected := map[string]bool{}
+		allExpected := len(r.statuses) > 0
 		for _, st := range r.statuses {
 			if st.State == finding.StateExpected {
 				expected[cmp.Or(st.Scope, st.Account)] = true
+			} else {
+				allExpected = false
 			}
 		}
+		// Every status expected: what the run left out (everything, when nothing said ok) is too.
+		expected[finding.ScopeAll] = expected[finding.ScopeAll] || allExpected
 		var sk []finding.Skipped
 		for _, s := range r.cov.Skipped() {
 			if expected[s.Scope] || strings.HasPrefix(s.Reason, string(finding.StateExpected)) {
@@ -86,7 +91,11 @@ func (t *Tracker) coverageLine(instances []string, now time.Time) string {
 			s += ", failed: " + firstSentence(info.Error)
 		case !info.Complete && len(info.Skipped) > 0:
 			scope, _, _ := strings.Cut(info.Skipped[0], ": ")
-			s += ", partial: " + scope + " not checked"
+			what := scope + " not checked"
+			if scope == finding.ScopeAll {
+				what = "nothing checked"
+			}
+			s += ", partial: " + what
 			if n := info.SkippedCount - 1; n > 0 {
 				s += fmt.Sprintf(" (+%d more)", n)
 			}
@@ -156,19 +165,40 @@ var gaps = []gap{
 		command: "segurata inventory workspace"},
 }
 
-// githubOwner2FA is covered when the github run read the owner's own account (no status says
-// two-factor authentication was not checked for a user:<login> scope).
-func githubOwner2FA(_ *Tracker, folded map[string]*run) (bool, string, bool) {
+// githubOwner2FA is covered when the github run read the owner's own account: no status other
+// than ok for a user:<login> scope or naming the read:user scope (runs before scopes existed). A
+// sync that folds no github run goes by the open setup items.
+func githubOwner2FA(t *Tracker, folded map[string]*run) (bool, string, bool) {
+	blocked := func(scope, detail string) bool {
+		return strings.HasPrefix(scope, "user:") || strings.Contains(detail, "read:user")
+	}
 	r := folded["github"]
 	if r == nil {
+		if t.openSetup("setup:github|", func(ref FindingRef) bool { return blocked(ref.Scope, ref.Title) }) {
+			return false, "", true
+		}
 		return false, "", false
 	}
 	for _, st := range r.statuses {
-		if strings.HasPrefix(st.Scope, "user:") && st.State != finding.StateOK {
+		if st.State != finding.StateOK && blocked(st.Scope, st.Detail) {
 			return false, "", true
 		}
 	}
 	return true, "the github run read your account", true
+}
+
+// openSetup reports whether an active setup item whose key starts with prefix has a reported
+// status ref that match accepts.
+func (t *Tracker) openSetup(prefix string, match func(FindingRef) bool) bool {
+	for _, it := range t.Items {
+		if it.Kind != KindSetup || it.Status != Open && it.Status != InProgress || !strings.HasPrefix(it.Key, prefix) {
+			continue
+		}
+		if slices.ContainsFunc(it.Findings, func(r FindingRef) bool { return !r.Gone && match(r) }) {
+			return true
+		}
+	}
+	return false
 }
 
 // ranConnector is covered once an instance of the connector has run.
@@ -196,6 +226,9 @@ func workspaceRead(t *Tracker, folded map[string]*run) (bool, string, bool) {
 		if slices.ContainsFunc(r.statuses, func(st finding.Status) bool { return st.State == finding.StateOK }) {
 			return true, l + " was read", true
 		}
+	}
+	if !configured && t.openSetup("setup:workspace", func(FindingRef) bool { return true }) {
+		return false, "", true // no workspace run folded now, but a tenant is still waiting for setup
 	}
 	return false, "", configured
 }

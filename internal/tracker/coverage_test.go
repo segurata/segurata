@@ -23,10 +23,21 @@ func TestCoverageLine(t *testing.T) {
 		finding.Status{Type: "status", Connector: "github", Account: "github:me", Scope: "user:me", State: finding.StateNoScope, Detail: "two-factor authentication not checked: gh's token lacks read:user"})
 	writeRun(t, out, t0.Add(-26*time.Hour), "aws.jsonl", at("aws", t0.Add(-26*time.Hour)), okStatus("aws", "1"))
 	writeRun(t, out, t0, "gcp.jsonl", at("gcp", t0), okStatus("gcp", "me@x.com"), errors.New("gcloud exited 1"))
+	// Only a status the config expects: nothing was inspected, on purpose.
+	writeRun(t, out, t0, "anthropic.jsonl", at("anthropic", t0), finding.Status{Type: "status", Connector: "anthropic", State: finding.StateMissingCredentials, Detail: "no admin key"})
+	writeRun(t, out, t0, "openai.jsonl", at("openai", t0), finding.Status{Type: "status", Connector: "openai", State: finding.StateMissingCredentials, Detail: "no admin key"})
 	tr := New(t0)
-	syncOrDie(t, tr, out, t0.Add(time.Minute))
+	expect := func(st *finding.Status) {
+		if st.Connector == "anthropic" {
+			st.State = finding.StateExpected
+		}
+	}
+	if _, err := tr.Sync(SyncOptions{OutDir: out, Expect: expect}, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	got := tr.coverageLine([]string{"aws", "cloudflare", "gcp", "github"}, t0.Add(3*time.Hour))
-	want := "Coverage: aws: 29 h ago; cloudflare: never run; gcp: 3 h ago, failed: gcloud exited 1; github: 3 h ago, partial: user:me not checked."
+	want := "Coverage: anthropic: 3 h ago (1 scope left out as expected); aws: 29 h ago; cloudflare: never run; gcp: 3 h ago, failed: gcloud exited 1; " +
+		"github: 3 h ago, partial: user:me not checked; openai: 3 h ago, partial: nothing checked."
 	if got != want {
 		t.Errorf("coverage line\n got %q\nwant %q", got, want)
 	}
@@ -97,5 +108,25 @@ func TestCoverageItems(t *testing.T) {
 	syncOrDie(t, tr, out, day3.Add(2*time.Minute))
 	if it := tr.ByKey("coverage:workspace"); it == nil || it.Status != Open {
 		t.Errorf("workspace coverage item %+v", it)
+	}
+}
+
+// Runs from before scopes existed say read:user in the detail; with no github run folded, the open
+// setup item says the same.
+func TestGithubOwner2FAFromOlderRunsAndSetupItems(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	writeRun(t, out, t0, "github.jsonl", okStatus("github", "github:org"),
+		finding.Status{Type: "status", Connector: "github", Account: "github:me", State: finding.StateNoScope, Detail: "two-factor authentication not checked: gh's token lacks read:user"})
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0.Add(time.Minute))
+	it := tr.ByKey("coverage:github-owner-2fa")
+	if it == nil || it.Status != Open {
+		t.Fatalf("from the detail: %+v", it)
+	}
+	if covered, _, known := githubOwner2FA(tr, map[string]*run{}); covered || !known {
+		t.Errorf("from the setup item: covered %v known %v", covered, known)
+	}
+	if line := tr.coverageLine(nil, t0.Add(time.Hour)); !strings.Contains(line, "github: ") {
+		t.Errorf("line %q", line)
 	}
 }
