@@ -4,7 +4,9 @@ An external segurata connector in Python 3 (standard library only) that runs
 [Prowler](https://github.com/prowler-cloud/prowler) (Apache-2.0) against Google Cloud and reports its
 failed checks as segurata findings. Prowler 5.51.0 has 117 GCP checks (Cloud Storage, Cloud SQL,
 Compute, IAM, KMS, logging, DNS, BigQuery, GKE, Vertex AI and others); this connector wraps them
-instead of rewriting them in segurata. It speaks protocol 1 of the external protocol
+instead of rewriting them in segurata. Failures of hygiene checks are weighted by what each project
+runs (see [Relevance](#relevance)), so CIS logging alerts missing in forty idle projects sit below
+a firewall open to the internet. It speaks protocol 1 of the external protocol
 ([docs/connectors.md](../../docs/connectors.md)) and only inventories: Prowler reads, nothing is
 changed.
 
@@ -97,7 +99,13 @@ In `~/.config/segurata/config.json`; every key is optional:
     "include_overlaps": false,
     "prowler_path": "/Users/me/.local/bin/prowler",
     "timeout": 1800,
-    "parallel": 1
+    "parallel": 1,
+    "relevance": true,
+    "relevance_overrides": {"iam_cloud_asset_inventory_enabled": "keep", "kms_key_rotation_enabled": "info"},
+    "not_applicable": [
+      {"check": "iam_account_access_approval_enabled", "where": "no_organization",
+       "reason": "Access Approval needs Access Transparency enabled for the project's organization, and this project has none"}
+    ]
   }
 }
 ```
@@ -115,6 +123,9 @@ In `~/.config/segurata/config.json`; every key is optional:
 | `prowler_path`, `gcloud_path` | `PATH` (and the SDK folders for gcloud) | Absolute paths to the CLIs |
 | `timeout` | 1800 | Seconds one project may take |
 | `parallel` | 1 | Projects scanned at once; Prowler is already multi-threaded inside a run |
+| `relevance` | `true` | Weigh hygiene checks by the project's profile ([Relevance](#relevance)). With `false` the profile is still read and recorded |
+| `relevance_overrides` | none | Check id to `keep` (never adjusted by the profile) or `info` (info in every project) |
+| `not_applicable` | Access Approval outside an organization | Failures reported as `info` with the reason. A configured list replaces the default; `[]` turns it off |
 
 Each project is scanned once, with the first account that lists it. When Prowler is denied, the
 next account that lists the project is tried; findings keep the first account either way, so their
@@ -133,12 +144,18 @@ prowler gcp --project-id P --output-formats json-ocsf --output-directory D --out
 No HTML or CSV report is asked for. The connector reads `D/prowler.ocsf.json` (OCSF Detection
 Findings) and `D/prowler.log`.
 
+Then, as the account Prowler ran as, it reads the project's [profile](#activity-profile) with
+gcloud. The connector runs only the gcloud commands in its `READ_COMMANDS` allowlist (auth list,
+print-access-token, projects list, services list, billing projects describe and the six resource
+lists in [Activity profile](#activity-profile)); any other command is refused before gcloud starts.
+
 ## What it reports
 
 One finding per **FAIL** result and resource. PASS, MANUAL and muted results, overlaps and
 results below `severity_min` are counted in the project's `ok` status, for example
-`12 FAIL, 80 PASS, 0 MANUAL; 0 muted, 3 already checked by gcp, 0 below severity_min; APIs disabled
-(nothing to check there): dataproc, notebooks`.
+`12 FAIL, 80 PASS, 0 MANUAL; 0 muted, 3 already checked by gcp, 0 below severity_min; profile
+production: 31 non-default services, 2 compute instances, 3 buckets, billing on; 0 lowered by
+relevance, 0 not applicable; APIs disabled (nothing to check there): dataproc, notebooks`.
 
 | Field | From |
 |---|---|
@@ -146,12 +163,85 @@ results below `severity_min` are counted in the project's `ok` status, for examp
 | `scope` | The project id |
 | `resource` | `type` `prowler_check`, `id` `<check id>:<project>:<resource uid>`, `name` the resource name |
 | `kind` | `exposure` when the check's categories include `internet-exposed`, `credential` for `secrets`, `setting` otherwise |
-| `severity` | Prowler's: critical, high, medium, low as they are, informational as `info` |
+| `severity` | Prowler's (critical, high, medium, low as they are, informational as `info`), weighed by [Relevance](#relevance) |
 | `title` | Prowler's result text, which names the resource (`Bucket x is publicly accessible.`). The check title states the passing condition, so it goes to the evidence |
 | `remediation` | Prowler's recommendation text; `url` its page on hub.prowler.com |
-| `evidence` | `check_id`, `check_title`, `service`, `resource_uid`, `resource_type`, `region`, `project`, `compliance` (CIS benchmark versions and requirement ids), `categories`, `prowler_version` |
+| `evidence` | `check_id`, `check_title`, `service`, `resource_uid`, `resource_type`, `region`, `project`, `compliance` (CIS benchmark versions and requirement ids), `categories`, `prowler_version`, `prowler_severity` (Prowler's severity before relevance), `profile` (the project's activity profile) and, when the severity was changed, `relevance` (why) |
 
 Prowler's per-resource raw data (`resources[].data`) is never copied: it holds whole API objects.
+
+## Relevance
+
+Most of a first run over many projects is the same CIS hygiene failing everywhere: nine logging
+metric-filter alerts, a log sink, Cloud Asset Inventory, container scanning, Access Approval. In a
+project that runs nothing they are not worth the attention a public bucket is. So each project
+gets an activity profile that sets how much they count.
+
+### Activity profile
+
+Per project, as the account that answered for Prowler:
+
+| Read | Command |
+|---|---|
+| Enabled services | `gcloud services list --enabled --project P` |
+| Billing | `gcloud billing projects describe P` |
+| VMs, GKE clusters, Cloud SQL instances, Cloud Run services, Cloud Functions, buckets | `gcloud compute instances list`, `container clusters list`, `sql instances list`, `run services list`, `functions list`, `storage buckets list` (`--project P`), each only when its API is enabled |
+| In an organization | The `parent` that `gcloud projects list` already returned (a folder counts: folders exist only under an organization) |
+
+An idle project costs two calls. Prowler's own results are not used for the counts: they depend on
+`checks`, `excluded_checks` and `severity_min`, and Prowler has no Cloud Run checks.
+
+| Class | When |
+|---|---|
+| `production` | Any VM, GKE cluster, Cloud SQL instance, Cloud Run service or function; or billing on and any bucket |
+| `empty` | None of the resources above, and at most 5 enabled services beyond the 23 Google enables on every new project ([Services enabled by default](https://cloud.google.com/service-usage/docs/enabled-service)) |
+| `light` | Everything else, e.g. a Firebase project with a bucket and no billing |
+| `unknown` | A call failed (other than a disabled API) and what it would have said could change the class |
+
+The profile goes into the evidence of every finding of the project (`class`, `services_enabled`,
+`services_non_default`, `billing_enabled`, `in_organization`, `resources`, `unread`) and into the
+project's `ok` status, e.g. `profile light: 25 non-default services, 1 buckets, billing off; 14
+lowered by relevance, 0 not applicable`.
+
+### Rules
+
+Applied to each failure in this order; the first that matches decides:
+
+1. **Not applicable** (`not_applicable`): `info`, with `relevance` = `not applicable: <reason>`.
+   `where: "no_organization"` limits an entry to projects outside an organization; `any` (the
+   default) applies everywhere. Info findings never open a tracker item, so these stay in the
+   report with their reason instead of as open work.
+2. **Overrides** (`relevance_overrides`): `info` sets the check to info everywhere; `keep` leaves it
+   as Prowler rated it.
+3. **Profile**, only with `relevance` on and only for the hygiene checks below:
+   `empty` → `info`; `light` → one level lower (high → medium → low → info); `production` and
+   `unknown` → unchanged.
+
+Hygiene checks (Prowler 5.51.0 ids):
+
+| Group | Checks |
+|---|---|
+| CIS 2.4-2.11 metric filters and alerts | `logging_log_metric_filter_and_alert_for_{audit_configuration,bucket_permission,compute_configuration,custom_role,project_ownership,sql_instance_configuration,vpc_firewall_rule,vpc_network,vpc_network_route}_changes_enabled` |
+| Log export and audit logs | `logging_sink_created`, `iam_audit_logs_enabled`, `cloudstorage_audit_logs_enabled`, `cloudstorage_bucket_logging_enabled`, `compute_subnet_flow_logs_enabled`, `compute_network_dns_logging_enabled`, `compute_loadbalancer_logging_enabled` |
+| Inventory, scanning, governance | `iam_cloud_asset_inventory_enabled`, `artifacts_container_analysis_enabled`, `gcr_container_scanning_enabled`, `iam_account_access_approval_enabled`, `iam_organization_essential_contacts_configured` |
+
+Never lowered by the profile, whatever the project runs: findings of kind `exposure` or
+`credential`, and these checks: firewall SSH/RDP open to the internet, VM public IP, default service
+account on a VM (with or without full API access), public image, Shodan-listed address, public
+bucket, Cloud SQL public IP or public access, public BigQuery dataset, public function, KMS key or
+secret, Vertex AI Workbench public IP, API key checks, and service-account admin roles and unused
+keys (`PROTECTED_CHECKS` in the script). `cloudstorage_uses_vpc_service_controls` is not in the
+hygiene list because Prowler files it as `internet-exposed`.
+
+`severity_min` filters on Prowler's severity, before relevance.
+
+### Not applicable by default
+
+| Check | Where | Why |
+|---|---|---|
+| `iam_account_access_approval_enabled` | Projects outside an organization | "Before enabling Access Approval, you must enable Access Transparency for your organization" ([Access Approval overview](https://cloud.google.com/assured-workloads/access-approval/docs/overview)). A project with no organization cannot meet that. Inside an organization Access Transparency is on by default ([Enable Access Transparency](https://cloud.google.com/assured-workloads/access-transparency/docs/enable)), so the check stays a hygiene check there |
+
+Prowler 5.51.0 has no Access Transparency check of its own.
 
 ## Overlap with the gcp connector
 
@@ -178,7 +268,7 @@ Not in Prowler, only in `gcp`: billing budgets and local credential files (ADC, 
 | Record | When |
 |---|---|
 | `status ok` (account) | gcloud listed the account's projects |
-| `status ok` (account, scope = project) | Prowler finished on the project; the detail is the summary |
+| `status ok` (account, scope = project) | Prowler finished on the project; the detail is the summary, with the project's profile and how many failures relevance changed |
 | `status noscope` (scope = project) | Every account that lists the project was denied, or Google refused one of Prowler's project-level calls (HTTP 403 in its log, including reading whether an API is enabled), so those checks saw nothing; the detail names the services and the roles to grant. Findings from what was read are still reported |
 | `status error` (scope = project) | Prowler timed out, crashed, or wrote output that is not JSON |
 | `status reauth` | gcloud's login for the account expired, or Prowler was refused its token |
@@ -196,6 +286,7 @@ cd plugins/prowler && python3 -m unittest
 ```
 
 The tests put a fake `prowler` and a fake `gcloud` (shell scripts in `testdata/fakebin`) on `PATH`
-and feed a synthetic OCSF fixture (`testdata/ocsf`, invented projects and resources). Nothing
+and feed synthetic OCSF fixtures (`testdata/ocsf`, invented projects and resources); the fake gcloud
+answers the profile calls from files each test writes. Nothing
 reaches Google Cloud. The fixture follows the OCSF writer of Prowler 5.51.0
 (`prowler/lib/outputs/ocsf/ocsf.py`).

@@ -1,0 +1,610 @@
+[
+    {
+        "message": "There are no log metric filters or alerts associated in project demo-proj-delta.",
+        "metadata": {
+            "event_code": "logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 3,
+        "severity": "Medium",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "There are no log metric filters or alerts associated in project demo-proj-delta.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "logging"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-3.0": [
+                    "2.4"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-delta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled",
+            "title": "Log metric filter and alert for project ownership changes configured",
+            "types": [],
+            "uid": "prowler-gcp-logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled-demo-proj-delta-global-project",
+            "name": "project"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "project"
+                    }
+                },
+                "group": {
+                    "name": "logging"
+                },
+                "labels": [],
+                "name": "project",
+                "type": "cloudresourcemanager.googleapis.com/Project",
+                "uid": "demo-proj-delta"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-delta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-delta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Synthetic remediation for logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled.",
+            "references": [
+                "https://hub.prowler.com/check/logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "There are no logging sinks to export copies of all the log entries in project demo-proj-delta.",
+        "metadata": {
+            "event_code": "logging_sink_created",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 3,
+        "severity": "Medium",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "There are no logging sinks to export copies of all the log entries in project demo-proj-delta.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "logging"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-3.0": [
+                    "2.4"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-delta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of logging_sink_created",
+            "title": "Sink configured to export all log entries",
+            "types": [],
+            "uid": "prowler-gcp-logging_sink_created-demo-proj-delta-global-project",
+            "name": "project"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "project"
+                    }
+                },
+                "group": {
+                    "name": "logging"
+                },
+                "labels": [],
+                "name": "project",
+                "type": "cloudresourcemanager.googleapis.com/Project",
+                "uid": "demo-proj-delta"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-delta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-delta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Synthetic remediation for logging_sink_created.",
+            "references": [
+                "https://hub.prowler.com/check/logging_sink_created"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Cloud Asset Inventory is not enabled in project demo-proj-delta.",
+        "metadata": {
+            "event_code": "iam_cloud_asset_inventory_enabled",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 4,
+        "severity": "High",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Cloud Asset Inventory is not enabled in project demo-proj-delta.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-3.0": [
+                    "2.4"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-delta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of iam_cloud_asset_inventory_enabled",
+            "title": "Cloud Asset Inventory is enabled",
+            "types": [],
+            "uid": "prowler-gcp-iam_cloud_asset_inventory_enabled-demo-proj-delta-global-project",
+            "name": "project"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "project"
+                    }
+                },
+                "group": {
+                    "name": "iam"
+                },
+                "labels": [],
+                "name": "project",
+                "type": "serviceusage.googleapis.com/Service",
+                "uid": "demo-proj-delta"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-delta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-delta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Synthetic remediation for iam_cloud_asset_inventory_enabled.",
+            "references": [
+                "https://hub.prowler.com/check/iam_cloud_asset_inventory_enabled"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Project demo-proj-delta does not have Access Approval enabled.",
+        "metadata": {
+            "event_code": "iam_account_access_approval_enabled",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 4,
+        "severity": "High",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Project demo-proj-delta does not have Access Approval enabled.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "identity-access"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-3.0": [
+                    "2.4"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-delta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of iam_account_access_approval_enabled",
+            "title": "Project has Access Approval enabled",
+            "types": [],
+            "uid": "prowler-gcp-iam_account_access_approval_enabled-demo-proj-delta-global-project",
+            "name": "project"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "project"
+                    }
+                },
+                "group": {
+                    "name": "iam"
+                },
+                "labels": [],
+                "name": "project",
+                "type": "accessapproval.googleapis.com/AccessApprovalSettings",
+                "uid": "demo-proj-delta"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-delta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-delta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Synthetic remediation for iam_account_access_approval_enabled.",
+            "references": [
+                "https://hub.prowler.com/check/iam_account_access_approval_enabled"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Firewall demo-allow-rdp allows 0.0.0.0/0 on port 3389.",
+        "metadata": {
+            "event_code": "compute_firewall_rdp_access_from_the_internet_allowed",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 5,
+        "severity": "Critical",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Firewall demo-allow-rdp allows 0.0.0.0/0 on port 3389.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [
+                "internet-exposed"
+            ],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-3.0": [
+                    "2.4"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-delta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of compute_firewall_rdp_access_from_the_internet_allowed",
+            "title": "Firewall rule does not allow RDP from the Internet",
+            "types": [],
+            "uid": "prowler-gcp-compute_firewall_rdp_access_from_the_internet_allowed-demo-proj-delta-global-demo-allow-rdp",
+            "name": "demo-allow-rdp"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-allow-rdp"
+                    }
+                },
+                "group": {
+                    "name": "compute"
+                },
+                "labels": [],
+                "name": "demo-allow-rdp",
+                "type": "compute.googleapis.com/Firewall",
+                "uid": "4444444444444444444"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-delta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-delta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Synthetic remediation for compute_firewall_rdp_access_from_the_internet_allowed.",
+            "references": [
+                "https://hub.prowler.com/check/compute_firewall_rdp_access_from_the_internet_allowed"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    },
+    {
+        "message": "Instance demo-vm uses the default service account with full API access.",
+        "metadata": {
+            "event_code": "compute_instance_default_service_account_in_use_with_full_api_access",
+            "product": {
+                "name": "Prowler",
+                "uid": "prowler",
+                "vendor_name": "Prowler",
+                "version": "5.51.0"
+            },
+            "profiles": [
+                "cloud",
+                "datetime"
+            ],
+            "tenant_uid": "",
+            "version": "1.5.0"
+        },
+        "severity_id": 4,
+        "severity": "High",
+        "status": "New",
+        "status_code": "FAIL",
+        "status_detail": "Instance demo-vm uses the default service account with full API access.",
+        "status_id": 1,
+        "unmapped": {
+            "related_url": "",
+            "categories": [],
+            "depends_on": [],
+            "related_to": [],
+            "additional_urls": [],
+            "notes": "",
+            "compliance": {
+                "CIS-3.0": [
+                    "2.4"
+                ]
+            },
+            "scan_id": "019a0000-0000-7000-8000-000000000000",
+            "provider_uid": "demo-proj-delta",
+            "provider": "gcp"
+        },
+        "activity_name": "Create",
+        "activity_id": 1,
+        "finding_info": {
+            "created_time": 1764000000,
+            "created_time_dt": "2026-11-24T12:00:00.000000Z",
+            "desc": "Synthetic description of compute_instance_default_service_account_in_use_with_full_api_access",
+            "title": "VM instance does not use the default service account with full API access",
+            "types": [],
+            "uid": "prowler-gcp-compute_instance_default_service_account_in_use_with_full_api_access-demo-proj-delta-global-demo-vm",
+            "name": "demo-vm"
+        },
+        "resources": [
+            {
+                "cloud_partition": null,
+                "region": "global",
+                "data": {
+                    "details": "",
+                    "metadata": {
+                        "name": "demo-vm"
+                    }
+                },
+                "group": {
+                    "name": "compute"
+                },
+                "labels": [],
+                "name": "demo-vm",
+                "type": "compute.googleapis.com/Instance",
+                "uid": "5555555555555555555"
+            }
+        ],
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+            "account": {
+                "name": "demo-proj-delta",
+                "type": "GCP Project",
+                "type_id": 5,
+                "uid": "demo-proj-delta",
+                "labels": []
+            },
+            "org": {
+                "name": "",
+                "uid": ""
+            },
+            "provider": "gcp",
+            "region": "global"
+        },
+        "remediation": {
+            "desc": "Synthetic remediation for compute_instance_default_service_account_in_use_with_full_api_access.",
+            "references": [
+                "https://hub.prowler.com/check/compute_instance_default_service_account_in_use_with_full_api_access"
+            ]
+        },
+        "risk_details": "Synthetic risk.",
+        "time": 1764000000,
+        "time_dt": "2026-11-24T12:00:00.000000Z",
+        "type_uid": 200401,
+        "type_name": "Detection Finding: Create"
+    }
+]
