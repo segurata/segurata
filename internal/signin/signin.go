@@ -45,12 +45,10 @@ func (it Item) Do() string {
 	return "run in your terminal: " + it.Command
 }
 
-// signInStates are the states a sign-in clears. noscope counts for commands: the fix is a fresh
-// sign-in with more scopes (gh auth refresh -s …).
-var (
-	pageStates    = []finding.State{finding.StateReauth, finding.StateSignedOut}
-	commandStates = []finding.State{finding.StateReauth, finding.StateSignedOut, finding.StateNoScope}
-)
+// commandStates are the states whose command is a sign-in: noscope counts, its fix is a fresh
+// sign-in with more scopes (gh auth refresh -s …). Pages are for reauth and signedout
+// (tracker.Item.BrowserSignIn).
+var commandStates = []finding.State{finding.StateReauth, finding.StateSignedOut, finding.StateNoScope}
 
 // Collect lists what the owner can do about the active setup items of the given connector
 // instances, in tracker order: for a status whose detail names a command, that command; for a
@@ -68,14 +66,14 @@ func Collect(items []*tracker.Item, targets []run.Target, accounts func(label st
 		if it.Kind != tracker.KindSetup || !it.Active(now) {
 			continue
 		}
-		if x, ok := collectOne(it, byLabel, accounts, all); ok {
+		if x, ok := collectOne(it, byLabel, accounts, all, now); ok {
 			out = append(out, x)
 		}
 	}
 	return out
 }
 
-func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accounts func(string) ([]string, bool), all bool) (Item, bool) {
+func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accounts func(string) ([]string, bool), all bool, now time.Time) (Item, bool) {
 	sts := it.SetupStatuses()
 	if len(sts) == 0 {
 		return Item{}, false
@@ -87,17 +85,11 @@ func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accoun
 		return Item{}, false
 	}
 	x := Item{TrackerID: it.ID, Title: it.Title, Target: lbl, Status: st}
-	var cmds []string
-	for _, s := range sts {
-		if c := tracker.StatusCommand(s); c != "" && !slices.Contains(cmds, c) {
-			cmds = append(cmds, c)
-		}
-	}
-	if len(cmds) > 0 {
+	if cmds := it.StatusCommands(); len(cmds) > 0 {
 		x.Command = strings.Join(cmds, " && ")
 		return x, all || slices.Contains(commandStates, st.State)
 	}
-	if !slices.Contains(pageStates, st.State) || !conn.Describe().NeedsCDP() {
+	if !it.BrowserSignIn(func(string) bool { return conn.Describe().NeedsCDP() }, now) {
 		return Item{}, false
 	}
 	if si, ok := conn.(connector.SignInner); ok {

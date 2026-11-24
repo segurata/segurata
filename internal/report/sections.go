@@ -29,7 +29,7 @@ func (r *Report) document() *doc.Doc {
 	if r.tracked() {
 		// The tracker's units, as status shows them: setup items and item history, not the runs'
 		// statuses and file diffs again.
-		tracker.Blockers(d, r.tr.Items, r.Generated)
+		tracker.Blockers(d, r.tr.Items, r.Generated, nil)
 		d.H(2, "Changes in the last 7 days")
 		tracker.Changes(d, r.tr.Items, r.Generated.AddDate(0, 0, -7), true)
 	} else {

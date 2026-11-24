@@ -254,6 +254,33 @@ func (it *Item) SetupStatuses() []finding.Status {
 	return out
 }
 
+// StatusCommands are the distinct commands a setup item's statuses name as their fix, in order
+// (StatusCommand of each).
+func (it *Item) StatusCommands() []string {
+	var out []string
+	for _, st := range it.SetupStatuses() {
+		if c := StatusCommand(st); c != "" && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// BrowserSignIn reports whether the owner clears an active setup item by signing in, or
+// confirming their identity, in the browser segurata drives: a reauth or signedout status of a
+// connector that browser says drives it, with no command to run instead. `segurata signin`
+// opens these.
+func (it *Item) BrowserSignIn(browser func(connector string) bool, now time.Time) bool {
+	if browser == nil || it.Kind != KindSetup || !it.Active(now) {
+		return false
+	}
+	if st := it.setupState(); st != finding.StateReauth && st != finding.StateSignedOut {
+		return false
+	}
+	sts := it.SetupStatuses()
+	return len(sts) > 0 && browser(sts[0].Connector) && len(it.StatusCommands()) == 0
+}
+
 // setupState is the state a setup item's key names: the last field of SetupKey.
 func (it *Item) setupState() finding.State {
 	return finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])
