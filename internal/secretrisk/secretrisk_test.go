@@ -181,3 +181,12 @@ func TestGuidesAreShortCitedAndInTheCatalog(t *testing.T) {
 		}
 	}
 }
+
+func TestIsShellRC(t *testing.T) {
+	for p, want := range map[string]bool{"~/.zshrc": true, "/Users/x/.bash_profile": true, ".profile": true,
+		"~/src/app/.env": false, "~/.zshrc.bak": false, "~/dotfiles/zshrc": false} {
+		if IsShellRC(p) != want {
+			t.Errorf("IsShellRC(%q) != %v", p, want)
+		}
+	}
+}

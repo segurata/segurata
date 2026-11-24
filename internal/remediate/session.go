@@ -84,7 +84,7 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 		fmt.Fprintln(opt.IO.Out, "\nDry run: nothing was changed. Run again with --apply to apply this plan.")
 		return nil
 	}
-	ok, err := confirm(opt)
+	ok, err := Confirm(opt.IO.In, opt.IO.Out, opt.Yes, opt.TTY)
 	if err != nil {
 		return err
 	}
@@ -119,15 +119,18 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 	return nil
 }
 
-func confirm(opt Options) (bool, error) {
-	if opt.Yes {
+// Confirm asks "Apply? [y/N]" on out and reads the answer from in. yes skips the question; when in
+// is not a terminal nobody can answer, so it refuses with ErrNotTTY. Every command that changes
+// something on --apply confirms through here.
+func Confirm(in io.Reader, out io.Writer, yes, tty bool) (bool, error) {
+	if yes {
 		return true, nil
 	}
-	if !opt.TTY {
+	if !tty {
 		return false, ErrNotTTY
 	}
-	fmt.Fprint(opt.IO.Out, "\nApply? [y/N] ")
-	line, err := bufio.NewReader(opt.IO.In).ReadString('\n')
+	fmt.Fprint(out, "\nApply? [y/N] ")
+	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}

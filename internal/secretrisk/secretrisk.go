@@ -308,6 +308,21 @@ func groupReadable(mode string) bool {
 // Reason is the plain-words line behind a priority: what it is and how far it went.
 func Reason(t Type, s Spot) string { return t.Label + "; " + s.Phrase }
 
+// ShellRC are the shell start-up files: an `export NAME=value` there reaches every process, and
+// docs/secrets.md moves such values to the Keychain.
+var ShellRC = []string{".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile"}
+
+// IsShellRC reports whether path (~/ or absolute) names one of ShellRC.
+func IsShellRC(path string) bool {
+	i := strings.LastIndexByte(path, '/')
+	for _, f := range ShellRC {
+		if path[i+1:] == f {
+			return true
+		}
+	}
+	return false
+}
+
 // passwordLike types hold human-chosen secrets: their hint shows only the length.
 var passwordLike = map[string]bool{
 	"assignment": true, "url-credentials": true, "netrc-password": true, "docker-auth": true,

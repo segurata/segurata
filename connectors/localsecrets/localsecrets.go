@@ -287,8 +287,6 @@ func bucketOf(ev secretrisk.Evidence) string {
 	return "3-local"
 }
 
-var shellRC = []string{".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile"}
-
 // fixFor is the docs/secrets.md anchor with the recommended fix.
 func fixFor(ev secretrisk.Evidence) string {
 	t, p := ev.Type, ev.Path
@@ -308,10 +306,7 @@ func fixFor(ev secretrisk.Evidence) string {
 		}
 		return false
 	}
-	rc := false
-	for _, f := range shellRC {
-		rc = rc || strings.HasSuffix(p, "/"+f)
-	}
+	rc := secretrisk.IsShellRC(p)
 	var a string
 	switch {
 	case ev.Tracked:
