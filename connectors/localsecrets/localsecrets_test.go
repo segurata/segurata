@@ -171,7 +171,13 @@ func TestGuards(t *testing.T) {
 	if !refused(gitleaksCheck, "git", "--report-path", "/tmp/r.json", "repo") || !refused(gitleaksCheck, "git", "--report-path=r.json", "repo") {
 		t.Error("gitleaks may write the raw report to a file")
 	}
-	if !refused(gitleaksCheck, "dir", "repo") || refused(gitleaksCheck, "git", "--report-path", "-", "repo") ||
+	safe := []string{"--log-opts", gitLogSafety + " --all"}
+	if refused(gitleaksCheck, append([]string{"git"}, append(safe, "repo")...)...) ||
+		!refused(gitleaksCheck, "git", "--report-path", "-", "repo") || !refused(gitleaksCheck, "git", "--log-opts", "--all", "repo") ||
+		!refused(gitleaksCheck, "git", "--log-opts="+gitLogSafety+" --all", "repo") {
+		t.Error("gitleaks may run git log without " + gitLogSafety)
+	}
+	if !refused(gitleaksCheck, "dir", "repo") ||
 		refused(gitleaksCheck, "version") || !refused(gitleaksCheck, "version", "--config=x") {
 		t.Error("gitleaks subcommand check")
 	}

@@ -28,7 +28,8 @@ var rgCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// gitleaksCheck allows only `gitleaks git` with the report on stdout, and `gitleaks version`.
+// gitleaksCheck allows only `gitleaks version`, and `gitleaks git` with the report on stdout and
+// its `git log` told not to run textconv drivers or external diffs (gitLogSafety).
 var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	if len(args) == 1 && args[0] == "version" {
 		return nil
@@ -36,13 +37,60 @@ var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	if err := (cli.Allowlist{"git"}).Check(args); err != nil {
 		return err
 	}
+	safe := false
 	for i, a := range args {
 		if strings.HasPrefix(a, "--report-path=") || (a == "--report-path" && (i+1 >= len(args) || args[i+1] != "-")) {
 			return refuse(args)
 		}
+		if strings.HasPrefix(a, "--log-opts=") {
+			return refuse(args)
+		}
+		if a == "--log-opts" && i+1 < len(args) {
+			safe = strings.HasPrefix(args[i+1], gitLogSafety+" ")
+		}
+	}
+	if !safe {
+		return refuse(args)
 	}
 	return nil
 })
+
+// A repository's own config (.git/config, and the files it includes) can name programs that git
+// runs during a read. The scan reads every repository under the home folder, cloned or extracted
+// from anywhere, so every git it starts, directly or through gitleaks, overrides each of them.
+// Command-line settings (GIT_CONFIG_COUNT) outrank every config file, includes and
+// config.worktree among them.
+var gitOverrides = [][2]string{
+	{"core.fsmonitor", "false"},     // ls-files runs the fsmonitor hook program on the work tree
+	{"core.hooksPath", "/dev/null"}, // no hook, whichever command would run one
+	{"log.showSignature", "false"},  // git log would run gpg.program (or gpg.ssh/x509.program) on signed commits
+	{"protocol.allow", "never"},     // no transport: core.sshCommand, remote helpers, credential helpers, core.gitProxy
+	{"core.pager", "cat"},           // the pager runs only on a terminal; pinned anyway
+}
+
+// gitEnv is the environment added to every git and gitleaks process: gitOverrides, plus
+//   - GIT_CONFIG_NOSYSTEM: the system config is skipped (the user's global config is theirs);
+//   - GIT_NO_LAZY_FETCH: a partial clone does not fetch a missing object from its promisor
+//     remote, which would run core.sshCommand or a remote helper (protocol.allow blocks it too);
+//   - GIT_TERMINAL_PROMPT=0 and GIT_PAGER=cat: nothing waits on the terminal;
+//   - GIT_OPTIONAL_LOCKS=0: reads do not refresh and rewrite the index.
+//
+// textconv drivers and external diffs (diff.<driver>.textconv, diff.<driver>.command and
+// diff.external) have no single setting to override: only a patch runs them, and only gitleaks
+// asks for one, with gitLogSafety. safe.directory keeps git's default: a repository owned by
+// another account is refused, and its scan reported as failed.
+var gitEnv = func() []string {
+	env := []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0",
+		fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(gitOverrides))}
+	for i, kv := range gitOverrides {
+		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, kv[1]))
+	}
+	return env
+}()
+
+// gitLogSafety opens every --log-opts gitleaks passes to its `git log -p`: no textconv driver
+// and no external diff program from the repository's config or attributes.
+const gitLogSafety = "--no-textconv --no-ext-diff"
 
 // gitList allows only `git ls-files` and `git rev-list`, both read-only.
 var gitList = cli.Allowlist{"ls-files", "rev-list"}

@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
 )
@@ -534,12 +534,16 @@ type headExec struct {
 	Path    string
 	Limit   int
 	Timeout time.Duration
+	Env     []string // KEY=VALUE pairs added to the inherited environment
 }
 
 func (h headExec) Run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, h.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, h.Path, args...)
+	cmd := proc.Command(ctx, h.Path, args...)
+	if len(h.Env) > 0 {
+		cmd.Env = append(os.Environ(), h.Env...)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

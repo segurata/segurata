@@ -56,10 +56,10 @@ type Connector struct {
 func New() *Connector {
 	return &Connector{
 		RG:        cli.Exec{Path: "rg", Timeout: time.Hour},
-		Gitleaks:  cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour}, // bounded per repo by the context
-		Git:       cli.Exec{Path: "git", Timeout: 2 * time.Minute},
+		Gitleaks:  cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour, Env: gitEnv}, // bounded per repo by the context
+		Git:       cli.Exec{Path: "git", Timeout: 2 * time.Minute, Env: gitEnv},
 		SSHKeygen: cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
-		GitHead:   headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second},
+		GitHead:   headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second, Env: gitEnv},
 		GH:        cli.Exec{Path: "gh", Timeout: 30 * time.Second, Env: []string{"GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1"}},
 		LookPath:  exec.LookPath,
 		Home:      os.UserHomeDir,

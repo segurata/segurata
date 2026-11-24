@@ -71,9 +71,9 @@ func (r *historyRepo) gitleaks() cli.Runner {
 			return []byte("v8.30.1\n"), nil
 		}
 		r.scans = append(r.scans, args)
-		revs := []string{"--all"} // gitleaks' default
-		if i := slices.Index(args, "--log-opts"); i >= 0 {
-			revs = strings.Fields(args[i+1])
+		revs := strings.Fields(logOpts(args))
+		if len(revs) == 0 {
+			revs = []string{"--all"} // gitleaks' default
 		}
 		var leaks []map[string]any
 		for _, c := range strings.Fields(r.git(append([]string{"rev-list"}, revs...)...)) {
@@ -129,11 +129,20 @@ func (r *historyRepo) want(t *testing.T, got map[string]bool, key byte, secrets 
 	}
 }
 
+// logOpts are the commits a `gitleaks git` call selects, without gitLogSafety; "" for every commit.
 func logOpts(scan []string) string {
-	if i := slices.Index(scan, "--log-opts"); i >= 0 {
-		return scan[i+1]
+	i := slices.Index(scan, "--log-opts")
+	if i < 0 {
+		return ""
 	}
-	return ""
+	opts, ok := strings.CutPrefix(scan[i+1], gitLogSafety+" ")
+	if !ok {
+		panic("gitleaks --log-opts without " + gitLogSafety)
+	}
+	if opts == gitleaksDefaultLogOpts {
+		return ""
+	}
+	return opts
 }
 
 func TestHistoryCacheScansOnlyNewCommits(t *testing.T) {

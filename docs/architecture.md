@@ -848,7 +848,10 @@ the cache is neither read nor written. A cache that cannot be written is logged 
 run a full scan, nothing more. The connector runs only `git rev-list`, `git ls-files`, `git log`
 with a fixed set of listing flags, `git cat-file -s` and `git cat-file blob` (the data-dump check
 below), `gitleaks git` and `gitleaks version`, and `gh repo view <owner/name> --json visibility`,
-each on an allowlist (`guards.go`).
+each on an allowlist (`guards.go`). A repository's own config cannot make that git run a program:
+every git process, gitleaks' included, overrides `core.fsmonitor`, `core.hooksPath`,
+`log.showSignature` and `core.pager` and forbids every transport (`protocol.allow=never`,
+`GIT_NO_LAZY_FETCH`), and gitleaks' `git log -p` runs with `--no-textconv --no-ext-diff`.
 
 ## Data dumps in git
 

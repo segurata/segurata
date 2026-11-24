@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 )
 
 // A run that could not read part of the machine says so, so the findings it missed there are not
@@ -95,5 +97,84 @@ func TestFailedLsFilesIsAScopedErrorNotAnEmptyRepository(t *testing.T) {
 	}
 	if lsCalls != 1 {
 		t.Errorf("ls-files ran %d times for one repository in one run", lsCalls)
+	}
+}
+
+// hostileRepo is a repository under home/src whose own config names a program for every hook git
+// offers a read to run: fsmonitor, a textconv driver, an external diff, signature verification,
+// hooks and a lazy fetch of missing objects over ssh. Each program touches marker.
+func hostileRepo(t *testing.T) (r *historyRepo, marker string) {
+	r = newHistoryRepo(t)
+	marker = filepath.Join(r.home, "ran")
+	prog := writeExe(t, "evil", `echo "$0 $*" >> "`+marker+`"`)
+	r.writeFile(".gitattributes", []byte("*.env diff=evil\n"))
+	r.commit("a.env")
+	r.commit("b.env")
+	// A signed commit, so that log.showSignature has a signature to verify.
+	raw := r.git("cat-file", "commit", "HEAD")
+	head, msg, _ := strings.Cut(raw, "\n\n")
+	signed := head + "\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n iQ==\n -----END PGP SIGNATURE-----\n\n" + msg + "\n"
+	r.writeFile("signed.txt", []byte(signed))
+	id := r.git("hash-object", "-t", "commit", "-w", "signed.txt")
+	r.git("update-ref", "HEAD", id)
+	if err := os.Remove(filepath.Join(r.dir, "signed.txt")); err != nil {
+		t.Fatal(err)
+	}
+	hooks := filepath.Dir(prog)
+	for _, h := range []string{"post-index-change", "reference-transaction", "pre-auto-gc", "post-checkout"} {
+		if err := os.Symlink(prog, filepath.Join(hooks, h)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, kv := range [][2]string{
+		{"core.fsmonitor", prog},
+		{"core.hooksPath", hooks},
+		{"core.pager", prog},
+		{"diff.evil.textconv", prog},
+		{"diff.external", prog},
+		{"log.showSignature", "true"},
+		{"gpg.program", prog},
+		{"core.repositoryformatversion", "1"},
+		{"extensions.partialClone", "origin"},
+		{"remote.origin.url", "ssh://example.invalid/x.git"},
+		{"remote.origin.promisor", "true"},
+		{"core.sshCommand", prog},
+	} {
+		r.git("config", kv[0], kv[1])
+	}
+	return r, marker
+}
+
+// A repository's own config cannot make the scan run a program: every git the connector starts,
+// directly or through gitleaks, runs with those settings overridden.
+func TestRepositoryConfigRunsNothing(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not installed")
+	}
+	r, marker := hostileRepo(t)
+	c := New()
+	c.Home = func() (string, error) { return r.home, nil }
+	c.KeyPath = func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") }
+	c.GH = nil
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	// Reads that would fetch a missing object from the promisor remote.
+	missing := strings.Repeat("e", 40)
+	s := newScan(context.Background(), c, r.home, settings{}, fingerprint.FromBytes(make([]byte, 32)), rec)
+	_, _ = guardGit(c.Git).Run(s.ctx, gitDirArg(r.dir), "cat-file", "-s", missing)
+	_, _ = guardGitHead(c.GitHead).Run(s.ctx, gitDirArg(r.dir), "cat-file", "blob", missing)
+	if ran, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("the repository's config ran a program:\n%s", ran)
+	}
+	if _, err := exec.LookPath("gitleaks"); err == nil {
+		var scanned bool
+		for _, f := range rec.findings {
+			scanned = scanned || evidence(f, "source") == "gitleaks"
+		}
+		if !scanned {
+			t.Errorf("gitleaks found nothing in the repository's history: %+v", rec.statuses)
+		}
 	}
 }

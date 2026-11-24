@@ -261,17 +261,17 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 // runGitleaks scans one repository's history with the JSON report on stdout, so raw values only
 // travel through a pipe into this process (never a file, never the terminal): each is
 // fingerprinted and dropped. logOpts, when set, limits the scan to those commits (`git log`
-// arguments). It returns the prepared leaks and how many were omitted because the evidence would
+// arguments); else every commit is scanned, as gitleaks does by default. It returns the prepared leaks and how many were omitted because the evidence would
 // have held the value.
 func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
 	defer cancel()
 	secs := strconv.Itoa(int(s.cfg.timeout.Seconds()))
-	args := []string{"git", "--no-banner", "--log-level", "fatal", "--exit-code", "0",
-		"--timeout", secs, "--report-format", "json", "--report-path", "-"}
-	if logOpts != "" {
-		args = append(args, "--log-opts", logOpts)
+	if logOpts == "" {
+		logOpts = gitleaksDefaultLogOpts
 	}
+	args := []string{"git", "--no-banner", "--log-level", "fatal", "--exit-code", "0",
+		"--timeout", secs, "--report-format", "json", "--report-path", "-", "--log-opts", gitLogSafety + " " + logOpts}
 	out, err := guardGitleaks(s.c.Gitleaks).Run(ctx, append(args, repo)...)
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, 0, fmt.Errorf("timed out after %s (raise gitleaks_timeout)", s.cfg.timeout)
@@ -344,6 +344,9 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 	c.Evidence = ev
 	return c, true, false
 }
+
+// gitleaksDefaultLogOpts is what gitleaks scans without --log-opts: every commit.
+const gitleaksDefaultLogOpts = "--full-history --all"
 
 // leading is the first n bytes of s, for ASCII values such as commit hashes and dates.
 func leading(s string, n int) string {
