@@ -20,7 +20,7 @@ func init() { ownerEmail = func() string { return "" } }
 const (
 	ownAWS     = "111122223333"
 	foreignAWS = "999988887777"
-	legacy     = "~/segurata-test-nowhere/i4a"
+	legacy     = "~/segurata-test-nowhere/legacyco"
 )
 
 // attributionFixture: three AWS keys committed under legacy, one naming the owner's account (seen
@@ -91,7 +91,7 @@ func TestSyncAttributesSecrets(t *testing.T) {
 // changes to mine.
 func TestRuleNarrowedToNotMine(t *testing.T) {
 	tr, out := attributionFixture(t)
-	d := tr.AddDecision("manual:i4a", "Is i4a dead?", []string{"yes", "no"}, t0)
+	d := tr.AddDecision("manual:legacyco", "Is legacyco dead?", []string{"yes", "no"}, t0)
 	now := t0.Add(2 * time.Hour)
 	preview, err := tr.PreviewDecision(d, now, "rotate mine, ignore the rest", []string{"path:" + legacy}, nil, []attribution.Owner{attribution.NotMine})
 	want := "closes 1 open item (P0 1) attributed not-mine, keeps 2 open (mine 1, unknown 1) by ignore@not-mine path:" + legacy
@@ -106,7 +106,7 @@ func TestRuleNarrowedToNotMine(t *testing.T) {
 		t.Fatalf("%+v %d %v", rules, closed, err)
 	}
 	theirs := mustRotate(t, tr, "2222")
-	if theirs.Status != Ignored || !strings.Contains(theirs.History[len(theirs.History)-1].Detail, "by decision "+d.ID+": Is i4a dead? rotate mine, ignore the rest; attributed not-mine: AWS account "+foreignAWS) {
+	if theirs.Status != Ignored || !strings.Contains(theirs.History[len(theirs.History)-1].Detail, "by decision "+d.ID+": Is legacyco dead? rotate mine, ignore the rest; attributed not-mine: AWS account "+foreignAWS) {
 		t.Errorf("not-mine key: %s %+v", theirs.Status, theirs.History)
 	}
 	for _, id := range []string{"1111", "3333"} {
@@ -153,11 +153,11 @@ func TestNarrowedRulesNeverCloseItemsWithoutAttribution(t *testing.T) {
 }
 
 func TestParseEffectWithOwners(t *testing.T) {
-	label, eff, err := ParseOption("yes=ignore@not-mine,unknown:path:~/src/i4a")
-	if err != nil || label != "yes" || eff.Scope != "path:~/src/i4a" || !slices.Equal(eff.Owners, []attribution.Owner{attribution.NotMine, attribution.Unknown}) {
+	label, eff, err := ParseOption("yes=ignore@not-mine,unknown:path:~/src/legacyco")
+	if err != nil || label != "yes" || eff.Scope != "path:~/src/legacyco" || !slices.Equal(eff.Owners, []attribution.Owner{attribution.NotMine, attribution.Unknown}) {
 		t.Errorf("%q %+v %v", label, eff, err)
 	}
-	if r := (Rule{Effect: eff.Effect, Scope: eff.Scope, Owners: eff.Owners}); r.Spec() != "ignore@not-mine,unknown path:~/src/i4a" {
+	if r := (Rule{Effect: eff.Effect, Scope: eff.Scope, Owners: eff.Owners}); r.Spec() != "ignore@not-mine,unknown path:~/src/legacyco" {
 		t.Errorf("spec %q", r.Spec())
 	}
 	for _, bad := range []string{"yes=ignore@:path:~/x", "yes=ignore@theirs:path:~/x", "yes=delete@mine:path:~/x"} {

@@ -14,8 +14,8 @@ import (
 )
 
 func TestParseOptionAndEffect(t *testing.T) {
-	label, eff, err := ParseOption("yes=ignore:path:~/src/i4a")
-	if err != nil || label != "yes" || eff == nil || eff.Effect != EffectIgnore || eff.Scope != "path:~/src/i4a" {
+	label, eff, err := ParseOption("yes=ignore:path:~/src/legacyco")
+	if err != nil || label != "yes" || eff == nil || eff.Effect != EffectIgnore || eff.Scope != "path:~/src/legacyco" {
 		t.Errorf("%q %+v %v", label, eff, err)
 	}
 	if label, eff, err := ParseOption("no"); err != nil || label != "no" || eff != nil {
