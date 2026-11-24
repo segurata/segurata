@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -228,21 +227,9 @@ func stateOf(it *tracker.Item) string {
 // report them; an absolute path inside the home directory is accepted too): active ones, or
 // closed ones when closed is true.
 func itemsUnder(t *tracker.Tracker, prefix string, closed bool, now time.Time) []*tracker.Item {
-	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(prefix, home+"/") {
-		prefix = "~" + prefix[len(home):]
-	}
-	prefix = strings.TrimSuffix(prefix, "/")
-	inside := func(p string) bool { return p == prefix || strings.HasPrefix(p, prefix+"/") }
 	var out []*tracker.Item
 	for _, it := range t.Items {
-		if it.Kind != tracker.KindRotate || it.Active(now) == closed || len(it.Secret.Locations) == 0 {
-			continue
-		}
-		all := true
-		for _, loc := range it.Secret.Locations {
-			all = all && inside(loc.Path)
-		}
-		if all {
+		if it.Kind == tracker.KindRotate && it.Active(now) != closed && it.Under(prefix) {
 			out = append(out, it)
 		}
 	}

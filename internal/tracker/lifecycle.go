@@ -37,6 +37,7 @@ const (
 	actRedacted    = "redacted"
 	actReclassify  = "reclassified"
 	actExpected    = "expected"
+	actRule        = "rule"
 	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `segurata rotations`.
 	ActNext          = "next"
 	ActReplacePlan   = "replace-plan"

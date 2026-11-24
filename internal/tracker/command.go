@@ -27,14 +27,14 @@ const trackUsage = `usage: segurata track <command>
   start      <id> [--note text]
   done       <id> [--note text]       a later sync verifies it, or reopens it if a run still reports it
   note       <id> <text>
-  decide     <id> --answer text
+  decide     <id> --answer text [--ignore-scope s]... [--accept-scope s]...   s: path:~/src/old, repo:owner/name, account:<glob>, gcp-project:<id>
   snooze     <id> --until YYYY-MM-DD [--note text]
   ignore     <id> --reason text
   expect     <setup-id> --reason text [--detail text] [--dry-run]   write a config rule that expects its status, close it
   reopen     <id> [--note text]
   prioritize <id> P0|P1|P2|P3|auto [--reason text]
   add        --title text [--kind fix|decide|setup|review] [--theme t] [--priority P2] [--note text]
-             --kind decide --question text --option a --option b
+             --kind decide --question text --option a --option "b=ignore:path:~/src/old"   (an option's effect applies when it is the answer)
   sync       [--out out] [--from out/<date>/local-secrets.jsonl] [--include-noise]
 <id> is T-0012 (or T-12), or a secret's short id.`
 
@@ -110,7 +110,7 @@ func (c CLI) Track(args []string) int {
 	case "list":
 		return c.list(t, rest, now)
 	case "show":
-		return c.show(t, rest)
+		return c.show(t, rest, now)
 	case "add":
 		return c.add(t, path, rest, now)
 	case "sync":
@@ -237,7 +237,7 @@ func (c CLI) list(t *Tracker, args []string, now time.Time) int {
 	return 0
 }
 
-func (c CLI) show(t *Tracker, args []string) int {
+func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 	if len(args) != 1 {
 		fmt.Fprintln(c.Err, "usage: segurata track show <id>")
 		return 2
@@ -270,6 +270,16 @@ func (c CLI) show(t *Tracker, args []string) int {
 		}
 		if d.Answer != "" {
 			fmt.Fprintf(w, "answer:    %s\n", d.Answer)
+		}
+		if it.Active(now) {
+			for _, l := range t.Leverage(it, now) {
+				fmt.Fprintf(w, "  if:      %s\n", l)
+			}
+		}
+		for _, r := range t.Rules {
+			if r.Decision == it.ID {
+				fmt.Fprintf(w, "rule:      %s %s at every sync (since %s)\n", r.Effect, r.Scope, r.At.Format(time.DateOnly))
+			}
 		}
 	}
 	if n := it.Next; n != nil {
@@ -310,6 +320,9 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	until := fs.String("until", "", "snooze: date the item comes back, YYYY-MM-DD")
 	reason := fs.String("reason", "", "ignore, prioritize: why")
 	answer := fs.String("answer", "", "decide: the answer")
+	var ignoreScopes, acceptScopes multi
+	fs.Var(&ignoreScopes, "ignore-scope", "decide: ignore every item in this scope, now and at every sync (repeat for each)")
+	fs.Var(&acceptScopes, "accept-scope", "decide: accept every item in this scope, now and at every sync (repeat for each)")
 	pos, err := cliflag.Parse(fs, args)
 	want := 1 // note takes the id and any number of words
 	if cmd == "prioritize" {
@@ -331,7 +344,14 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	case "note":
 		err = it.Note(now, strings.Join(pos[1:], " "))
 	case "decide":
-		err = it.Decide(now, *answer)
+		var added []Rule
+		var closed int
+		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes); err == nil && len(added) > 0 {
+			for _, r := range added {
+				fmt.Fprintf(c.Out, "Rule: %s %s, at every sync.\n", r.Effect, r.Scope)
+			}
+			fmt.Fprintf(c.Out, "%s closed now by this decision.\n", count(closed, "item", "items"))
+		}
 	case "snooze":
 		err = it.Snooze(now, *until, *note)
 	case "ignore":
@@ -342,6 +362,9 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 		err = it.Ignore(now, r)
 	case "reopen":
 		it.Reopen(now, *note)
+		if n := t.DropRules(it.ID); n > 0 {
+			fmt.Fprintf(c.Out, "%s of this decision removed; the items they closed stay as they are.\n", count(n, "rule", "rules"))
+		}
 	case "prioritize":
 		var p secretrisk.Priority
 		if p, err = ParsePriority(pos[1]); err == nil {
@@ -367,7 +390,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 	question := fs.String("question", "", "decide: the question")
 	note := fs.String("note", "", "free text kept in the history")
 	var options multi
-	fs.Var(&options, "option", "decide: one possible answer (repeat for each)")
+	fs.Var(&options, "option", `decide: one possible answer, optionally with its effect: "yes=ignore:path:~/src/old" (repeat for each)`)
 	if pos, err := cliflag.Parse(fs, args); err != nil || len(pos) > 0 {
 		fmt.Fprintln(c.Err, trackUsage)
 		return 2
@@ -383,7 +406,20 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 		if strings.TrimSpace(*question) == "" {
 			return c.fail(errors.New("--kind decide needs --question"))
 		}
-		it = t.AddDecision(fmt.Sprintf("manual:%d", t.NextID), *question, options, now)
+		var labels []string
+		var effects []OptionEffect
+		for _, o := range options {
+			label, eff, err := ParseOption(o)
+			if err != nil {
+				return c.fail(err)
+			}
+			labels = append(labels, label)
+			if eff != nil {
+				effects = append(effects, *eff)
+			}
+		}
+		it = t.AddDecision(fmt.Sprintf("manual:%d", t.NextID), *question, labels, now)
+		it.Decision.Effects = effects
 	case k == KindRotate || !slices.Contains(kinds, k):
 		return c.fail(fmt.Errorf("--kind %q: use fix, decide, setup or review (secrets come from local-secrets)", *kind))
 	case strings.TrimSpace(*title) == "":

@@ -219,8 +219,22 @@ func (p *proposal) add(f finding.Finding) {
 }
 
 func refOf(f finding.Finding) FindingRef {
-	return FindingRef{ID: f.ID, Connector: f.Connector, Instance: f.Instance, Account: f.Account, Scope: finding.ScopeOf(f), Title: f.Title,
+	r := FindingRef{ID: f.ID, Connector: f.Connector, Instance: f.Instance, Account: f.Account, Scope: finding.ScopeOf(f), Title: f.Title,
 		Severity: f.Severity, LastSeen: f.ObservedAt.UTC()}
+	str := func(k string) string { s, _ := f.Evidence[k].(string); return s }
+	for _, p := range []string{str("repo"), str("path")} {
+		if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "/") {
+			r.Path = p
+			break
+		}
+	}
+	if f.Connector == "github" && strings.Count(f.Resource.Name, "/") == 1 {
+		r.Repo = f.Resource.Name
+	}
+	if f.Connector == "gcp" {
+		r.Project = str("project")
+	}
+	return r
 }
 
 // worst is the most severe finding (the first one on a tie).

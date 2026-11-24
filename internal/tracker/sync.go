@@ -34,6 +34,8 @@ type SyncReport struct {
 	Created, Verified, Reopened int
 	// Expected counts setup items closed (or created closed) because the config expects them.
 	Expected int
+	// Ruled counts items closed by a decision's rule.
+	Ruled int
 	// Every item.
 	Woken, Lapsed int
 }
@@ -183,6 +185,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		it.noteHeld(held, now)
 	}
 	t.expireAll(now, &rep)
+	rep.Ruled = t.applyRules(now)
 	t.seed(now)
 	if t.Sources == nil {
 		t.Sources = map[string]time.Time{}
@@ -207,8 +210,8 @@ func (r SyncReport) FoldedSecrets() bool {
 
 // SyncLine is the one-line summary of what a sync did to items other than secrets.
 func SyncLine(r SyncReport) string {
-	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config; %d snoozes and %d acceptances expired.\n",
-		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Woken, r.Lapsed)
+	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config, %d closed by decisions; %d snoozes and %d acceptances expired.\n",
+		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Woken, r.Lapsed)
 	if len(r.Stale) > 0 {
 		s += fmt.Sprintf("Skipped older runs than the tracker already holds: %s.\n", strings.Join(r.Stale, ", "))
 	}

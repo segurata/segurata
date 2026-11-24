@@ -65,7 +65,7 @@ func (t *Tracker) Status(path string, now time.Time, f Filter) *doc.Doc {
 	d.P(fmt.Sprintf("As of %s. Tracker %s, %s.", now.Format("2006-01-02 15:04"), path, sync))
 	t.headline(d, items, now)
 	t.doNext(d, items, now)
-	decisions(d, items, now)
+	t.decisions(d, items, now)
 	blockers(d, items, now)
 	t.changes(d, items, now)
 	accepted(d, items, now)
@@ -198,13 +198,16 @@ func itemDoc(it *Item, t *Tracker) doc.Item {
 	return out
 }
 
-func decisions(d *doc.Doc, items []*Item, now time.Time) {
+func (t *Tracker) decisions(d *doc.Doc, items []*Item, now time.Time) {
 	d.H(2, "Pending decisions")
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Kind == KindDecide && it.Active(now) }) {
 		out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: it.Decision.Question, Meta: it.ID}
 		if len(it.Decision.Options) > 0 {
 			out.Details = append(out.Details, doc.Detail{Label: "Options", Text: strings.Join(it.Decision.Options, " | ")})
+		}
+		for _, l := range t.Leverage(it, now) {
+			out.Details = append(out.Details, doc.Detail{Label: "Leverage", Text: l})
 		}
 		out.Details = append(out.Details, doc.Detail{Label: "Answer", Text: "segurata track decide " + it.ID + ` --answer "…"`, Kind: doc.DCode})
 		list = append(list, out)

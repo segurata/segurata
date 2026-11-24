@@ -244,6 +244,32 @@ substring of the status detail, or a regular expression between slashes; `reason
   original order; the previous file is kept as `config.json.segurata-bak-<UTC time>`. An equal
   rule already there is not added twice. `--dry-run` prints the rule and changes nothing.
 
+### Decisions and rules
+
+A decision can carry effects. `track add --kind decide --question "Are the legacy repos dead?"
+--option "yes=ignore:path:~/src/i4a" --option "no"` stores the option labels and, for each
+`label=effect:scope`, an entry in `decision.effects` (`{option, effect, scope}`). Effects are
+`ignore` or `accept`; scopes are `path:<dir>` (rotate items whose every location, and other
+items whose every reported finding, lie under it: the `repo` or `path` a local finding names),
+`repo:<owner/name>` (GitHub findings of that repository, case-insensitive), `account:<glob>`
+(findings of matching accounts) and `gcp-project:<id>`. Decide and setup items are never in scope.
+
+`track decide <id> --answer "…" [--ignore-scope s]... [--accept-scope s]...` answers it and adds
+a rule to the tracker's top-level `rules` for the option the answer picks (the label, or the
+label followed by ":" or a space) and for every scope given:
+
+```json
+"rules": [{"effect": "ignore", "scope": "path:~/src/i4a", "reason": "Are the legacy repos dead? yes",
+           "decision": "T-0002", "at": "…"}]
+```
+
+Rules apply at once and at the end of every sync: an open, in-progress or snoozed item in scope
+is ignored (or accepted, with no end date) with the reason "by decision T-0002: …", so a finding
+in scope found later never stays open. An item reopened by hand after the rule was added is left
+alone. Reopening the decision removes its rules; the items they closed stay as they are. A pending
+decision with effects shows its leverage in `status` and `track show`: `answering "yes" closes 128
+open items (P0 120, P1 8) by ignore path:~/src/i4a`.
+
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
@@ -268,7 +294,8 @@ finished run of every connector instance (`remediate.LatestFiles`) and:
    - a snooze past its date, or an acceptance past its last day, opens the item again. An
      expired acceptance stays on the item, so its findings show "(acceptance expired)" until the
      owner acts.
-5. Adds any missing theme or seeded decision.
+5. Applies the decisions' rules (see "Decisions and rules").
+6. Adds any missing theme or seeded decision.
 
 Rotate items keep the rotation rules below instead: they are never closed because a secret
 stopped being reported (git history and transcripts do not forget, and a redacted copy still

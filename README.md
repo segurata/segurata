@@ -65,9 +65,10 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 ./segurata track expect T-3153 --reason "ephemeral key on purpose" [--dry-run]   # a setup item kept on purpose: config rule
 
 ./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
-./segurata track decide T-0003 --answer "yes"
+./segurata track decide T-0003 --answer "yes" [--ignore-scope path:~/src/old] [--accept-scope repo:acme/site]
 ./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
 ./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
+./segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no
 ./segurata track sync [--out out]         # also run by inventory and rotations sync
 ```
 
@@ -79,6 +80,12 @@ fresh sign-in is a setup item; info findings make none. Items have a kind (fix, 
 setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed, and two
 segurata sets itself: reclassified, a secret a corrected rule now rates as noise, and expected), a computed
 priority that `prioritize` can override, the findings they link, the next step and a history.
+
+A decision can carry effects: answering it adds rules (`ignore` or `accept` a scope:
+`path:<dir>`, `repo:<owner/name>`, `account:<glob>`, `gcp-project:<id>`) that close the items in
+scope now and at every sync, with the decision named in the reason. A pending decision shows
+how many open items each answer would close. Details:
+[docs/architecture.md](docs/architecture.md#decisions-and-rules).
 
 A status other than `ok` that is kept on purpose (an ephemeral key, an IAM user limited by design,
 other people's accounts) goes in the config as an expected rule, by hand or with `track expect`:

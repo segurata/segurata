@@ -234,6 +234,11 @@ func (t *Tracker) validate() error {
 		}
 		ids[it.ID], keys[it.Key] = true, true
 	}
+	for i, r := range t.Rules {
+		if err := r.validate(); err != nil {
+			return fmt.Errorf("rule %d: %w", i+1, err)
+		}
+	}
 	return nil
 }
 

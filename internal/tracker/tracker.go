@@ -101,6 +101,11 @@ type FindingRef struct {
 	Gone     bool             `json:"gone,omitempty"`
 	// Expected is, on a setup item's status ref, the reason of the config rule that expects it.
 	Expected string `json:"expected,omitempty"`
+	// Where the finding is, for decision rules (see Rule): a local path (a repository, a file), a
+	// GitHub repository (owner/name) or a GCP project.
+	Path    string `json:"path,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Project string `json:"project,omitempty"`
 }
 
 // Label is the connector instance as the command line names it: name or name:label.
@@ -127,6 +132,8 @@ type Decision struct {
 	Options    []string   `json:"options,omitempty"`
 	Answer     string     `json:"answer,omitempty"`
 	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+	// Effects are the rules answering an option adds (track add --option "yes=ignore:path:~/src/old").
+	Effects []OptionEffect `json:"effects,omitempty"`
 }
 
 // Acceptance records why a risk is kept and until when. It stays on the item after it expires, so
@@ -187,4 +194,6 @@ type Tracker struct {
 	Sources map[string]time.Time `json:"sources,omitempty"`
 	Themes  []Theme              `json:"themes"`
 	Items   []*Item              `json:"items"`
+	// Rules are the effects of answered decisions, applied at every sync.
+	Rules []Rule `json:"rules,omitempty"`
 }
