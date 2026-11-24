@@ -1,7 +1,7 @@
 // Package connectedapps inventories the third-party apps connected to accounts outside Google:
-// GitHub, X, Slack, Notion, Microsoft, Dropbox, Facebook, Instagram and LinkedIn. It reads each
-// service's own settings pages over CDP, in hidden targets of the browser the user is
-// already signed in to, and lists GitHub keys with the `gh` CLI.
+// GitHub, X, Slack, Notion, Microsoft (personal and work accounts), Dropbox, Facebook, Instagram
+// and LinkedIn. It reads each service's own settings pages over CDP, in hidden targets of the
+// browser the user is already signed in to, and lists GitHub keys with the `gh` CLI.
 //
 // Read-only by construction: it only navigates and reads. It never clicks a button (not even
 // "See more"), never submits a form, loads each listing page once per run, and closes every
@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +46,7 @@ func (*Connector) Describe() connector.Description {
 		Name:     name,
 		Version:  "0.1.0",
 		Protocol: connector.ProtocolVersion,
-		Summary:  "Apps connected to GitHub, X, Slack, Notion, Microsoft, Dropbox, Facebook, Instagram and LinkedIn, read from the signed-in browser",
+		Summary:  "Apps connected to GitHub, X, Slack, Notion, Microsoft (personal and work), Dropbox, Facebook, Instagram and LinkedIn, read from the signed-in browser",
 		Needs:    []string{"cdp", "cli:gh"},
 	}
 }
@@ -63,6 +64,7 @@ var services = []service{
 	{"slack", slack},
 	{"notion", notion},
 	{"microsoft", microsoftPage.run},
+	{"microsoft-work", microsoftWork},
 	{"dropbox", dropbox},
 	{"facebook", facebook},
 	{"instagram", instagramPage.run},
@@ -419,6 +421,21 @@ type row struct {
 	Name  string   `json:"name"`
 	Href  string   `json:"href"`
 	Lines []string `json:"lines"`
+}
+
+// fetchedJS reads the page URL, its text, and whether the page has fetched a URL containing path,
+// from the page's own resource timing: it sends nothing. An entry appears once the response has
+// arrived, for pages whose list comes from one call that capture reads.
+func fetchedJS(path string) string {
+	return `(() => ({url: location.href, text: document.body ? document.body.innerText : "",
+  fetched: performance.getEntriesByType("resource").some((e) => e.name.includes(` + strconv.Quote(path) + `))}))()`
+}
+
+// fetchPage is what fetchedJS returns.
+type fetchPage struct {
+	URL     string `json:"url"`
+	Text    string `json:"text"`
+	Fetched bool   `json:"fetched"`
 }
 
 // twice passes once ready has accepted two values in a row, for pages that pass a moment before

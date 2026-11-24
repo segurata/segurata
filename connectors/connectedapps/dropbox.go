@@ -28,24 +28,15 @@ var (
 	dropboxSignedOutRE = regexp.MustCompile(`dropbox\.com/login`)
 )
 
-// dropboxJS says whether the page has fetched the app list yet, from the page's own resource
-// timing: it sends nothing.
-const dropboxJS = `(() => ({url: location.href, text: document.body ? document.body.innerText : "",
-  fetched: performance.getEntriesByType("resource").some((e) => e.name.includes("/account/get_linked_apps"))}))()`
+var dropboxJS = fetchedJS("/account/get_linked_apps")
 
-type dropboxPage struct {
-	URL     string `json:"url"`
-	Text    string `json:"text"`
-	Fetched bool   `json:"fetched"`
-}
-
-func dropboxOut(p dropboxPage) bool { return p.URL == "" || dropboxSignedOutRE.MatchString(p.URL) }
+func dropboxOut(p fetchPage) bool { return p.URL == "" || dropboxSignedOutRE.MatchString(p.URL) }
 
 // dropboxReady passes once the page is the sign-in page, or has held the fetched app list for two
 // reads in a row: the response can finish a moment after the resource timing entry appears.
 func dropboxReady() func(json.RawMessage) bool {
 	return twice(func(raw json.RawMessage) bool {
-		p, ok := decode[dropboxPage](raw)
+		p, ok := decode[fetchPage](raw)
 		return ok && p.URL != "" && (dropboxSignedOutRE.MatchString(p.URL) || p.Fetched)
 	})
 }
@@ -60,7 +51,7 @@ func dropbox(ctx context.Context, e *env) {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[dropboxPage](raw)
+	p, _ := decode[fetchPage](raw)
 	if dropboxOut(p) {
 		e.status("", finding.StateSignedOut, "not signed in to Dropbox in the browser: %s", dropboxURL)
 		return

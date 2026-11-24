@@ -67,10 +67,21 @@ func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
 			p, ok := decode[fbListPage](raw)
 			return ok && p.URL != "" && !fbSignedOutRE.MatchString(p.URL) && !fbReauthRE.MatchString(p.URL) && fbListed(p)
 		}}, true
+	case "microsoft-work":
+		if st.Scope == msWorkSecurityScope {
+			return msSignIn(msWorkSecurityURL, "complete the Microsoft sign-in check (MFA) until Security info lists your sign-in methods", msWorkSecurityJS, func(p fetchPage) bool {
+				return strings.HasPrefix(p.URL, "https://mysignins.microsoft.com/") && strings.TrimSpace(p.Text) != ""
+			}), true
+		}
+		do := "sign in to Microsoft 365 with your work or school account"
+		if !signedOut {
+			do = "complete the Microsoft sign-in check (MFA)"
+		}
+		return msSignIn(msWorkAppsURL, do, msWorkAppsJS, func(p fetchPage) bool { return p.Fetched }), true
 	case "dropbox":
 		if signedOut {
 			return connector.SignInPage{URL: dropboxURL, Do: "sign in to Dropbox", Expr: dropboxJS, Done: func(raw json.RawMessage) bool {
-				p, ok := decode[dropboxPage](raw)
+				p, ok := decode[fetchPage](raw)
 				return ok && !dropboxOut(p) && p.Fetched
 			}}, true
 		}
@@ -92,6 +103,14 @@ var pageOnlyServices = map[string]struct {
 	"instagram": {instagramPage, "Instagram"},
 	"linkedin":  {linkedinPage, "LinkedIn"},
 	"microsoft": {microsoftPage, "your Microsoft account"},
+}
+
+// msSignIn is a Microsoft page, through once it has left the sign-in host and through accepts it.
+func msSignIn(u, do, expr string, through func(fetchPage) bool) connector.SignInPage {
+	return connector.SignInPage{URL: u, Do: do, Expr: expr, Done: func(raw json.RawMessage) bool {
+		p, ok := decode[fetchPage](raw)
+		return ok && p.URL != "" && msLoginState(p) == "" && through(p)
+	}}
 }
 
 // listSignIn is a sign-in page whose expression returns a listPage: through once the URL is set and

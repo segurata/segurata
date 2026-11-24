@@ -117,6 +117,8 @@ func base(service string, g grant) (finding.Severity, string) {
 		return finding.SevInfo, "sign commits as you"
 	case "slack_app":
 		return slackSeverity(g)
+	case "microsoft_work_app":
+		return finding.SevLow, "sign you in with your work account"
 	case "dropbox_app":
 		return dropboxSeverity(service, g)
 	}

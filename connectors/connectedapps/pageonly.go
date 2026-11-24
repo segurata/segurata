@@ -15,6 +15,7 @@ type pageOnly struct {
 	signedOut *regexp.Regexp // matches the URL a signed-out browser lands on
 	empty     *regexp.Regexp // matches the empty list's text; nil when it was never seen
 	loaded    *regexp.Regexp // matches text present once the page has rendered
+	hint      string         // appended to the signed-out detail
 }
 
 func (s pageOnly) run(ctx context.Context, e *env) {
@@ -28,7 +29,7 @@ func (s pageOnly) run(ctx context.Context, e *env) {
 	p, _ := decode[listPage](raw)
 	switch {
 	case p.URL == "" || s.signedOut.MatchString(p.URL):
-		e.status("", finding.StateSignedOut, "not signed in in the browser: %s", s.url)
+		e.status("", finding.StateSignedOut, "not signed in in the browser: %s%s", s.url, s.hint)
 	case s.empty != nil && s.empty.MatchString(p.Text):
 		e.status("", finding.StateOK, "no connected apps")
 	default:
@@ -55,10 +56,15 @@ var (
 		loaded:    regexp.MustCompile(`(?i)Permitted services|Servicios permitidos`),
 	}
 
-	// Signed out when this connector was written: only the sign-in redirect is known.
+	// Personal Microsoft accounts only. Signed out whenever checked (last 2026-11-24, with only a
+	// work account signed in): account.live.com sends the browser to login.live.com, whose form
+	// cannot tell a missing account from a signed-out one without typing an address. So the owner
+	// with no personal account leaves "microsoft" out of the services config; microsoft-work reads
+	// work and school accounts.
 	microsoftPage = pageOnly{
 		url:       "https://account.live.com/consent/Manage",
 		signedOut: regexp.MustCompile(`login\.(live|microsoftonline)\.com`),
 		loaded:    regexp.MustCompile(`(?s).{400}`),
+		hint:      `. This page is for personal Microsoft accounts; with only a work or school account, leave "microsoft" out of the connected-apps "services" config (microsoft-work reads that account)`,
 	}
 )
