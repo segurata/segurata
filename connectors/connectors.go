@@ -9,6 +9,7 @@ import (
 	_ "github.com/segurata/segurata/connectors/browserext"
 	_ "github.com/segurata/segurata/connectors/connectedapps"
 	_ "github.com/segurata/segurata/connectors/gcp"
+	_ "github.com/segurata/segurata/connectors/github"
 	_ "github.com/segurata/segurata/connectors/googlepersonal"
 	_ "github.com/segurata/segurata/connectors/localsecrets"
 	_ "github.com/segurata/segurata/connectors/macos"
