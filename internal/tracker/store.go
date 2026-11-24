@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -129,7 +130,8 @@ func retire(path string, now time.Time) (string, error) {
 }
 
 // Load reads and validates tracker.json. A missing file is fs.ErrNotExist; a file that does not
-// parse or validate is an error, never an empty tracker, so nothing is lost by a later save.
+// parse or validate is an error, never an empty tracker, so nothing is lost by a later save. The
+// tracker remembers the bytes it was read from, so Save can tell when another command saved since.
 func Load(path string) (*Tracker, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -139,7 +141,40 @@ func Load(path string) (*Tracker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w (fix it or restore %s.bak)", path, err, path)
 	}
+	t.read = digest(raw)
 	return t, nil
+}
+
+func digest(raw []byte) *[sha256.Size]byte {
+	d := sha256.Sum256(raw)
+	return &d
+}
+
+// ErrChanged is Save refusing a tracker.json that changed after this tracker was loaded: writing
+// it would drop the other command's change.
+var ErrChanged = errors.New("changed since this command loaded it")
+
+// Update loads the tracker at path (a new one when there is none yet), applies fn and saves it,
+// holding the tracker lock throughout, so commands that change the tracker one after another never
+// lose each other's change. fn's error leaves the file alone. Commands that hold the tracker for
+// long (a confirmation, file rewrites) do that work first and record its outcome with Update.
+func Update(path string, now time.Time, fn func(*Tracker) error) error {
+	unlock, err := Lock(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	t, err := Load(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		t, err = New(now), nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := fn(t); err != nil {
+		return err
+	}
+	return t.Save(path)
 }
 
 // upgrades turns a tracker of schema version n into n+1, on the raw JSON. Each future format
@@ -247,7 +282,9 @@ func (t *Tracker) validate() error {
 
 // Save writes the tracker atomically with mode 0600 in a 0700 directory, after copying the file it
 // replaces to tracker.json.bak. It refuses to replace a file that no longer parses (edited by hand,
-// or by another program): that file may hold the only copy of something.
+// or by another program): that file may hold the only copy of something. It refuses with
+// ErrChanged a file other than the one this tracker was loaded from or last saved (another command
+// saved since, or the file appeared after a new tracker was made): saving would lose that change.
 func (t *Tracker) Save(path string) error {
 	if err := t.validate(); err != nil {
 		return fmt.Errorf("not saving an invalid tracker: %w", err)
@@ -261,11 +298,23 @@ func (t *Tracker) Save(path string) error {
 		if _, perr := parse(old); perr != nil {
 			return fmt.Errorf("refusing to overwrite %s: it does not parse (%v); fix it or restore %s.bak", path, perr, path)
 		}
+		if t.read == nil || *digest(old) != *t.read {
+			return fmt.Errorf("%s %w (another segurata command, or an edit, saved it); nothing was written, run it again", path, ErrChanged)
+		}
 		if err := statefile.Write(path+".bak", old); err != nil {
 			return fmt.Errorf("backing up %s: %w", path, err)
 		}
 	}
 	sort.SliceStable(t.Items, func(i, j int) bool { return idNumber(t.Items[i].ID) < idNumber(t.Items[j].ID) })
 	t.SchemaVersion = SchemaVersion
-	return statefile.WriteJSON(path, t)
+	raw, err := json.MarshalIndent(t, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	if err := statefile.Write(path, raw); err != nil {
+		return err
+	}
+	t.read = digest(raw)
+	return nil
 }

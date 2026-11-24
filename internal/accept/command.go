@@ -34,13 +34,21 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-func (c CLI) load(now time.Time) (*tracker.Tracker, string, error) {
+// load loads the tracker; with lock it first takes the tracker lock, held until unlock, for a
+// command that saves it.
+func (c CLI) load(now time.Time, lock bool) (t *tracker.Tracker, path string, unlock func(), err error) {
+	unlock = func() {}
 	p, err := c.Paths.Resolve()
 	if err != nil {
-		return nil, "", err
+		return nil, "", unlock, err
 	}
-	t, err := tracker.LoadOrMigrate(p, now, c.Err)
-	return t, p.Tracker, err
+	if lock {
+		if unlock, err = tracker.Lock(p.Tracker); err != nil {
+			return nil, "", func() {}, err
+		}
+	}
+	t, err = tracker.LoadOrMigrate(p, now, c.Err)
+	return t, p.Tracker, unlock, err
 }
 
 // Accept records a finding of the latest run as an accepted risk, or lists the accepted ones.
@@ -57,7 +65,8 @@ func (c CLI) Accept(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.load(now)
+	t, path, unlock, err := c.load(now, !*list)
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}
@@ -98,7 +107,8 @@ func (c CLI) Unaccept(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.load(now)
+	t, path, unlock, err := c.load(now, true)
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}

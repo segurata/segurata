@@ -349,6 +349,18 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
+- Save also refuses a file that is not the one the command loaded or last saved (compared by
+  SHA-256): another command saved it in between, and writing would drop that change silently.
+  The command fails with "changed since this command loaded it; … run it again" and writes
+  nothing, the backup included. `track sync` alone folds its runs once more into that version.
+- Commands that change the tracker hold a lock from load to save: an exclusive `flock` on
+  `tracker.json.lock` (released by the system if the process dies), waiting up to two minutes for
+  another command, so the scheduled `inventory` → `track sync` and an interactive command run one
+  after the other. Views (`status` without `--mark-seen`, `track list|show`, `report`) take no
+  lock. `rotations replace` and `redact` hold the tracker across a confirmation and file rewrites,
+  so they take no lock for that; they record their outcome (rotated, a failed attempt, the
+  redaction notes) with `tracker.Update`, which loads the tracker fresh under the lock. Without
+  `flock` (Windows) the lock is a no-op and the SHA-256 check still refuses lost updates.
 - `schema_version` 5 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision

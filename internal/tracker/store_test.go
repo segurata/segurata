@@ -56,6 +56,82 @@ func TestSaveLoadRoundTripModesAndBackup(t *testing.T) {
 	}
 }
 
+// Two commands that loaded the same tracker.json: the second save would silently drop the first
+// one's change, so it is refused. The refused save leaves the file and its backup alone.
+func TestSaveRefusesAFileChangedSinceItWasLoaded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tracker.json")
+	if err := New(t0).Save(path); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := Load(path)
+	b, _ := Load(path)
+	_ = a.Items[0].Note(t0, "from a")
+	if err := a.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := os.ReadFile(path)
+	bak, _ := os.ReadFile(path + ".bak")
+	_ = b.Items[0].Note(t0, "from b")
+	if err := b.Save(path); !errors.Is(err, ErrChanged) || !strings.Contains(err.Error(), "run it again") {
+		t.Fatalf("stale save: %v", err)
+	}
+	if raw, _ := os.ReadFile(path); !bytes.Equal(raw, saved) {
+		t.Error("the stale save overwrote the file")
+	}
+	if raw, _ := os.ReadFile(path + ".bak"); !bytes.Equal(raw, bak) {
+		t.Error("the stale save replaced the backup")
+	}
+	// The command that saved can save again: its own write is what it last saw.
+	_ = a.Items[0].Note(t0, "from a, again")
+	if err := a.Save(path); err != nil {
+		t.Errorf("second save of the same tracker: %v", err)
+	}
+	// A tracker made new because the file did not exist yet does not replace one created since.
+	if err := New(t0).Save(path); !errors.Is(err, ErrChanged) {
+		t.Errorf("new tracker over a file created since: %v", err)
+	}
+}
+
+// Update loads the tracker fresh under the lock, so concurrent changes all land.
+func TestUpdateSerializesConcurrentChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tracker.json")
+	const n = 8
+	errs := make(chan error, n)
+	for i := range n {
+		go func() {
+			errs <- Update(path, t0, func(tr *Tracker) error {
+				return tr.Items[0].Note(t0, fmt.Sprintf("note %d", i))
+			})
+		}()
+	}
+	for range n {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	tr, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := 0
+	for _, e := range tr.Items[0].History {
+		if e.Action == actNote {
+			notes++
+		}
+	}
+	if notes != n {
+		t.Errorf("%d of %d notes kept", notes, n)
+	}
+	// fn's error leaves the file as it was.
+	before, _ := os.ReadFile(path)
+	if err := Update(path, t0, func(*Tracker) error { return errors.New("no") }); err == nil {
+		t.Error("fn's error lost")
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Error("saved after fn failed")
+	}
+}
+
 func TestSaveRefusesToOverwriteAFileThatDoesNotParse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tracker.json")
 	broken := []byte(`{"schema_version": 1, "items": [` + "\n")

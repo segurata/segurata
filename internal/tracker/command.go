@@ -65,13 +65,21 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-func (c CLI) open(now time.Time) (*Tracker, string, error) {
+// open loads the tracker; with lock it first takes the tracker lock, held until unlock, for a
+// command that saves it.
+func (c CLI) open(now time.Time, lock bool) (t *Tracker, path string, unlock func(), err error) {
+	unlock = func() {}
 	p, err := c.Paths.Resolve()
 	if err != nil {
-		return nil, "", err
+		return nil, "", unlock, err
 	}
-	t, err := LoadOrMigrate(p, now, c.Err)
-	return t, p.Tracker, err
+	if lock {
+		if unlock, err = Lock(p.Tracker); err != nil {
+			return nil, "", func() {}, err
+		}
+	}
+	t, err = LoadOrMigrate(p, now, c.Err)
+	return t, p.Tracker, unlock, err
 }
 
 func flags(name string, w io.Writer) *flag.FlagSet {
@@ -114,7 +122,8 @@ func (c CLI) Track(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.open(now)
+	t, path, unlock, err := c.open(now, cmd != "list" && cmd != "show")
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}
@@ -146,17 +155,32 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	rep, err := t.Sync(opt, now)
+	rep, err := syncAndSave(t, path, opt, now)
 	if err != nil {
-		return c.fail(err)
-	}
-	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
 	s := rep.Secrets
 	fmt.Fprintf(c.Out, "Secrets: %d (%d new, %d reopened, %d reclassified as noise, %d noise-only skipped).\n", s.Secrets, s.Created, s.Reopened, s.Reclassified, s.Skipped)
 	fmt.Fprint(c.Out, SyncLine(rep))
 	return 0
+}
+
+// syncAndSave folds the runs into t and saves it. When tracker.json changed after t was loaded
+// (saved by something that does not take the lock: an edit, an older binary), it folds the same
+// runs once more into that version instead of failing a scheduled sync or dropping the change.
+func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time) (SyncReport, error) {
+	for again := false; ; again = true {
+		rep, err := t.Sync(opt, now)
+		if err != nil {
+			return rep, err
+		}
+		if err = t.Save(path); again || !errors.Is(err, ErrChanged) {
+			return rep, err
+		}
+		if t, err = Load(path); err != nil {
+			return rep, err
+		}
+	}
 }
 
 // expect writes the config rule that expects a setup item's status and closes the item as
@@ -502,7 +526,7 @@ func (c CLI) Status(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, err := c.open(now)
+	t, path, _, err := c.open(now, false)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -530,8 +554,7 @@ func (c CLI) Status(args []string) int {
 	}
 	if (*markSeen || *write) && f.empty() {
 		at := now.UTC()
-		t.LastStatusAt = &at
-		if err := t.Save(path); err != nil {
+		if err := Update(path, now, func(t *Tracker) error { t.LastStatusAt = &at; return nil }); err != nil {
 			return c.fail(err)
 		}
 	}

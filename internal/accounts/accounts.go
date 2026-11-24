@@ -290,6 +290,11 @@ func (c CLI) moveSetup(lbl, account string, on bool) int {
 	if err != nil {
 		return c.fail(err)
 	}
+	unlock, err := tracker.Lock(p.Tracker)
+	if err != nil {
+		return c.fail(err)
+	}
+	defer unlock()
 	now := c.Now()
 	t, err := tracker.LoadOrMigrate(p, now, c.Err)
 	if err != nil {

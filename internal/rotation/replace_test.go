@@ -48,6 +48,7 @@ type fakeOS struct {
 	clip      string
 	items     map[string]string // Keychain service → value
 	keepStale bool              // security -i "succeeds" but stores nothing
+	onPaste   func()            // runs when pbpaste is called: another command at work meanwhile
 }
 
 func (f *fakeOS) run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
@@ -56,6 +57,9 @@ func (f *fakeOS) run(_ context.Context, stdin []byte, name string, args ...strin
 	f.calls = append(f.calls, call{name, args, string(stdin)})
 	switch {
 	case name == pbpaste:
+		if f.onPaste != nil {
+			f.onPaste()
+		}
 		return []byte(f.clip + "\n"), nil
 	case name == pbcopy:
 		f.clip = string(stdin)
@@ -368,6 +372,34 @@ func TestReplaceWritesAFileUsedUnderTwoNamesOnce(t *testing.T) {
 	}
 	if !fx.cleared() {
 		t.Error("clipboard not cleared")
+	}
+}
+
+// replace holds its copy of the tracker across the clipboard, the confirmation and the file
+// writes; another command that saves meanwhile keeps its change, and the item is still rotated.
+func TestReplaceRecordsIntoTheTrackerAsItIsAfterTheWrites(t *testing.T) {
+	for _, apply := range []bool{false, true} {
+		fx := newReplaceFixture(t)
+		fx.os.onPaste = func() {
+			if err := tracker.Update(fx.state, t0, func(l *tracker.Tracker) error { return l.Items[0].Note(t0, "saved meanwhile") }); err != nil {
+				t.Fatal(err)
+			}
+		}
+		args := []string{"replace", fx.id()}
+		if apply {
+			args = append(args, "--apply", "--yes")
+		}
+		if _, e, code := fx.run(t, "", false, args...); code != 0 {
+			t.Fatalf("apply %v: %d %s", apply, code, e)
+		}
+		l, _ := tracker.Load(fx.state)
+		if h := l.Items[0].History; h[len(h)-1].Detail != "saved meanwhile" {
+			t.Errorf("apply %v: the other command's note was lost", apply)
+		}
+		want := map[bool]string{false: tracker.ActReplacePlan, true: "done"}[apply]
+		if got := fx.lastAction(t); got != want {
+			t.Errorf("apply %v: last action %q", apply, got)
+		}
 	}
 }
 

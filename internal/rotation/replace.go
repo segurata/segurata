@@ -453,9 +453,20 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	}
 	r.print(c.Out, v, *backup)
 
+	// The copy loaded at the start is stale by now (the clipboard, the confirmation, the writes):
+	// each outcome is recorded into the tracker as it is when recording.
+	record := func(change func(*tracker.Item)) error {
+		return tracker.Update(path, now, func(fresh *tracker.Tracker) error {
+			cur, err := fresh.FindRotate(it.Fingerprint)
+			if err == nil {
+				change(cur)
+			}
+			return err
+		})
+	}
 	if !*apply {
-		it.Log(now, tracker.EvNote, tracker.ActReplacePlan, fmt.Sprintf("planned for %d %s", len(r.files), textfmt.Plural(len(r.files), "file", "files")))
-		if err := t.Save(path); err != nil {
+		plan := fmt.Sprintf("planned for %s", textfmt.Count(len(r.files), "file", "files"))
+		if err := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplacePlan, plan) }); err != nil {
 			return c.fail(err)
 		}
 		fmt.Fprintf(c.Out, "\nDry run: nothing was changed. Run again with --apply to apply this plan (the new value is read again).\n")
@@ -475,9 +486,8 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		if len(written) > 0 {
 			note += "; already written: " + strings.Join(written, ", ")
 		}
-		it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, note)
-		if serr := t.Save(path); serr != nil {
-			fmt.Fprintln(c.Err, "rotations:", serr)
+		if rerr := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, note) }); rerr != nil {
+			fmt.Fprintln(c.Err, "rotations:", rerr)
 		}
 		return c.fail(errors.New(note))
 	}
@@ -501,8 +511,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	if err := r.verify(v); err != nil {
 		return failed(fmt.Errorf("written, but the check failed: %w", err), written)
 	}
-	it.Done(now, r.note(written))
-	if err := t.Save(path); err != nil {
+	if err := record(func(it *tracker.Item) { it.Done(now, r.note(written)) }); err != nil {
 		return c.fail(err)
 	}
 	fmt.Fprintf(c.Out, "\nReplaced in %s and checked. %s is now rotated.\n", textfmt.Count(len(r.files), "file", "files"), it.Secret.ID)

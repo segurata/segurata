@@ -66,6 +66,16 @@ func (c CLI) Run(args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
+	// Commands that save hold the tracker lock from load to save. replace does not: it holds the
+	// tracker across the clipboard, a confirmation and file writes, and records each outcome with
+	// tracker.Update instead.
+	if cmd != "list" && cmd != "show" && cmd != "replace" {
+		unlock, err := tracker.Lock(paths.Tracker)
+		if err != nil {
+			return c.fail(err)
+		}
+		defer unlock()
+	}
 	now := c.Now()
 	t, err := tracker.LoadOrMigrate(paths, now, c.Err)
 	if err != nil {

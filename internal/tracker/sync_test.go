@@ -558,3 +558,29 @@ func TestGroupTitlesAgreeInNumber(t *testing.T) {
 		}
 	}
 }
+
+// track sync folds the runs again into a tracker.json another command saved while it worked (an
+// edit, a binary without the lock), instead of failing or dropping that change.
+func TestSyncAndSaveFoldsAgainIntoATrackerChangedMeanwhile(t *testing.T) {
+	dir := t.TempDir()
+	path, out := filepath.Join(dir, "tracker.json"), filepath.Join(dir, "out")
+	if err := New(t0).Save(path); err != nil {
+		t.Fatal(err)
+	}
+	writeRun(t, out, t0, "macos.jsonl", fnd("macos", "", "Mac", "macos_setting", "backup-none", "backup-none", finding.SevHigh, "No Time Machine backup is configured", t0))
+	stale, _ := Load(path)
+	other, _ := Load(path)
+	_ = other.Items[0].Note(t0, "saved meanwhile")
+	if err := other.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := syncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour))
+	if err != nil || rep.Created != 1 {
+		t.Fatalf("sync: %+v %v", rep, err)
+	}
+	got, _ := Load(path)
+	if got.Items[0].History[len(got.Items[0].History)-1].Detail != "saved meanwhile" {
+		t.Error("the other command's change was lost")
+	}
+	byTitle(t, got, "No Time Machine backup")
+}
