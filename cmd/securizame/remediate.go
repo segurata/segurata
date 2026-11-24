@@ -2,15 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"github.com/segurata/segurata/internal/finding"
 	"os"
 	"os/signal"
 	"strings"
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/run"
 )
@@ -68,7 +69,18 @@ func remediateCmd(args []string) int {
 		return 1
 	}
 	conns := all()
-	r, err := remediate.For(f, conns)
+	request := func(f finding.Finding) (connector.Request, error) {
+		cfg, err := config.Load(config.DefaultPath())
+		if err != nil {
+			return connector.Request{}, err
+		}
+		req, errs := run.InstanceRequest(cfg, f.Connector, f.Instance)
+		if len(errs) > 0 {
+			return connector.Request{}, fmt.Errorf("%s: %w", remediate.Selector(f), errors.Join(errs...))
+		}
+		return req, nil
+	}
+	r, err := remediate.For(f, conns, request)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

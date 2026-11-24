@@ -12,8 +12,8 @@ import (
 )
 
 // Remediator is implemented by connectors that can fix some of their own findings. It is optional:
-// the core checks for it with a type assertion. External connectors cannot remediate yet; a
-// protocol `remediate` subcommand is planned for a later protocol version.
+// the core checks for it with a type assertion. External connectors remediate through protocol 2
+// (`plan` and `apply`, see External), wrapped by the core in a Remediator of its own.
 type Remediator interface {
 	// Plan states exactly what Apply would change for f, without changing anything.
 	Plan(ctx context.Context, f finding.Finding) (Plan, error)

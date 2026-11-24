@@ -140,13 +140,29 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	defer f.Close()
 	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, res: res}
 
-	resolved, errs := secrets.ResolveAll(t.Instance.Secrets)
+	req, errs := NewRequest(cfg, t.Instance)
 	for _, e := range errs {
 		s.Status(finding.Status{State: finding.StateMissingCredentials, Detail: e.Error()})
 	}
-	req := connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: t.Instance.Config, Secrets: resolved}
 	res.Err = t.Connector.Inventory(ctx, req, s)
 	return res
+}
+
+// NewRequest builds the request for one connector instance, resolving its secret references.
+// A secret that cannot be resolved is left out of the request and returned as an error.
+func NewRequest(cfg config.Config, in config.Instance) (connector.Request, []error) {
+	resolved, errs := secrets.ResolveAll(in.Secrets)
+	return connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: in.Config, Secrets: resolved}, errs
+}
+
+// InstanceRequest is NewRequest for the instance a finding came from (label "" is the unnamed one).
+func InstanceRequest(cfg config.Config, name, label string) (connector.Request, []error) {
+	for _, in := range cfg.Instances(name) {
+		if in.Label == label {
+			return NewRequest(cfg, in)
+		}
+	}
+	return connector.Request{}, []error{fmt.Errorf("no configured instance %q of connector %s", label, name)}
 }
 
 // Summary prints statuses that need attention, then findings worst first.

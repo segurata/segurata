@@ -14,6 +14,10 @@ go build -o securizame ./cmd/securizame
 ./securizame inventory [name ...]  # all connectors when none is given
 ```
 
+An external connector is any `securizame-<name>` executable on `PATH`, in any language; how to
+write one, built-in or external: [docs/connectors.md](docs/connectors.md). Contributing:
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 Output goes to `out/<date>/<connector>.jsonl` (mode 0600; `out/` is gitignored because it holds
 email addresses and each account's services), with a summary sorted by severity.
 
@@ -287,6 +291,11 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 | `macos.smb.guest-off` | `sudo /usr/sbin/sharing -e <name> -g 000` (live shares open to guests) | `sudo /usr/sbin/sharing -e <name> -g 001` |
 | `macos.home.private` | `/bin/chmod 700 <home>`, no sudo, when group or others can read the home folder (every user is in `staff`, so 750 is as open as 755; 711 passes, as CIS allows) | `/bin/chmod <old mode> <home>` |
 | `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
+
+External connectors speaking protocol 2 add their own actions (`securizame connectors` lists
+them after `remediates:`). The plan, the confirmation and the check afterwards are the same; the
+connector runs its own plan as you, and securizame refuses any plugin plan that needs sudo
+([docs/connectors.md](docs/connectors.md#plan-v2)).
 
 The home folder path comes from the OS (`os.UserHomeDir`), never from the finding, and the octal
 `chmod` leaves its ACL entries (macOS's `group:everyone deny delete`) in place; the finding's

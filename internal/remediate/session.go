@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,12 +29,19 @@ func Selector(f finding.Finding) string {
 	return f.Connector + ":" + f.Instance
 }
 
-// For returns what can remediate f: the core for generic file actions, otherwise its connector.
-func For(f finding.Finding, conns []connector.Connector) (connector.Remediator, error) {
-	if f.Remediation.Action == "" {
+// RequestFunc builds the request for the connector instance that produced a finding: its config
+// and resolved secrets. Only external connectors need it.
+type RequestFunc func(f finding.Finding) (connector.Request, error)
+
+// For returns what can remediate f: the core for generic file actions, otherwise its connector. A
+// built-in connector implements connector.Remediator; an external one must declare the action in
+// describe's "remediates", and is wrapped in External with the request built by request.
+func For(f finding.Finding, conns []connector.Connector, request RequestFunc) (connector.Remediator, error) {
+	action := f.Remediation.Action
+	if action == "" {
 		return nil, fmt.Errorf("finding %s has no automatable remediation: %s", f.ID, f.Remediation.Summary)
 	}
-	if (Files{}).Handles(f.Remediation.Action) {
+	if (Files{}).Handles(action) {
 		return Files{}, nil
 	}
 	for _, c := range conns {
@@ -43,7 +51,21 @@ func For(f finding.Finding, conns []connector.Connector) (connector.Remediator, 
 		if r, ok := c.(connector.Remediator); ok {
 			return r, nil
 		}
-		return nil, fmt.Errorf("connector %s cannot remediate (external connectors cannot yet)", f.Connector)
+		e, ok := c.(*connector.External)
+		if !ok {
+			return nil, fmt.Errorf("connector %s cannot remediate", f.Connector)
+		}
+		if !slices.Contains(e.Describe().Remediates, action) {
+			return nil, fmt.Errorf("external connector %s does not declare the remediation %s in describe (\"remediates\")", f.Connector, action)
+		}
+		if request == nil {
+			return nil, errors.New("no request for the external connector's instance")
+		}
+		req, err := request(f)
+		if err != nil {
+			return nil, err
+		}
+		return External{Conn: e, Req: req}, nil
 	}
 	return nil, fmt.Errorf("connector %s is not installed", f.Connector)
 }

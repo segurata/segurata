@@ -35,44 +35,13 @@ link; that has to be said up front, not discovered afterwards.
 
 ## Finding model
 
-One JSON line per finding (`internal/finding`):
-
-```json
-{
-  "type": "finding",
-  "id": "sha256(connector|account|resource.type|resource.id)[:16]",
-  "connector": "google-personal",
-  "account": "person@example.com",
-  "resource": {"type": "oauth_grant", "id": "…", "name": "Dropbox"},
-  "kind": "grant",
-  "severity": "high",
-  "title": "Dropbox can see and download your contacts",
-  "evidence": {"scopes": ["…"]},
-  "created_at": "2020-03-24T00:00:00Z",
-  "last_used_at": null,
-  "remediation": {"summary": "…", "url": "https://…", "action": "", "automatable": false},
-  "observed_at": "2026-11-23T21:00:00Z"
-}
-```
-
-- `kind`: `grant` (third-party access), `credential` (key, token, service account), `setting`
-  (security configuration), `spend` (spend, budget or limit), `exposure` (secret in plain sight).
-- `severity`: `info`, `low`, `medium`, `high`, `critical`.
-- `last_used_at`: whatever the provider reports. If it reports nothing, `null`, never a made-up date.
-- `evidence` never holds a secret. At most a redacted prefix and the length (`finding.Redact`).
-- `remediation.action`: id of a built-in remediation (`macos.firewall.enable`, `file.chmod600`),
-  empty when the fix is manual. `automatable` is true exactly when `action` is set.
-
-Besides findings, a connector emits per-account status records saying why something could not be
-inspected:
-
-```json
-{"type": "status", "connector": "openai", "account": "org-…", "state": "missing_credentials", "detail": "…"}
-```
-
-`state`: `ok`, `reauth`, `signedout`, `noscope` (signed in, but the credential lacks a permission),
-`unverified` (signed in, but the reader was never checked against a real page),
-`missing_credentials`, `unsupported`, `error`.
+A connector emits JSON records (`internal/finding`): one `finding` per thing worth looking at
+(connector, account, resource, kind, severity, title, evidence, dates, remediation) and one
+`status` per account saying whether it could be inspected (`ok`, `reauth`, `signedout`,
+`noscope`, `unverified`, `missing_credentials`, `unsupported`, `error`). The core fills the
+derived fields: the stable id (a hash of connector, instance, account, resource type and resource
+id), the connector name, `observed_at`, `automatable` and `accepted`. `evidence` never holds a
+secret. Fields, kinds, stable-id and severity rules: [connectors.md](connectors.md#finding-model).
 
 ## Remediation
 
@@ -104,8 +73,13 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
 - Generic actions belong to the core, so any connector can attach them. `file.chmod600` takes the
   file in `evidence.path` (absolute or `~/`), refuses symlinks and non-regular files, and changes the
   mode in-process; the undo is `chmod <old mode> <path>`.
-- External connectors cannot remediate yet. A later protocol version will add a
-  `securizame-<name> remediate` subcommand with the same plan and apply steps.
+- An external connector remediates through protocol 2: it declares its actions in `describe`
+  (`remediates`), returns a plan from `securizame-<name> plan` and runs it in
+  `securizame-<name> apply` (`remediate.External`). The core shows the plan and confirms as for a
+  built-in, asks for the plan again before applying and refuses one that differs, and refuses any
+  plan that needs sudo: a plugin's command line is never on the hand-written allowlist, so the core
+  cannot vet it and will not run it as root. The plugin runs its plan as the owner; the allowlist
+  binds built-in actions only. Details: [connectors.md](connectors.md#plan-v2).
 
 ## Accepted risks
 
@@ -137,31 +111,15 @@ names another file, `internal/accept`):
   The debugging-port finding's resource id is `brave-remote-debugging`, whatever port Brave uses.
 - A broken file is an error, never an empty list: a typo must not unhide or hide anything silently.
 
-## External connector protocol (v1)
+## External connector protocol (v1, v2)
 
-An external connector is a `securizame-<name>` executable with two subcommands.
-
-`securizame-<name> describe` prints a JSON object:
-
-```json
-{"name": "example", "version": "0.1.0", "protocol": 1,
- "summary": "What it inventories", "needs": ["cdp", "cli:gcloud", "secret:EXAMPLE_API_KEY"]}
-```
-
-`securizame-<name> inventory` reads one JSON request from stdin and writes JSON Lines records
-(`finding`, `status` or `log`) to stdout:
-
-```json
-{"protocol": 1, "cdp_url": "http://127.0.0.1:9222", "config": {"…": "…"},
- "secrets": {"EXAMPLE_API_KEY": "value already resolved by the core"}}
-```
-
-Rules:
-- Exit 0 when it finished, even if some accounts reported error statuses. Non-zero only when the
-  connector could not start at all.
-- stderr is for human diagnostics; the core shows it with `--verbose`.
-- The connector never writes secrets to stdout or stderr.
-- The core takes the connector name from `describe`, never from the records.
+An external connector is a `securizame-<name>` executable on `PATH`, in any language, discovered
+at start (`connector.Discover`) and wrapped in the `connector.Connector` interface
+(`connector.External`). It answers `describe` with a JSON object and `inventory` with JSON Lines
+records, reading one JSON request (protocol, config, resolved secrets, CDP address) on stdin.
+Protocol 2 adds `plan` and `apply` for remediation. The core speaks both versions and sends each
+connector the version it declared, so a version 1 connector keeps working unchanged. Full protocol
+with examples: [connectors.md](connectors.md#external-connector-protocol).
 
 ## Secrets used by connectors
 

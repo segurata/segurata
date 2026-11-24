@@ -40,7 +40,11 @@ func main() {
 			if e, ok := c.(*connector.External); ok {
 				kind = e.Path
 			}
-			fmt.Printf("%-16s %-8s %s  [needs: %s] (%s)\n", d.Name, d.Version, d.Summary, strings.Join(d.Needs, ", "), kind)
+			remediates := ""
+			if len(d.Remediates) > 0 {
+				remediates = " [remediates: " + strings.Join(d.Remediates, ", ") + "]"
+			}
+			fmt.Printf("%-16s %-8s %s  [needs: %s]%s (%s)\n", d.Name, d.Version, d.Summary, strings.Join(d.Needs, ", "), remediates, kind)
 		}
 	case "inventory":
 		os.Exit(inventory(os.Args[2:]))
