@@ -48,6 +48,69 @@ A connector emits JSON records (`internal/finding`): one `finding` per thing wor
 derived fields: the stable id (a hash of connector, instance, account, resource type and resource
 id), the connector name, `observed_at`, `automatable` and `accepted`. `evidence` never holds a
 secret. Fields, kinds, stable-id and severity rules: [connectors.md](connectors.md#finding-model).
+The core ends each run with a `run_end` record (next section).
+
+## Run completeness
+
+A finding missing from a run is resolved only if that run looked where the finding was. A run
+killed halfway, a connector that stopped at the GitHub rate limit, a gitleaks scan that timed out
+on one repository, a GCP project with permission denied or a signed-out service all leave findings
+out without fixing anything. So every run says what it covered, and every consumer checks it
+before calling a finding gone.
+
+**Envelope.** `run.Inventory` writes one last record per connector instance:
+
+```json
+{"type": "run_end", "connector": "github", "started_at": "…", "ended_at": "…", "complete": false,
+ "scopes": {"inspected": ["github:octo", "repo:octo"], "inspected_count": 2,
+            "skipped": [{"scope": "repo:acme/api", "reason": "the GitHub API rate limit ran low"}],
+            "skipped_count": 1}}
+```
+
+`complete` is true when nothing was skipped and the connector returned no error (then `error`
+holds it). The lists are capped (50 inspected, 200 skipped); the counts are not. A file without
+`run_end` was killed, is still running, or was written before this record existed.
+
+**Scopes.** A finding belongs to a scope: its `scope` field when the connector inspects the
+account in parts, otherwise its account (`finding.ScopeOf`). Examples: `repo:<owner>/<name>` and
+`repo:<owner>` (github), `history:<repo>`, `dumps:<repo>` and `files` (local-secrets), the project
+id and `billing:<id>` (gcp), the service name (connected-apps), `profile <name>` (aws). The run's
+coverage is derived (`finding.Tally`):
+
+- a status `ok` marks its account (or `scope`) inspected;
+- any other status, `unverified` included, leaves its `scope`, or else its account, uninspected; a
+  status with neither leaves everything uninspected;
+- a connector declares what no status carries with `Emitter.Scope(id, false, reason)` (external
+  connectors: a `scope` record);
+- a connector error, a cancelled context, or a run where no status said `ok` and nothing was
+  declared inspected, leaves everything (`*`) uninspected; so does a skipped list over the cap;
+- a skipped scope ending in `*` covers every scope with that prefix.
+
+A finding is not checked by a run when the run has no `run_end`, when everything was skipped, or
+when a skipped scope matches its scope or its account (`finding.Coverage`).
+
+**Consumers.**
+
+- `remediate.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
+  and the newest such run before it as the previous one; a newer file without `run_end` is passed
+  over and named. `remediate.ReadRun` drops a half-written last line of such a file.
+- `report` lists a finding missing from the latest run as "not checked this run" with the reason,
+  never as resolved, when the run did not inspect its scope. Its "Run completeness" section names
+  partial runs and their skipped scopes, runs without `run_end`, and newer runs that did not
+  finish; the headline marks them `(partial)` or `(no run_end)`. An accepted risk counts as no
+  longer reported only when its scope was inspected.
+- `track sync` marks a finding gone only when its scope was inspected, so it never closes or
+  verifies an item on an incomplete run, and logs `not checked in run <label> of <ended_at>
+  (<reason>)` once per run on each item it held back. A setup item's status ref counts as gone
+  only in a run that inspected something.
+- `remediate --apply` returns "could not verify the fix" (`remediate.ErrUnverified`) when the
+  check run did not inspect the finding's scope, instead of reporting it fixed.
+
+**Older files.** Files without `run_end` (from before this record, or killed) stay usable for
+display: the report lists their findings and notes the unknown completeness. They never prove a
+finding gone: nothing in them closes or verifies an item, and a finding missing from one is not
+checked. Findings and tracker refs recorded before scopes existed carry no scope; for them any
+skipped scope counts, so only a complete run proves them gone.
 
 ## Tracker
 
@@ -127,14 +190,15 @@ segurata` when the only finding is automatable). Only generic decisions are seed
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
-run of every connector instance (`remediate.LatestFiles`) and:
+finished run of every connector instance (`remediate.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
    syncing two output folders (interactive and scheduled) never makes items flap.
 2. Folds local-secrets findings into rotate items (below) and every other finding at low or above
    into the item its rule names, creating it (`found`) or adding the new finding (`seen`).
 3. Marks a linked finding `gone` when its connector instance ran and did not report it, unless
-   that run could not inspect the finding's account (a non-ok status for that account, or for all).
+   that run did not inspect the finding's scope (see "Run completeness"); then it logs
+   `not checked in run …` once per run on an item that would otherwise have closed.
 4. Moves items on:
    - open, in progress or snoozed, with every finding gone: done, `verified (no longer reported)`;
    - done: verified once every finding is gone in a run after it was marked done; reopened
@@ -230,7 +294,8 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
 - One finding per run. Without `--apply` it stops after the plan. With `--apply` it asks on the
   terminal and refuses when stdin is not a terminal, unless `--yes`.
 - After applying, the core runs that connector instance's inventory again and reports whether the
-  finding is gone. A finding still reported, or a check that could not run, is an error.
+  finding is gone. A finding still reported, a check that could not run, or a check run that did
+  not inspect the finding's scope ("could not verify the fix") is an error.
 - A built-in connector remediates by implementing the optional `connector.Remediator` interface
   (`Plan`, `Apply`). `Apply` recomputes the plan and refuses one that differs from what was shown.
 - Every command an action may run is on a per-action allowlist of exact argument lists, written by
@@ -285,10 +350,8 @@ imported once (see "Tracker").
 `segurata report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
 changes:
 
-- the latest run of every connector instance, through `remediate.LatestFiles` and
-  `remediate.ReadRun` (findings and statuses);
-- for each, its previous run: `remediate.PreviousFile`, the same file name in the newest earlier
-  `out/<date>/` folder;
+- the latest finished run of every connector instance and the finished run before it, through
+  `remediate.LatestRuns` and `remediate.ReadRun` (findings, statuses and `run_end`);
 - the tracker's acceptances, which annotate every finding as `inventory` does, so an acceptance
   made after the run counts and an expired one shows again;
 - the tracker's rotate items.
@@ -297,7 +360,8 @@ The only write is the one-time import of the former state files, when the tracke
 yet.
 
 The diff is by finding id: an id only in the latest file is new, one only in the previous file is
-resolved, one in both with another severity changed. That is why ids must stay stable (see
+resolved if the latest run inspected its scope and "not checked this run" otherwise, one in both
+with another severity changed. That is why ids must stay stable (see
 "Accepted risks"). Runs compare per connector instance, because each connector runs on its own
 schedule.
 

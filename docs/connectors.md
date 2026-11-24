@@ -87,6 +87,7 @@ One JSON object per finding (`internal/finding`):
 | `id` | Core | Leave it empty; the core computes it (see "Stable IDs") |
 | `connector`, `instance` | Core | Taken from `describe` and the config, never from the record |
 | `account` | Connector | The account inspected: an email, an org id, `mac` |
+| `scope` | Connector | Optional: the part of the account the finding belongs to when the connector inspects the account in parts (a repository, a project, a service); see "Coverage". Not part of the id |
 | `resource` | Connector | `type` and `id` identify the thing; `name` is for people |
 | `kind` | Connector | `grant` (third-party access), `credential` (key, token, service account), `setting` (security configuration), `spend` (spend, budget or limit), `exposure` (secret or personal data in plain sight) |
 | `severity` | Connector | `info`, `low`, `medium`, `high`, `critical` (see "Severity") |
@@ -116,7 +117,40 @@ inspected:
 | `error` | Anything else; `detail` says what failed |
 
 A `detail` is read by the owner at the terminal: say what to do next, with the exact command or
-page. Log lines (`{"type": "log", "msg": "…"}`) are shown only with `--verbose`.
+page. Log lines (`{"type": "log", "msg": "…"}`) are shown only with `--verbose`. A status may also
+carry a `scope` (next section).
+
+## Coverage
+
+The core compares runs: a finding missing from the latest run counts as resolved, closes its
+tracker item and passes a remediation check. That is only true if the run looked where the finding
+was. So **a connector must say what it did not inspect**; the core records it in the run's
+`run_end` record ([architecture.md](architecture.md#run-completeness)) and never takes a finding
+of an uninspected scope as gone.
+
+- **Emit one `ok` status per account inspected.** A run where no status says `ok` counts as having
+  inspected nothing.
+- **An account not inspected gets a status other than `ok`**, named exactly as the account of its
+  findings. A failure reported under another name (`profile dev` while findings say
+  `123456789012`, `github` while findings say `github:octo`) covers none of them.
+- **When the account is inspected in parts, give findings a `scope`** and name it in the status of
+  a part that failed: `{"account": "me@example.com", "scope": "my-project", "state": "error",
+  "detail": "permission denied"}` leaves only `my-project` uninspected, not the account. A status
+  whose `scope` is `*` leaves everything uninspected (use it when you cannot tell which accounts a
+  failure hid).
+- **Declare what no status carries** with `emit.Scope(id, false, reason)` (external connectors: a
+  `{"type": "scope", "scope": "…", "inspected": false, "reason": "…"}` record): repositories the
+  rate limit left unread, items past a configured cap, parts the config turns off. `reason` is one
+  line for the owner. `inspected: true` may name a scope that was read, for the record only.
+- **A scope ending in `*` covers every scope with that prefix.** Declare `repo:*` when a listing
+  failed or when hundreds of items are left over, rather than listing each: the record keeps at
+  most 200 skipped scopes, and a run over that counts as having inspected nothing.
+- **Do not catch an interrupted context and return nil.** The core treats a cancelled context, or
+  an error returned from `Inventory`, as nothing inspected.
+
+Scope names are the connector's own; keep them stable across runs and distinct from account
+names. The built-in connectors use, for example, `repo:<owner>/<name>` (github), `history:<repo>`
+(local-secrets), the project id (gcp) and the service name (connected-apps).
 
 ## Stable IDs
 
@@ -201,7 +235,8 @@ Reads one request:
  "secrets": {"EXAMPLE_API_KEY": "value already resolved by the core"}}
 ```
 
-and writes JSON Lines to stdout: `finding`, `status` and `log` records as described above.
+and writes JSON Lines to stdout: `finding`, `status`, `scope` and `log` records as described
+above.
 
 - Exit 0 when it finished, even if some accounts reported error statuses. Non-zero only when the
   connector could not start at all.
@@ -289,6 +324,9 @@ version 2, change `protocol` to 2 and accept `2` in the requests; add `remediate
 
 ## Testing
 
+- Coverage: test that each partial failure (a rate limit, a timeout, a denied project, a cap)
+  produces the status or `Scope` declaration that covers the findings it hides
+  (`httpxtest.Recorder.Scopes` records the declarations).
 - Built-in: test `Inventory` with a recording emitter (`httpxtest.Recorder`) and fake inputs:
   `httpxtest.NewServer` for HTTP APIs (it checks the credential and refuses anything but GET),
   testdata files for CLI output, a temp `HOME` for files. Inject the clock (`Now`) so ages and
