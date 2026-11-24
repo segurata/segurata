@@ -20,7 +20,7 @@ import (
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -88,13 +88,13 @@ type Seen struct {
 // name and those its run_end declares skipped because the config's accounts list leaves them out,
 // each with what the latest run naming it said.
 func SeenAccounts(out, lbl string) ([]Seen, error) {
-	history, err := remediate.History(out, time.Now())
+	history, err := run.History(out, time.Now())
 	if err != nil {
 		return nil, err
 	}
 	by := map[string]*Seen{}
-	for _, file := range history[strings.ReplaceAll(lbl, ":", "-")+".jsonl"] {
-		rf, err := remediate.ReadRun(file)
+	for _, file := range history[run.FileName(lbl)] {
+		rf, err := run.Read(file)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +131,7 @@ func SeenAccounts(out, lbl string) ([]Seen, error) {
 }
 
 // runTime is when a run ended, or the file's modification time for a run without run_end.
-func runTime(file string, rf remediate.RunFile) time.Time {
+func runTime(file string, rf run.Output) time.Time {
 	if rf.End != nil && !rf.End.EndedAt.IsZero() {
 		return rf.End.EndedAt
 	}
@@ -381,7 +381,7 @@ func (c CLI) owned(out string) int {
 // latestOwned is what attribution.Discover reads in the latest run of every connector instance
 // that reports accounts (local-secrets reports none, and its runs are large).
 func latestOwned(out string) (attribution.Owned, error) {
-	files, err := remediate.LatestFiles(out, time.Now())
+	files, err := run.LatestFiles(out, time.Now())
 	if err != nil {
 		return attribution.Owned{}, err
 	}
@@ -391,7 +391,7 @@ func latestOwned(out string) (attribution.Owned, error) {
 		if strings.HasPrefix(filepath.Base(f), tracker.SecretsConnector) {
 			continue
 		}
-		rf, err := remediate.ReadRun(f)
+		rf, err := run.Read(f)
 		if err != nil {
 			return attribution.Owned{}, err
 		}

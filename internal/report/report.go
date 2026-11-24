@@ -7,14 +7,13 @@ package report
 
 import (
 	"io"
-
-	"github.com/segurata/segurata/internal/doc"
 	"path/filepath"
 	"sort"
 	"time"
 
+	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
+	runfile "github.com/segurata/segurata/internal/run" // a report names its runs run
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -95,7 +94,7 @@ const maxP0 = 5
 // Build reads the latest run of every connector instance and its previous run, and annotates
 // every finding with the tracker's acceptances as of today.
 func Build(in Inputs) (*Report, error) {
-	latest, err := remediate.LatestRuns(in.OutDir, in.Now)
+	latest, err := runfile.LatestRuns(in.OutDir, in.Now)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +139,8 @@ func dateOf(file string) string { return filepath.Base(filepath.Dir(file)) }
 // readRun reads a latest run and diffs it with the previous one. A finding missing from it is
 // resolved only when the run inspected its scope; findings of a previous run without run_end carry
 // no reliable scope, so any skipped scope makes them not checked.
-func readRun(l remediate.Latest, annotate func(*finding.Finding)) (*Run, error) {
-	rf, err := remediate.ReadRun(l.File)
+func readRun(l runfile.Latest, annotate func(*finding.Finding)) (*Run, error) {
+	rf, err := runfile.Read(l.File)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +155,7 @@ func readRun(l remediate.Latest, annotate func(*finding.Finding)) (*Run, error) 
 	if l.Prev == "" {
 		return run, nil
 	}
-	prevRun, err := remediate.ReadRun(l.Prev)
+	prevRun, err := runfile.Read(l.Prev)
 	if err != nil {
 		return nil, err
 	}

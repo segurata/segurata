@@ -1,6 +1,6 @@
 //go:build linux
 
-package remediate
+package prompt
 
 import "syscall"
 

@@ -280,7 +280,7 @@ func (e emitting) Inventory(ctx context.Context, _ connector.Request, emit conne
 }
 
 // Every run ends with a run_end record: complete only when nothing was skipped and the connector
-// did not fail. A run killed before it is written has none (see remediate.ReadRun).
+// did not fail. A run killed before it is written has none (see Read).
 func TestRunEndRecordsCoverage(t *testing.T) {
 	ok := func(emit connector.Emitter, account string) {
 		emit.Status(finding.Status{Account: account, State: finding.StateOK})

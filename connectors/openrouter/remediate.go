@@ -11,7 +11,6 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 // ActionDeleteUnusedKey deletes an API key that was never used or not for longer than
@@ -123,16 +122,8 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	return p, nil
 }
 
-// Apply reads the key again, refuses a plan that differs from the one shown, resolves the write
-// key and sends the plan's one DELETE through the write client's routes.
+// Apply resolves the write key and sends the plan's one DELETE through the write client's routes.
 func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.Plan, _ connector.IO) error {
-	want, err := r.Plan(ctx, f)
-	if err != nil {
-		return err
-	}
-	if err := remediate.SamePlan(want, p); err != nil {
-		return err
-	}
 	write, err := r.cs.Write(ctx, writeSecret)
 	if err != nil {
 		return err

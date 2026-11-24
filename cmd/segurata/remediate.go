@@ -13,6 +13,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/run"
 )
@@ -36,12 +37,12 @@ func remediateCmd(args []string) int {
 		return 2
 	}
 
-	files, err := remediate.LatestFiles(*out, time.Now())
+	files, err := run.LatestFiles(*out, time.Now())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	findings, err := remediate.Load(files)
+	findings, err := run.Load(files)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -63,7 +64,7 @@ func remediateCmd(args []string) int {
 		remediate.List(os.Stdout, findings, minSev)
 		return 0
 	}
-	f, err := remediate.Find(findings, id)
+	f, err := run.Find(findings, id)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -78,7 +79,7 @@ func remediateCmd(args []string) int {
 		}
 		cs, errs := run.InstanceCredentials(ctx, cfg, f.Connector, f.Instance)
 		if len(errs) > 0 {
-			return connector.Credentials{}, fmt.Errorf("%s: %w", remediate.Selector(f), errors.Join(errs...))
+			return connector.Credentials{}, fmt.Errorf("%s: %w", f.Selector(), errors.Join(errs...))
 		}
 		return cs, nil
 	}
@@ -93,13 +94,13 @@ func remediateCmd(args []string) int {
 		if err != nil {
 			return nil, err
 		}
-		targets, err := run.Targets(cfg, conns, []string{remediate.Selector(f)})
+		targets, err := run.Targets(cfg, conns, []string{f.Selector()})
 		if err != nil {
 			return nil, err
 		}
 		return run.Inventory(ctx, cfg, targets, *out, nil, annotate)
 	}
-	opt := remediate.Options{Apply: *apply, Yes: *yes, TTY: remediate.IsTerminal(os.Stdin),
+	opt := remediate.Options{Apply: *apply, Yes: *yes, TTY: prompt.IsTerminal(os.Stdin),
 		IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, Group: remediate.Members(findings, f)}
 	if err := remediate.Execute(ctx, f, r, opt, reinventory); err != nil {
 		fmt.Fprintln(os.Stderr, err)

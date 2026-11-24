@@ -121,7 +121,7 @@ func TestDeleteExpiredRefusesLiveSecretsAndAnotherTenant(t *testing.T) {
 		deleteStep("11111111-1111-1111-1111-111111111111", "k1"),
 		{Argv: []string{"az", "ad", "app", "delete", "--id", "11111111-1111-1111-1111-111111111111"}},
 	} {
-		if err := allow.Check(ActionDeleteExpiredSecrets, s); !errors.Is(err, remediate.ErrRefused) {
+		if err := allow.Check(ActionDeleteExpiredSecrets, s); !errors.Is(err, connector.ErrRefused) {
 			t.Errorf("%s: want refusal, got %v", s, err)
 		}
 	}

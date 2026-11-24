@@ -6,69 +6,22 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
-	"github.com/segurata/segurata/internal/runtest"
 )
 
 var enable = connector.Step{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "on"}, Sudo: true}
 
-type recordingExec struct{ ran []connector.Step }
-
-func (r *recordingExec) Run(_ context.Context, s connector.Step, _ connector.IO) error {
-	r.ran = append(r.ran, s)
-	return nil
-}
-
 func quietIO() connector.IO {
 	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
-}
-
-func TestAllowlistMatchesExactArgvAndSudo(t *testing.T) {
-	allow := Allowlist{"a": {enable}}
-	if err := allow.Check("a", enable); err != nil {
-		t.Fatal(err)
-	}
-	refused := []connector.Step{
-		{Argv: enable.Argv},                          // same argv without sudo
-		{Argv: append(enable.Argv, "x"), Sudo: true}, // extra argument
-		{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "off"}, Sudo: true},
-		{Argv: []string{"/bin/sh", "-c", "id"}, Sudo: true},
-	}
-	for _, s := range refused {
-		if err := allow.Check("a", s); !errors.Is(err, ErrRefused) {
-			t.Errorf("%s: want refusal, got %v", s, err)
-		}
-	}
-	if err := allow.Check("other", enable); !errors.Is(err, ErrRefused) {
-		t.Errorf("a step allowed for one action must not run for another: %v", err)
-	}
-}
-
-func TestRunChecksEveryStepBeforeRunningAny(t *testing.T) {
-	ex := &recordingExec{}
-	p := connector.Plan{Action: "a", Commands: []connector.Step{enable, {Argv: []string{"/bin/rm", "-rf", "/"}, Sudo: true}}}
-	if err := Run(context.Background(), p, Allowlist{"a": {enable}}, ex, quietIO()); !errors.Is(err, ErrRefused) {
-		t.Fatalf("want refusal, got %v", err)
-	}
-	if len(ex.ran) != 0 {
-		t.Fatalf("ran %v before refusing the plan", ex.ran)
-	}
-	if err := Run(context.Background(), connector.Plan{Action: "a", Commands: []connector.Step{enable}}, Allowlist{"a": {enable}}, ex, quietIO()); err != nil || len(ex.ran) != 1 {
-		t.Fatalf("err=%v ran=%v", err, ex.ran)
-	}
-}
-
-func TestStepStringQuotesLikeAShell(t *testing.T) {
-	s := connector.Step{Argv: []string{"/bin/chmod", "644", "/tmp/my file's"}, Sudo: true}
-	if got, want := s.String(), `sudo /bin/chmod 644 '/tmp/my file'\''s'`; got != want {
-		t.Fatalf("got %s want %s", got, want)
-	}
 }
 
 // fakeRemediator records Apply calls.
@@ -130,7 +83,7 @@ func TestDryRunPrintsThePlanAndNeverApplies(t *testing.T) {
 func TestApplyRefusesWithoutATerminalUnlessYes(t *testing.T) {
 	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
 	err := Execute(context.Background(), target, r, Options{Apply: true, TTY: false, IO: quietIO()}, neverReinventory(t))
-	if !errors.Is(err, ErrNotTTY) || r.applied != 0 {
+	if !errors.Is(err, prompt.ErrNotTTY) || r.applied != 0 {
 		t.Fatalf("err=%v applied=%d", err, r.applied)
 	}
 	if err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, results()); err != nil || r.applied != 1 {
@@ -194,7 +147,7 @@ func TestForPicksCoreFileActionsAndRefusesManualFindings(t *testing.T) {
 	if _, err := For(finding.Finding{ID: "x", Remediation: finding.Remediation{Summary: "by hand"}}, nil, nil); err == nil {
 		t.Fatal("manual finding should not be remediable")
 	}
-	r, err := For(finding.Finding{Connector: "local-secrets", Remediation: finding.Remediation{Action: ActionChmod600}}, nil, nil)
+	r, err := For(finding.Finding{Connector: "local-secrets", Remediation: finding.Remediation{Action: connector.ActionChmod600}}, nil, nil)
 	if _, ok := r.(Files); err != nil || !ok {
 		t.Fatalf("file.chmod600 belongs to the core: %T %v", r, err)
 	}
@@ -213,19 +166,19 @@ func TestChmod600PlansExactlyAndApplies(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := finding.Finding{Kind: finding.KindExposure, Evidence: map[string]any{"path": "~/.env"},
-		Remediation: finding.Remediation{Action: ActionChmod600}}
+		Remediation: finding.Remediation{Action: connector.ActionChmod600}}
 	fs := Files{Home: func() (string, error) { return dir, nil }}
 	p, err := fs.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := connector.Plan{
-		Action: ActionChmod600, Summary: "Make " + path + " readable and writable by its owner only.",
+		Action: connector.ActionChmod600, Summary: "Make " + path + " readable and writable by its owner only.",
 		Files:       []connector.FileChange{{Path: path, Mode: 0o600, Was: 0o644}},
 		Undo:        []connector.Step{{Argv: []string{"/bin/chmod", "644", path}}},
 		SideEffects: p.SideEffects,
 	}
-	if err := SamePlan(want, p); err != nil || p.NeedsSudo() {
+	if !reflect.DeepEqual(want, p) || p.NeedsSudo() {
 		t.Fatalf("plan %+v", p)
 	}
 	if err := fs.Apply(context.Background(), f, p, quietIO()); err != nil {
@@ -244,82 +197,29 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 	path := filepath.Join(dir, "key")
 	_ = os.WriteFile(path, nil, 0o600)
 	_ = os.Chmod(path, 0o640)
-	f := finding.Finding{Evidence: map[string]any{"path": path}, Remediation: finding.Remediation{Action: ActionChmod600}}
+	f := finding.Finding{Evidence: map[string]any{"path": path}, Remediation: finding.Remediation{Action: connector.ActionChmod600}}
 	p, err := Files{}.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.Files[0].Path = filepath.Join(dir, "other")
-	if err := (Files{}).Apply(context.Background(), f, p, quietIO()); err == nil {
+	other := filepath.Join(dir, "other")
+	_ = os.WriteFile(other, nil, 0o600)
+	_ = os.Chmod(other, 0o640)
+	p.Files[0].Path = other
+	altered := &connectortest.ShownOnce{Remediator: Files{}, Shown: &p}
+	if err := Execute(context.Background(), f, altered, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t)); err == nil {
 		t.Fatal("applied an altered plan")
+	}
+	if fi, _ := os.Stat(other); fi.Mode().Perm() != 0o640 {
+		t.Fatalf("the altered plan changed %s to %o", other, fi.Mode().Perm())
 	}
 	link := filepath.Join(dir, "link")
 	_ = os.Symlink(path, link)
 	for _, bad := range []string{link, "relative/key", ""} {
-		g := finding.Finding{Evidence: map[string]any{"path": bad}, Remediation: finding.Remediation{Action: ActionChmod600}}
+		g := finding.Finding{Evidence: map[string]any{"path": bad}, Remediation: finding.Remediation{Action: connector.ActionChmod600}}
 		if _, err := (Files{}).Plan(context.Background(), g); err == nil {
 			t.Errorf("planned chmod on %q", bad)
 		}
-	}
-}
-
-func TestLatestFilesTakeEachConnectorsNewestRun(t *testing.T) {
-	out := t.TempDir()
-	write := func(day, name string, recs ...any) { runtest.Write(t, filepath.Join(out, day, name), recs...) }
-	_ = os.MkdirAll(filepath.Join(out, "notes"), 0o700)
-	_ = os.WriteFile(filepath.Join(out, "2026-12-31.jsonl"), nil, 0o600) // a file, not a run directory
-	write("2026-11-01", "macos.jsonl", finding.Finding{Type: "finding", ID: "old00000"})
-	write("2026-11-23", "macos.jsonl",
-		finding.Status{Type: "status", Connector: "macos", State: finding.StateOK},
-		finding.Finding{Type: "finding", ID: "aaaa1111", Severity: finding.SevLow, Remediation: finding.Remediation{Action: "x.y"}},
-		finding.Finding{Type: "finding", ID: "aaaa2222", Severity: finding.SevHigh},
-		finding.Finding{Type: "finding", ID: "bbbb3333", Severity: finding.SevHigh, Remediation: finding.Remediation{Action: "x.z"}})
-	// After midnight only another connector ran: macos must still come from 2026-11-23.
-	write("2026-11-24", "local-secrets.jsonl", finding.Finding{Type: "finding", ID: "cccc4444"})
-
-	files, err := LatestFiles(out, time.Now())
-	if err != nil || len(files) != 2 {
-		t.Fatalf("files=%v err=%v", files, err)
-	}
-	all, err := Load(files)
-	if err != nil || len(all) != 4 {
-		t.Fatalf("loaded %d err=%v", len(all), err)
-	}
-	if _, err := Find(all, "old00000"); err == nil {
-		t.Fatal("an older run of the same connector must be ignored")
-	}
-	if f, err := Find(all, "bbbb"); err != nil || f.ID != "bbbb3333" {
-		t.Fatalf("unique prefix from the previous day: %v %v", f.ID, err)
-	}
-	if _, err := Find(all, "cccc4444"); err != nil {
-		t.Fatal("today's connector must be found too")
-	}
-	if _, err := Find(all, "aaaa"); err == nil {
-		t.Fatal("ambiguous prefix accepted")
-	}
-	auto := Automatable(all)
-	if len(auto) != 2 || auto[0].ID != "bbbb3333" {
-		t.Fatalf("automatable worst first: %+v", auto)
-	}
-	if _, err := LatestFiles(t.TempDir(), time.Now()); err == nil {
-		t.Fatal("empty out dir should explain how to run an inventory")
-	}
-}
-
-func TestIsTerminalRejectsDevNullAndPipes(t *testing.T) {
-	null, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer null.Close()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	defer w.Close()
-	if IsTerminal(null) || IsTerminal(r) {
-		t.Fatal("/dev/null and pipes are not terminals")
 	}
 }
 
@@ -371,5 +271,69 @@ func TestListHidesFindingsBelowTheMinimumSeverity(t *testing.T) {
 	List(&b, all, finding.SevInfo)
 	if !strings.Contains(b.String(), "noise0001") {
 		t.Fatalf("--all must include info:\n%s", b.String())
+	}
+}
+
+// driftingRemediator states a different plan each time it is asked, and applies whatever it is
+// handed without checking: what a remediator without a copy of the stale-plan guard does.
+type driftingRemediator struct {
+	plans   []connector.Plan
+	applied []connector.Plan
+}
+
+func (d *driftingRemediator) Plan(context.Context, finding.Finding) (connector.Plan, error) {
+	p := d.plans[0]
+	if len(d.plans) > 1 {
+		d.plans = d.plans[1:]
+	}
+	return p, nil
+}
+
+func (d *driftingRemediator) Apply(_ context.Context, _ finding.Finding, p connector.Plan, _ connector.IO) error {
+	d.applied = append(d.applied, p)
+	return nil
+}
+
+func TestTheCoreRefusesAPlanThatDriftedBetweenConfirmAndApply(t *testing.T) {
+	shown := connector.Plan{Action: target.Remediation.Action, Summary: "Turn on the firewall.", Commands: []connector.Step{enable}}
+	now := shown
+	now.Summary = "Turn on the firewall, and more."
+	r := &driftingRemediator{plans: []connector.Plan{shown, now}}
+	err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t))
+	if err == nil || !strings.Contains(err.Error(), "plan changed") {
+		t.Fatalf("want a refusal, got %v", err)
+	}
+	if len(r.applied) != 0 {
+		t.Fatalf("applied %v, a plan that is no longer the one confirmed", r.applied)
+	}
+
+	same := &driftingRemediator{plans: []connector.Plan{shown}}
+	if err := Execute(context.Background(), target, same, Options{Apply: true, Yes: true, IO: quietIO()}, results()); err != nil {
+		t.Fatal(err)
+	}
+	if len(same.applied) != 1 || same.applied[0].Summary != shown.Summary {
+		t.Fatalf("applied %v, want the confirmed plan once", same.applied)
+	}
+}
+
+type driftingGroup struct{ driftingRemediator }
+
+func (d *driftingGroup) PlanGroup(ctx context.Context, fs []finding.Finding) (connector.Plan, error) {
+	return d.Plan(ctx, fs[0])
+}
+
+func (d *driftingGroup) ApplyGroup(ctx context.Context, fs []finding.Finding, p connector.Plan, io connector.IO) error {
+	return d.Apply(ctx, fs[0], p, io)
+}
+
+func TestTheCoreRefusesAGroupPlanThatDrifted(t *testing.T) {
+	a, b := grouped("a1", "owner", finding.SevHigh), grouped("b2", "owner", finding.SevHigh)
+	shown := connector.Plan{Action: a.Remediation.Action, Summary: "Enable secret scanning in 2 repositories."}
+	now := shown
+	now.Summary = "Enable secret scanning in 3 repositories."
+	r := &driftingGroup{driftingRemediator{plans: []connector.Plan{shown, now}}}
+	opt := Options{Apply: true, Yes: true, IO: quietIO(), Group: []finding.Finding{a, b}}
+	if err := Execute(context.Background(), a, r, opt, neverReinventory(t)); err == nil || len(r.applied) != 0 {
+		t.Fatalf("err=%v applied=%v", err, r.applied)
 	}
 }

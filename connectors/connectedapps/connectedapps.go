@@ -25,7 +25,6 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 const name = "connected-apps"
@@ -38,7 +37,7 @@ type Connector struct {
 	browser browser
 	gh      cli.Runner
 	now     func() time.Time
-	exec    remediate.Executor // runs a confirmed remediation; nil is remediate.System
+	exec    connector.Executor // runs a confirmed remediation; nil is connector.System
 }
 
 func (*Connector) Describe() connector.Description {

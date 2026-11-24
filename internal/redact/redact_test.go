@@ -16,7 +16,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/fingerprint"
-	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -409,7 +409,7 @@ func TestApplyNeedsATerminalOrYes(t *testing.T) {
 	p := fx.write(".claude/projects/a/s.jsonl", fx.transcript(), 0o600)
 	before := fx.read(p)
 	code, out := fx.run("", false, "--trails", "--apply")
-	if code == 0 || !strings.Contains(out, remediate.ErrNotTTY.Error()) {
+	if code == 0 || !strings.Contains(out, prompt.ErrNotTTY.Error()) {
 		t.Errorf("exit %d without a terminal:\n%s", code, out)
 	}
 	if code, _ := fx.run("n\n", true, "--trails", "--apply"); code != 0 {

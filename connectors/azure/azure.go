@@ -18,7 +18,6 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 // readOnly lists every az command this connector runs. Anything else is refused before it reaches
@@ -34,8 +33,8 @@ type Connector struct {
 	// Run executes az commands after the read-only guard. Tests replace it with canned output.
 	Run cli.Runner
 	Now func() time.Time
-	// Exec runs a confirmed remediation's allowlisted commands; nil is remediate.System.
-	Exec remediate.Executor
+	// Exec runs a confirmed remediation's allowlisted commands; nil is connector.System.
+	Exec connector.Executor
 }
 
 func New() *Connector {

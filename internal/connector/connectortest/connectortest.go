@@ -1,4 +1,5 @@
-// Package connectortest builds fake external connectors from shell scripts for tests.
+// Package connectortest builds fake external connectors from shell scripts, and fake remediators,
+// for tests.
 package connectortest
 
 import (

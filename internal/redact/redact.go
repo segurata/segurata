@@ -24,7 +24,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/cliflag"
-	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -127,7 +127,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	if o.backup {
 		fmt.Fprintln(c.Out, "\nWARNING: --backup keeps a copy of every file as it was, next to it (mode 0600). Each copy holds the secrets in plaintext: delete them once you have checked the result.")
 	}
-	yes, err := remediate.Confirm(c.In, c.Out, o.yes, c.TTY)
+	yes, err := prompt.Confirm(c.In, c.Out, o.yes, c.TTY)
 	if err != nil {
 		return c.fail(err)
 	}

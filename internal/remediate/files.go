@@ -13,19 +13,13 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// ActionChmod600 makes one file readable and writable by its owner only (700 when the owner could
-// execute it, so a script keeps running). Any connector can attach it to a finding by setting
-// Remediation.Action and putting the file's path in evidence.path (absolute, or starting with
-// ~/). With Remediation.Group, one plan closes every file of the group.
-const ActionChmod600 = "file.chmod600"
-
 // Files implements the generic file actions, which belong to the core rather than to a connector.
 type Files struct {
 	Home func() (string, error) // expands ~/; os.UserHomeDir by default
 }
 
 // Handles reports whether the action is one of the generic file actions.
-func (Files) Handles(action string) bool { return action == ActionChmod600 }
+func (Files) Handles(action string) bool { return action == connector.ActionChmod600 }
 
 func (fs Files) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
 	return fs.PlanGroup(ctx, []finding.Finding{f})
@@ -39,11 +33,11 @@ func (fs Files) Apply(ctx context.Context, f finding.Finding, p connector.Plan, 
 // mode change for those other accounts can still open. A file that cannot be changed is left out
 // with the reason; when none can, that is the error.
 func (fs Files) PlanGroup(_ context.Context, group []finding.Finding) (connector.Plan, error) {
-	p := connector.Plan{Action: ActionChmod600}
+	p := connector.Plan{Action: connector.ActionChmod600}
 	var left []string
 	var seen []string
 	for _, f := range group {
-		if f.Remediation.Action != ActionChmod600 {
+		if f.Remediation.Action != connector.ActionChmod600 {
 			return connector.Plan{}, fmt.Errorf("unknown file action %q", f.Remediation.Action)
 		}
 		path, err := fs.path(f)
@@ -101,14 +95,7 @@ func change(path string) (connector.FileChange, error) {
 	return connector.FileChange{Path: path, Mode: 0o600 | was&0o100, Was: was}, nil
 }
 
-func (fs Files) ApplyGroup(ctx context.Context, group []finding.Finding, p connector.Plan, _ connector.IO) error {
-	want, err := fs.PlanGroup(ctx, group)
-	if err != nil {
-		return err
-	}
-	if err := SamePlan(want, p); err != nil {
-		return err
-	}
+func (Files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan, _ connector.IO) error {
 	for _, c := range p.Files {
 		if err := os.Chmod(c.Path, c.Mode); err != nil {
 			return err

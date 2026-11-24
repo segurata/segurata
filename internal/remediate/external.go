@@ -34,16 +34,8 @@ func (x External) Plan(ctx context.Context, f finding.Finding) (connector.Plan, 
 	return vetPlugin(x.Conn.Describe().Name, f, reply)
 }
 
-// Apply asks the connector for the plan again and refuses to go on when it differs from p, the
-// plan the owner confirmed; only then does it run `apply` with p.
+// Apply runs the connector's `apply` with p, the plan the owner confirmed.
 func (x External) Apply(ctx context.Context, f finding.Finding, p connector.Plan, io connector.IO) error {
-	want, err := x.Plan(ctx, f)
-	if err != nil {
-		return err
-	}
-	if err := SamePlan(want, p); err != nil {
-		return err
-	}
 	return x.Conn.RequestApply(ctx, connector.RemediationRequest{Request: x.Req, Finding: f, Plan: &p}, io.Out, io.Err)
 }
 

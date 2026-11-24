@@ -17,7 +17,8 @@ import (
 type Remediator interface {
 	// Plan states exactly what Apply would change for f, without changing anything.
 	Plan(ctx context.Context, f finding.Finding) (Plan, error)
-	// Apply carries out p, which must be the plan Plan returns for f now.
+	// Apply carries out p. The core calls it only after Plan for f, asked again just before, returned
+	// p unchanged, so Apply needs no stale-plan check of its own.
 	Apply(ctx context.Context, f finding.Finding, p Plan, io IO) error
 }
 
