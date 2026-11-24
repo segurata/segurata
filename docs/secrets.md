@@ -21,6 +21,7 @@ quarantine: `~/.claude/scripts/safe-update.sh`, or check the release date before
 | Finding | Section |
 |---|---|
 | Any secret in a tracked file or in history (gitleaks) | [In git: always rotate](#in-git-always-rotate) |
+| A database dump in a repository or its history (`data_dump`) | [Data dumps in git](#data-dumps-in-git) |
 | `.env*` under `~/src` | [.env files](#env-files) |
 | `export X=...` in `~/.zshrc` and friends | [Shell variables from the Keychain](#shell-variables-from-the-keychain) |
 | MCP `env` blocks in `~/.claude.json`, `~/.mcp`, `~/.codex`, `~/.cursor` | [MCP servers and agents](#mcp-servers-and-agents) |
@@ -51,6 +52,43 @@ backups.
 If the finding is a false positive (test fixture, sample key), add the gitleaks `Fingerprint`
 (`commit:file:rule:line`, printed by `gitleaks git` in that repo) to `.gitleaksignore`, and mark the
 item with `securizame rotations ignore <id> --reason …`.
+
+## Data dumps in git
+
+A `data_dump` finding is a database dump, database file or data export committed to a repository:
+`production_latest_backup.sql`, `latest.dump`, `app.sqlite3`. Everyone who could clone the
+repository has every row in it: customers' personal data, password hashes, session and API tokens.
+Deleting the file in a new commit changes nothing; the blob stays in the history and in every
+clone.
+
+1. Treat the data as exposed. Who could clone it: collaborators past and present, CI systems,
+   forks, and anyone at all if `visibility` is `PUBLIC`. `on_remote_branch: false` with
+   `remote: true` means the commit has not been seen on a remote branch: if it really never left
+   this machine, do not push it and continue at step 3.
+2. Rotate every credential the dump holds: application secrets stored in tables, API keys of
+   integrations, admin passwords. Force a password reset if user password hashes are in it and the
+   hashing is weak (MD5, SHA-1, unsalted). The gitleaks matches inside the dump are marked
+   `in_data_dump` and kept out of `securizame rotations` as noise, except AWS, Stripe live, GitHub
+   and GitLab keys and private keys, which stay in the ledger.
+3. Remove the file from history, in a fresh clone:
+   `git filter-repo --path <path> --invert-paths` (from
+   [git-filter-repo](https://github.com/newren/git-filter-repo)), then force-push every branch and
+   tag. Every collaborator must re-clone: an old clone pushed again brings the file back. On
+   GitHub, cached views and pull request refs keep it until
+   [GitHub Support purges them](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
+   securizame never rewrites history or pushes; this step is yours.
+4. Personal data of customers or staff in the dump may be a personal data breach under the GDPR:
+   the controller has 72 hours from becoming aware of it to notify the supervisory authority,
+   unless it is unlikely to result in a risk to people. Spain:
+   [AEPD, brechas de datos personales](https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales);
+   EU: [EDPB Guidelines 9/2022 on personal data breach notification](https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en).
+   Document the incident even when no notification is due.
+5. So it does not happen again: `*.sql`, `*.dump`, `*.sqlite3` and `*.db` in `.gitignore`, dumps
+   kept outside repositories (encrypted, with an expiry), and anonymised or generated data for
+   development.
+
+A false positive (a public sample database, a fixture with generated rows):
+`securizame accept <finding-id> --reason …`.
 
 ## After a rotation
 

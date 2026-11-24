@@ -243,6 +243,16 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   deleted ref, a new gitleaks version or config, or a new fingerprint key means a full scan again.
   The status line says how many repositories were unchanged, incremental or full. Details:
   [docs/architecture.md](docs/architecture.md#incremental-git-history-scan).
+- Database dumps in git: every repository's tracked files and every file ever added to its
+  history are matched against dump names (`*.sql`, `*.sql.gz`, `*.dump`, `*.pgdump`, `*.sqlite3`,
+  `*.db`, database `*.bak`, large `prod`/`backup` exports), minus schemas, migrations, seeds,
+  vendored code and small files. Each hit is one `data_dump` finding with its size, first commit,
+  whether it is still in the tree, whether it was pushed and, through `gh`, whether the remote is
+  public; the first 4 KiB of one blob are read to recognise a dump header, nothing more. gitleaks
+  matches inside a dump are marked `in_data_dump` and left out of rotation, except AWS, Stripe
+  live, GitHub and GitLab keys and private keys. Results are cached per repository in
+  `~/.cache/securizame/datadumps/`. What to do: [docs/secrets.md](docs/secrets.md#data-dumps-in-git);
+  details: [docs/architecture.md](docs/architecture.md#data-dumps-in-git).
 - SSH keys in `~/.ssh`: type, permissions and whether they have a passphrase
   (`ssh-keygen -y -P ""`). A key without one is an `exposure` finding; a key with one, an `info`
   `setting`.
@@ -251,12 +261,14 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   gitleaks `generic-api-key`), anon or expired JWTs and encrypted private keys are `info`.
 - A finding in a working file that group or others can read carries the `file.chmod600` action:
   `securizame remediate <finding-id>` closes the file. The secret still has to be rotated.
-- Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history. The disk scan takes
+- Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history; `gh` (optional) for
+  the visibility of repositories holding a dump. The disk scan takes
   about a minute; the history scan of ~330 repositories takes most of the run.
 - Config (`connectors.local-secrets.config`): `repos_root`, `skip_git_history` (true skips
   gitleaks and keeps the fast scan), `git_cache` (default true; false scans every repository's
   whole history and leaves the cache alone), `gitleaks_workers` (default 6), `gitleaks_timeout`
-  (per repository, default `"10m"`).
+  (per repository, default `"10m"`), `data_dumps` (default true; false turns the dump check off,
+  `"only"` runs nothing else, about a minute cold and seconds from the cache).
 - What to do with each finding: [docs/secrets.md](docs/secrets.md); each finding's `evidence.fix`
   links the section.
 
