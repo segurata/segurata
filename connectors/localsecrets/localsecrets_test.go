@@ -364,7 +364,12 @@ func TestInventoryEndToEnd(t *testing.T) {
 	}
 
 	byKey := map[string][]finding.Finding{}
+	var summary *finding.Finding
 	for _, f := range rec.findings {
+		if f.Resource.Type == NoiseSummaryType {
+			summary = &f
+			continue
+		}
 		k := evidence(f, "type") + " " + evidence(f, "path") + " " + evidence(f, "source")
 		byKey[k] = append(byKey[k], f)
 		if evidence(f, "fingerprint") == "" || len(evidence(f, "fingerprint")) != 16 {
@@ -434,6 +439,14 @@ func TestInventoryEndToEnd(t *testing.T) {
 		t.Error("service-account private key reported twice")
 	}
 
+	// Noise (the generic gitleaks match, the generic assignment) is counted, not emitted; the
+	// summary lists each noise-only value with its type.
+	if summary == nil || summary.Severity != finding.SevInfo {
+		t.Fatalf("no noise summary: %+v", summary)
+	}
+	if fps, _ := summary.Evidence["noise_fingerprints"].(map[string]string); len(fps) != 2 {
+		t.Errorf("noise fingerprints %v", summary.Evidence["noise_fingerprints"])
+	}
 	// Noise (the generic gitleaks match, the generic assignment) is counted, not emitted.
 	for _, k := range []string{"generic-api-key ~/src/shop/app.js gitleaks", "assignment ~/src/shop/.env scan", "generic-api-key ~/src/shop/README.md gitleaks"} {
 		if len(byKey[k]) != 0 {

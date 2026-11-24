@@ -224,6 +224,9 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	for _, f := range findings {
 		emit.Finding(f)
 	}
+	if sum, ok := noise.summary(); ok {
+		emit.Finding(sum)
+	}
 	detail := fmt.Sprintf("%d findings", len(findings))
 	switch {
 	case history:
@@ -514,6 +517,7 @@ func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 			noise.add(ev)
 			continue
 		}
+		noise.emitted(ev)
 		out = append(out, f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Resource.ID < out[j].Resource.ID })

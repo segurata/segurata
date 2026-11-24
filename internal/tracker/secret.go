@@ -199,6 +199,48 @@ func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise 
 	return rep
 }
 
+// NoiseOnly reads the noise summary of a local-secrets run: every fingerprint whose copies are all
+// noise, with its type. The connector emits it instead of the noise findings themselves (unless
+// emit_noise), so a secret a corrected rule made noise still reaches its item.
+func NoiseOnly(fs []finding.Finding) map[string]string {
+	for _, f := range fs {
+		if f.Connector != SecretsConnector || f.Resource.Type != noiseSummaryType {
+			continue
+		}
+		raw, _ := json.Marshal(f.Evidence["noise_fingerprints"])
+		var m map[string]string
+		if json.Unmarshal(raw, &m) == nil {
+			return m
+		}
+	}
+	return nil
+}
+
+// noiseSummaryType is localsecrets.NoiseSummaryType (the tracker does not import connectors).
+const noiseSummaryType = "noise_summary"
+
+// SyncNoise applies a noise summary to the items it names, as SyncSecrets does for a secret whose
+// every sighting is noise: impact noise, and open, in-progress, snoozed or ignored items closed as
+// reclassified. Fingerprints without an item are left alone: noise never creates one.
+func (t *Tracker) SyncNoise(noise map[string]string, now time.Time) SecretReport {
+	var rep SecretReport
+	if len(noise) == 0 {
+		return rep
+	}
+	for fp, it := range t.byFingerprint() {
+		typ, ok := noise[fp]
+		if !ok {
+			continue
+		}
+		it.Secret.Impact = secretrisk.Noise.String()
+		if it.reclassify(now, typ) {
+			rep.Reclassified++
+		}
+		it.derive()
+	}
+	return rep
+}
+
 // reclassify closes an item whose every current sighting is noise, and reports whether it did.
 // Done and accepted items keep their status: the owner settled them. An ignored item becomes
 // reclassified too, its ignore reason kept in the event, so the "ignored" count holds only what

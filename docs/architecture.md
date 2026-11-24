@@ -841,7 +841,12 @@ every run without a new scan.
   are noise. gitleaks 8.30 has no other rule that takes a bare hex value: `facebook-secret` and
   `codecov-access-token` require the provider's name next to the value.
 - Noise is counted, not emitted, unless `emit_noise: true`: the run's status line ends with
-  `noise not emitted …: N; by type: …; by place: …` (the 25 largest places, the rest summed).
+  `noise not emitted …: N; by type: …; by place: …` (the 25 largest places, the rest summed), and
+  one `info` finding of resource type `noise_summary` carries the same counts plus
+  `noise_fingerprints`, every fingerprint whose copies are all noise with its type. `track sync`
+  applies it like a noise sighting (`SyncNoise`): an item whose secret a corrected rule made noise
+  closes as `reclassified`. Fingerprints without an item are ignored, so `sync --include-noise`
+  needs `emit_noise: true` to track noise-only secrets.
 
 Hints. Every value hint the connector writes is `secretrisk.Redact`'s: the known prefix, `…`, the
 last four characters when the value is long and random, and the length, `sk_live_…a1b2(107)`;

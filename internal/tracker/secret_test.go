@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/doc"
+	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -381,3 +382,26 @@ func TestReclassifyLeavesSettledItems(t *testing.T) {
 	}
 }
 
+// The connector emits noise as one summary, not one finding per copy: it still reclassifies.
+func TestNoiseSummaryReclassifies(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	l.SyncSecrets([]Sighting{
+		sight(ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", "~/src/lms/k.yml", "gitleaks", "repo", "", true, true)),
+		sight(ev("bbbbbbbbbbbbbbbb", "anthropic", "~/.zshrc", "scan", "config", "644", false, false)),
+	}, t0, false)
+	summary := finding.Finding{Connector: SecretsConnector, Resource: finding.Resource{Type: noiseSummaryType},
+		Evidence: map[string]any{"noise_fingerprints": map[string]any{"aaaaaaaaaaaaaaaa": "aws-access-key-id", "ffffffffffffffff": "assignment"}}}
+	noise := NoiseOnly([]finding.Finding{{Connector: SecretsConnector, Resource: finding.Resource{Type: "secret"}}, summary})
+	if len(noise) != 2 {
+		t.Fatalf("NoiseOnly %v", noise)
+	}
+	rep := l.SyncNoise(noise, t0.Add(time.Hour))
+	a, _ := l.FindRotate("aaaa")
+	b, _ := l.FindRotate("bbbb")
+	if rep.Reclassified != 1 || a.Status != Reclassified || a.Priority != "" || b.Status != Open || len(l.Items) != 2 {
+		t.Errorf("report %+v, a %s %q, b %s, %d items", rep, a.Status, a.Priority, b.Status, len(l.Items))
+	}
+	if rep := l.SyncNoise(noise, t0.Add(2*time.Hour)); rep.Reclassified != 0 {
+		t.Errorf("reclassified twice: %+v", rep)
+	}
+}
