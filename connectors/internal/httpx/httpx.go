@@ -53,6 +53,15 @@ func IsStatus(err error, code int) bool {
 	return errors.As(err, &se) && se.Code == code
 }
 
+// State is the status state of a failed call: reauth when the provider rejected the credential
+// (HTTP 401), error otherwise.
+func State(err error) finding.State {
+	if IsStatus(err, http.StatusUnauthorized) {
+		return finding.StateReauth
+	}
+	return finding.StateError
+}
+
 // Get fetches path (relative to BaseURL) with the query q and decodes the JSON body into out.
 func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) error {
 	u := c.BaseURL + path

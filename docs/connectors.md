@@ -108,7 +108,7 @@ inspected:
 | `state` | Meaning |
 |---|---|
 | `ok` | Inspected |
-| `reauth` | The service wants a fresh sign-in or identity check |
+| `reauth` | The service wants a fresh sign-in or identity check, or rejected the credential (HTTP 401) |
 | `signedout` | No session |
 | `noscope` | Signed in, but the credential lacks a permission; `detail` says which and how to grant it |
 | `unverified` | Signed in, but the reader was never checked against a real page |

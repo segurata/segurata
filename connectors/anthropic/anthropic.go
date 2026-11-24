@@ -96,7 +96,7 @@ type scan struct {
 
 func (s *scan) fail(err error) {
 	s.failed = true
-	s.emit.Status(finding.Status{Account: s.account, State: finding.StateError, Detail: err.Error()})
+	s.emit.Status(finding.Status{Account: s.account, State: httpx.State(err), Detail: err.Error()})
 }
 
 func (s *scan) run() {

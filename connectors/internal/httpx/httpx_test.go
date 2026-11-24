@@ -1,6 +1,12 @@
 package httpx
 
-import "testing"
+import (
+	"errors"
+	"net/http"
+	"testing"
+
+	"github.com/segurata/segurata/internal/finding"
+)
 
 func TestErrorMessage(t *testing.T) {
 	cases := map[string]string{
@@ -35,6 +41,18 @@ func TestMatchesRedacted(t *testing.T) {
 	} {
 		if got := MatchesRedacted(c.redacted, c.secret); got != c.want {
 			t.Errorf("MatchesRedacted(%q, %q) = %v", c.redacted, c.secret, got)
+		}
+	}
+}
+
+func TestState(t *testing.T) {
+	for err, want := range map[error]finding.State{
+		&StatusError{Code: http.StatusUnauthorized}: finding.StateReauth,
+		&StatusError{Code: http.StatusForbidden}:    finding.StateError,
+		errors.New("dial tcp: refused"):             finding.StateError,
+	} {
+		if got := State(err); got != want {
+			t.Errorf("%v: %s, want %s", err, got, want)
 		}
 	}
 }

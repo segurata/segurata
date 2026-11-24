@@ -93,7 +93,7 @@ type scan struct {
 
 func (s *scan) fail(acct string, err error) {
 	s.failed = true
-	s.emit.Status(finding.Status{Account: acct, State: finding.StateError, Detail: err.Error()})
+	s.emit.Status(finding.Status{Account: acct, State: httpx.State(err), Detail: err.Error()})
 }
 
 type workspace struct {

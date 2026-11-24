@@ -49,13 +49,6 @@ func (c *Connector) Describe() connector.Description {
 	}
 }
 
-func stateFor(err error) finding.State {
-	if httpx.IsStatus(err, http.StatusUnauthorized) {
-		return finding.StateReauth
-	}
-	return finding.StateError
-}
-
 type organization struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`
@@ -91,7 +84,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	api := httpx.New(base, http.Header{"Authorization": {"Bearer " + tok}})
 	var orgs []organization
 	if err := api.Get(ctx, "/v1/organizations", nil, &orgs); err != nil {
-		emit.Status(finding.Status{Account: "supabase", State: stateFor(err), Detail: err.Error()})
+		emit.Status(finding.Status{Account: "supabase", State: httpx.State(err), Detail: err.Error()})
 		return nil
 	}
 	failed := map[string][]string{}

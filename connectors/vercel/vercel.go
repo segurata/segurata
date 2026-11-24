@@ -49,13 +49,6 @@ func (c *Connector) Describe() connector.Description {
 	}
 }
 
-func stateFor(err error) finding.State {
-	if httpx.IsStatus(err, http.StatusUnauthorized) {
-		return finding.StateReauth
-	}
-	return finding.StateError
-}
-
 type token struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -113,7 +106,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		} `json:"user"`
 	}
 	if err := api.Get(ctx, "/v2/user", nil, &me); err != nil {
-		emit.Status(finding.Status{Account: "vercel", State: stateFor(err), Detail: err.Error()})
+		emit.Status(finding.Status{Account: "vercel", State: httpx.State(err), Detail: err.Error()})
 		return nil
 	}
 	account := me.User.Username

@@ -94,7 +94,7 @@ type scan struct {
 // fail reports a partial failure; the run goes on with whatever else it can read.
 func (s *scan) fail(err error) {
 	s.failed = true
-	s.emit.Status(finding.Status{Account: account, State: finding.StateError, Detail: err.Error()})
+	s.emit.Status(finding.Status{Account: account, State: httpx.State(err), Detail: err.Error()})
 }
 
 func (s *scan) run() {
