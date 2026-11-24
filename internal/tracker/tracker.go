@@ -14,12 +14,13 @@ package tracker
 import (
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // SchemaVersion is the tracker.json format this binary writes.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Kind says what sort of action an item asks for.
 type Kind string
@@ -196,4 +197,8 @@ type Tracker struct {
 	Items   []*Item              `json:"items"`
 	// Rules are the effects of answered decisions, applied at every sync.
 	Rules []Rule `json:"rules,omitempty"`
+	// Owned are the owner's accounts, projects, workspaces, GitHub owners and emails discovered in
+	// connector runs, kept across syncs (a sync that reads no aws run still knows the aws account).
+	// Config `owned` adds to them at every sync; see "Attribution" in docs/architecture.md.
+	Owned *attribution.Owned `json:"owned,omitempty"`
 }

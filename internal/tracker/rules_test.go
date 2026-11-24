@@ -68,7 +68,7 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 	if !strings.Contains(b.String(), `answering "yes" closes 3 open items`) {
 		t.Errorf("status lacks the leverage:\n%s", b.String())
 	}
-	rules, closed, err := tr.DecideWithEffects(d, now, "yes: archive them", nil, []string{"gcp-project:old-proj"})
+	rules, closed, err := tr.DecideWithEffects(d, now, "yes: archive them", nil, []string{"gcp-project:old-proj"}, nil)
 	if err != nil || len(rules) != 2 || closed != 4 {
 		t.Fatalf("decide: %+v %d %v", rules, closed, err)
 	}

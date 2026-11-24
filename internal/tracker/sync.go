@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -23,6 +24,9 @@ type SyncOptions struct {
 	// Expect applies the config's expected rules to each status read (config.Config.Expect); nil
 	// for none. Statuses are matched at every sync, so a rule added or removed since the run counts.
 	Expect func(*finding.Status)
+	// Owned are the owner's accounts the runs do not show (config `owned`, the git email): added to
+	// the ones discovered, for attribution.
+	Owned attribution.Owned
 }
 
 // SyncReport counts what a sync changed.
@@ -133,7 +137,9 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	for _, l := range rep.Runs {
 		r := folded[l]
 		if r.isSecrets() {
-			rep.Secrets.add(t.SyncSecrets(Sightings(r.findings), now, opt.IncludeNoise))
+			sightings := Sightings(r.findings)
+			rep.Secrets.add(t.SyncSecrets(sightings, now, opt.IncludeNoise))
+			t.collectClaims(sightings)
 		}
 		for _, f := range r.findings {
 			if ev, ok := secretEvidence(f); ok {
@@ -207,6 +213,8 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		it.noteHeld(held, now)
 	}
 	t.expireAll(now, &rep)
+	t.discover(runs)
+	t.Attribute(t.OwnedAll(opt.Owned))
 	rep.Ruled = t.applyRules(now)
 	t.seed(now)
 	if t.Sources == nil {

@@ -8,10 +8,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -34,9 +36,9 @@ type CLI struct {
 
 const usage = `usage: segurata rotations <command>
   sync    [--from out/<date>/local-secrets.jsonl] [--out out] [--include-noise]
-  list    [--all] [--priority P0,P1] [--service stripe,aws]
+  list    [--all] [--priority P0,P1] [--service stripe,aws] [--owner mine,not-mine,unknown]
   next    [--priority P0] [--service stripe] [--log]   the most urgent item, with what to do (--log records it was shown)
-  show    <id>
+  show    <id>   with whose it is (owner, confidence, the reasons and claims behind it)
   replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
           put the new value in every used_in file (see: segurata rotations replace --help)
   done    <id> [--note text]
@@ -104,11 +106,11 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
-	expect, err := tracker.Expectations(c.Config)
+	opt, err := tracker.ConfiguredSync(c.Config, tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise})
 	if err != nil {
 		return c.fail(err)
 	}
-	rep, err := t.Sync(tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise, Expect: expect}, now)
+	rep, err := t.Sync(opt, now)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -130,6 +132,9 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 		counts[it.EffectivePriority()]++
 	}
 	fmt.Fprintf(c.Out, "Open: P0 %d, P1 %d, P2 %d, P3 %d. Tracker: %s\n", counts[secretrisk.P0], counts[secretrisk.P1], counts[secretrisk.P2], counts[secretrisk.P3], path)
+	owners := t.OwnerCounts(func(it *tracker.Item) bool { return it.Active(now) })
+	fmt.Fprintf(c.Out, "Open by owner: mine %d, not-mine %d, unknown %d (segurata rotations list --owner not-mine).\n",
+		owners[attribution.Mine], owners[attribution.NotMine], owners[attribution.Unknown])
 	fmt.Fprint(c.Out, tracker.SyncLine(rep))
 	return 0
 }
@@ -149,20 +154,29 @@ func (c CLI) list(t *tracker.Tracker, args []string, now time.Time) int {
 	all := fs.Bool("all", false, "include rotated, snoozed and ignored items")
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0,P1")
 	service := fs.String("service", "", "comma-separated services, e.g. stripe,aws")
+	owner := fs.String("owner", "", "comma-separated attributions: mine, not-mine, unknown")
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
 	items := selectItems(t, now, *all, splitList(*prio), splitList(*service))
+	if *owner != "" {
+		owners, err := attribution.ParseOwners(*owner)
+		if err != nil {
+			return c.fail(err)
+		}
+		items = slices.DeleteFunc(items, func(it *tracker.Item) bool { return !slices.Contains(owners, it.Owner()) })
+	}
 	tw := tabwriter.NewWriter(c.Out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tPRI\tSTATUS\tSERVICE/TYPE\tREDACTED\tEXPOSURE\tLOCS\tFIRST SEEN\tREASON")
+	fmt.Fprintln(tw, "ID\tPRI\tSTATUS\tOWNER\tSERVICE/TYPE\tREDACTED\tEXPOSURE\tLOCS\tFIRST SEEN\tREASON")
 	for _, it := range items {
 		s := it.Secret
 		reason := ""
 		if len(s.Reasons) > 0 {
 			reason = s.Reasons[0]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%s\t%s\t%d\t%s\t%s\n", s.ID, textfmt.OrDash(string(it.EffectivePriority())), stateOf(it), s.Service, s.Type,
-			textfmt.OrDash(s.Redacted), it.WorstLabel(), len(s.Locations), s.FirstSeen.Format(time.DateOnly), textfmt.Truncate(reason, 90))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s/%s\t%s\t%s\t%d\t%s\t%s\n", s.ID, textfmt.OrDash(string(it.EffectivePriority())), stateOf(it),
+			textfmt.OrDash(string(it.Owner())), s.Service, s.Type, textfmt.OrDash(s.Redacted), it.WorstLabel(), len(s.Locations),
+			s.FirstSeen.Format(time.DateOnly), textfmt.Truncate(reason, 90))
 	}
 	tw.Flush()
 	fmt.Fprintf(c.Out, "%d items\n", len(items))
@@ -194,6 +208,7 @@ func (c CLI) show(t *tracker.Tracker, args []string) int {
 	for _, r := range s.Reasons {
 		fmt.Fprintf(w, "  - %s\n", r)
 	}
+	printAttribution(w, s.Attribution)
 	fmt.Fprintln(w, "\nput the new value in (used_in):")
 	if len(s.UsedIn) == 0 {
 		fmt.Fprintln(w, "  (no working file holds it: only history, transcripts or logs)")
@@ -213,6 +228,28 @@ func (c CLI) show(t *tracker.Tracker, args []string) int {
 		fmt.Fprintf(w, "  %s  %s  %s\n", e.At.Format(time.RFC3339), e.Action, e.Detail)
 	}
 	return 0
+}
+
+// printAttribution says whose the secret is and why.
+func printAttribution(w io.Writer, a *attribution.Result) {
+	if a == nil {
+		fmt.Fprintln(w, "\nowner:       not attributed yet (run segurata rotations sync)")
+		return
+	}
+	fmt.Fprintf(w, "\nowner:       %s (%s confidence)\n", a.Owner, a.Confidence)
+	for _, r := range a.Reasons {
+		fmt.Fprintf(w, "  - %s\n", r)
+	}
+	f := a.Facts
+	for _, kv := range []struct {
+		k string
+		v []string
+	}{{"AWS accounts", f.AWSAccounts}, {"GCP projects", f.GCPProjects}, {"Slack workspaces", f.SlackTeams},
+		{"commit authors", f.AuthorEmails}, {"repository owners", f.RepoOwners}} {
+		if len(kv.v) > 0 {
+			fmt.Fprintf(w, "  %s: %s\n", kv.k, strings.Join(kv.v, ", "))
+		}
+	}
 }
 
 // stateOf is an item's status in the words of this command family: a done secret is "rotated".

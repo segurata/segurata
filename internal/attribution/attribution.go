@@ -9,10 +9,13 @@
 package attribution
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Claims are the account identifiers one sighting of a secret names. local-secrets fills them at
@@ -229,4 +232,16 @@ func hints(f Facts, o Owned) []string {
 
 func contains(list []string, v string, fold bool) bool {
 	return slices.ContainsFunc(list, func(x string) bool { return x == v || fold && strings.EqualFold(x, v) })
+}
+
+// GitEmail is the email `git config user.email` gives (global or system), or "" when git or the
+// setting is missing: the owner's commit email by default.
+func GitEmail() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "config", "--get", "user.email").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
