@@ -46,8 +46,8 @@ esac
 
 func TestExternalRemediationShowsConfirmsAndApplies(t *testing.T) {
 	e, applied := demoPlugin(t, goodPlan)
-	r, err := For(pluginFinding, []connector.Connector{e}, func(finding.Finding) (connector.Request, error) {
-		return connector.Request{Secrets: map[string]string{"DEMO_TOKEN": "s3cret"}}, nil
+	r, err := For(pluginFinding, []connector.Connector{e}, func(finding.Finding) (connector.Credentials, error) {
+		return connector.Credentials{Request: connector.Request{Secrets: map[string]string{"DEMO_TOKEN": "s3cret"}}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,14 +123,14 @@ func TestExternalPlansAreVetted(t *testing.T) {
 
 func TestForExternalNeedsADeclaredActionAndProtocol2(t *testing.T) {
 	e, _ := demoPlugin(t, goodPlan)
-	req := func(finding.Finding) (connector.Request, error) { return connector.Request{}, nil }
+	req := func(finding.Finding) (connector.Credentials, error) { return connector.Credentials{}, nil }
 	undeclared := pluginFinding
 	undeclared.Remediation.Action = "demo.other"
 	if _, err := For(undeclared, []connector.Connector{e}, req); err == nil || !strings.Contains(err.Error(), "remediates") {
 		t.Fatalf("undeclared action: %v", err)
 	}
-	if _, err := For(pluginFinding, []connector.Connector{e}, func(finding.Finding) (connector.Request, error) {
-		return connector.Request{}, errors.New("secret missing")
+	if _, err := For(pluginFinding, []connector.Connector{e}, func(finding.Finding) (connector.Credentials, error) {
+		return connector.Credentials{}, errors.New("secret missing")
 	}); err == nil {
 		t.Fatal("a request that cannot be built must stop the remediation")
 	}

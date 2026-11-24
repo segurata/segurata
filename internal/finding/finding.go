@@ -53,11 +53,27 @@ type Resource struct {
 // Remediation says how to fix a finding. Action names a built-in remediation (such as
 // "macos.firewall.enable") that `segurata remediate` can apply; it is empty when the fix is
 // manual. Automatable is derived from Action by Fill.
+//
+// Group, when set, names the findings one plan fixes together: `segurata remediate` gathers every
+// finding of the same connector instance with the same Action and Group, plans them as one and
+// lists them as one line. Severity, when set, is the severity of what Action fixes when that is
+// less than the finding's own (a hardening step on a finding graded for something else); the list
+// ranks the action by it.
 type Remediation struct {
-	Summary     string `json:"summary"`
-	URL         string `json:"url,omitempty"`
-	Action      string `json:"action,omitempty"`
-	Automatable bool   `json:"automatable"`
+	Summary     string   `json:"summary"`
+	URL         string   `json:"url,omitempty"`
+	Action      string   `json:"action,omitempty"`
+	Group       string   `json:"group,omitempty"`
+	Severity    Severity `json:"severity,omitempty"`
+	Automatable bool     `json:"automatable"`
+}
+
+// ActionSeverity is the severity `segurata remediate --list` ranks the finding's action by.
+func (f Finding) ActionSeverity() Severity {
+	if f.Remediation.Severity != "" {
+		return f.Remediation.Severity
+	}
+	return f.Severity
 }
 
 // Finding is one thing worth looking at. Evidence must never hold a secret value: use Redact.

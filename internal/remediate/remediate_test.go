@@ -96,7 +96,7 @@ func results(ids ...string) Reinventory {
 		tally.Declare("mac", true, "")
 		r := &run.Result{Name: "macos", End: tally.End("macos", "", time.Now(), time.Now(), nil)}
 		for _, id := range ids {
-			r.Findings = append(r.Findings, finding.Finding{ID: id})
+			r.Findings = append(r.Findings, finding.Finding{ID: id, Remediation: target.Remediation})
 		}
 		return []*run.Result{r}, nil
 	}

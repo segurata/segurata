@@ -221,14 +221,17 @@ func NewRequest(cfg config.Config, in config.Instance) (connector.Request, []err
 	return connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: in.Config, Secrets: resolved}, errs
 }
 
-// InstanceRequest is NewRequest for the instance a finding came from (label "" is the unnamed one).
-func InstanceRequest(cfg config.Config, name, label string) (connector.Request, []error) {
+// InstanceCredentials are what a remediation of the instance a finding came from may use (label
+// "" is the unnamed one): NewRequest, and the unresolved references of its remediation_secrets,
+// which only Apply resolves.
+func InstanceCredentials(cfg config.Config, name, label string) (connector.Credentials, []error) {
 	for _, in := range cfg.Instances(name) {
 		if in.Label == label {
-			return NewRequest(cfg, in)
+			req, errs := NewRequest(cfg, in)
+			return connector.Credentials{Request: req, WriteRefs: in.RemediationSecrets, Resolve: secrets.Resolve}, errs
 		}
 	}
-	return connector.Request{}, []error{fmt.Errorf("no configured instance %q of connector %s", label, name)}
+	return connector.Credentials{}, []error{fmt.Errorf("no configured instance %q of connector %s", label, name)}
 }
 
 // Summary prints statuses that need attention, then findings worst first.
