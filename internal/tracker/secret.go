@@ -43,6 +43,10 @@ type Location struct {
 	Origin   string    `json:"origin,omitempty"` // whose repository: secretrisk.OriginOwned, OriginThirdParty, OriginForkUpstream
 	Reused   bool      `json:"reused,omitempty"` // a third-party copy of a value the owner also holds
 	LastSeen time.Time `json:"last_seen"`
+	// Gone marks a working location the latest finished local-secrets run read without finding the
+	// secret there: kept for the record, left out of used_in, the exposure and path rules (see
+	// current). Records of the past (history, transcripts, logs) are never gone.
+	Gone bool `json:"gone,omitempty"`
 }
 
 func (l Location) key() string { return l.Source + "\x00" + l.Path }
@@ -365,6 +369,50 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	rep.Reopened++
 }
 
+// secretsFilesScope is the scope of local-secrets findings outside git history
+// (localsecrets.filesScope; the tracker does not import connectors).
+const secretsFilesScope = "files"
+
+// markGoneLocations flags, on every rotate item, the working locations a local-secrets run did not
+// report although it read the files: the secret is no longer there. A run that skipped the files
+// proves nothing, and noise-only secrets are not reported one by one, so neither marks anything. A
+// location reported again is no longer gone (merge replaces it).
+func (t *Tracker) markGoneLocations(r *run) {
+	if _, unchecked := r.cov.Unchecked("", secretsFilesScope); unchecked {
+		return
+	}
+	seen := map[string]bool{}
+	for _, s := range Sightings(r.findings) {
+		seen[s.Evidence.Fingerprint+"\x00"+locationOf(s.Evidence, time.Time{}).key()] = true
+	}
+	noise := NoiseOnly(r.findings)
+	for fp, it := range t.byFingerprint() {
+		if _, isNoise := noise[fp]; isNoise {
+			continue
+		}
+		for i := range it.Secret.Locations {
+			if l := &it.Secret.Locations[i]; l.Working() && !seen[fp+"\x00"+l.key()] {
+				l.Gone = true
+			}
+		}
+	}
+}
+
+// current are the locations that still hold the secret as far as segurata knows: every one not
+// gone, or all of them when every one is gone (the item keeps its exposure until it is settled).
+func (it *Item) current() []Location {
+	var out []Location
+	for _, l := range it.Secret.Locations {
+		if !l.Gone {
+			out = append(out, l)
+		}
+	}
+	if len(out) == 0 {
+		return it.Secret.Locations
+	}
+	return out
+}
+
 // NoteRedaction records that `segurata redact` replaced the value in some trail files. The
 // locations stay: the copies reached wherever they went before the local file was cleaned.
 func (it *Item) NoteRedaction(at time.Time, files int) {
@@ -473,7 +521,7 @@ func (it *Item) worstSpot() (secretrisk.Spot, bool) {
 	if it.Secret == nil {
 		return best, false
 	}
-	for _, l := range it.Secret.Locations {
+	for _, l := range it.current() {
 		s := l.Spot()
 		if !found || spotRank(s) > spotRank(best) {
 			best, found = s, true
@@ -544,7 +592,7 @@ func (it *Item) refreshSecret() {
 		reasons = append(reasons, secretrisk.Reason(t, worst))
 		counts := map[string]int{}
 		phrase := map[string]string{}
-		for _, l := range s.Locations {
+		for _, l := range it.current() {
 			sp := l.Spot()
 			counts[sp.Label]++
 			phrase[sp.Label] = sp.Phrase
@@ -571,7 +619,7 @@ func (it *Item) refreshSecret() {
 	seen := map[string]bool{}
 	s.UsedIn = []string{}
 	for _, l := range s.Locations {
-		if l.Working() && !seen[l.Path] {
+		if l.Working() && !l.Gone && !seen[l.Path] {
 			seen[l.Path] = true
 			s.UsedIn = append(s.UsedIn, l.Path)
 		}
@@ -618,7 +666,7 @@ func (it *Item) secretTitle() string {
 		return title
 	}
 	title += " in " + primary.Name()
-	if n := len(s.Locations) - 1; n > 0 {
+	if n := len(it.current()) - 1; n > 0 {
 		title += fmt.Sprintf(" (+%d %s)", n, textfmt.Plural(n, "place", "places"))
 	}
 	if d := it.firstCommitted(); d != "" {
@@ -661,7 +709,7 @@ func (it *Item) keyFacts() string {
 // primaryLocation is the location that exposed the secret the most; among equals, the owner's
 // repository, then the most recent commit, then the path.
 func (it *Item) primaryLocation() (Location, bool) {
-	locs := it.Secret.Locations
+	locs := it.current()
 	if len(locs) == 0 {
 		return Location{}, false
 	}

@@ -115,7 +115,7 @@ func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, e
 func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	var recorded []int
 	for _, loc := range r.item.Secret.Locations {
-		if loc.Path == p && loc.Line > 0 && loc.Source != "gitleaks" {
+		if loc.Path == p && loc.Line > 0 && loc.Source != "gitleaks" && !loc.Gone {
 			recorded = append(recorded, loc.Line)
 		}
 	}

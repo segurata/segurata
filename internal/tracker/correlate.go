@@ -104,7 +104,7 @@ func (t *Tracker) secretIndex() secretIndex {
 		x.byService[it.Secret.Service] = append(x.byService[it.Secret.Service], it)
 		seen := map[string]bool{}
 		for _, l := range it.Secret.Locations {
-			if !seen[l.Path] {
+			if !l.Gone && !seen[l.Path] {
 				seen[l.Path] = true
 				x.byPath[l.Path] = append(x.byPath[l.Path], it)
 			}

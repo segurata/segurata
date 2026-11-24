@@ -305,6 +305,32 @@ func TestReplaceFollowsSymlinks(t *testing.T) {
 	}
 }
 
+// A used_in file deleted since the scan: a new scan and sync take it out of used_in, as the
+// refusal advises, and replace goes ahead with the files left.
+func TestReplaceAfterAUsedInFileWasDeletedAndRescanned(t *testing.T) {
+	fx := newReplaceFixture(t)
+	if err := os.Remove(fx.env); err != nil {
+		t.Fatal(err)
+	}
+	if _, e, code := fx.run(t, "", false, "replace", fx.id()); code != 1 {
+		t.Fatalf("before the rescan: %d %s", code, e)
+	}
+	redacted := fx.item(t).Secret.Redacted
+	run := filepath.Join(fx.home, "out", "local-secrets.jsonl")
+	writeFindings(t, run,
+		secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted, Path: "~/.zshrc", Line: 2, Mode: "640", Fingerprint: fx.key.Of(fx.old)},
+		secretrisk.Evidence{Source: "scan", Kind: "transcript", Type: "anthropic", Redacted: redacted, Path: "~/.claude/projects/p/s.jsonl", Line: 9, Mode: "600", Fingerprint: fx.key.Of(fx.old)})
+	if _, e, code := fx.run(t, "", false, "sync", "--from", run, "--out", filepath.Join(fx.home, "none")); code != 0 {
+		t.Fatalf("sync: %s", e)
+	}
+	if got := strings.Join(fx.item(t).Secret.UsedIn, " "); got != "~/.zshrc" {
+		t.Fatalf("used_in after the rescan %q", got)
+	}
+	if _, e, code := fx.run(t, "", false, "replace", fx.id(), "--apply", "--yes"); code != 0 || fx.item(t).Status != tracker.Done {
+		t.Fatalf("apply: %d %s", code, e)
+	}
+}
+
 func TestReplaceBackupIsPrivate(t *testing.T) {
 	fx := newReplaceFixture(t)
 	before := read(t, fx.zshrc)

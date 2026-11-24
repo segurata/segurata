@@ -139,20 +139,20 @@ func under(p, prefix string) bool {
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
-// Under reports whether the item lies entirely under a path: every location of a rotate item, or
-// every finding still reported of another item, has a path inside prefix. An item with none
-// does not.
+// Under reports whether the item lies entirely under a path: every current location of a rotate
+// item, or every finding still reported of another item, has a path inside prefix. An item with
+// none does not.
 func (it *Item) Under(prefix string) bool {
 	return it.allIn(func(p string) bool { return under(p, prefix) }, func(r FindingRef) string { return r.Path })
 }
 
-// allIn applies in to the path of every location of a rotate item, or to what field reads from
-// every finding still reported of another item; false when there is nothing to test or a value is
-// empty.
+// allIn applies in to the path of every current location of a rotate item, or to what field reads
+// from every finding still reported of another item; false when there is nothing to test or a value
+// is empty.
 func (it *Item) allIn(in func(string) bool, field func(FindingRef) string) bool {
 	var values []string
 	if it.Secret != nil {
-		for _, l := range it.Secret.Locations {
+		for _, l := range it.current() {
 			values = append(values, l.Path)
 		}
 	} else {

@@ -349,12 +349,12 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
-- `schema_version` 4 is the current format. A format change adds an upgrade step from version n
+- `schema_version` 5 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
   `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
   status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
-  the top-level `runs` (see "Coverage"). An older file holds none of them, so it loads as it is and is saved as the current version (the
+  the top-level `runs` (see "Coverage"); 5 added a location's `gone`. An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### Migration from the former state files
@@ -937,7 +937,10 @@ Priority is impact × exposure, both table-driven:
   ignored count is what the owner judged. If a later sighting is not noise, the item opens again
   (`auto-reopen`), or goes back to ignored with the owner's reason when it was ignored before.
 - `sync` merges locations (never drops one: git history and transcripts do not forget) and
-  refreshes `last_seen` only for secrets it saw. Expired snoozes go back to `open`.
+  refreshes `last_seen` only for secrets it saw. A working location (config, `.env`, rc or repo
+  working tree) that a finished local-secrets run did not report although it read the files is
+  marked `gone`: kept for the record, left out of `used_in`, the exposure, the title and path
+  rules until a sighting there brings it back. Expired snoozes go back to `open`.
 - After a real rotation the old value is revoked, so only a working file that still holds it
   matters. `done` and `replace` record the locations known at that moment (`rotated_locations`).
   A `rotated` item seen again is reopened, with the reason "still present after rotation (old
@@ -946,15 +949,15 @@ Priority is impact × exposure, both table-driven:
   value never reached it) or new since; the history note says which. Copies only in git history,
   transcripts, logs or shell history leave it `rotated` and add one `history-only` note per
   rotation ([docs/secrets.md](secrets.md#after-a-rotation)).
-- `used_in` lists the working files (config, `.env`, rc files) that hold the secret: where the new
-  value has to go once it is rotated.
+- `used_in` lists the working files (config, `.env`, rc files) that hold the secret now (not
+  `gone`): where the new value has to go once it is rotated.
 - `rotate_url` is the provider console page for that kind of secret, checked against each
   provider's documentation. Types without a stable, account-independent page (npm tokens, Shopify,
   private keys) have none.
 - `secret.id` is the first 8 characters of the fingerprint, longer on collision. Commands accept
   any unique prefix of it or of the fingerprint, or the tracker's `T-` id.
 - `done`, `snooze`, `ignore` and `reopen` also take `--path <prefix>` instead of an id: every item
-  whose locations all lie under that path. A test log or a data file full of fixtures goes away in
+  whose current locations all lie under that path. A test log or a data file full of fixtures goes away in
   one command, while a secret that also appears elsewhere stays.
 
 ### What counts against the owner

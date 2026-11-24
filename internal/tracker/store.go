@@ -155,6 +155,8 @@ var upgrades = map[int]func(map[string]any) error{
 	// 4 adds the status merged with an item's merged_into, a finding ref's type, resource and match,
 	// and the top-level runs; a version 3 file has none, so it carries over as it is.
 	3: func(map[string]any) error { return nil },
+	// 5 adds a location's gone; a version 4 file has none, so it carries over as it is.
+	4: func(map[string]any) error { return nil },
 }
 
 func parse(raw []byte) (*Tracker, error) {
