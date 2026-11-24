@@ -6,3 +6,7 @@ out/
 # Go
 /securizame
 /bin/
+
+# Python
+__pycache__/
+*.pyc
