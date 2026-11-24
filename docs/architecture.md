@@ -74,7 +74,8 @@ holds it). The lists are capped (50 inspected, 200 skipped); the counts are not.
 **Scopes.** A finding belongs to a scope: its `scope` field when the connector inspects the
 account in parts, otherwise its account (`finding.ScopeOf`). Examples: `repo:<owner>/<name>` and
 `repo:<owner>` (github), `history:<repo>`, `dumps:<repo>` and `files` (local-secrets), the project
-id and `billing:<id>` (gcp), the service name (connected-apps), `profile <name>` (aws). The run's
+id and `billing:<id>` (gcp), the service name (connected-apps), `profile <name>` (aws),
+`check:<id>` (macos). The run's
 coverage is derived (`finding.Tally`):
 
 - a status `ok` marks its account (or `scope`) inspected;
