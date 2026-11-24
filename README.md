@@ -67,7 +67,7 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 
 ./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
 ./segurata track decide T-0003 --answer "yes" [--ignore-scope path:~/src/old] [--accept-scope repo:acme/site]
-./segurata track decide T-0002 --answer "rotate mine, ignore the rest" --ignore-scope path:~/src/i4a --owner not-mine [--dry-run]
+./segurata track decide T-0002 --answer "rotate mine, ignore the rest" --ignore-scope path:~/src/legacyco --owner not-mine [--dry-run]
 ./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
 ./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
 ./segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no

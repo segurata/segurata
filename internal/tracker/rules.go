@@ -47,7 +47,7 @@ type OptionEffect struct {
 	Owners []attribution.Owner `json:"owners,omitempty"`
 }
 
-// ParseEffect reads "ignore:path:~/src/i4a", or "ignore@not-mine:path:~/src/i4a" for a rule that
+// ParseEffect reads "ignore:path:~/src/legacyco", or "ignore@not-mine:path:~/src/legacyco" for a rule that
 // closes only rotate items attributed to those owners, into its effect, scope and owners.
 func ParseEffect(spec string) (effect, scope string, owners []attribution.Owner, err error) {
 	effect, scope, _ = strings.Cut(strings.TrimSpace(spec), ":")
@@ -108,8 +108,8 @@ func (r Rule) validate() error {
 	return checkScope(r.Scope)
 }
 
-// Spec is the rule as the command line writes it: "ignore path:~/src/i4a", "ignore@not-mine
-// path:~/src/i4a".
+// Spec is the rule as the command line writes it: "ignore path:~/src/legacyco", "ignore@not-mine
+// path:~/src/legacyco".
 func (r Rule) Spec() string {
 	return r.Effect + ownersSuffix(r.Owners) + " " + r.Scope
 }

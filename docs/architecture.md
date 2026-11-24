@@ -266,7 +266,7 @@ substring of the status detail, or a regular expression between slashes; `reason
 ### Decisions and rules
 
 A decision can carry effects. `track add --kind decide --question "Are the legacy repos dead?"
---option "yes=ignore:path:~/src/i4a" --option "no"` stores the option labels and, for each
+--option "yes=ignore:path:~/src/legacyco" --option "no"` stores the option labels and, for each
 `label=effect:scope`, an entry in `decision.effects` (`{option, effect, scope}`). Effects are
 `ignore` or `accept`; scopes are `path:<dir>` (rotate items whose every location, and other
 items whose every reported finding, lie under it: the `repo` or `path` a local finding names),
@@ -278,7 +278,7 @@ a rule to the tracker's top-level `rules` for the option the answer picks (the l
 label followed by ":" or a space) and for every scope given:
 
 ```json
-"rules": [{"effect": "ignore", "scope": "path:~/src/i4a", "reason": "Are the legacy repos dead? yes",
+"rules": [{"effect": "ignore", "scope": "path:~/src/legacyco", "reason": "Are the legacy repos dead? yes",
            "decision": "T-0002", "at": "…"}]
 ```
 
@@ -287,18 +287,18 @@ is ignored (or accepted, with no end date) with the reason "by decision T-0002: 
 in scope found later never stays open. An item reopened by hand after the rule was added is left
 alone. Reopening the decision removes its rules; the items they closed stay as they are. A pending
 decision with effects shows its leverage in `status` and `track show`: `answering "yes" closes 128
-open items (P0 120, P1 8) by ignore path:~/src/i4a`.
+open items (P0 120, P1 8) by ignore path:~/src/legacyco`.
 
 A rule can be narrowed to owners (`"owners": ["not-mine"]`): it then closes only rotate items
 whose attribution (see "Attribution") is one of them, and its reason adds the attribution's first
 reason ("…; attributed not-mine: AWS account 999988887777 is none of your 1 known"). Items in
 scope with another attribution, and items that have none (anything but a secret), stay open. The
 flag says what the rule closes, like the effect and the scope: `track decide <id> --answer "rotate
-mine, ignore the rest" --ignore-scope path:~/src/i4a --owner not-mine` narrows the rules of the
-scopes given there; an option carries its own owners as `yes=ignore@not-mine:path:~/src/i4a`.
+mine, ignore the rest" --ignore-scope path:~/src/legacyco --owner not-mine` narrows the rules of the
+scopes given there; an option carries its own owners as `yes=ignore@not-mine:path:~/src/legacyco`.
 `--dry-run` prints, per rule, what answering would close and keep open, and changes nothing:
 `closes 120 open items (P0 100, P1 20) attributed not-mine, keeps 8 open (mine 5, unknown 3) by
-ignore@not-mine path:~/src/i4a`; the leverage of pending decisions reads the same. An item a
+ignore@not-mine path:~/src/legacyco`; the leverage of pending decisions reads the same. An item a
 narrowed rule closed opens again (`auto-reopen`, "now attributed mine, which … leaves open") when
 a later sync attributes it to an owner the rule does not name: the key turned out to be the
 owner's after all. Ignoring it by hand afterwards sticks.
