@@ -11,6 +11,22 @@ The name: "segurata" is Spanish slang for a security guard.
 House rule: every connector **inventories first, read-only**. Removing access is a separate step,
 by hand or with an explicit remediation, after reviewing the list.
 
+## Install
+
+Release binaries for macOS, Linux and Windows (amd64 and arm64) are static, with a SHA-256
+`checksums.txt` signed keylessly with Sigstore cosign and an SPDX SBOM per archive.
+
+```bash
+brew install --cask example-org/tap/segurata                  # Homebrew tap
+go install github.com/segurata/segurata/cmd/segurata@latest     # from source, Go 1.26+
+segurata version
+```
+
+Or download an archive from the releases page, verify `checksums.txt` with `cosign verify-blob`
+and the archive with `sha256sum -c`, and put `segurata` on your `PATH`. The exact commands, the
+certificate identity to expect and the caveats while the repository is private:
+[docs/releasing.md](docs/releasing.md#verifying-a-release).
+
 ## Build
 
 ```bash
@@ -617,3 +633,13 @@ Actions by area and priority, with verified sources and what a script can audit:
 ## Manual review
 
 Services without a connector, with the page where you revoke access: [docs/manual-review.md](docs/manual-review.md).
+
+## Security
+
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes; it also lists the
+properties segurata promises (read-only inventory, no secret values in output, confirmed and
+allowlisted changes, standard library only). Releases: [docs/releasing.md](docs/releasing.md).
+
+## License
+
+[Apache License 2.0](LICENSE).
