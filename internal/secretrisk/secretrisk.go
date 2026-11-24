@@ -33,9 +33,18 @@ type Evidence struct {
 	Repo        string `json:"repo,omitempty"`   // gitleaks: repository
 	Commit      string `json:"commit,omitempty"` // gitleaks: first commit seen
 	Date        string `json:"date,omitempty"`   // gitleaks: date of that commit
-	Public      bool   `json:"public,omitempty"` // not a secret on its own (anon or expired JWT)
+	Public      bool   `json:"public,omitempty"` // not a secret on its own: anon or expired JWT, expired STS key, public OAuth client
 	Encrypted   bool   `json:"encrypted,omitempty"`
 	InDataDump  bool   `json:"in_data_dump,omitempty"` // gitleaks: inside a committed database dump
+	// Origin is whose repository a committed copy sits in (OriginOwned, OriginThirdParty,
+	// OriginForkUpstream); "" when unknown or not committed. See origin.go.
+	Origin string `json:"origin,omitempty"`
+	// Reused marks a copy in a third-party repository (or inherited from a fork's upstream) whose
+	// value is also in one of the owner's own files: it is the owner's secret, so it counts.
+	Reused bool `json:"reused,omitempty"`
+	// Sample marks a value that reads like test data ("test", "fake", "1234", a run of one
+	// character). It lowers the impact to noise only in a test, example or documentation path.
+	Sample bool `json:"sample,omitempty"`
 }
 
 // Impact is how much damage the secret can do in the wrong hands.
@@ -222,8 +231,11 @@ var catalog = map[string]Type{
 	// Low: public by design or limited blast radius.
 	"sentry-dsn":     {"sentry", "Sentry DSN", Low, ""},
 	"google-api-key": {"google", "Google API key", Low, urlGCPCredentials},
-	"stripe-test":    {"stripe", "Stripe test key", Low, urlStripeKeys},
-	"jwt":            {"unknown", "JWT of unknown origin", Low, ""},
+	// A pre-signed URL carries a key id and a signature, never the secret key, and expires within
+	// seven days (STS-signed ones within 36 hours).
+	"aws-presigned-url": {"aws", "Pre-signed AWS URLs", Low, urlAWS},
+	"stripe-test":       {"stripe", "Stripe test key", Low, urlStripeKeys},
+	"jwt":               {"unknown", "JWT of unknown origin", Low, ""},
 
 	// Noise: generic name=value matches, mostly configuration that is not secret.
 	"assignment":      {"generic", "Generic secret-looking assignment", Noise, ""},
@@ -251,7 +263,9 @@ var temporaryAWS = Type{Service: "aws", Label: "Temporary AWS credential (STS, e
 // hexLookalike is for gitleaks rules that also accept any 40-character hex string (Sourcegraph's
 // legacy token format). Without the service's own prefix the match is most often a SHA-1, a git
 // object id or a hash column in a database dump: 2,013 such matches in one SQL backup on
-// 2026-11-24. Real current tokens carry the prefix and keep the catalog impact.
+// 2026-11-24. Real current tokens carry the prefix and keep the catalog impact. Among gitleaks
+// 8.30's rules only this one takes a bare hex value with no keyword: facebook-secret and
+// codecov-access-token also capture 32 hex characters, but only next to their provider's name.
 var hexLookalike = Type{Service: "generic", Label: "40-character hex string (a hash more often than a token)", Impact: Noise}
 
 // TypeFor is Lookup refined by the redacted hint, for types whose prefix changes what they are.
@@ -271,12 +285,30 @@ func Known(typ string) (Type, bool) {
 	return t, ok
 }
 
-// ImpactOf is the type's impact, lowered to noise for values that are not usable secrets.
+// ImpactOf is the type's impact, adjusted by where the copy is: noise for values that are not
+// usable secrets and for other people's repositories, by host for URL credentials (url.go), and
+// one level lower in test, example, documentation and vendored paths (paths.go).
 func ImpactOf(e Evidence) Impact {
-	if e.Public || e.Encrypted || dumpNoise(e) {
+	if e.Public || e.Encrypted || dumpNoise(e) || NotOwners(e.Origin, e.Reused) {
 		return Noise
 	}
-	return TypeFor(e.Type, e.Redacted).Impact
+	i := TypeFor(e.Type, e.Redacted).Impact
+	if urlTypes[e.Type] {
+		i = hostImpact(URLHost(e.Note), i)
+	}
+	if e.Kind != "repo" {
+		return i
+	}
+	switch RoleOf(e.Path) {
+	case RoleNone:
+		return i
+	case RoleGenerated:
+		return Noise
+	}
+	if e.Sample || i == Noise {
+		return Noise
+	}
+	return i - 1
 }
 
 // Spot is how far one location exposed the secret, with a short label for tables and the plain
@@ -307,8 +339,14 @@ func Where(source, kind, mode string, tracked, remote bool) Spot {
 	return Spot{Local, "local", "in a local file only you can read"}
 }
 
-// WhereEvidence is Where for one finding.
-func WhereEvidence(e Evidence) Spot { return Where(e.Source, e.Kind, e.Mode, e.Tracked, e.Remote) }
+// WhereEvidence is Where for one finding, or the upstream's spot for a copy in a repository that
+// is not the owner's.
+func WhereEvidence(e Evidence) Spot {
+	if s, ok := UpstreamSpot(e.Origin, e.Reused); ok {
+		return s
+	}
+	return Where(e.Source, e.Kind, e.Mode, e.Tracked, e.Remote)
+}
 
 func groupReadable(mode string) bool {
 	m, err := strconv.ParseUint(mode, 8, 32)
