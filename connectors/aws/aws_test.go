@@ -195,7 +195,7 @@ func TestOtherFailuresStayErrorsAndKeepTheDenialHint(t *testing.T) {
 	fr := healthyAccount()
 	fr.replies["configure list-profiles"] = "dev\n"
 	fr.errs = map[string]error{
-		"iam get-account-summary": errors.New("Could not connect to the endpoint URL"),
+		"iam get-account-summary":                            errors.New("Could not connect to the endpoint URL"),
 		"budgets describe-budgets --account-id 111122223333": errors.New("AccessDeniedException"),
 	}
 	rec := &httpxtest.Recorder{}
