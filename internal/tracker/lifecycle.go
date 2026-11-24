@@ -32,6 +32,7 @@ const (
 	actNote        = "note"
 	actNotChecked  = "not-checked"
 	actDecide      = "decide"
+	actReanswer    = "reanswer"
 	actPrioritize  = "prioritize"
 	actHistory     = "history-only"
 	actRedacted    = "redacted"

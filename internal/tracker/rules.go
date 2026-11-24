@@ -289,13 +289,22 @@ func (it *Item) reopenedByHandSince(at time.Time) bool {
 //
 // owners, when given, narrow the rules of the scopes given here (not those of the options, which
 // carry their own) to rotate items attributed to those owners.
+//
+// A decision answered before is answered again: the new answer replaces the old one and its rules,
+// as reopening and answering would; the items the old rules closed stay as they are.
 func (t *Tracker) DecideWithEffects(it *Item, at time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]Rule, int, error) {
 	add, err := t.decisionRules(it, at, answer, ignore, accept, owners)
 	if err != nil {
 		return nil, 0, err
 	}
+	prev := it.Decision.Answer
 	if err := it.Decide(at, answer); err != nil {
 		return nil, 0, err
+	}
+	if prev != "" {
+		n := t.DropRules(it.ID)
+		it.Log(at, EvDecided, actReanswer, fmt.Sprintf("replaces the answer %q; %s of it removed, the items they closed stay as they are",
+			prev, textfmt.Count(n, "rule", "rules")))
 	}
 	t.Rules = append(t.Rules, add...)
 	for _, r := range add {

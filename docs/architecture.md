@@ -285,7 +285,9 @@ label followed by ":" or a space) and for every scope given:
 Rules apply at once and at the end of every sync: an open, in-progress or snoozed item in scope
 is ignored (or accepted, with no end date) with the reason "by decision T-0002: …", so a finding
 in scope found later never stays open. An item reopened by hand after the rule was added is left
-alone. Reopening the decision removes its rules; the items they closed stay as they are. A pending
+alone. Reopening the decision removes its rules; the items they closed stay as they are. Answering
+an answered decision again does the same before adding the new answer's rules, so answers never
+accumulate rules. A pending
 decision with effects shows its leverage in `status` and `track show`: `answering "yes" closes 128
 open items (P0 120, P1 8) by ignore path:~/src/legacyco`.
 

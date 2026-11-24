@@ -31,7 +31,8 @@ const trackUsage = `usage: segurata track <command>
   decide     <id> --answer text [--ignore-scope s]... [--accept-scope s]... [--owner not-mine] [--dry-run]
              s: path:~/src/old, repo:owner/name, account:<glob>, gcp-project:<id>; --owner narrows the
              scopes' rules to secrets attributed to those owners (mine, not-mine, unknown); --dry-run
-             prints what answering would close and keep open, and changes nothing
+             prints what answering would close and keep open, and changes nothing; answering again
+             replaces the previous answer and its rules
   snooze     <id> --until YYYY-MM-DD [--note text]
   ignore     <id> --reason text
   expect     <setup-id> --reason text [--detail text] [--dry-run]   write a config rule that expects its status, close it
@@ -382,7 +383,11 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 		}
 		var added []Rule
 		var closed int
-		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes, owners); err == nil && len(added) > 0 {
+		again := it.Decision != nil && it.Decision.Answer != ""
+		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes, owners); err == nil && again {
+			fmt.Fprintf(c.Out, "This answer %s.\n", it.lastDetail(actReanswer))
+		}
+		if err == nil && len(added) > 0 {
 			for _, r := range added {
 				fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
 			}
