@@ -6,12 +6,12 @@ CLI. It uses no Google SDK and no extra Go module: every call is a read-only `gc
 changed.
 
 ```
-securizame inventory gcp
+segurata inventory gcp
 ```
 
 ## Configuration
 
-Optional, in `~/.config/securizame/config.json`:
+Optional, in `~/.config/segurata/config.json`:
 
 ```json
 {"connectors": {"gcp": {"config": {
@@ -29,7 +29,7 @@ Optional, in `~/.config/securizame/config.json`:
 | `billing_project` | gcloud's own quota project | Passed as `--billing-project` to `billing budgets list`, for when the Budget API rejects the configured quota project (`USER_PROJECT_DENIED`) |
 | `gcloud_path` | `PATH`, then the standard install folders: `~/google-cloud-sdk/bin/gcloud`, `/usr/lib/google-cloud-sdk/bin/gcloud`, `/opt/homebrew/share/google-cloud-sdk/bin/gcloud`, `/usr/local/share/google-cloud-sdk/bin/gcloud` | CLI path |
 
-When the SDK lives elsewhere and only an interactive shell's rc file puts it on `PATH`, securizame
+When the SDK lives elsewhere and only an interactive shell's rc file puts it on `PATH`, segurata
 run from a script, cron or launchd does not find it and reports `unsupported`. Set `gcloud_path` to
 the binary, for example for an SDK unpacked in `~/src/utils`:
 

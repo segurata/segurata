@@ -1,6 +1,6 @@
 # Architecture
 
-securizame inventories the digital footprint of a person or a small company (consumer accounts,
+segurata inventories the digital footprint of a person or a small company (consumer accounts,
 clouds, AI providers, secrets on disk), assesses it and, only when asked, cleans it up.
 
 Everything in this repository is written in English: code, comments, finding text, docs and commit
@@ -9,10 +9,10 @@ messages.
 ## Pieces
 
 ```
-securizame (Go binary)
+segurata (Go binary)
 ├── core: config, secret references, connector execution, output, report
 ├── built-in connectors (compiled in)
-└── external connectors: securizame-<name> executables on PATH, in any language
+└── external connectors: segurata-<name> executables on PATH, in any language
 ```
 
 Both kinds of connector share one contract. A built-in one implements the Go interface
@@ -26,11 +26,11 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `inventory` | Lists what exists: grants, keys, settings, spend | Never |
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
-| `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Only securizame's own `tracker.json` (the "since" mark) and, with `--write`, `status.md` and `status.html` |
-| `track` | Lists, shows and changes tracker items; `track sync` folds the latest runs in | Only securizame's own `tracker.json` |
-| `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `tracker.json` |
+| `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Only segurata's own `tracker.json` (the "since" mark) and, with `--write`, `status.md` and `status.html` |
+| `track` | Lists, shows and changes tracker items; `track sync` folds the latest runs in | Only segurata's own `tracker.json` |
+| `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only segurata's own `tracker.json` |
 | `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
-| `rotations` | Keeps the ledger of secrets to rotate (the tracker's rotate items) and guides each rotation | Only securizame's own `tracker.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
+| `rotations` | Keeps the ledger of secrets to rotate (the tracker's rotate items) and guides each rotation | Only segurata's own `tracker.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
 | `report` | Summarises the latest runs, what changed, the secrets to rotate and the accepted risks | Never (writes only the `--out` file) |
 | `redact` | Replaces the secrets `local-secrets` finds in trail files (agent transcripts, shell histories, logs) with `[REDACTED:<type>:<fingerprint8>]` | With `--apply` and confirmation: those trail files, never a working file; a history note in `tracker.json` |
 
@@ -54,7 +54,7 @@ secret. Fields, kinds, stable-id and severity rules: [connectors.md](connectors.
 Runs and findings are ephemeral: each inventory rewrites them. The tracker (`internal/tracker`) is
 the one durable record of what to do, what is done and what is pending.
 
-State: `~/.securizame/tracker.json`, mode 0600 in a 0700 folder (`SECURIZAME_HOME` names another
+State: `~/.segurata/tracker.json`, mode 0600 in a 0700 folder (`SEGURATA_HOME` names another
 folder), outside any repository. Generated views live beside it (`status.md`, `status.html`) and
 are never edited by hand. The file is JSON with a `schema_version`; it is the single source of
 truth, and every change goes through the CLI.
@@ -72,7 +72,7 @@ truth, and every change goes through the CLI.
                "title": "acme-labs does not require two-factor authentication", "severity": "high",
                "last_seen": "…", "gone": false}],
  "next": {"who": "you", "action": "Turn on \"Require two-factor authentication\" …",
-          "command": "securizame track show T-0042", "url": "https://github.com/organizations/acme-labs/settings/security"},
+          "command": "segurata track show T-0042", "url": "https://github.com/organizations/acme-labs/settings/security"},
  "status_at": "…", "verified_at": null, "created_at": "…", "updated_at": "…",
  "history": [{"at": "…", "event": "found", "action": "found", "detail": "5 findings"}]}
 ```
@@ -81,7 +81,7 @@ truth, and every change goes through the CLI.
     the same item; sync finds items by key.
   - `kind`: `fix`, `rotate` (one secret, by `fingerprint`, with its locations under `secret`),
     `decide` (with `decision`: question, options, answer, answered_at), `setup` (what keeps
-    securizame from seeing an account) or `review` (a list to keep or prune).
+    segurata from seeing an account) or `review` (a list to keep or prune).
   - `status`: `open`, `in_progress`, `done`, `accepted` (with `accepted`: reason, until,
     accepted_at), `ignored` or `snoozed` (with `snoozed_until`).
   - `priority` is computed: a rotate item's comes from the rotation model below; others map the
@@ -103,7 +103,7 @@ connector and resource type, first match wins:
 | Findings | One item per | Kind |
 |---|---|---|
 | local-secrets secrets | fingerprint (rotate items, below) | rotate |
-| local-secrets secrets in transcripts, shell histories and logs | local-secrets instance: "Redact secrets from N trail files", next step `securizame redact --trails`, severity capped at medium | fix |
+| local-secrets secrets in transcripts, shell histories and logs | local-secrets instance: "Redact secrets from N trail files", next step `segurata redact --trails`, severity capped at medium | fix |
 | local-secrets `data_dump` | file | fix |
 | github org and repository-setting checks | check, across orgs ("Two-factor authentication not required in 5 GitHub orgs") | fix |
 | github repositories | organization | fix |
@@ -119,12 +119,12 @@ connector and resource type, first match wins:
 
 A finding that has an item of its own (key `finding:<id>`) always goes there before any rule: one
 accepted apart from its group, or one grouped per finding anyway. The title and next step come
-from the rule and the worst finding's remediation (`securizame remediate <id>` and `who:
-securizame` when the only finding is automatable). Decisions the owner already faces are seeded
+from the rule and the worst finding's remediation (`segurata remediate <id>` and `who:
+segurata` when the only finding is automatable). Decisions the owner already faces are seeded
 once each (purging data dumps from git history, whether the two old projects are dead,
 the testssl.sh fixtures, the primary password manager, the daily schedule); `track add` adds more.
 
-### Lifecycle: `securizame track sync`
+### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
 run of every connector instance (`remediate.LatestFiles`) and:
@@ -167,8 +167,8 @@ reached the model provider).
 ### Migration from the former state files
 
 The first command that opens the tracker when `tracker.json` does not exist but
-`~/.local/state/securizame/rotations.json` (`SECURIZAME_STATE`) or
-`~/.config/securizame/accepted.json` (`SECURIZAME_ACCEPTED`) does imports them:
+`rotations.json` in `~/.segurata` (`SEGURATA_STATE` names another folder) or
+`~/.config/segurata/accepted.json` (`SEGURATA_ACCEPTED`) does imports them:
 
 - every ledger item becomes a rotate item, ids in order of first sighting, with its locations,
   `used_in`, reasons, priority, `rotated_locations`, snooze and full history (each event's time,
@@ -180,17 +180,36 @@ Stored values are imported as they are, not recomputed. The tracker is saved, th
 are renamed to `<file>.migrated-<date>` (never deleted, never overwritten). A file that does not
 parse, or has an unknown version or status, stops the import and nothing is written or moved.
 
-### `securizame status`
+### Directories of the former name
+
+`internal/legacy`, run by every command before config or state is read (what moves where: README,
+"Upgrading"). Each old directory is renamed only when the new one does not exist; when both exist
+it warns on stderr and the new one is used. A rename keeps modes and bytes, so the fingerprint key
+and every fingerprint survive. After moving the tracker it rewrites the binary's own words in it
+(who takes the next step, its action and command, decision questions and options, theme
+descriptions), never the owner's notes or a path. After moving the config it renames a Keychain
+reference only when the new item exists, checked from its attributes (`security
+find-generic-password -s <service>`, no `-w`).
+
+`segurata keychain-migrate [--apply [--yes]]` handles the rest, one item at a time: read the old
+value (`-w`, captured in memory), store it under the new name with `security -i` and the add command
+on stdin, read it back and compare, rewrite the reference in the config, and only then delete the
+old item. A failure before the rewrite leaves the config and the old item as they were; a new item
+that already holds a different value is left for the owner to resolve. Values never reach an
+argument list or the output. `internal/keychain` holds the Keychain calls it shares with `rotations
+replace --to-keychain`.
+
+### `segurata status`
 
 ```
-securizame status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]
+segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]
 ```
 
 The briefing, built with the report's document model and renderers (`internal/doc`), so text,
 Markdown and HTML say the same thing: a headline (open items by priority and theme, done and
 verified in the last 7 days, accepted, ignored, snoozed), "Do next" (the ten most urgent entries
 with their next step, command and page; secrets count as one entry per priority pointing to
-`securizame rotations next`), pending decisions, setup blockers, the changes since the last
+`segurata rotations next`), pending decisions, setup blockers, the changes since the last
 unfiltered status (events counted, the latest listed) and the accepted risks. `--write` also
 writes `status.md` and `status.html` next to the tracker, mode 0600. `report` stays the per-run
 view.
@@ -198,10 +217,10 @@ view.
 ## Remediation
 
 ```
-securizame remediate --list                      automatable findings of the latest run
-securizame remediate <finding-id>                print the plan; changes nothing
-securizame remediate <finding-id> --apply        print the plan, ask "Apply? [y/N]", apply, check
-securizame remediate <finding-id> --apply --yes  same without asking
+segurata remediate --list                      automatable findings of the latest run
+segurata remediate <finding-id>                print the plan; changes nothing
+segurata remediate <finding-id> --apply        print the plan, ask "Apply? [y/N]", apply, check
+segurata remediate <finding-id> --apply --yes  same without asking
 ```
 
 The finding comes from the latest `out/<date>/*.jsonl` (a unique id prefix is enough). The plan
@@ -220,14 +239,14 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   entries at apply time from a fresh read of what exists, never from the finding: the finding only
   says which object, and a name that matches nothing exactly is refused.
 - sudo: a command that needs root runs as `/usr/bin/sudo <argv>` with the terminal's stdin, stdout
-  and stderr attached, so sudo asks for the password itself. securizame never reads, stores or
+  and stderr attached, so sudo asks for the password itself. segurata never reads, stores or
   pipes a password.
 - Generic actions belong to the core, so any connector can attach them. `file.chmod600` takes the
   file in `evidence.path` (absolute or `~/`), refuses symlinks and non-regular files, and changes the
   mode in-process; the undo is `chmod <old mode> <path>`.
 - An external connector remediates through protocol 2: it declares its actions in `describe`
-  (`remediates`), returns a plan from `securizame-<name> plan` and runs it in
-  `securizame-<name> apply` (`remediate.External`). The core shows the plan and confirms as for a
+  (`remediates`), returns a plan from `segurata-<name> plan` and runs it in
+  `segurata-<name> apply` (`remediate.External`). The core shows the plan and confirms as for a
   built-in, asks for the plan again before applying and refuses one that differs, and refuses any
   plan that needs sudo: a plugin's command line is never on the hand-written allowlist, so the core
   cannot vet it and will not run it as root. The plugin runs its plan as the owner; the allowlist
@@ -236,9 +255,9 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
 ## Accepted risks
 
 ```
-securizame accept <finding-id> --reason "..." [--until YYYY-MM-DD]
-securizame accept --list
-securizame unaccept <finding-id>
+segurata accept <finding-id> --reason "..." [--until YYYY-MM-DD]
+segurata accept --list
+segurata unaccept <finding-id>
 ```
 
 Some findings describe a risk the owner keeps on purpose (Brave's remote debugging port, which
@@ -247,12 +266,12 @@ enough) and records it in the tracker (`internal/accept` on `internal/tracker`):
 links the finding gets status `accepted` with `{"reason", "until", "accepted_at"}`. When that item
 groups other findings too (one of five orgs), the finding first moves to an item of its own, so
 the others stay open. `unaccept` takes the finding id (or a unique prefix) or the item id and
-opens the item again. Acceptances recorded in the former `~/.config/securizame/accepted.json` are
+opens the item again. Acceptances recorded in the former `~/.config/segurata/accepted.json` are
 imported once (see "Tracker").
 
 - The core stamps every finding of an inventory with `"accepted": {"reason", "accepted_at",
   "until", "expired"}` when an item holding its id carries an acceptance. The finding stays in the JSONL; the summary
-  and `remediate --list` leave it out and say "N accepted findings hidden; see securizame accept
+  and `remediate --list` leave it out and say "N accepted findings hidden; see segurata accept
   --list". `remediate` re-reads the file, so an acceptance made after the run counts.
 - `until` is the last day it applies. After it the finding shows again, its title followed by
   "(acceptance expired)", and the next sync opens the item again.
@@ -263,7 +282,7 @@ imported once (see "Tracker").
 
 ## Report
 
-`securizame report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
+`segurata report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
 changes:
 
 - the latest run of every connector instance, through `remediate.LatestFiles` and
@@ -295,17 +314,17 @@ report.
 ## Scheduled runs
 
 ```
-securizame schedule install [--every 24h] [--connectors a,b] [--apply [--yes]]
-securizame schedule uninstall [--apply [--yes]]
-securizame schedule status
-securizame schedule run [--connectors a,b]        what the agent executes
+segurata schedule install [--every 24h] [--connectors a,b] [--apply [--yes]]
+segurata schedule uninstall [--apply [--yes]]
+segurata schedule status
+segurata schedule run [--connectors a,b]        what the agent executes
 ```
 
 `internal/schedule`. On macOS, `install` builds a launchd user agent,
-`~/Library/LaunchAgents/com.securizame.inventory.plist`, that runs `securizame schedule run` every
+`~/Library/LaunchAgents/com.segurata.inventory.plist`, that runs `segurata schedule run` every
 `--every` (default 24h, at least 1h; `StartInterval`, not at load) from
-`~/.local/state/securizame`, with the PATH of the shell that installed it and its output in
-`~/Library/Logs/securizame/`. Without `--apply` it prints the plist and the
+`~/.segurata`, with the PATH of the shell that installed it and its output in
+`~/Library/Logs/segurata/`. Without `--apply` it prints the plist and the
 `launchctl bootstrap gui/<uid> <plist>` command and changes nothing; with `--apply` it asks on the
 terminal as `remediate` does (`--yes` skips it), writes the plist (mode 644), boots out an agent
 already loaded and bootstraps the new one. `uninstall` boots it out and removes the plist, keeping
@@ -314,29 +333,29 @@ gone by the first run.
 
 One `schedule run`:
 
-1. Reads the high and critical findings of the latest scheduled run (`~/.local/state/securizame/out`),
+1. Reads the high and critical findings of the latest scheduled run (`~/.segurata/out`),
    leaving out accepted ones.
-2. Runs `securizame inventory --out ~/.local/state/securizame/out <connectors>`. Without
+2. Runs `segurata inventory --out ~/.segurata/out <connectors>`. Without
    `--connectors`, every installed connector except those whose `describe` needs `cdp`: the browser
    is rarely running with its debugging port when the agent fires.
 3. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three new
    high or critical findings by title. Titles never carry secrets; evidence is never shown. Each
    is also written to the log.
-4. Runs `securizame report --format md --out ~/.local/state/securizame/last-report.md --dir
-   ~/.local/state/securizame/out`.
+4. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
+   ~/.segurata/out`.
 
-Scheduled inventories live apart from the interactive `out/`; `securizame remediate --out
-~/.local/state/securizame/out --list` works from them.
+Scheduled inventories live apart from the interactive `out/`; `segurata remediate --out
+~/.segurata/out --list` works from them.
 
 On Linux `install` prints the equivalent systemd user service and timer
-(`~/.config/systemd/user/securizame-inventory.{service,timer}`) and the `systemctl --user` commands
+(`~/.config/systemd/user/segurata-inventory.{service,timer}`) and the `systemctl --user` commands
 to enable them; `--apply` is refused there, and new findings go to the journal instead of a
 notification.
 
 ## Doctor
 
 ```
-securizame doctor [--connector name|name:label] [--out out]
+segurata doctor [--connector name|name:label] [--out out]
 ```
 
 `internal/doctor`, read-only. Prints one line per check, `OK`, `WARN` or `FAIL`, each `WARN` and
@@ -376,7 +395,7 @@ connector or instance (the config and state are always checked).
 
 ## External connector protocol (v1, v2)
 
-An external connector is a `securizame-<name>` executable on `PATH`, in any language, discovered
+An external connector is a `segurata-<name>` executable on `PATH`, in any language, discovered
 at start (`connector.Discover`) and wrapped in the `connector.Connector` interface
 (`connector.External`). It answers `describe` with a JSON object and `inventory` with JSON Lines
 records, reading one JSON request (protocol, config, resolved secrets, CDP address) on stdin.
@@ -396,13 +415,13 @@ the request, without writing it to disk. A literal value in the config is reject
 | `keychain:service` | `security find-generic-password -s service -w` (macOS Keychain) |
 | `op://vault/item/field` | `op read` (1Password CLI) |
 
-Config at `~/.config/securizame/config.json` (override with `SECURIZAME_CONFIG`):
+Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 
 ```json
 {
   "cdp_url": "http://127.0.0.1:9222",
   "connectors": {
-    "openai": {"secrets": {"OPENAI_ADMIN_KEY": "keychain:securizame-openai-admin"}},
+    "openai": {"secrets": {"OPENAI_ADMIN_KEY": "keychain:segurata-openai-admin"}},
     "gcp": {"config": {"projects": ["my-project"]}}
   }
 }
@@ -416,8 +435,8 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 `name` selects every instance and `name:label` just one.
 
 ```json
-"openrouter:work":     {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:securizame-openrouter-work"}},
-"openrouter:personal": {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:securizame-openrouter-personal"}}
+"openrouter:work":     {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:segurata-openrouter-work"}},
+"openrouter:personal": {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:segurata-openrouter-personal"}}
 ```
 
 ## v0 connectors
@@ -454,7 +473,7 @@ gitleaks over every repository under `repos_root` is most of a `local-secrets` r
 minutes for ~330 repositories). History only grows, so each repository is scanned in full once and
 then only for the commits added since (`connectors/localsecrets/historycache.go`).
 
-Cache: `~/.cache/securizame/gitleaks/<sha256(repo path)[:16]>.json`, mode 0600, one per
+Cache: `~/.cache/segurata/gitleaks/<sha256(repo path)[:16]>.json`, mode 0600, one per
 repository. It holds the repository path, the cache format version, a hash of the gitleaks
 version and configuration (`GITLEAKS_CONFIG`, `GITLEAKS_CONFIG_TOML`, the repository's
 `.gitleaks.toml` and `.gitleaksignore`), a probe fingerprint of the machine key, the tips (every
@@ -530,7 +549,7 @@ them noise, so the rotation ledger skips them; the dump finding counts them in
 `gitleaks_matches`. AWS access keys, Stripe live keys, GitHub and GitLab tokens and private keys
 keep their impact: those are more often the owner's own credentials than a column of user data.
 
-Cache: `~/.cache/securizame/datadumps/<sha256(repo path)[:16]>.json`, mode 0600, beside the
+Cache: `~/.cache/segurata/datadumps/<sha256(repo path)[:16]>.json`, mode 0600, beside the
 gitleaks cache and named the same way. It holds the tips the history was read at (the same
 `git rev-list --no-walk --all` as the gitleaks cache), the candidates' history facts, sizes and
 header classes by blob id, and the visibility. With unchanged tips a repository costs one
@@ -542,13 +561,13 @@ check (with `skip_git_history: true`, no rg, gitleaks or ssh-keygen pass runs).
 
 ## Rotation ledger
 
-`securizame rotations` turns `local-secrets` findings into a list of secrets to rotate, one item per
+`segurata rotations` turns `local-secrets` findings into a list of secrets to rotate, one item per
 fingerprint. The items are the tracker's rotate items (`internal/tracker/secret.go`: folding,
 priority, reopen rules); `internal/rotation` is the command family on top (list, next, show,
 replace, done, snooze, ignore, reopen). The risk model it shares with the connector lives in
 `internal/secretrisk`, so a finding's severity and an item's priority never disagree.
 
-State: in the tracker (see "Tracker"); the former `~/.local/state/securizame/rotations.json` is
+State: in the tracker (see "Tracker"); the former `~/.segurata/rotations.json` is
 imported once. A rotate item holds redacted hints and fingerprints, never values. Its status is the
 tracker's (`done` reads "rotated" in these commands):
 
@@ -562,8 +581,8 @@ tracker's (`done` reads "rotated" in these commands):
    "locations": [{"path": "~/src/shop/.env", "line": 3, "bucket": "3-local", "tracked": false, "mode": "600",
                   "source": "scan", "kind": "repo", "last_seen": "…"}],
    "used_in": ["~/src/shop/.env"], "rotate_url": "https://dashboard.stripe.com/apikeys"},
- "next": {"who": "you", "action": "Rotate it at https://dashboard.stripe.com/apikeys and copy the new value; securizame puts it in 1 file.",
-          "command": "securizame rotations replace 3f9a12c4", "url": "https://dashboard.stripe.com/apikeys"},
+ "next": {"who": "you", "action": "Rotate it at https://dashboard.stripe.com/apikeys and copy the new value; segurata puts it in 1 file.",
+          "command": "segurata rotations replace 3f9a12c4", "url": "https://dashboard.stripe.com/apikeys"},
  "history": [{"at": "…", "event": "found", "action": "found", "detail": "found in 2 places"}]}
 ```
 
@@ -638,10 +657,10 @@ Priority is impact × exposure, both table-driven:
 ## Redaction
 
 ```
-securizame redact --trails                       dry run: files, matches per file and per type, bytes
-securizame redact --path ~/.claude/projects/-src-shop
-securizame redact --item 3f9a12c4                one rotation item's secret, in every trail
-securizame redact --trails --min-priority P1 --apply [--yes] [--backup]
+segurata redact --trails                       dry run: files, matches per file and per type, bytes
+segurata redact --path ~/.claude/projects/-src-shop
+segurata redact --item 3f9a12c4                one rotation item's secret, in every trail
+segurata redact --trails --min-priority P1 --apply [--yes] [--backup]
 ```
 
 A remediation that rewrites local trail files (`internal/redact`). Transcripts, shell histories
@@ -698,5 +717,5 @@ redaction removes the copy that stays on disk, in backups and in sync tools.
 ## Prior art
 
 Prowler and ScoutSuite already audit AWS, Azure and GCP security posture in depth. When that depth
-is needed they get wrapped as external connectors rather than rewritten. securizame covers what they
+is needed they get wrapped as external connectors rather than rewritten. segurata covers what they
 don't: consumer accounts, personal OAuth grants, AI-provider keys and spend, and local secrets.

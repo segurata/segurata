@@ -1,14 +1,14 @@
 # Manual review of third-party access
 
 Where each service lets you see and revoke the apps connected to your account. Services with a
-connector are inventoried by securizame; the rest have to be reviewed by hand. Review them every
+connector are inventoried by segurata; the rest have to be reviewed by hand. Review them every
 quarter, and right after a service you used to sign in with announces a breach.
 
 Starting list from [amureki/revokeaccess](https://github.com/amureki/revokeaccess), extended with
-the services securizame covers. Links checked on 2026-11-23: signed out, each one redirects to the
+the services segurata covers. Links checked on 2026-11-23: signed out, each one redirects to the
 service's login page.
 
-| Service | Where to revoke | securizame |
+| Service | Where to revoke | segurata |
 |---|---|---|
 | Google | https://myaccount.google.com/connections | `google-personal` |
 | Google Workspace (admin) | Admin console › Security › API controls | `workspace` |

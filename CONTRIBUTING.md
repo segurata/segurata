@@ -15,7 +15,7 @@ go test ./...
 - **Go standard library only.** No third-party modules in `go.mod`. A connector that needs a
   provider SDK calls the provider's official CLI instead, or becomes an external connector.
 - **Inventory is read-only.** A connector lists and reads; it never changes anything. Changes go
-  through `securizame remediate`: one finding, an exact plan shown first, explicit confirmation,
+  through `segurata remediate`: one finding, an exact plan shown first, explicit confirmation,
   and for built-ins only commands on a hand-written allowlist.
 - **No secret values anywhere**: not in findings, statuses, logs, test fixtures, docs or commit
   messages. Tests use obviously fake values and assert they never reach the output.
