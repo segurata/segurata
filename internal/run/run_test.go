@@ -58,7 +58,7 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 	if err != nil || len(res) != 1 || res[0].Err != nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
-	if fk.got.Secrets["OK"] != "s3cret" || fk.got.CDPURL != "http://cdp" || fk.got.Protocol != 1 {
+	if fk.got.Secrets["OK"] != "s3cret" || fk.got.CDPURL != "http://cdp" || fk.got.Protocol != connector.ProtocolVersion {
 		t.Fatalf("request not built right: %+v", fk.got)
 	}
 	if _, leaked := fk.got.Secrets["BAD"]; leaked {

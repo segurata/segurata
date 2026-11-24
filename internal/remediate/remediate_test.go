@@ -188,14 +188,14 @@ func TestVerifyAfterApply(t *testing.T) {
 }
 
 func TestForPicksCoreFileActionsAndRefusesManualFindings(t *testing.T) {
-	if _, err := For(finding.Finding{ID: "x", Remediation: finding.Remediation{Summary: "by hand"}}, nil); err == nil {
+	if _, err := For(finding.Finding{ID: "x", Remediation: finding.Remediation{Summary: "by hand"}}, nil, nil); err == nil {
 		t.Fatal("manual finding should not be remediable")
 	}
-	r, err := For(finding.Finding{Connector: "local-secrets", Remediation: finding.Remediation{Action: ActionChmod600}}, nil)
+	r, err := For(finding.Finding{Connector: "local-secrets", Remediation: finding.Remediation{Action: ActionChmod600}}, nil, nil)
 	if _, ok := r.(Files); err != nil || !ok {
 		t.Fatalf("file.chmod600 belongs to the core: %T %v", r, err)
 	}
-	if _, err := For(finding.Finding{Connector: "nope", Remediation: finding.Remediation{Action: "nope.fix"}}, nil); err == nil {
+	if _, err := For(finding.Finding{Connector: "nope", Remediation: finding.Remediation{Action: "nope.fix"}}, nil, nil); err == nil {
 		t.Fatal("missing connector should fail")
 	}
 }

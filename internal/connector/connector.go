@@ -3,12 +3,19 @@ package connector
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"github.com/segurata/segurata/internal/finding"
 )
 
-const ProtocolVersion = 1
+// ProtocolVersion is the newest external connector protocol the core speaks. Version 2 adds
+// remediation (`plan` and `apply`); the core still speaks version 1 (MinProtocolVersion) to
+// connectors that only inventory. See docs/connectors.md.
+const (
+	ProtocolVersion    = 2
+	MinProtocolVersion = 1
+)
 
 // Description is what `securizame-<name> describe` prints.
 type Description struct {
@@ -17,7 +24,13 @@ type Description struct {
 	Protocol int      `json:"protocol"`
 	Summary  string   `json:"summary"`
 	Needs    []string `json:"needs"` // "cdp", "cli:gcloud", "secret:OPENAI_ADMIN_KEY"
+	// Remediates lists the remediation actions an external connector plans and applies itself
+	// (protocol 2 and later). Built-in connectors leave it empty and implement Remediator.
+	Remediates []string `json:"remediates,omitempty"`
 }
+
+// NeedsCDP reports whether the connector drives the browser over the Chrome DevTools Protocol.
+func (d Description) NeedsCDP() bool { return slices.Contains(d.Needs, "cdp") }
 
 // Request is what the core hands a connector on `inventory`. Secrets arrive already resolved.
 type Request struct {

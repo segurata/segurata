@@ -1,4 +1,4 @@
-// securizame inventories a personal digital footprint. See docs/arquitectura.md.
+// securizame inventories a personal digital footprint. See docs/architecture.md.
 //
 //	securizame connectors                     list built-in and external connectors
 //	securizame inventory [name|name:label ...] run connectors (all when none given)
@@ -8,6 +8,7 @@
 //	securizame rotations sync|list|show|done|snooze|ignore|reopen   ledger of secrets to rotate
 //	securizame accept <finding-id> --reason text [--until YYYY-MM-DD]   keep a risk on purpose
 //	securizame accept --list | securizame unaccept <finding-id>
+//	securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply]   scheduled runs
 package main
 
 import (
@@ -40,7 +41,11 @@ func main() {
 			if e, ok := c.(*connector.External); ok {
 				kind = e.Path
 			}
-			fmt.Printf("%-16s %-8s %s  [needs: %s] (%s)\n", d.Name, d.Version, d.Summary, strings.Join(d.Needs, ", "), kind)
+			remediates := ""
+			if len(d.Remediates) > 0 {
+				remediates = " [remediates: " + strings.Join(d.Remediates, ", ") + "]"
+			}
+			fmt.Printf("%-16s %-8s %s  [needs: %s]%s (%s)\n", d.Name, d.Version, d.Summary, strings.Join(d.Needs, ", "), remediates, kind)
 		}
 	case "inventory":
 		os.Exit(inventory(os.Args[2:]))
@@ -52,6 +57,8 @@ func main() {
 		os.Exit(acceptCLI().Accept(os.Args[2:]))
 	case "unaccept":
 		os.Exit(acceptCLI().Unaccept(os.Args[2:]))
+	case "schedule":
+		os.Exit(scheduleCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -59,7 +66,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|show|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id>")
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|show|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id> | securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply]")
 }
 
 func all() []connector.Connector {

@@ -1,0 +1,28 @@
+# Contributing
+
+## Build and test
+
+```bash
+go build -o securizame ./cmd/securizame
+gofmt -l .                 # must print nothing
+go vet ./...
+go test ./...
+(cd examples/hibp && python3 -m unittest)   # the example external connector
+```
+
+## Rules
+
+- **Go standard library only.** No third-party modules in `go.mod`. A connector that needs a
+  provider SDK calls the provider's official CLI instead, or becomes an external connector.
+- **Inventory is read-only.** A connector lists and reads; it never changes anything. Changes go
+  through `securizame remediate`: one finding, an exact plan shown first, explicit confirmation,
+  and for built-ins only commands on a hand-written allowlist.
+- **No secret values anywhere**: not in findings, statuses, logs, test fixtures, docs or commit
+  messages. Tests use obviously fake values and assert they never reach the output.
+- **No personal data in the repository**: inventories (`out/`) are gitignored; fixtures use
+  `example.com` addresses and made-up names.
+- **English** for code, comments, finding text, docs and commit messages.
+- Every behaviour change comes with a test. External services are faked in tests, never called.
+
+How to write a connector, the finding model and the external protocol:
+[docs/connectors.md](docs/connectors.md). Design: [docs/architecture.md](docs/architecture.md).

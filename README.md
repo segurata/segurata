@@ -14,6 +14,10 @@ go build -o securizame ./cmd/securizame
 ./securizame inventory [name ...]  # all connectors when none is given
 ```
 
+An external connector is any `securizame-<name>` executable on `PATH`, in any language; how to
+write one, built-in or external: [docs/connectors.md](docs/connectors.md). Contributing:
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 Output goes to `out/<date>/<connector>.jsonl` (mode 0600; `out/` is gitignored because it holds
 email addresses and each account's services), with a summary sorted by severity.
 
@@ -288,6 +292,11 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 | `macos.home.private` | `/bin/chmod 700 <home>`, no sudo, when group or others can read the home folder (every user is in `staff`, so 750 is as open as 755; 711 passes, as CIS allows) | `/bin/chmod <old mode> <home>` |
 | `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
 
+External connectors speaking protocol 2 add their own actions (`securizame connectors` lists
+them after `remediates:`). The plan, the confirmation and the check afterwards are the same; the
+connector runs its own plan as you, and securizame refuses any plugin plan that needs sudo
+([docs/connectors.md](docs/connectors.md#plan-v2)).
+
 The home folder path comes from the OS (`os.UserHomeDir`), never from the finding, and the octal
 `chmod` leaves its ACL entries (macOS's `group:everyone deny delete`) in place; the finding's
 evidence lists them.
@@ -328,6 +337,24 @@ the summary and `remediate --list`, which print how many were hidden. With `--un
 again after that day, marked "(acceptance expired)". State: `~/.config/securizame/accepted.json`
 (mode 0600; `SECURIZAME_ACCEPTED` names another file). Details:
 [docs/architecture.md](docs/architecture.md#accepted-risks).
+
+## Scheduled runs
+
+```bash
+./securizame schedule install                         # print the launchd agent; changes nothing
+./securizame schedule install --every 12h --apply     # write and load it, after "Apply? [y/N]"
+./securizame schedule status
+./securizame schedule uninstall --apply
+```
+
+A launchd user agent (`~/Library/LaunchAgents/com.securizame.inventory.plist`) runs an inventory
+every day (or `--every`), writes `~/.local/state/securizame/last-report.md`, and posts a macOS
+notification when a high or critical finding appears that the previous run did not have. By default
+it runs every connector except those that need the browser's debugging port; `--connectors
+macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/securizame/`, inventories to
+`~/.local/state/securizame/out`. Install it from the binary you will keep: the agent runs that
+exact path, with the PATH you had when installing. On Linux it prints a systemd user timer to
+install by hand. Details: [docs/architecture.md](docs/architecture.md#scheduled-runs).
 
 ## Plan
 

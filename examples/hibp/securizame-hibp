@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""securizame-hibp: external securizame connector for Have I Been Pwned (API v3).
+
+For each address in config.emails it asks HIBP which breaches include it and emits one exposure
+finding per breach and address. Standard library only; speaks the securizame external connector
+protocol (docs/connectors.md). Read-only: it only sends GET requests to the breachedaccount
+endpoint.
+
+    securizame-hibp describe
+    securizame-hibp inventory < request.json
+"""
+
+import json
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta, timezone
+
+NAME = "hibp"
+VERSION = "0.1.0"
+PROTOCOL = 2
+SECRET = "HIBP_API_KEY"
+USER_AGENT = "securizame-hibp"
+DEFAULT_BASE_URL = "https://haveibeenpwned.com/api/v3"
+HIBP_URL = "https://haveibeenpwned.com/"
+KEY_URL = HIBP_URL + "API/Key"
+ACCOUNT = "haveibeenpwned"
+DEFAULT_DELAY = 6.0  # seconds between requests: fits a key limited to 10 requests a minute
+MAX_RETRIES = 3  # 429 answers honoured per address before giving up on it
+TIMEOUT = 30
+
+SETUP_HINT = (
+    "set " + SECRET + ": buy an API key at " + KEY_URL + ", store it with: "
+    'security add-generic-password -s securizame-hibp -a "$USER" -w '
+    'and reference it as "keychain:securizame-hibp" under connectors.hibp.secrets '
+    "in ~/.config/securizame/config.json (examples/hibp/README.md)"
+)
+
+PASSWORD_CLASSES = {"passwords", "password hints"}
+# Data that enables fraud or account takeover without a password.
+SENSITIVE_CLASSES = {
+    "auth tokens",
+    "bank account numbers",
+    "credit cards",
+    "credit card cvv",
+    "government issued ids",
+    "partial credit card data",
+    "passport numbers",
+    "security questions and answers",
+    "social security numbers",
+    "private messages",
+}
+SEVERITIES = ["info", "low", "medium", "high", "critical"]
+RECENT = timedelta(days=365)
+OLD = timedelta(days=365 * 5)
+
+
+def describe():
+    return {
+        "name": NAME,
+        "version": VERSION,
+        "protocol": PROTOCOL,
+        "summary": "Breaches in Have I Been Pwned that include the configured email addresses",
+        "needs": ["secret:" + SECRET],
+    }
+
+
+class Emitter:
+    def __init__(self, out):
+        self.out = out
+
+    def _write(self, rec):
+        self.out.write(json.dumps(rec, sort_keys=True) + "\n")
+        self.out.flush()
+
+    def finding(self, f):
+        self._write(dict(f, type="finding"))
+
+    def status(self, account, state, detail=""):
+        self._write({"type": "status", "account": account, "state": state, "detail": detail})
+
+    def log(self, msg):
+        self._write({"type": "log", "msg": msg})
+
+
+class HTTPError(Exception):
+    def __init__(self, code, retry_after=None):
+        super().__init__("HTTP %d" % code)
+        self.code = code
+        self.retry_after = retry_after
+
+
+def http_get(url, headers):
+    """GET url and return (status, body). Raises HTTPError for 4xx/5xx other than 404."""
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        with e:
+            if e.code == 404:
+                return 404, b""
+            retry = e.headers.get("retry-after") if e.headers else None
+        raise HTTPError(e.code, retry) from None
+
+
+def parse_date(s):
+    """Parse an HIBP date ("2013-10-04" or "2013-12-04T00:00:00Z") as an aware UTC datetime."""
+    if not s:
+        return None
+    try:
+        if len(s) == 10:
+            return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return datetime.strptime(s.replace("Z", "+00:00")[:25], "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def rfc3339(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
+
+
+def severity(breach, now):
+    """Severity of one breach for one address, and the reasons, from its data classes and age.
+
+    Passwords or password hints are high; other fraud-enabling data medium; the rest low. A breach
+    first seen within a year goes up one level; one over five years old without passwords goes down
+    one. Fabricated breaches are info and spam lists at most low.
+    """
+    classes = {c.lower() for c in breach.get("DataClasses") or []}
+    reasons = []
+    if breach.get("IsFabricated"):
+        return "info", ["HIBP considers this breach fabricated"]
+    if classes & PASSWORD_CLASSES:
+        level = SEVERITIES.index("high")
+        reasons.append("exposed " + " and ".join(sorted(classes & PASSWORD_CLASSES)))
+    elif classes & SENSITIVE_CLASSES:
+        level = SEVERITIES.index("medium")
+        reasons.append("exposed " + ", ".join(sorted(classes & SENSITIVE_CLASSES)))
+    else:
+        level = SEVERITIES.index("low")
+        reasons.append("no passwords or financial data exposed")
+    dates = [d for d in (parse_date(breach.get("BreachDate")), parse_date(breach.get("AddedDate"))) if d]
+    latest = max(dates) if dates else None
+    if latest and now - latest <= RECENT:
+        level += 1
+        reasons.append("breached or published within the last year")
+    elif latest and now - latest > OLD and not classes & PASSWORD_CLASSES:
+        level -= 1
+        reasons.append("over five years old")
+    if breach.get("IsSpamList"):
+        level = min(level, SEVERITIES.index("low"))
+        reasons.append("spam list: addresses only")
+    return SEVERITIES[max(0, min(level, len(SEVERITIES) - 1))], reasons
+
+
+def to_finding(email, breach, now):
+    sev, reasons = severity(breach, now)
+    title = breach.get("Title") or breach.get("Name")
+    domain = breach.get("Domain") or ""
+    classes = breach.get("DataClasses") or []
+    where = domain or ("the service behind " + title)
+    summary = (
+        "Change the password at %s; if you used the same password anywhere else, change it there "
+        "too, and turn on two-factor authentication where offered." % where
+    )
+    if not set(c.lower() for c in classes) & PASSWORD_CLASSES:
+        summary = "No password in this breach. " + summary
+    shown = ", ".join(c.lower() for c in classes[:4]) + (", …" if len(classes) > 4 else "")
+    return {
+        "account": email,
+        "resource": {"type": "breach", "id": breach.get("Name", ""), "name": title},
+        "kind": "exposure",
+        "severity": sev,
+        "title": "In the %s breach (%s): %s" % (title, breach.get("BreachDate") or "date unknown", shown),
+        "evidence": {
+            "domain": domain,
+            "breach_date": breach.get("BreachDate"),
+            "added_date": breach.get("AddedDate"),
+            "data_classes": classes,
+            "pwn_count": breach.get("PwnCount"),
+            "verified": breach.get("IsVerified"),
+            "sensitive": breach.get("IsSensitive"),
+            "spam_list": breach.get("IsSpamList"),
+            "malware": breach.get("IsMalware"),
+            "stealer_log": breach.get("IsStealerLog"),
+            "reasons": reasons,
+            "hibp_url": HIBP_URL + "PwnedWebsites#" + breach.get("Name", ""),
+        },
+        "created_at": rfc3339(parse_date(breach.get("BreachDate"))),
+        "last_used_at": None,
+        "remediation": {"summary": summary, "url": "https://" + domain if domain else HIBP_URL},
+    }
+
+
+def base_url(config):
+    """The API base: the real one, or a local test server. Anything else would send the key away."""
+    url = config.get("base_url") or DEFAULT_BASE_URL
+    parsed = urllib.parse.urlparse(url)
+    local = parsed.hostname in ("127.0.0.1", "localhost", "::1")
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and local):
+        raise ValueError("base_url must be https (or http on localhost for tests)")
+    return url.rstrip("/")
+
+
+def inventory(req, emit, get=http_get, sleep=time.sleep, now=None):
+    now = now or datetime.now(timezone.utc)
+    config = req.get("config") or {}
+    key = (req.get("secrets") or {}).get(SECRET, "")
+    if not key:
+        emit.status(ACCOUNT, "missing_credentials", SETUP_HINT)
+        return
+    emails = [e.strip() for e in config.get("emails") or [] if isinstance(e, str) and e.strip()]
+    if not emails:
+        emit.status(ACCOUNT, "error", 'no addresses to check: add "emails": ["you@example.com"] under connectors.hibp.config')
+        return
+    try:
+        base = base_url(config)
+    except ValueError as e:
+        emit.status(ACCOUNT, "error", str(e))
+        return
+    delay = float(config.get("request_delay_seconds", DEFAULT_DELAY))
+    query = {"truncateResponse": "false"}
+    if config.get("include_unverified") is False:
+        query["IncludeUnverified"] = "false"
+    headers = {"hibp-api-key": key, "user-agent": USER_AGENT}
+    for i, email in enumerate(emails):
+        if i > 0 and delay > 0:
+            sleep(delay)
+        url = "%s/breachedaccount/%s?%s" % (base, urllib.parse.quote(email, safe=""), urllib.parse.urlencode(query))
+        if not check(email, url, headers, emit, get, sleep, now):
+            return
+
+
+def check(email, url, headers, emit, get, sleep, now):
+    """Check one address. Returns False when the remaining addresses cannot be checked either."""
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            code, body = get(url, headers)
+            break
+        except HTTPError as e:
+            if e.code == 429 and attempt < MAX_RETRIES:
+                wait = int(e.retry_after) if (e.retry_after or "").isdigit() else 10
+                emit.log("rate limited; waiting %d s" % wait)
+                sleep(wait)
+                continue
+            if e.code == 401:
+                emit.status(ACCOUNT, "missing_credentials", "HIBP rejected the API key (401): check it at " + KEY_URL + ". " + SETUP_HINT)
+                return False
+            if e.code == 403:
+                emit.status(ACCOUNT, "error", "HIBP refused the request (403): the key's subscription may not cover this, or the user agent was blocked")
+                return False
+            detail = {
+                400: "HIBP says the address is not valid (400)",
+                429: "still rate limited after %d retries (429): lower the request rate with request_delay_seconds" % MAX_RETRIES,
+                503: "HIBP is unavailable (503): try again later",
+            }.get(e.code, "HIBP answered HTTP %d" % e.code)
+            emit.status(email, "error", detail)
+            return e.code not in (429, 503)
+        except (urllib.error.URLError, OSError) as e:
+            emit.status(email, "error", "could not reach HIBP: %s" % getattr(e, "reason", e))
+            return False
+    if code == 404:
+        emit.status(email, "ok", "not in any breach HIBP can disclose")
+        return True
+    try:
+        breaches = json.loads(body)
+    except ValueError:
+        emit.status(email, "error", "HIBP returned something that is not JSON")
+        return True
+    for b in breaches:
+        emit.finding(to_finding(email, b, now))
+    emit.status(email, "ok", "%d breaches" % len(breaches))
+    return True
+
+
+def main(argv, stdin=sys.stdin, stdout=sys.stdout):
+    if len(argv) != 2:
+        sys.stderr.write("usage: securizame-hibp describe | inventory < request.json\n")
+        return 2
+    if argv[1] == "describe":
+        stdout.write(json.dumps(describe()) + "\n")
+        return 0
+    if argv[1] == "inventory":
+        try:
+            req = json.load(stdin)
+        except ValueError:
+            sys.stderr.write("securizame-hibp: the request on stdin is not JSON\n")
+            return 2
+        if req.get("protocol") not in (1, 2):
+            sys.stderr.write("securizame-hibp: unsupported protocol %r\n" % req.get("protocol"))
+            return 2
+        inventory(req, Emitter(stdout))
+        return 0
+    sys.stderr.write("securizame-hibp: unknown subcommand %r\n" % argv[1])
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
