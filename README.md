@@ -213,7 +213,9 @@ location, `used_in` (the config, `.env` and rc files that hold it, where the new
 and the provider page where it is rotated. State lives outside the repository, at
 `~/.local/state/securizame/rotations.json` (mode 0600; `SECURIZAME_STATE` names another
 directory), and holds no secret values. A secret marked done that the next sync still finds with
-the same fingerprint is reopened: the old value is still somewhere. Generic matches are left out
+the same fingerprint in a working file (config, `.env`, rc, repo working tree) is reopened: a
+program still reads the old value there. Copies only in git history, transcripts or logs are dead
+after revocation, so the item stays rotated with a one-time note. Generic matches are left out
 unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture.md#rotation-ledger).
 
 The guided loop is `next`, rotate at the provider, `replace`, `next` again. `next` prints one item:
