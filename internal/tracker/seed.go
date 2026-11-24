@@ -67,13 +67,15 @@ var seedDecisions = []seedDecision{
 // seed adds the themes and seeded decisions that are missing. A theme segurata defines keeps the
 // title and description of this version, so renaming one here renames it in every tracker.
 func (t *Tracker) seed(now time.Time) {
+	defined := map[string]Theme{}
+	for _, th := range themes {
+		defined[th.ID] = th
+	}
 	have := map[string]bool{}
-	for i := range t.Themes {
-		have[t.Themes[i].ID] = true
-		for _, th := range themes {
-			if th.ID == t.Themes[i].ID {
-				t.Themes[i] = th
-			}
+	for i, th := range t.Themes {
+		have[th.ID] = true
+		if def, ok := defined[th.ID]; ok {
+			t.Themes[i] = def
 		}
 	}
 	for _, th := range themes {

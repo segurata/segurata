@@ -192,7 +192,11 @@ func appsTitle(p *proposal) string {
 	return textfmt.Count(n, noun[0], noun[1]) + " " + rest
 }
 
-func lastWord(s string) string { f := strings.Fields(s); return f[len(f)-1] }
+// lastWord is the head noun of an app noun: "integration" for "Notion integration".
+func lastWord(s string) string {
+	f := strings.Fields(s)
+	return f[len(f)-1]
+}
 
 var (
 	quoted = regexp.MustCompile(`"[^"]*"`)
