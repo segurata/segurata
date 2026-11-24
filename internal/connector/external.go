@@ -16,6 +16,7 @@ import (
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/searchpath"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const externalPrefix = "segurata-"
@@ -119,16 +120,30 @@ func (d Description) validate() error {
 func (e *External) Describe() Description { return e.desc }
 
 // Inventory runs `segurata-<name> inventory`. The request carries the protocol version the
-// connector declared, so a version 1 connector never sees a version it does not know.
+// connector declared, so a version 1 connector never sees a version it does not know. A record the
+// core cannot use fails the run once the rest has been read: dropping it silently would make what
+// it reported look resolved.
 func (e *External) Inventory(ctx context.Context, req Request, emit Emitter) error {
 	req.Protocol = e.desc.Protocol
 	var stderr bytes.Buffer
-	err := e.stream(ctx, "inventory", req, &stderr, func(line []byte) { decodeRecord(line, e.desc.Name, emit) })
+	var malformed int
+	var first error
+	err := e.stream(ctx, "inventory", req, &stderr, func(line []byte) {
+		if err := decodeRecord(line, e.desc.Name, emit); err != nil {
+			if malformed++; first == nil {
+				first = err
+			}
+		}
+	})
+	diag := strings.TrimSpace(stderr.String())
 	if err != nil {
-		return fmt.Errorf("%s: %w: %s", e.desc.Name, err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("%s: %w: %s", e.desc.Name, err, diag)
 	}
-	if s := strings.TrimSpace(stderr.String()); s != "" {
-		emit.Log(s)
+	if diag != "" {
+		emit.Log(diag)
+	}
+	if malformed > 0 {
+		return fmt.Errorf("%s: %s, first: %w", e.desc.Name, textfmt.Count(malformed, "malformed record", "malformed records"), first)
 	}
 	return nil
 }
@@ -253,39 +268,49 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-// decodeRecord routes one JSON line to the emitter by its "type" field.
-func decodeRecord(line []byte, name string, emit Emitter) {
+// decodeRecord routes one JSON line to the emitter by its "type" field. It returns an error, and
+// emits nothing, for a line that is not a record of a known type with the fields that type needs.
+func decodeRecord(line []byte, name string, emit Emitter) error {
 	var head struct {
 		Type string `json:"type"`
 		Msg  string `json:"msg"`
 	}
-	if json.Unmarshal(line, &head) != nil {
-		emit.Log(fmt.Sprintf("%s: unparseable line ignored", name))
-		return
+	if err := json.Unmarshal(line, &head); err != nil {
+		return fmt.Errorf("unparseable line: %w", err)
 	}
 	switch head.Type {
 	case "finding":
 		var f finding.Finding
-		if json.Unmarshal(line, &f) == nil {
-			f.Connector = name
-			emit.Finding(f)
+		if err := json.Unmarshal(line, &f); err != nil {
+			return fmt.Errorf("finding: %w", err)
 		}
+		if !f.Severity.Valid() || f.Remediation.Severity != "" && !f.Remediation.Severity.Valid() {
+			return fmt.Errorf("finding %s/%s: severity %q (remediation %q) is not info, low, medium, high or critical",
+				f.Resource.Type, f.Resource.ID, f.Severity, f.Remediation.Severity)
+		}
+		f.Connector = name
+		emit.Finding(f)
 	case "status":
 		var s finding.Status
-		if json.Unmarshal(line, &s) == nil {
-			s.Connector = name
-			emit.Status(s)
+		if err := json.Unmarshal(line, &s); err != nil {
+			return fmt.Errorf("status: %w", err)
 		}
+		s.Connector = name
+		emit.Status(s)
 	case "scope":
 		var sc struct {
 			Scope     string `json:"scope"`
 			Inspected bool   `json:"inspected"`
 			Reason    string `json:"reason"`
 		}
-		if json.Unmarshal(line, &sc) == nil {
-			emit.Scope(sc.Scope, sc.Inspected, sc.Reason)
+		if err := json.Unmarshal(line, &sc); err != nil {
+			return fmt.Errorf("scope: %w", err)
 		}
+		emit.Scope(sc.Scope, sc.Inspected, sc.Reason)
 	case "log":
 		emit.Log(head.Msg)
+	default:
+		return fmt.Errorf("unknown record type %q", head.Type)
 	}
+	return nil
 }

@@ -92,7 +92,7 @@ One JSON object per finding (`internal/finding`):
 | `scope` | Connector | Optional: the part of the account the finding belongs to when the connector inspects the account in parts (a repository, a project, a service); see "Coverage". Not part of the id |
 | `resource` | Connector | `type` and `id` identify the thing; `name` is for people |
 | `kind` | Connector | `grant` (third-party access), `credential` (key, token, service account), `setting` (security configuration), `spend` (spend, budget or limit), `exposure` (secret or personal data in plain sight) |
-| `severity` | Connector | `info`, `low`, `medium`, `high`, `critical` (see "Severity") |
+| `severity` | Connector | `info`, `low`, `medium`, `high`, `critical`, exactly; anything else from an external connector fails the run (see "Severity") |
 | `title` | Connector | One line a person understands without the evidence. No secret, no token |
 | `evidence` | Connector | Whatever backs the finding: scopes, dates, paths, counts. Never a secret value |
 | `created_at`, `last_used_at` | Connector | What the provider reports, RFC 3339. `null` when it reports nothing, never a made-up date |
@@ -302,7 +302,10 @@ above.
   connector could not start at all.
 - stderr is for human diagnostics; the core shows it with `--verbose`.
 - The core takes the connector name from `describe`, never from the records, and computes ids.
-- Unparseable lines are ignored with a log line.
+- Every stdout line must be a `finding`, `status`, `scope` or `log` record whose fields have the
+  documented types, and every finding needs one of the five severities, in lowercase. The core
+  keeps the records it can use but fails the run on any other line ("2 malformed records, first:
+  …"), so nothing the connector reported earlier closes as resolved.
 
 ### `plan` (v2)
 

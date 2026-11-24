@@ -122,12 +122,46 @@ esac
 	}
 }
 
-type recorder struct{ logs []string }
+type recorder struct {
+	logs     []string
+	findings []finding.Finding
+	statuses []finding.Status
+}
 
-func (r *recorder) Finding(finding.Finding)    {}
-func (r *recorder) Status(finding.Status)      {}
+func (r *recorder) Finding(f finding.Finding)  { r.findings = append(r.findings, f) }
+func (r *recorder) Status(s finding.Status)    { r.statuses = append(r.statuses, s) }
 func (r *recorder) Scope(string, bool, string) {}
 func (r *recorder) Log(m string)               { r.logs = append(r.logs, m) }
+
+// A record the core cannot use must fail the run: dropping it would close its item as verified.
+func TestInventoryFailsOnMalformedRecords(t *testing.T) {
+	good := `{"type":"finding","account":"a","resource":{"type":"t","id":"ok"},"kind":"grant","severity":"high","title":"ok"}`
+	malformed := map[string]string{
+		"not json":            `not json`,
+		"evidence shape":      `{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"severity":"high","evidence":"text"}`,
+		"capitalised":         `{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"severity":"High"}`,
+		"no severity":         `{"type":"finding","account":"a","resource":{"type":"t","id":"x"}}`,
+		"remediation level":   `{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"severity":"low","remediation":{"severity":"urgent"}}`,
+		"status shape":        `{"type":"status","account":["a"],"state":"ok"}`,
+		"scope shape":         `{"type":"scope","scope":"repo:a/b","inspected":"no"}`,
+		"unknown record type": `{"type":"Finding","account":"a"}`,
+	}
+	for why, line := range malformed {
+		e := connectortest.Plugin(t, "m", `case "$1" in
+describe) echo '{"name":"m","protocol":2}';;
+inventory) cat >/dev/null; echo '`+good+`'; echo '`+line+`';;
+esac
+`)
+		var rec recorder
+		err := e.Inventory(context.Background(), connector.Request{}, &rec)
+		if err == nil || !strings.Contains(err.Error(), "1 malformed record") {
+			t.Errorf("%s: err = %v", why, err)
+		}
+		if len(rec.findings) != 1 || rec.findings[0].Resource.ID != "ok" {
+			t.Errorf("%s: findings %+v; the well-formed one must still arrive", why, rec.findings)
+		}
+	}
+}
 
 func TestRequestPlanDecodesStrictly(t *testing.T) {
 	plugin := func(reply string) *connector.External {
