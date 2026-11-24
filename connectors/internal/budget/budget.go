@@ -25,7 +25,10 @@ type Threshold struct {
 // Scope is what spend a budget counts. Units empty means every unit of the container.
 type Scope struct {
 	Units   []string // units of the container (GCP projects) the budget is limited to
-	Filters []string // any other narrowing, worded for people ("2 services"); part of the identity
+	Filters []string // any other narrowing, worded for people ("14 services")
+	// Detail is the exact narrowing the short Filters words leave out (the 14 service ids): never
+	// shown, compared when looking for identical budgets.
+	Detail string
 }
 
 // Budget is one provider budget in neutral terms.
@@ -385,7 +388,7 @@ func (j judge) describe(b Budget) string {
 func identity(b Budget) string {
 	units, filters := slices.Sorted(slices.Values(b.Scope.Units)), slices.Sorted(slices.Values(b.Scope.Filters))
 	return strings.Join([]string{number(b.Amount), b.Currency, b.Period, strconv.FormatBool(b.LastPeriod),
-		strings.Join(units, "\x00"), strings.Join(filters, "\x00")}, "\x01")
+		strings.Join(units, "\x00"), strings.Join(filters, "\x00"), b.Scope.Detail}, "\x01")
 }
 
 func evidence(b Budget) map[string]any {

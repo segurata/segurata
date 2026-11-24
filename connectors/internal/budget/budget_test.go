@@ -101,7 +101,9 @@ func TestDuplicatesGroupSameScopeAmountAndPeriod(t *testing.T) {
 	quarterly.Period = PeriodQuarter
 	scoped := monthly("s1", "Maps", 75, ok...)
 	scoped.Scope.Units = []string{"shop"}
-	all := []Budget{maps1, maps2, other, quarterly, scoped}
+	narrowed := monthly("n1", "Maps", 75, ok...)
+	narrowed.Scope.Detail = "services/AAAA,services/BBBB,services/CCCC"
+	all := []Budget{maps1, maps2, other, quarterly, scoped, narrowed}
 	for i := range all {
 		all[i].Actions = []string{ActionPubSub}
 	}
@@ -109,7 +111,7 @@ func TestDuplicatesGroupSameScopeAmountAndPeriod(t *testing.T) {
 	got := titles(fs)
 	group := got["Budgets 'Maps', 'Maps' and 'Other name' on billing account BA-1 are the same (75 EUR/month, all projects): keep one"]
 	if group.Severity != finding.SevLow || group.Resource.ID != "BA-1/m1+m2+o1" {
-		t.Fatalf("a copy with another name is still a copy, other periods and scopes are not:\n%v", got)
+		t.Fatalf("a copy with another name is still a copy, other periods, scopes and filter details are not:\n%v", got)
 	}
 	two := Evaluate(container(), []Budget{maps1, maps2}, wording)
 	if _, ok := titles(two)["2 budgets named 'Maps' on billing account BA-1 are the same (75 EUR/month, all projects): delete one"]; !ok {

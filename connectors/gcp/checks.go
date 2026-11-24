@@ -320,12 +320,23 @@ func (b gcpBudget) neutral(currency string, ids map[string]string) budget.Budget
 	for _, a := range f.ResourceAncestors {
 		nb.Scope.Filters = append(nb.Scope.Filters, a)
 	}
-	if n := len(f.Services); n > 0 {
-		nb.Scope.Filters = append(nb.Scope.Filters, countOf(n, "service", f.Services))
+	var detail []string
+	for _, list := range []struct {
+		noun  string
+		items []string
+	}{{"service", f.Services}, {"subaccount", f.Subaccounts}} {
+		if len(list.items) == 0 {
+			continue
+		}
+		sorted := slices.Sorted(slices.Values(list.items))
+		if len(sorted) <= 2 {
+			nb.Scope.Filters = append(nb.Scope.Filters, list.noun+"s "+strings.Join(sorted, ", "))
+			continue
+		}
+		nb.Scope.Filters = append(nb.Scope.Filters, fmt.Sprintf("%d %ss", len(sorted), list.noun))
+		detail = append(detail, sorted...)
 	}
-	if n := len(f.Subaccounts); n > 0 {
-		nb.Scope.Filters = append(nb.Scope.Filters, countOf(n, "subaccount", f.Subaccounts))
-	}
+	nb.Scope.Detail = strings.Join(detail, ",")
 	for _, k := range slices.Sorted(maps.Keys(f.Labels)) {
 		nb.Scope.Filters = append(nb.Scope.Filters, fmt.Sprintf("label %s=%v", k, f.Labels[k]))
 	}
@@ -350,15 +361,6 @@ func (b gcpBudget) neutral(currency string, ids map[string]string) budget.Budget
 		nb.Actions = append(nb.Actions, budget.ActionSpendCap)
 	}
 	return nb
-}
-
-// countOf names a short list in full and a long one by its count, keeping the identity exact.
-func countOf(n int, noun string, items []string) string {
-	sorted := slices.Sorted(slices.Values(items))
-	if n <= 2 {
-		return noun + "s " + strings.Join(sorted, ", ")
-	}
-	return fmt.Sprintf("%d %ss (%s)", n, noun, finding.StableID(sorted...)[:6])
 }
 
 // billingWording is how the shared budget rules speak about a GCP billing account.

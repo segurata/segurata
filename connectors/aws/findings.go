@@ -153,7 +153,8 @@ func (b awsBudget) neutral(ns []notification) budget.Budget {
 		nb.Scope.Filters = append(nb.Scope.Filters, k+": "+strings.Join(b.CostFilters[k], ", "))
 	}
 	if raw := strings.TrimSpace(string(b.FilterExpression)); raw != "" && raw != "{}" && raw != "null" {
-		nb.Scope.Filters = append(nb.Scope.Filters, "filter "+finding.StableID(raw)[:6])
+		nb.Scope.Filters = append(nb.Scope.Filters, "cost filter")
+		nb.Scope.Detail = raw
 	}
 	for _, n := range ns {
 		if n.ComparisonOperator == "LESS_THAN" {
