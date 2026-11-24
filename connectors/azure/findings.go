@@ -83,7 +83,8 @@ func secretFinding(a app, p passwordCredential, now time.Time) finding.Finding {
 	case end.Before(now):
 		f.Severity = finding.SevLow
 		f.Title = fmt.Sprintf("Client secret of app %q expired on %s and is still registered", a.DisplayName, day(*end))
-		f.Remediation.Summary = "Delete the expired secret."
+		f.Remediation.Summary = "Delete the expired secret. `segurata remediate` deletes every expired secret of the tenant in one plan."
+		f.Remediation.Action = ActionDeleteExpiredSecrets
 	case end.Sub(now) <= expiringWithin:
 		f.Severity = finding.SevMedium
 		f.Title = fmt.Sprintf("Client secret of app %q expires %s, in %d days", a.DisplayName, day(*end), int(end.Sub(now).Hours()/24))
