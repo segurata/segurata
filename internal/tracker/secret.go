@@ -37,6 +37,10 @@ type Location struct {
 	Source   string    `json:"source"` // scan | gitleaks | name | ssh
 	Kind     string    `json:"kind"`   // config | repo | transcript | history | log
 	Remote   bool      `json:"remote,omitempty"`
+	Repo     string    `json:"repo,omitempty"`   // git history: the repository
+	Date     string    `json:"date,omitempty"`   // git history: date of the first commit seen, YYYY-MM-DD
+	Origin   string    `json:"origin,omitempty"` // whose repository: secretrisk.OriginOwned, OriginThirdParty, OriginForkUpstream
+	Reused   bool      `json:"reused,omitempty"` // a third-party copy of a value the owner also holds
 	LastSeen time.Time `json:"last_seen"`
 }
 
@@ -52,8 +56,12 @@ func (l Location) Working() bool {
 	return l.Source != "gitleaks" && (l.Kind == "config" || l.Kind == "repo")
 }
 
-// Spot is how exposed this location left the secret.
+// Spot is how exposed this location left the secret: a copy in someone else's repository exposes
+// the upstream's secret, not the owner's.
 func (l Location) Spot() secretrisk.Spot {
+	if s, ok := secretrisk.UpstreamSpot(l.Origin, l.Reused); ok {
+		return s
+	}
 	return secretrisk.Where(l.Source, l.Kind, l.Mode, l.Tracked, l.Remote)
 }
 
@@ -266,7 +274,8 @@ func bestSighting(g []Sighting) Sighting {
 
 func locationOf(ev secretrisk.Evidence, seen time.Time) Location {
 	return Location{Path: ev.Path, Line: ev.Line, Bucket: ev.Bucket, Tracked: ev.Tracked, Mode: ev.Mode,
-		Source: ev.Source, Kind: ev.Kind, Remote: ev.Remote, LastSeen: seen.UTC()}
+		Source: ev.Source, Kind: ev.Kind, Remote: ev.Remote, Repo: ev.Repo, Date: ev.Date, Origin: ev.Origin,
+		Reused: ev.Reused, LastSeen: seen.UTC()}
 }
 
 // merge adds or updates one location.
@@ -330,8 +339,10 @@ func (it *Item) worstSpot() (secretrisk.Spot, bool) {
 	return best, found
 }
 
-// spotOrder breaks ties between spots of the same exposure level.
-var spotOrder = map[string]int{"git+remote": 7, "transcript": 6, "git": 5, "readable": 4, "history": 3, "log": 2, "local": 1}
+// spotOrder breaks ties between spots of the same exposure level. Copies in other people's
+// repositories rank last.
+var spotOrder = map[string]int{"git+remote": 7, "transcript": 6, "git": 5, "readable": 4, "history": 3, "log": 2, "local": 1,
+	secretrisk.OriginThirdParty: 0, secretrisk.OriginForkUpstream: 0}
 
 func spotRank(s secretrisk.Spot) int { return int(s.Level)*10 + spotOrder[s.Label] }
 
@@ -403,10 +414,10 @@ func (it *Item) refreshSecret() {
 	it.secretTitleAndNext()
 }
 
-// secretTitleAndNext names a rotate item by its type and redacted hint, and says how to rotate it.
+// secretTitleAndNext names a rotate item and says how to rotate it.
 func (it *Item) secretTitleAndNext() {
 	s := it.Secret
-	it.Title = strings.TrimSpace(secretrisk.TypeFor(s.Type, s.Redacted).Label + " " + s.Redacted)
+	it.Title = it.secretTitle()
 	where := "in the provider's console"
 	if s.RotateURL != "" {
 		where = "at " + s.RotateURL
@@ -423,6 +434,104 @@ func (it *Item) secretTitleAndNext() {
 		n.Command = "segurata rotations replace " + s.ID
 	}
 	it.Next = n
+}
+
+// secretTitle names a rotate item by what it is and where it was found worst: "<label> <hint> in
+// <repo>:<file> (+N places), committed YYYY-MM". The hint is left out when it is not one value
+// ("PEM"); the date is the earliest commit among the locations.
+func (it *Item) secretTitle() string {
+	s := it.Secret
+	title := secretrisk.TypeFor(s.Type, s.Redacted).Label
+	if _, single := secretrisk.ParseHint(s.Redacted); single {
+		title += " " + s.Redacted
+	}
+	primary, ok := it.primaryLocation()
+	if !ok {
+		return title
+	}
+	title += " in " + primary.Name()
+	if n := len(s.Locations) - 1; n > 0 {
+		title += fmt.Sprintf(" (+%d %s)", n, textfmt.Plural(n, "place", "places"))
+	}
+	if d := it.firstCommitted(); d != "" {
+		title += ", committed " + d[:7]
+	}
+	return title
+}
+
+// primaryLocation is the location that exposed the secret the most; among equals, the owner's
+// repository, then the most recent commit, then the path.
+func (it *Item) primaryLocation() (Location, bool) {
+	locs := it.Secret.Locations
+	if len(locs) == 0 {
+		return Location{}, false
+	}
+	best := locs[0]
+	for _, l := range locs[1:] {
+		if r, br := spotRank(l.Spot()), spotRank(best.Spot()); r != br {
+			if r > br {
+				best = l
+			}
+			continue
+		}
+		if lo, bo := l.Origin == secretrisk.OriginOwned, best.Origin == secretrisk.OriginOwned; lo != bo {
+			if lo {
+				best = l
+			}
+			continue
+		}
+		if l.Date != best.Date {
+			if l.Date > best.Date {
+				best = l
+			}
+			continue
+		}
+		if l.Path < best.Path {
+			best = l
+		}
+	}
+	return best, true
+}
+
+// Name is the location as a title shows it: <repo>:<file> for git history (the repository
+// without its ~/src/ prefix), else the path.
+func (l Location) Name() string {
+	if l.Repo != "" && strings.HasPrefix(l.Path, l.Repo+"/") {
+		return strings.TrimPrefix(l.Repo, "~/src/") + ":" + strings.TrimPrefix(l.Path, l.Repo+"/")
+	}
+	return l.Path
+}
+
+// firstCommitted is the earliest commit date among the locations, "" when none was committed.
+func (it *Item) firstCommitted() string {
+	first := ""
+	for _, l := range it.Secret.Locations {
+		if len(l.Date) >= 7 && (first == "" || l.Date < first) {
+			first = l.Date
+		}
+	}
+	return first
+}
+
+// lastCommitted is the latest commit date among the locations, "" when none was committed.
+func (it *Item) lastCommitted() string {
+	last := ""
+	for _, l := range it.Secret.Locations {
+		if l.Date > last {
+			last = l.Date
+		}
+	}
+	return last
+}
+
+// owned reports whether a location is in one of the owner's repositories.
+func (it *Item) owned() bool {
+	for _, l := range it.Secret.Locations {
+		if l.Origin == secretrisk.OriginOwned {
+			return true
+		}
+	}
+	return false
 }
 
 // reopenedStillPresent: the last done/reopen event is an automatic reopen.

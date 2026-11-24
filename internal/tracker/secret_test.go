@@ -254,3 +254,64 @@ func TestSyncLowersImpactWhenTheCurrentSightingIsLess(t *testing.T) {
 		t.Fatalf("the same item seen as a temporary credential must drop: impact=%s priority=%s", it.Secret.Impact, it.Priority)
 	}
 }
+
+func TestSecretTitleNamesTheWorstPlaceAndTheCommitDate(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	hist := ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/src/acme/shop/config/old.env", "gitleaks", "repo", "", true, true)
+	hist.Repo, hist.Date, hist.Redacted = "~/src/acme/shop", "2023-04-09", "sk_live_…a1b2(48)"
+	later := hist
+	later.Path, later.Date = "~/src/acme/shop/config/new.env", "2024-06-01"
+	local := ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/src/acme/shop/.env", "scan", "repo", "600", false, false)
+	local.Redacted = hist.Redacted
+	pem := ev("bbbbbbbbbbbbbbbb", "private-key", "~/.ssh/deploy.pem", "scan", "config", "600", false, false)
+	pem.Redacted = "PEM"
+	l.SyncSecrets([]Sighting{sight(hist), sight(later), sight(local), sight(pem)}, t0, false)
+	s, _ := l.FindRotate("aaaa")
+	if want := "Stripe live secret key sk_live_…a1b2(48) in acme/shop:config/new.env (+2 places), committed 2023-04"; s.Title != want {
+		t.Errorf("title %q, want %q", s.Title, want)
+	}
+	k, _ := l.FindRotate("bbbb")
+	if k.Title != "Private key in ~/.ssh/deploy.pem" {
+		t.Errorf("title %q", k.Title)
+	}
+}
+
+func TestSortPrefersOwnedRepositoriesAndRecentCommits(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	leak := func(fp, date, origin string) Sighting {
+		e := ev(fp, "aws-access-key-id", "~/src/r"+fp[:1]+"/k.env", "gitleaks", "repo", "", true, true)
+		e.Redacted, e.Date, e.Origin = "AKIA…(20)", date, origin
+		return sight(e)
+	}
+	l.SyncSecrets([]Sighting{
+		leak("1111111111111111", "2025-01-01", ""),
+		leak("2222222222222222", "2019-01-01", secretrisk.OriginOwned),
+		leak("3333333333333333", "2024-01-01", secretrisk.OriginOwned),
+	}, t0, false)
+	items := append([]*Item{}, l.Items...)
+	Sort(items)
+	var got []string
+	for _, it := range items {
+		got = append(got, it.Secret.ID[:1])
+	}
+	if strings.Join(got, ",") != "3,2,1" {
+		t.Errorf("order %v", got)
+	}
+}
+
+func TestUpstreamLocationsDoNotRaisePriority(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	mine := ev("aaaaaaaaaaaaaaaa", "github", "~/.config/gh/hosts.yml", "scan", "config", "600", false, false)
+	theirs := ev("aaaaaaaaaaaaaaaa", "github", "~/src/lms/config/ci.yml", "gitleaks", "repo", "", true, true)
+	theirs.Origin = secretrisk.OriginThirdParty
+	l.SyncSecrets([]Sighting{sight(mine), sight(theirs)}, t0, true)
+	it := l.Items[0]
+	if it.Priority != secretrisk.P2 || it.WorstLabel() != "local" {
+		t.Errorf("a third-party copy not tied to the owner raised the item: %s %s", it.Priority, it.WorstLabel())
+	}
+	theirs.Reused = true
+	l.SyncSecrets([]Sighting{sight(mine), sight(theirs)}, t0, true)
+	if it.Priority != secretrisk.P0 {
+		t.Errorf("the owner's token pushed to a third-party repository: %s", it.Priority)
+	}
+}
