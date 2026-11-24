@@ -77,6 +77,14 @@ profile's name, its access key id (emitted redacted) and whether it has a sessio
 values are skipped as the file is read. Profiles with a session token expire on their own and are
 not reported. [Config and credential files](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html).
 
+Each key finding is written after the profiles are inspected, so it can say whether the key
+works: when `sts get-caller-identity` succeeded with that profile, its evidence has `sts_account`
+and its title ends "aws sts says it works for account …". An AWS key id also names the account it
+encodes (`aws_account`, decoded offline, as local-secrets does), and, when the fingerprint key
+exists (it is never created here), `fingerprint` is the HMAC local-secrets gives every copy of the
+same key id. The tracker uses them to merge this finding into the rotate item of the same key (see
+"Correlation" in [architecture.md](architecture.md#correlation)).
+
 The same files hold keys for S3-compatible services. From `~/.aws/config` (or `AWS_CONFIG_FILE`)
 the connector reads only each profile's `region` and `endpoint_url`. AWS access key ids start with
 `AKIA` (long-lived) or `ASIA` (temporary); a profile whose key does not is not AWS and gets no STS

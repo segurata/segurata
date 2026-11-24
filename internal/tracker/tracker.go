@@ -20,7 +20,7 @@ import (
 )
 
 // SchemaVersion is the tracker.json format this binary writes.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Kind says what sort of action an item asks for.
 type Kind string
@@ -51,9 +51,13 @@ const (
 	// Expected is a setup item whose statuses the owner's config says to expect
 	// (connectors.<x>.expected); removing the rule opens it again.
 	Expected Status = "expected"
+	// Merged is closed by segurata: another item owns the same problem (merged_into), as a
+	// connector's plain-text credential is the same secret as a rotate item's. It opens again when
+	// the two stop matching.
+	Merged Status = "merged"
 )
 
-var statuses = []Status{Open, InProgress, Done, Accepted, Ignored, Snoozed, Reclassified, Expected}
+var statuses = []Status{Open, InProgress, Done, Accepted, Ignored, Snoozed, Reclassified, Expected, Merged}
 
 // Who does the next step.
 type Who string
@@ -77,6 +81,8 @@ const (
 	EvPriority = "priority"
 	// EvReclassified closes an item segurata now rates as noise (status reclassified).
 	EvReclassified = "reclassified"
+	// EvMerged closes an item whose problem another item owns (status merged).
+	EvMerged = "merged"
 )
 
 // Event is one line of an item's history.
@@ -107,6 +113,13 @@ type FindingRef struct {
 	Path    string `json:"path,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	Project string `json:"project,omitempty"`
+	// Type and Resource are the finding's resource type and id, which ranking reads (an org's 2FA
+	// check, a macOS backup setting).
+	Type     string `json:"type,omitempty"`
+	Resource string `json:"resource,omitempty"`
+	// Match, on a rotate item's ref, says how the connector's credential was matched with the
+	// secret: fingerprint, hint (redacted hint and service) or path (the file holding it).
+	Match string `json:"match,omitempty"`
 }
 
 // Label is the connector instance as the command line names it: name or name:label.
@@ -170,7 +183,8 @@ type Item struct {
 	Decision         *Decision           `json:"decision,omitempty"`
 	Accepted         *Acceptance         `json:"accepted,omitempty"`
 	SnoozedUntil     string              `json:"snoozed_until,omitempty"`
-	StatusAt         time.Time           `json:"status_at"` // last status change
+	MergedInto       string              `json:"merged_into,omitempty"` // status merged: the item that owns the problem
+	StatusAt         time.Time           `json:"status_at"`             // last status change
 	VerifiedAt       *time.Time          `json:"verified_at,omitempty"`
 	CreatedAt        time.Time           `json:"created_at"`
 	UpdatedAt        time.Time           `json:"updated_at"`

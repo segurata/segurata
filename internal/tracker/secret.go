@@ -515,8 +515,22 @@ func (it *Item) refreshSecret() {
 	if ok {
 		it.Priority = secretrisk.PriorityOf(impactByName(s.Impact), worst.Level)
 	}
-	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
+	// A connector that reports the same credential proves it live: the worse of the two priorities
+	// holds, and a live key that left the machine is P0 (see correlate.go).
+	live := it.live()
+	for _, r := range live {
+		if p := priorityOf(r.Severity); p != "" && p.Rank() < it.Priority.Rank() {
+			it.Priority = p
+		}
+	}
 	var reasons []string
+	if it.LiveAndLeaked() {
+		it.Priority = secretrisk.P0
+		if primary, ok := it.primaryLocation(); ok {
+			reasons = append(reasons, "live key, leaked in "+primary.Name())
+		}
+	}
+	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
 	if it.reopenedStillPresent() {
 		reasons = append(reasons, StillPresent)
 	}
@@ -543,6 +557,9 @@ func (it *Item) refreshSecret() {
 				reasons = append(reasons, fmt.Sprintf("also %s (%d %s)", phrase[lb], n, textfmt.Plural(n, "place", "places")))
 			}
 		}
+	}
+	for _, r := range live {
+		reasons = append(reasons, "live: "+r.Label()+": "+r.Title)
 	}
 	if it.Owner() == attribution.Mine && it.upstreamCopy() {
 		reasons = append(reasons, "yours by attribution ("+it.Secret.Attribution.Reasons[0]+"), so its copies in other people's repositories count in full")

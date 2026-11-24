@@ -38,6 +38,7 @@ const (
 	actReclassify  = "reclassified"
 	actExpected    = "expected"
 	actRule        = "rule"
+	actMerged      = "merged"
 	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `segurata rotations`.
 	ActNext          = "next"
 	ActReplacePlan   = "replace-plan"
@@ -73,6 +74,9 @@ func (it *Item) Log(at time.Time, event, action, detail string) {
 
 func (it *Item) setStatus(at time.Time, st Status, event, action, detail string) {
 	it.Status, it.StatusAt = st, at.UTC()
+	if st != Merged {
+		it.MergedInto = ""
+	}
 	if st != Snoozed {
 		it.SnoozedUntil = ""
 	}
@@ -261,7 +265,7 @@ func (it *Item) AcceptanceExpired(now time.Time) bool {
 // Closed reports whether the item is off the to-do list for a reason other than a snooze.
 func (it *Item) Closed() bool {
 	switch it.Status {
-	case Done, Ignored, Accepted, Reclassified, Expected:
+	case Done, Ignored, Accepted, Reclassified, Expected, Merged:
 		return true
 	}
 	return false
@@ -354,7 +358,7 @@ func (t *Tracker) find(ref string, keep func(*Item) bool, hint string) (*Item, e
 	return nil, fmt.Errorf("%q matches %d items, use more characters", ref, len(hits))
 }
 
-// Sort orders items most urgent first: priority, then (secrets) worst exposure, a copy in one of
+// Sort orders items most urgent first: priority, then (secrets) live and leaked, worst exposure, a copy in one of
 // the owner's repositories, the most recent commit, service and id; other items by severity,
 // title and id.
 func Sort(items []*Item) {
@@ -364,6 +368,9 @@ func Sort(items []*Item) {
 			return pa < pb
 		}
 		if a.Secret != nil && b.Secret != nil {
+			if la, lb := a.LiveAndLeaked(), b.LiveAndLeaked(); la != lb {
+				return la
+			}
 			if ra, rb := spotRank(a.worst()), spotRank(b.worst()); ra != rb {
 				return ra > rb
 			}

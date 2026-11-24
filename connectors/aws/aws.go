@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 )
 
 // staleAfter is the age or idle time past which an access key is a liability.
@@ -52,10 +53,14 @@ type Connector struct {
 	CredentialsFile func() string
 	// ConfigFile returns the shared config file path, read for each profile's region and endpoint.
 	ConfigFile func() string
+	// Fingerprint opens the key local-secrets fingerprints secrets with, so a plain-text key id is
+	// named by the same fingerprint as its leaked copies; nil or not ok leaves it out.
+	Fingerprint func() (fingerprint.Key, bool)
 }
 
 func New() *Connector {
-	return &Connector{Run: cli.Exec{Path: "aws", Timeout: 2 * time.Minute}, Now: time.Now, CredentialsFile: defaultCredentialsFile, ConfigFile: defaultConfigFile}
+	return &Connector{Run: cli.Exec{Path: "aws", Timeout: 2 * time.Minute}, Now: time.Now, CredentialsFile: defaultCredentialsFile,
+		ConfigFile: defaultConfigFile, Fingerprint: fingerprint.OpenDefault}
 }
 
 func init() { connector.Register(New()) }
@@ -88,7 +93,19 @@ func sharedFile(env, name string) string {
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
 	now := c.Now()
-	issuers := c.scanLocalFiles(emit)
+	local, issuers := c.scanLocalFiles(emit)
+	// The plain-text keys are reported after the profiles are inspected, so each says whether STS
+	// accepted it, and for which account.
+	works := map[string]string{} // profile -> account STS named
+	defer func() {
+		for _, f := range local {
+			if acct := works[f.Resource.Name]; acct != "" {
+				f.Evidence["sts_account"] = acct
+				f.Title += fmt.Sprintf("; aws sts says it works for account %s", acct)
+			}
+			emit.Finding(f)
+		}
+	}()
 
 	profiles, err := c.profiles(ctx, req.Config)
 	if err != nil {
@@ -107,7 +124,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 			emit.Log(fmt.Sprintf("profile %s holds %s, not an AWS key: skipped", p, by))
 			continue
 		}
-		c.inspectProfile(ctx, p, now, costExplorer, seen, emit)
+		works[p] = c.inspectProfile(ctx, p, now, costExplorer, seen, emit)
 	}
 	return nil
 }
@@ -266,15 +283,17 @@ func policyHint(principal string, denied []string) string {
 
 func profileScope(profile string) string { return "profile " + profile }
 
-func (c *Connector) inspectProfile(ctx context.Context, profile string, now time.Time, costExplorer bool, seen map[string]bool, emit connector.Emitter) {
+// inspectProfile audits the account a profile reaches and returns its id, "" when STS refused the
+// profile's credentials.
+func (c *Connector) inspectProfile(ctx context.Context, profile string, now time.Time, costExplorer bool, seen map[string]bool, emit connector.Emitter) string {
 	var id struct{ Account, Arn string }
 	if err := c.call(ctx, profile, &id, "sts", "get-caller-identity"); err != nil {
 		emit.Status(finding.Status{Account: profileScope(profile), State: classify(err), Detail: err.Error()})
-		return
+		return ""
 	}
 	if seen[id.Account] {
 		emit.Log(fmt.Sprintf("profile %s reaches an account already inspected, skipped", profile))
-		return
+		return id.Account
 	}
 	seen[id.Account] = true
 
@@ -309,6 +328,7 @@ func (c *Connector) inspectProfile(ctx context.Context, profile string, now time
 		st.State, st.Detail = finding.StateNoScope, policyHint(principalName(id.Arn), a.denied)
 	}
 	emit.Status(st)
+	return id.Account
 }
 
 // principalName turns arn:aws:iam::1:user/alice into "user alice" for status details.

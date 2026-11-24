@@ -68,7 +68,8 @@ before calling a finding gone.
 ```
 
 `complete` is true when nothing was skipped and the connector returned no error (then `error`
-holds it). The lists are capped (50 inspected, 200 skipped); the counts are not. A file without
+holds it). `secret_fingerprints` names, by key, the fingerprint of each secret the core resolved for
+the instance (never the value; see "Correlation"). The lists are capped (50 inspected, 200 skipped); the counts are not. A file without
 `run_end` was killed, is still running, or was written before this record existed.
 
 **Scopes.** A finding belongs to a scope: its `scope` field when the connector inspects the
@@ -156,12 +157,14 @@ truth, and every change goes through the CLI.
   - `status`: `open`, `in_progress`, `done`, `accepted` (with `accepted`: reason, until,
     accepted_at), `ignored` (by the owner), `snoozed` (with `snoozed_until`), `reclassified`
     (closed by segurata: every current sighting of the secret is now noise, see "Rotation
-    ledger") or `expected` (a setup item the config says to expect, see "Expected statuses").
+    ledger"), `expected` (a setup item the config says to expect, see "Expected statuses") or
+    `merged` (closed by segurata: another item, named by `merged_into`, owns the same problem, see
+    "Correlation").
   - `priority` is computed: a rotate item's comes from the rotation model below; others map the
     worst linked severity (critical P0, high P1, medium P2, low P3). `priority_override`
     (priority, reason, at) wins when set.
   - `history` events are `found`, `seen`, `status`, `note`, `verified`, `reopened`, `decided`,
-    `priority` or `reclassified`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
+    `priority`, `reclassified` or `merged`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
     `snooze-expired`, `acceptance-expired`, `history-only`, `redacted`, `next`, …).
 - **Theme**: `{id, title, description}`, seeded in every tracker: `rotations`, `data-dumps`,
   `transcripts`, `mac`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`,
@@ -334,11 +337,12 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
-- `schema_version` 3 is the current format. A format change adds an upgrade step from version n
+- `schema_version` 4 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
-  `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`. An
-  older file holds none of them, so it loads as it is and is saved as the current version (the
+  `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
+  status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
+  the top-level `runs` (see "Coverage"). An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### Migration from the former state files
@@ -989,6 +993,52 @@ listed as hints and never change the verdict.
 `rotations show` prints the verdict, its reasons and the facts; `rotations list --owner
 mine|not-mine|unknown` filters by it and shows an OWNER column; `rotations sync` counts open
 secrets by owner. Decision rules use it through `owners` (see "Decisions and rules").
+
+## Correlation
+
+Two connectors can report one secret: the aws connector finds the long-lived key in
+`~/.aws/credentials`, and local-secrets finds the same key there and pushed to a repository's
+history. The rotate item owns the problem (`internal/tracker/correlate.go`). At every sync, before
+grouping, each credential finding of a folded run is matched with a rotate item:
+
+| Connector | Findings | Rotate items it may match |
+|---|---|---|
+| aws | `aws_local_credentials` | service aws |
+| aws | `r2_local_credentials`, `s3_local_credentials` | any |
+| gcp | `local_credential` (ADC, service-account key files) | services gcp, google, oauth, private-key |
+| openai, openrouter, anthropic | `api_key` (info ones too: a key in use) | the same service |
+
+The match is, in order: the fingerprint, when the finding carries one (the aws connector gives the
+key id's); a finding with a fingerprint matches nothing else, since the key in the file may have
+been rotated since the copy leaked. Else the redacted hint and the service: the hint forms of
+segurata (`AKIA…(20)`), OpenRouter (`sk-or-v1-27e...d4d`) and OpenAI (`sk-proj-****…xxkA`) are
+read into prefix, tail and length (`secretrisk.Hint`), and two fit when one prefix starts the
+other, one tail ends the other and known lengths agree; a hint match needs at least three
+characters of tail, enough to tell keys apart. Else the file: a rotate item with a location at the
+finding's path (`file`, `path`) whose hint, when both have one, fits. Among several candidates the
+most urgent wins. A finding whose item the owner accepted is left alone.
+
+A matched finding is not grouped: it goes on the rotate item as a finding ref with `match`
+(`fingerprint`, `hint` or `path`), replaced at every sync that folds its connector instance. The
+connector's item loses that ref; left with nothing reported, an open, in-progress, snoozed or done
+one closes as `merged` (history `merged`, "the same secret as T-0404, which owns it now",
+`merged_into` set, next step "Nothing here: T-0404 owns this secret"). When a later sync no longer
+matches the finding (another fingerprint, another key), it goes back to its item, which opens again
+(`auto-reopen`, "no longer the same secret as T-0404").
+
+The core also writes, in each run's `run_end`, the fingerprints of the secrets it resolved for the
+instance (`secret_fingerprints`, by name, never the value). A rotate item with one of them gets a
+ref `uses:<instance>:<name>`, "segurata's vercel connector signs in with it (VERCEL_TOKEN) and its
+run of 2026-11-24 worked": the token segurata uses is one of the leaked ones.
+
+On the rotate item, the refs still reported are evidence the secret is live:
+
+- its priority is the worse of its own and its refs' severities (critical P0, high P1, …);
+- a live secret whose worst copy left the machine (pushed history, a transcript) is P0, its first
+  reason is "live key, leaked in <repo>:<file>", and it sorts first among secrets;
+- each ref adds a reason "live: <instance>: <title>" ("live: aws: Long-lived AWS access key for
+  profile "default" stored in plain text; aws sts says it works for account 111122223333",
+  "live: openrouter:personal: API key "Claude Code": in use with a credit limit").
 
 ## Redaction
 

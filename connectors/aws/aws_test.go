@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 )
 
 var now = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
@@ -438,5 +439,36 @@ func TestMutatingCommandIsRefusedBeforeTheCLI(t *testing.T) {
 		if len(fr.calls) != 0 {
 			t.Errorf("%v reached the CLI", args)
 		}
+	}
+}
+
+// A plain-text key says, after the profile is inspected, that STS accepted it and for which
+// account, the account its id encodes, and the fingerprint local-secrets gives its leaked copies:
+// what lets the tracker merge it with the rotate item of the same key.
+func TestPlainTextKeyNamesItsFingerprintAccountAndLiveness(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials")
+	if err := os.WriteFile(path, []byte("[dev]\naws_access_key_id = AKIASP2TPHJSQH3FJXYZ\naws_secret_access_key = x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key := fingerprint.FromBytes([]byte("0123456789abcdef0123456789abcdef"))
+	c := newTest(healthyAccount(), path)
+	c.Fingerprint = func() (fingerprint.Key, bool) { return key, true }
+	rec := &httpxtest.Recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"profiles": []any{"dev"}}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	got := byType(rec, "aws_local_credentials")
+	if len(got) != 1 {
+		t.Fatalf("findings: %+v", rec.Findings)
+	}
+	ev := got[0].Evidence
+	if ev["fingerprint"] != key.Of("AKIASP2TPHJSQH3FJXYZ") || ev["aws_account"] != "171436882533" || ev["sts_account"] != "111122223333" {
+		t.Errorf("evidence: %v", ev)
+	}
+	if !strings.HasSuffix(got[0].Title, "; aws sts says it works for account 111122223333") {
+		t.Errorf("title: %s", got[0].Title)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", got[0]), "AKIASP2TPHJSQH3FJXYZ") {
+		t.Error("the full key id leaked")
 	}
 }

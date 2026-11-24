@@ -220,7 +220,7 @@ func (p *proposal) add(f finding.Finding) {
 
 func refOf(f finding.Finding) FindingRef {
 	r := FindingRef{ID: f.ID, Connector: f.Connector, Instance: f.Instance, Account: f.Account, Scope: finding.ScopeOf(f), Title: f.Title,
-		Severity: f.Severity, LastSeen: f.ObservedAt.UTC()}
+		Severity: f.Severity, LastSeen: f.ObservedAt.UTC(), Type: f.Resource.Type, Resource: f.Resource.ID}
 	str := func(k string) string { s, _ := f.Evidence[k].(string); return s }
 	for _, p := range []string{str("repo"), str("path")} {
 		if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "/") {

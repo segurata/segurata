@@ -260,6 +260,9 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 	if it.VerifiedAt != nil {
 		fmt.Fprintf(w, " (verified %s)", it.VerifiedAt.Format(time.DateOnly))
 	}
+	if it.MergedInto != "" {
+		fmt.Fprintf(w, " into %s", it.MergedInto)
+	}
 	fmt.Fprintf(w, "\nkind:      %s\ntheme:     %s\nseverity:  %s\nkey:       %s\ncreated:   %s\n", it.Kind, t.ThemeTitle(it.Theme),
 		textfmt.OrDash(string(it.Severity)), it.Key, it.CreatedAt.Format(time.DateOnly))
 	if o := it.PriorityOverride; o != nil {
