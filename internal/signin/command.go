@@ -240,12 +240,15 @@ func pick(targets []run.Target, labels []string) []run.Target {
 	return out
 }
 
-// readLine closes the returned channel once a line (Enter) is read from r, or r ends.
+// readLine closes the returned channel once a full line (Enter) is read from r. If r ends or
+// fails first (stdin closed, as under a non-interactive runner that still reports a terminal), the
+// channel stays open: the wait then ends only when every page is done or the timeout passes.
 func readLine(r io.Reader) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
-		_, _ = bufio.NewReader(r).ReadString('\n')
-		close(ch)
+		if _, err := bufio.NewReader(r).ReadString('\n'); err == nil {
+			close(ch)
+		}
 	}()
 	return ch
 }
