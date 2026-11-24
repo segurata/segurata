@@ -3,6 +3,7 @@
 package httpx
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,9 @@ type Client struct {
 	Header  http.Header
 	HTTP    *http.Client
 }
+
+// Base is the API base URL without a trailing slash: configured, or def when configured is empty.
+func Base(configured, def string) string { return strings.TrimRight(cmp.Or(configured, def), "/") }
 
 // New returns a client with a sane timeout. Header values are sent on every request.
 func New(baseURL string, header http.Header) *Client {

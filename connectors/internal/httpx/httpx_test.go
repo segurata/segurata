@@ -56,3 +56,13 @@ func TestState(t *testing.T) {
 		}
 	}
 }
+
+func TestBase(t *testing.T) {
+	for _, c := range []struct{ configured, want string }{
+		{"", "https://api.example.com"}, {"http://127.0.0.1:9/", "http://127.0.0.1:9"}, {"http://127.0.0.1:9", "http://127.0.0.1:9"},
+	} {
+		if got := Base(c.configured, "https://api.example.com/"); got != c.want {
+			t.Errorf("Base(%q) = %q, want %q", c.configured, got, c.want)
+		}
+	}
+}

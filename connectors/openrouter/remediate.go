@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpw"
@@ -60,27 +59,13 @@ type remediator struct {
 	cs connector.Credentials
 }
 
-func (r *remediator) base() string {
-	if r.c.BaseURL != "" {
-		return strings.TrimRight(r.c.BaseURL, "/")
-	}
-	return DefaultBaseURL
-}
-
-func (r *remediator) now() time.Time {
-	if r.c.Now != nil {
-		return r.c.Now().UTC()
-	}
-	return time.Now().UTC()
-}
-
 // read finds the key now in its workspace's listing, with the read-only inventory key.
 func (r *remediator) read(ctx context.Context, f finding.Finding) (apiKey, error) {
 	read := r.cs.Request.Secrets[secretName]
 	if read == "" {
 		return apiKey{}, fmt.Errorf("%s is not configured: the plan reads the key's current state with it; %s", secretName, setupHint)
 	}
-	s := &scan{ctx: ctx, api: httpx.New(r.base(), http.Header{"Authorization": {"Bearer " + read}})}
+	s := &scan{ctx: ctx, api: httpx.New(httpx.Base(r.c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + read}})}
 	q := url.Values{}
 	if ws, _ := f.Evidence["workspace_id"].(string); ws != "" {
 		q.Set("workspace_id", ws)
@@ -105,7 +90,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	if err != nil {
 		return connector.Plan{}, err
 	}
-	now := r.now()
+	now := connector.Now(r.c.Now)
 	n := k.Name
 	if n == "" {
 		n = k.Hash
@@ -126,7 +111,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	p := connector.Plan{
 		Action:  ActionDeleteUnusedKey,
 		Summary: fmt.Sprintf("Delete the OpenRouter API key %q (%s) in %s, %s.", n, k.Label, f.Account, used),
-		Calls:   []connector.Call{{Method: http.MethodDelete, URL: r.base() + "/keys/" + url.PathEscape(k.Hash), Secret: writeSecret}},
+		Calls:   []connector.Call{{Method: http.MethodDelete, URL: httpx.Base(r.c.BaseURL, DefaultBaseURL) + "/keys/" + url.PathEscape(k.Hash), Secret: writeSecret}},
 		SideEffects: []string{
 			"No undo: a deleted key cannot be restored. Anything still holding it gets HTTP 401 and needs a new key.",
 			"Its usage history stays in the account's activity; the credit balance and other keys do not change.",
@@ -152,5 +137,5 @@ func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.P
 	if err != nil {
 		return err
 	}
-	return httpw.Send(ctx, r.base(), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
+	return httpw.Send(ctx, httpx.Base(r.c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
 }

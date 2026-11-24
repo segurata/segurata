@@ -45,10 +45,7 @@ func init() { connector.Register(&Connector{}) }
 
 // SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
-	if secret != secretName {
-		return ""
-	}
-	return setupHint
+	return connector.HintFor(secret, secretName, setupHint)
 }
 
 func (c *Connector) Describe() connector.Description {
@@ -67,18 +64,11 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: "organization", State: finding.StateMissingCredentials, Detail: setupHint})
 		return nil
 	}
-	base, now := c.BaseURL, time.Now
-	if base == "" {
-		base = DefaultBaseURL
-	}
-	if c.Now != nil {
-		now = c.Now
-	}
 	s := &scan{
 		ctx:     ctx,
-		api:     httpx.New(base, http.Header{"X-Api-Key": {key}, "Anthropic-Version": {apiVersion}}),
+		api:     httpx.New(httpx.Base(c.BaseURL, DefaultBaseURL), http.Header{"X-Api-Key": {key}, "Anthropic-Version": {apiVersion}}),
 		emit:    emit,
-		now:     now().UTC(),
+		now:     connector.Now(c.Now),
 		account: "organization",
 	}
 	s.run()

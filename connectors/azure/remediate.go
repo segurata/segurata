@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -38,10 +37,6 @@ func (c *Connector) readSecrets(ctx context.Context, fs []finding.Finding) (secr
 	if len(fs) == 0 || fs[0].Remediation.Action != ActionDeleteExpiredSecrets {
 		return secretsState{}, fmt.Errorf("azure has no such remediation")
 	}
-	now := time.Now
-	if c.Now != nil {
-		now = c.Now
-	}
 	var current account
 	if err := c.call(ctx, &current, "account", "show"); err != nil {
 		return secretsState{}, fmt.Errorf("az account show: %w", err)
@@ -61,7 +56,7 @@ func (c *Connector) readSecrets(ctx context.Context, fs []finding.Finding) (secr
 			live[key{a.AppID, p.KeyID}] = expired{app: a, cred: p}
 		}
 	}
-	at := now()
+	at := connector.Now(c.Now)
 	for _, f := range fs {
 		appID, _ := f.Evidence["app_id"].(string)
 		keyID, _ := f.Evidence["key_id"].(string)
