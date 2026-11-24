@@ -1,0 +1,84 @@
+# GoReleaser configuration, run by .github/workflows/release.yml on v* tags.
+# How to release and verify: docs/releasing.md.
+version: 2
+
+project_name: segurata
+
+builds:
+  - id: segurata
+    main: ./cmd/segurata
+    binary: segurata
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/segurata/segurata/internal/version.Version={{ .Tag }}
+      - -X github.com/segurata/segurata/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/segurata/segurata/internal/version.Date={{ .CommitDate }}
+    # The commit time instead of the build time, so a rebuild of a tag gives the same bytes.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - ids: [segurata]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - SECURITY.md
+
+# One SPDX SBOM per archive, made by syft (installed by the release workflow). No --enrich: the
+# binary has no third-party modules, and enrichment would query the network.
+sboms:
+  - artifacts: archive
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Keyless signature of checksums.txt with the workflow's GitHub OIDC identity. Checksums cover the
+# archives and SBOMs, so one signature covers every artifact.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+homebrew_casks:
+  - name: segurata
+    binaries: [segurata]
+    homepage: https://github.com/example-org/segurata # segurata/segurata after the move
+    description: Inventories, assesses and cleans up a personal digital footprint
+    repository:
+      owner: '{{ if isEnvSet "HOMEBREW_TAP_OWNER" }}{{ .Env.HOMEBREW_TAP_OWNER }}{{ else }}example-org{{ end }}'
+      name: homebrew-tap
+      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
+    # No tap token, no tap update; the rest of the release goes ahead.
+    skip_upload: '{{ if isEnvSet "HOMEBREW_TAP_GITHUB_TOKEN" }}auto{{ else }}true{{ end }}'
+    commit_msg_template: "segurata {{ .Tag }}"
+    caveats: |
+      The binary is not notarized by Apple. If macOS refuses to run it, check the release
+      signature (docs/releasing.md) and then run:
+        xattr -d com.apple.quarantine "$(brew --prefix)/bin/segurata"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge "
+
+release:
+  # Tags with a pre-release suffix (v1.2.0-rc.1) become GitHub pre-releases.
+  prerelease: auto
