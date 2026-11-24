@@ -43,9 +43,14 @@ type Connector struct {
 	Home                         func() (string, error)
 	// KeyPath is the fingerprint key file for a home directory.
 	KeyPath func(home string) string
-	// CacheDir holds the per-repository git history caches for a home directory (historycache.go).
+	// CacheDir holds the per-repository git history caches for a home directory (historycache.go);
+	// the data-dump caches live in a sibling datadumps directory.
 	CacheDir func(home string) string
 	Now      func() time.Time
+
+	// GitHead reads the first bytes of a blob (headExec) and GH asks GitHub a repository's
+	// visibility, both for the data-dump check (dumpscan.go). Either may be nil: no peek, no gh.
+	GitHead, GH cli.Runner
 }
 
 func New() *Connector {
@@ -54,6 +59,8 @@ func New() *Connector {
 		Gitleaks:  cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour}, // bounded per repo by the context
 		Git:       cli.Exec{Path: "git", Timeout: 2 * time.Minute},
 		SSHKeygen: cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
+		GitHead:   headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second},
+		GH:        cli.Exec{Path: "gh", Timeout: 30 * time.Second, Env: []string{"GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1"}},
 		LookPath:  exec.LookPath,
 		Home:      os.UserHomeDir,
 		KeyPath:   fingerprint.DefaultPath,
@@ -69,8 +76,8 @@ func (c *Connector) Describe() connector.Description {
 		Name:     name,
 		Version:  "0.1.0",
 		Protocol: connector.ProtocolVersion,
-		Summary:  "Plaintext secrets in config, .env files, histories, logs, agent transcripts, git history; SSH keys without a passphrase",
-		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen"},
+		Summary:  "Plaintext secrets in config, .env files, histories, logs, agent transcripts, git history; database dumps committed to git; SSH keys without a passphrase",
+		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen", "cli:gh (optional)"},
 	}
 }
 
@@ -81,6 +88,7 @@ type settings struct {
 	workers     int           // gitleaks_workers
 	timeout     time.Duration // gitleaks_timeout, per repository
 	gitCache    bool          // git_cache: scan only commits added since the last run
+	dumps       dumpMode      // data_dumps: true, false or "only"
 }
 
 func parseSettings(cfg map[string]any, home string) (settings, error) {
@@ -93,6 +101,10 @@ func parseSettings(cfg map[string]any, home string) (settings, error) {
 	}
 	if v, ok := cfg["git_cache"].(bool); ok {
 		s.gitCache = v
+	}
+	var err error
+	if s.dumps, err = parseDumpMode(cfg["data_dumps"]); err != nil {
+		return s, err
 	}
 	if v, ok := cfg["gitleaks_workers"].(float64); ok && v >= 1 {
 		s.workers = int(v)
@@ -130,6 +142,11 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if err != nil {
 		return fmt.Errorf("fingerprint key: %w", err)
 	}
+	if cfg.dumps == dumpsOnly {
+		s := newScan(ctx, c, home, cfg, fp, emit)
+		s.dumpsAll()
+		return s.emitDumps(finding.Status{Account: localAccount, State: finding.StateOK, Detail: "data_dumps only"})
+	}
 	if _, err := c.LookPath("rg"); err != nil {
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported,
 			Detail: "rg (ripgrep) is required: install it, respecting the 4-day quarantine"})
@@ -152,6 +169,13 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		defer wg.Done()
 		s.byName()
 	}()
+	if cfg.dumps == dumpsOn {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.dumpsAll()
+		}()
+	}
 	var repos, failed int
 	if history {
 		wg.Add(1)
@@ -182,8 +206,11 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if s.omitted > 0 {
 		detail += fmt.Sprintf("; %d omitted because the value appeared in the path or note", s.omitted)
 	}
-	emit.Status(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
-	return nil
+	if cfg.dumps == dumpsOff {
+		emit.Status(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
+		return nil
+	}
+	return s.emitDumps(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
 }
 
 // row is one secret at one location, aggregated over repeated matches.
@@ -207,6 +234,7 @@ type scan struct {
 	git   gitCache
 	stats historyStats
 	historyOnce
+	dumps dumpState
 }
 
 func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprint.Key, emit connector.Emitter) *scan {

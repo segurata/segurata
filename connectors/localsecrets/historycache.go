@@ -84,7 +84,9 @@ func (s *scan) gitleaks(repo string) error {
 	remote := s.hasRemote(repo)
 	replay := func(leaks []cachedLeak, omitted int) {
 		for _, l := range leaks {
-			s.store(l.evidence(s.now, remote))
+			ev := l.evidence(s.now, remote)
+			s.markDump(repo, &ev)
+			s.store(ev)
 		}
 		s.omit(omitted)
 	}
@@ -214,9 +216,12 @@ func (s *scan) rulesKey(repo string) (string, error) {
 // cacheKeyProbe changes whenever the fingerprint key does, which invalidates cached fingerprints.
 func (s *scan) cacheKeyProbe() string { return s.fp.Of("securizame git history cache") }
 
-func (s *scan) cachePath(repo string) string {
+func (s *scan) cachePath(repo string) string { return repoCacheFile(s.c.CacheDir(s.home), repo) }
+
+// repoCacheFile names a repository's cache file in dir after the hash of its path.
+func repoCacheFile(dir, repo string) string {
 	sum := sha256.Sum256([]byte(repo))
-	return filepath.Join(s.c.CacheDir(s.home), hex.EncodeToString(sum[:8])+".json")
+	return filepath.Join(dir, hex.EncodeToString(sum[:8])+".json")
 }
 
 // loadCache returns the cache at path when it matches want's version, repository, rules and key,
