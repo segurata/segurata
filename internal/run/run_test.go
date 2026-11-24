@@ -340,3 +340,63 @@ func (p probingFake) Inventory(_ context.Context, _ connector.Request, emit conn
 	p.check()
 	return nil
 }
+
+// needy needs a secret and says how to set it up; it reports a missing secret itself, as the AI
+// connectors do, so a second status would show up if the core called it without the secret.
+type needy struct{ called bool }
+
+func (n *needy) Describe() connector.Description {
+	return connector.Description{Name: "needy", Version: "0", Protocol: 1, Needs: []string{"secret:NEEDY_KEY"}}
+}
+
+func (n *needy) SetupHint(secret string) string {
+	if secret != "NEEDY_KEY" {
+		return ""
+	}
+	return "create a key at https://example.com/keys"
+}
+
+func (n *needy) Inventory(_ context.Context, req connector.Request, emit connector.Emitter) error {
+	n.called = true
+	if req.Secrets["NEEDY_KEY"] == "" {
+		emit.Status(finding.Status{Account: "organization", State: finding.StateMissingCredentials, Detail: "set NEEDY_KEY"})
+	}
+	return nil
+}
+
+func TestAnUnresolvedRequiredSecretIsOneCoreStatusWithTheConnectorsHint(t *testing.T) {
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{
+		"needy:personal": {Secrets: map[string]string{"NEEDY_KEY": "env:SEGURATA_TEST_UNSET_NEEDY"}},
+	}}
+	n := &needy{}
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, n), t.TempDir(), nil, nil)
+	if err != nil || res[0].Err != nil {
+		t.Fatalf("res=%v err=%v", res, err)
+	}
+	if n.called {
+		t.Error("Inventory ran without the secret it needs")
+	}
+	lines := readLines(t, res[0].File)
+	if len(lines) != 2 {
+		t.Fatalf("want one status and run_end, got %v", lines)
+	}
+	st := lines[0]
+	detail, _ := st["detail"].(string)
+	if st["state"] != "missing_credentials" || st["instance"] != "personal" ||
+		!strings.HasPrefix(detail, "NEEDY_KEY: environment variable SEGURATA_TEST_UNSET_NEEDY is not set") ||
+		!strings.HasSuffix(detail, "; create a key at https://example.com/keys") {
+		t.Errorf("status: %v", st)
+	}
+	if end := lines[1]; end["type"] != "run_end" || end["complete"] != false {
+		t.Errorf("run_end: %v", end)
+	}
+}
+
+func TestAMissingSecretReferenceIsLeftToTheConnector(t *testing.T) {
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"needy": {}}}
+	n := &needy{}
+	res, _ := Inventory(context.Background(), cfg, mustTargets(t, cfg, n), t.TempDir(), nil, nil)
+	if !n.called || len(res[0].Statuses) != 1 || res[0].Statuses[0].Detail != "set NEEDY_KEY" {
+		t.Errorf("called=%v statuses=%v", n.called, res[0].Statuses)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -169,10 +170,9 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, res: res}
 
 	req, errs := NewRequest(cfg, t.Instance)
-	for _, e := range errs {
-		s.Status(finding.Status{State: finding.StateMissingCredentials, Detail: e.Error()})
+	if missing := unresolved(t.Connector, errs, s); !missing {
+		res.Err = t.Connector.Inventory(ctx, req, s)
 	}
-	res.Err = t.Connector.Inventory(ctx, req, s)
 	s.end(ctx, started, res.Err)
 	if err := f.Close(); err != nil {
 		res.Err = errors.Join(res.Err, err)
@@ -182,6 +182,31 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		res.Err = errors.Join(res.Err, err)
 	}
 	return res
+}
+
+// unresolved reports each secret reference that could not be resolved as one missing_credentials
+// status, with the connector's setup hint when it gives one, and says whether a secret the
+// connector needs is among them: then Inventory is not called, so the connector cannot report the
+// same problem again in its own words. The core owns unresolvable references; a connector still
+// reports a secret that is not configured at all.
+func unresolved(c connector.Connector, errs []error, emit connector.Emitter) bool {
+	needs := c.Describe().Needs
+	hinter, _ := c.(connector.SetupHinter)
+	missing := false
+	for _, e := range errs {
+		detail := e.Error()
+		var re *secrets.ResolveError
+		if errors.As(e, &re) {
+			if hinter != nil {
+				if h := hinter.SetupHint(re.Key); h != "" {
+					detail += "; " + h
+				}
+			}
+			missing = missing || slices.Contains(needs, "secret:"+re.Key)
+		}
+		emit.Status(finding.Status{State: finding.StateMissingCredentials, Detail: detail})
+	}
+	return missing
 }
 
 // NewRequest builds the request for one connector instance, resolving its secret references.

@@ -193,6 +193,13 @@ next to a test, so every finding of a kind gets the same answer.
   A connector declares what it reads in `needs` (`secret:NAME`) and reads it from `secrets`.
 - A secret that is missing is a `missing_credentials` status whose `detail` says where to create a
   read-only credential and how to store it in the Keychain, never an error and never a guess.
+- One owner per problem. A reference the core cannot resolve (an unset variable, a Keychain item
+  that is gone) is the core's: it emits one `missing_credentials` status naming the key and, for a
+  secret listed in `needs`, does not call `inventory` at all, so the connector never reports it a
+  second time. A built-in connector supplies the steps for that status by implementing
+  `connector.SetupHinter` (`SetupHint(secret) string`); they are appended to the core's detail. A
+  secret with no reference in the config reaches the connector as absent, and reporting it stays
+  the connector's job.
 - Ask for the narrowest credential that can read what you need. Read-only keys first.
 - Never write a secret to stdout, stderr, a file or a log, not even in debug output. Never put one
   in a URL query when the API accepts a header.

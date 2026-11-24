@@ -61,6 +61,13 @@ type Connector interface {
 	Inventory(ctx context.Context, req Request, emit Emitter) error
 }
 
+// SetupHinter is optional: a connector that implements it says how to set up one of the secrets
+// its Description needs. When a secret reference in the config cannot be resolved, the core owns
+// the one missing_credentials status and does not call Inventory; the hint goes in its detail.
+type SetupHinter interface {
+	SetupHint(secret string) string
+}
+
 var builtins = map[string]Connector{}
 
 // Register is called from each built-in connector's init.
