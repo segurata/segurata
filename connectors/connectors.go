@@ -15,4 +15,5 @@ import (
 	_ "github.com/segurata/segurata/connectors/openrouter"
 	_ "github.com/segurata/segurata/connectors/supabase"
 	_ "github.com/segurata/segurata/connectors/vercel"
+	_ "github.com/segurata/segurata/connectors/workspace"
 )

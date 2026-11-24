@@ -66,20 +66,43 @@ points to the page where access is revoked.
   opening each app's page exhausts the limit. If X answers "Rate limit exceeded", wait 15 minutes.
 - Notion has no URL for Settings > Connections (it is a modal): review those by hand.
 
-## Google Workspace: admin audit
+## Google Workspace administration (`workspace`)
 
 ```bash
-node workspace/audit.mjs example.com example.org [--inactive-days 90] [--quota-project ID]
-node --test workspace/        # tests with a mocked fetch, no network
+./securizame inventory workspace                    # every configured tenant
+./securizame inventory workspace:example.com      # one tenant
 ```
 
-Per tenant, read-only through the Admin SDK: accounts without 2SV enrolled or enforced (admins
-first), admins, accounts suspended or without a login in over 90 days, and third-party apps with
-OAuth grants ranked by number of users, with their scopes (`tokens.list` per user). If the token
-allows it, adds OAuth authorizations and revocations over the last 30 days (Reports API,
-`applicationName=token`).
+One instance per tenant, read-only through the Admin SDK (GET requests with read-only scopes):
 
-Credentials, once per tenant. The script never signs in and never creates service accounts:
+| Finding | Severity |
+|---|---|
+| Account without 2-Step Verification enrolled, or enrolled but not enforced (admins first) | Admin not enrolled `critical`, user not enrolled `high`, admin not enforced `medium`, user not enforced `low` |
+| Each super or delegated admin | `info`; `medium` for a super admin who signed in during the last 3 days, since the super admin role belongs on a separate account not used day to day |
+| Account suspended or archived, or without a sign-in for more than `inactive_days` (counted from creation when it never signed in) | Inactive admin `high`, inactive user `medium`, suspended or archived `low` |
+| Third-party app holding OAuth grants (`tokens.list` per active account), with its users and scopes | From the broadest scope: admin write scopes `critical`; full or read Gmail, all of Drive, Docs, Sheets or Slides, Cloud Platform and read-only admin scopes `high`; other data `medium`; files the app created `low`; Sign in with Google only `info` |
+| App authorized or revoked in the last 30 days with no current grant (Reports API, `applicationName=token`) | `info`; the counts of apps with grants go in their evidence |
+
+Without the Reports scope the token activity is skipped and the status says so. Fixes are manual;
+each finding links the Google help page for it.
+
+Config, one key per tenant in `~/.config/securizame/config.json`:
+
+```json
+"workspace:example.com":   {"config": {"domain": "example.com"}},
+"workspace:example.org": {"config": {"domain": "example.org", "inactive_days": 60}}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `domain` | required | The tenant's primary domain |
+| `cloudsdk_config` | `~/.config/securizame/gcloud-<domain>` | gcloud config folder holding this tenant's credentials |
+| `quota_project` | the OAuth client's project | Sent as `X-Goog-User-Project`, for when the Admin SDK API is enabled in another project |
+| `inactive_days` | 90 | Days without a sign-in before an account counts as inactive |
+| `gcloud_path` | `PATH`, then the standard install folders | gcloud binary, as for `gcp` |
+
+Credentials, once per tenant. securizame never signs in and never creates OAuth clients or
+service accounts:
 
 1. In a Google Cloud project of the tenant, enable "Admin SDK API" and create an OAuth client ID
    of type "Desktop app". gcloud's default client does not allow scopes outside Google Cloud.
@@ -93,15 +116,15 @@ Credentials, once per tenant. The script never signs in and never creates servic
      --scopes=openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.user.security,https://www.googleapis.com/auth/admin.reports.audit.readonly
    ```
 
-   gcloud requires `cloud-platform` on that login. The token the script then requests carries only
-   the three read-only Admin SDK scopes, and the script checks the account belongs to the audited
-   domain.
+   gcloud requires `cloud-platform` on that login. The connector then runs only
+   `gcloud auth application-default print-access-token` with the three read-only Admin SDK scopes,
+   with `CLOUDSDK_CONFIG` pointing at the tenant's folder, and checks with Google's tokeninfo
+   endpoint and the user list that the credentials belong to the configured domain.
 
-- Without credentials the script stops and prints that same command with the tenant's path.
-- `WORKSPACE_ACCESS_TOKEN` replaces gcloud when the token comes from elsewhere.
-- If the Admin SDK API is not enabled in the quota project, pass `--quota-project <ID>`.
-- Output: `out/workspace-<domain>-<date>.jsonl`, with `user`, `grant`, `app` and
-  `token-activity` lines, plus the summary on screen.
+- Without stored credentials the instance reports `missing_credentials` with these same steps and
+  the tenant's path.
+- A token from elsewhere: set the `WORKSPACE_ACCESS_TOKEN` secret reference on the instance
+  (`"secrets": {"WORKSPACE_ACCESS_TOKEN": "keychain:..."}`); gcloud is then not used.
 
 ## Plaintext secrets on disk (`local-secrets`)
 

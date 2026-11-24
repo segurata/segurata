@@ -106,7 +106,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 	r := c.runner
 	if r == nil {
-		path, err := findGcloud(cfg.gcloudPath, c.home)
+		path, err := cli.FindGcloud(cfg.gcloudPath, c.home, connectorName)
 		if err != nil {
 			emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
 			return nil

@@ -11,7 +11,7 @@ service's login page.
 | Service | Where to revoke | securizame |
 |---|---|---|
 | Google | https://myaccount.google.com/connections | `google-personal` |
-| Google Workspace (admin) | Admin console › Security › API controls | `workspace/` prototype |
+| Google Workspace (admin) | Admin console › Security › API controls | `workspace` |
 | GitHub OAuth apps | https://github.com/settings/applications | `connected-apps/` prototype |
 | GitHub Apps (installed) | https://github.com/settings/installations | `connected-apps/` prototype |
 | X | https://x.com/settings/connected_apps | `connected-apps/` prototype |
