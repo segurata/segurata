@@ -9,7 +9,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -140,8 +139,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 }
 
 func (c CLI) parse(args []string) (options, bool) {
-	fs := flag.NewFlagSet("redact", flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("redact", c.Err)
 	fs.Usage = func() { fmt.Fprintln(c.Err, usage) }
 	var o options
 	var prio string

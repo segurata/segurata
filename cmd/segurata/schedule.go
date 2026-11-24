@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -21,7 +20,7 @@ const scheduleUsage = "usage: segurata schedule install|uninstall|status|run [--
 // scheduleCmd is `segurata schedule`. install and uninstall are dry runs unless --apply; run is
 // what the installed agent executes.
 func scheduleCmd(args []string) int {
-	fs := flag.NewFlagSet("schedule", flag.ContinueOnError)
+	fs := cliflag.New("schedule", os.Stderr)
 	every := fs.Duration("every", schedule.DefaultEvery, "interval between runs")
 	conns := fs.String("connectors", "", "comma-separated connectors (default: all that do not need the browser)")
 	apply := fs.Bool("apply", false, "write and load the agent after confirmation (default: dry run)")

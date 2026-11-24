@@ -2,7 +2,6 @@ package report
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"github.com/segurata/segurata/internal/config"
 	"io"
@@ -32,8 +31,7 @@ func (c CLI) fail(err error) int {
 // Run builds the report and prints it, or writes it to --out with mode 0600: it names accounts,
 // services and file paths.
 func (c CLI) Run(args []string) int {
-	fs := flag.NewFlagSet("report", flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("report", c.Err)
 	format := fs.String("format", string(Text), "text, md or html")
 	out := fs.String("out", "", "write the report to this file (mode 0600) instead of stdout")
 	dir := fs.String("dir", config.DefaultOutDir(), "inventory output directory")

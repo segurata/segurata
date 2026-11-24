@@ -21,13 +21,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"strings"
 
+	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -105,18 +105,21 @@ func all() []connector.Connector {
 }
 
 func inventory(args []string) int {
-	fs := flag.NewFlagSet("inventory", flag.ExitOnError)
+	fs := cliflag.New("inventory", os.Stderr)
 	minSev := fs.String("min-severity", "low", "hide findings below this severity in the summary")
 	out := fs.String("out", config.DefaultOutDir(), "output directory")
 	verbose := fs.Bool("verbose", false, "show connector logs")
-	_ = fs.Parse(args)
+	selectors, err := cliflag.Parse(fs, args)
+	if err != nil {
+		return 2
+	}
 
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		return 1
 	}
-	targets, err := run.Targets(cfg, all(), fs.Args())
+	targets, err := run.Targets(cfg, all(), selectors)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2

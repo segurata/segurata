@@ -20,11 +20,12 @@ const maxLeaks = 8
 // next prints the single most urgent active item with everything needed to rotate it. It is a
 // read-only view: only with --log does it record in the item's history that it was shown.
 func (c CLI) next(t *tracker.Tracker, path string, args []string, now time.Time) int {
-	fs := newFlags("next", c.Err)
+	fs := cliflag.New("rotations next", c.Err)
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0 or P0,P1")
 	service := fs.String("service", "", "comma-separated services, e.g. stripe,aws")
 	logIt := fs.Bool("log", false, "record in the item's history that it was shown")
-	if _, err := cliflag.Parse(fs, args); err != nil {
+	if pos, err := cliflag.Parse(fs, args); err != nil || len(pos) > 0 {
+		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
 	items := selectItems(t, now, false, splitList(*prio), splitList(*service))
