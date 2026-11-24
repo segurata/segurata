@@ -29,7 +29,7 @@ func TestCoverageMatchesScopesAccountsAndWildcards(t *testing.T) {
 		{"x", "x:other", true, "x: signedout"}, // the status's account matches the finding's
 		{"github:acme", "repo:acme/a", true, "repo:*: repositories not listed"},
 		{"github:acme", "github:acme", false, ""},
-		{"me@x.com", "", true, "locked"}, // scope unknown: any skip counts
+		{"me@x.com", "", true, "recorded without a scope, and this run skipped locked"}, // scope unknown: any skip counts
 	} {
 		why, unchecked := c.Unchecked(tc.account, tc.scope)
 		if unchecked != tc.unchecked || !strings.HasPrefix(why, tc.why) {

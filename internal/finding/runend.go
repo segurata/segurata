@@ -207,8 +207,11 @@ func (c Coverage) Unchecked(account, scope string) (string, bool) {
 		return why, true
 	}
 	for _, s := range c.skipped {
-		if scope == "" || matchScope(s.Scope, scope) || matchScope(s.Scope, account) {
+		switch {
+		case matchScope(s.Scope, scope) || matchScope(s.Scope, account):
 			return s.Scope + ": " + s.Reason, true
+		case scope == "":
+			return "recorded without a scope, and this run skipped " + s.Scope + ": " + s.Reason, true
 		}
 	}
 	return "", false

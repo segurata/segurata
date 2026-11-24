@@ -17,6 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secrets"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Target is one connector instance to run.
@@ -202,8 +203,8 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 			}
 		}
 		if sk := r.End.Scopes.Skipped; r.Err == nil && len(sk) > 0 {
-			fmt.Fprintf(w, "~ %s: incomplete run, %d scopes not inspected (first %s: %s); missing findings there are not resolved\n",
-				r.Name, r.End.Scopes.SkippedCount, sk[0].Scope, sk[0].Reason)
+			fmt.Fprintf(w, "~ %s: incomplete run, %d %s not inspected (first %s: %s); missing findings there are not resolved\n",
+				r.Name, r.End.Scopes.SkippedCount, textfmt.Plural(r.End.Scopes.SkippedCount, "scope", "scopes"), sk[0].Scope, sk[0].Reason)
 		}
 		all = append(all, r.Findings...)
 	}
