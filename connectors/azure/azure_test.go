@@ -192,6 +192,10 @@ func TestBudgetMapping(t *testing.T) {
 	if got := bs[1].neutral(); got.ID != "" {
 		t.Errorf("a usage budget is not a spend budget: %+v", got)
 	}
+	// A subscription without a budget puts money at stake, as every budget finding does.
+	if fs := budgetFindings("s", "sub", nil, nil); len(fs) != 1 || fs[0].Resource.Type != "azure_budget" || fs[0].Blast != finding.BlastMoney {
+		t.Errorf("no budget: %+v", fs)
+	}
 }
 
 func TestEveryCommandRunIsReadOnly(t *testing.T) {

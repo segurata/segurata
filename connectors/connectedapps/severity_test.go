@@ -104,11 +104,33 @@ func TestAssess(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			sev, label := assess(c.service, c.g)
-			if sev != c.want || label != c.label {
-				t.Fatalf("got %s %q, want %s %q", sev, label, c.want, c.label)
+			r := assess(c.service, c.g)
+			if r.sev != c.want || r.label != c.label {
+				t.Fatalf("got %s %q, want %s %q", r.sev, r.label, c.want, c.label)
 			}
 		})
+	}
+}
+
+// A grant declares what it puts at stake beyond its severity: write access to every repository
+// for GitHub scopes that give it, posting as you for any X app.
+func TestAssessBlast(t *testing.T) {
+	cases := []struct {
+		service string
+		g       grant
+		want    finding.Blast
+	}{
+		{"github", grant{resType: "github_oauth_app", scopes: []string{"Read all user profile data", "Delete repositories"}}, finding.BlastAllRepos},
+		{"github", grant{resType: "github_oauth_app", scopes: []string{"Full control of private repositories"}, stale: true}, finding.BlastAllRepos},
+		{"github", grant{resType: "github_oauth_app", scopes: []string{"Read all user profile data"}}, ""},
+		{"x", grant{resType: "x_app", scopes: []string{"users.read"}}, finding.BlastPosts},
+		{"x", grant{resType: "x_app", scopes: []string{"write"}}, finding.BlastPosts},
+		{"dropbox", grant{resType: "dropbox_app", scopes: []string{"files.content.write"}}, ""},
+	}
+	for _, c := range cases {
+		if got := assess(c.service, c.g).blast; got != c.want {
+			t.Errorf("%s %v: blast %q, want %q", c.service, c.g.scopes, got, c.want)
+		}
 	}
 }
 

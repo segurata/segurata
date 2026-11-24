@@ -63,6 +63,14 @@ var severities = map[check]finding.Severity{
 	repoUnprotectedDefault:   finding.SevLow,
 }
 
+// blasts are what a check puts at stake beyond its severity (finding.Blast).
+var blasts = map[check]finding.Blast{
+	orgNo2FARequirement:   finding.BlastOrgAccess, // one stolen password opens every repository of the org
+	orgMembersNo2FA:       finding.BlastOrgAccess,
+	orgCollaboratorsNo2FA: finding.BlastOrgAccess,
+	orgDefaultPermission:  finding.BlastOrgWrite,
+}
+
 // issue is one failed check on a repository, kept in the repository's single finding.
 type issue struct {
 	Check    check            `json:"check"`

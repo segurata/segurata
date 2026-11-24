@@ -54,6 +54,10 @@ func expect(t *testing.T, fs []finding.Finding, want map[string]finding.Severity
 		if f.Severity != sev || f.Kind != finding.KindSpend {
 			t.Errorf("%q: %s %s, want %s spend", title, f.Kind, f.Severity, sev)
 		}
+		// A budget's finding is about money; the container's says what its connector declared.
+		if blast := finding.BlastMoney; f.Resource.Type == "billing_account" && f.Blast != "" || f.Resource.Type != "billing_account" && f.Blast != blast {
+			t.Errorf("%q: blast %q", title, f.Blast)
+		}
 	}
 	if len(fs) != len(want) {
 		t.Errorf("got %d findings, want %d", len(fs), len(want))
@@ -69,6 +73,11 @@ func TestNoAlertingBudgetIsOneHighFinding(t *testing.T) {
 	})
 	if fs[0].Resource.Type != "billing_account" || !strings.Contains(fs[0].Remediation.Summary, "stops billing") {
 		t.Errorf("no-budget finding keeps the container resource and says how to cap: %+v", fs[0])
+	}
+	c := container("shop")
+	c.Blast = finding.BlastMoney
+	if f := Evaluate(c, nil, wording)[0]; f.Blast != finding.BlastMoney {
+		t.Errorf("the container's blast: %q", f.Blast)
 	}
 }
 

@@ -141,7 +141,7 @@ func agentCheck(name string, t agentTrace) check {
 	if t.account != "" {
 		parts = append(parts, "service account "+t.account)
 	}
-	ch := check{id: "endpoint-agent:" + name, resource: "endpoint_agent", name: name,
+	ch := check{id: "endpoint-agent:" + name, resource: "endpoint_agent", name: name, blast: finding.BlastLeftovers,
 		detail: strings.Join(parts, "; "),
 		evidence: map[string]any{"vendor": name, "apps": t.apps, "launchd": t.launchd, "folders": t.dirs,
 			"running": len(t.procs) > 0, "service_account": t.account}}

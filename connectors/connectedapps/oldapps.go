@@ -60,7 +60,8 @@ func (e *env) oldAppsFinding(who string, old []grant, b oldBatch) finding.Findin
 	var names []string
 	var apps []map[string]any
 	for _, g := range old {
-		sev, label := assess(e.service, g)
+		r := assess(e.service, g)
+		sev, label := r.sev, r.label
 		if sev.Rank() > worst.Rank() {
 			worst = sev
 		}

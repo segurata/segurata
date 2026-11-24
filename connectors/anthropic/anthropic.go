@@ -411,6 +411,7 @@ func (s *scan) emitSpend(workspaces []workspace, costs map[string]float64) {
 		Severity:    finding.SevLow,
 		Title:       fmt.Sprintf("Anthropic organization spent %s in the last 30 days; %s", httpx.USD(total), note),
 		Evidence:    map[string]any{"cost_30d_usd": total, "spend_limit": "not exposed by the API"},
+		Blast:       finding.BlastMoney,
 		Remediation: remediation,
 	})
 	type ws struct{ id, name string }

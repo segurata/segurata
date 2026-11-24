@@ -237,6 +237,9 @@ func TestExposedMacGradesEachCheckAndAttachesActions(t *testing.T) {
 		t.Errorf("tcp4 and tcp6 on one address should merge: %v", a)
 	}
 	dbg := rec.ByResource(t, "macos_setting", "brave-remote-debugging")
+	if dbg.Blast != finding.BlastBrowser {
+		t.Errorf("debugging blast %q", dbg.Blast)
+	}
 	if fmt.Sprint(dbg.Evidence["flags"]) != "[--remote-debugging-port=9222]" || fmt.Sprint(dbg.Evidence["listening"]) != "[127.0.0.1.9222]" {
 		t.Errorf("debugging evidence %v", dbg.Evidence)
 	}

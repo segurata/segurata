@@ -213,8 +213,9 @@ func (e *env) report(g grant) {
 	if g.lastUsed != nil && e.now.Sub(*g.lastUsed) > staleAfter {
 		g.stale = true
 	}
-	sev, label := assess(e.service, g)
-	title := fmt.Sprintf("%s can %s", g.name, label)
+	r := assess(e.service, g)
+	sev := r.sev
+	title := fmt.Sprintf("%s can %s", g.name, r.label)
 	if g.stale {
 		title += " (not used for over a year)"
 	}
@@ -270,6 +271,7 @@ func (e *env) report(g grant) {
 		Resource:    finding.Resource{Type: g.resType, ID: id, Name: g.name},
 		Kind:        kind,
 		Severity:    sev,
+		Blast:       r.blast,
 		Title:       title,
 		Evidence:    ev,
 		CreatedAt:   g.created,

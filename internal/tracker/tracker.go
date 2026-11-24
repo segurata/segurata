@@ -114,10 +114,13 @@ type FindingRef struct {
 	Path    string `json:"path,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	Project string `json:"project,omitempty"`
-	// Type and Resource are the finding's resource type and id, which ranking reads (an org's 2FA
-	// check, a macOS backup setting).
+	// Type and Resource are the finding's resource type and id.
 	Type     string `json:"type,omitempty"`
 	Resource string `json:"resource,omitempty"`
+	// Blast and Unconfirmed are what the connector declared of the finding, which ranking reads
+	// (see score.go).
+	Blast       finding.Blast `json:"blast,omitempty"`
+	Unconfirmed bool          `json:"unconfirmed,omitempty"`
 	// Match, on a rotate item's ref, says how the connector's credential was matched with the
 	// secret: fingerprint, hint (redacted hint and service), path (the file holding it) or possible
 	// (a hint that fits this secret and others, in Item.Possible). Confidence says how sure:

@@ -261,6 +261,7 @@ type check struct {
 	// cannot answer it, error when the tool failed or timed out.
 	skipState finding.State
 	sev       finding.Severity
+	blast     finding.Blast // what it puts at stake beyond its severity
 	title     string
 	detail    string
 	evidence  map[string]any
@@ -320,6 +321,7 @@ func (r *reporter) report(ch check) {
 		Resource:    finding.Resource{Type: typ, ID: ch.id, Name: name},
 		Kind:        finding.KindSetting,
 		Severity:    ch.sev,
+		Blast:       ch.blast,
 		Title:       ch.title,
 		Evidence:    ev,
 		Remediation: ch.rem,

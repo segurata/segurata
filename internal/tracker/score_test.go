@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"bytes"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -12,12 +13,13 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// scoredItem is an open item with n findings of one resource type and id.
-func scoredItem(tr *Tracker, kind Kind, key, theme, title string, sev finding.Severity, typ, res string, n int) *Item {
+// scoredItem is an open item with n findings of one resource type and id, which put blast at
+// stake.
+func scoredItem(tr *Tracker, kind Kind, key, theme, title string, sev finding.Severity, typ, res string, blast finding.Blast, n int) *Item {
 	it := tr.newItem(kind, key, theme, title, t0)
 	it.Severity, it.Priority = sev, priorityOf(sev)
 	for i := range n {
-		it.Findings = append(it.Findings, FindingRef{ID: key + string(rune('a'+i)), Type: typ, Resource: res, Severity: sev})
+		it.Findings = append(it.Findings, FindingRef{ID: key + string(rune('a'+i)), Type: typ, Resource: res, Severity: sev, Blast: blast})
 	}
 	it.Next = &Next{Who: You, Action: "Fix " + title + ".", Command: "segurata track show " + it.ID}
 	return it
@@ -30,17 +32,17 @@ func scoredItem(tr *Tracker, kind Kind, key, theme, title string, sev finding.Se
 func TestDoNextRanksByBlastRadius(t *testing.T) {
 	tr := New(t0)
 	low := []*Item{
-		scoredItem(tr, KindFix, "group:azure|azure_budget|account:sub|family:x", "cloud", "Subscription has no budget", finding.SevHigh, "azure_budget", "s/none", 1),
-		scoredItem(tr, KindFix, "group:gcp|budget_enforcement|account:me", "cloud", "Budgets on billing account B only notify", finding.SevHigh, "budget_enforcement", "B", 1),
-		scoredItem(tr, KindReview, "finding:chatgpt", "browser-extensions", "Brave extension ChatGPT: remove", finding.SevHigh, "browser_extension", "hehg", 1),
-		scoredItem(tr, KindReview, "group:connected-apps|github_oauth_app|account:github:me|family:can read your profile", "connected-apps", "5 GitHub OAuth apps can see your profile", finding.SevHigh, "github_oauth_app", "", 5),
-		scoredItem(tr, KindReview, "group:connected-apps|x_app|account:x:@me|family:can post", "connected-apps", "27 X apps can post and delete posts as you", finding.SevHigh, "x_app", "", 27),
+		scoredItem(tr, KindFix, "group:azure|azure_budget|account:sub|family:x", "cloud", "Subscription has no budget", finding.SevHigh, "azure_budget", "s/none", finding.BlastMoney, 1),
+		scoredItem(tr, KindFix, "group:gcp|budget_enforcement|account:me", "cloud", "Budgets on billing account B only notify", finding.SevHigh, "budget_enforcement", "B", finding.BlastMoney, 1),
+		scoredItem(tr, KindReview, "finding:chatgpt", "browser-extensions", "Brave extension ChatGPT: remove", finding.SevHigh, "browser_extension", "hehg", "", 1),
+		scoredItem(tr, KindReview, "group:connected-apps|github_oauth_app|account:github:me|family:can read your profile", "connected-apps", "5 GitHub OAuth apps can see your profile", finding.SevHigh, "github_oauth_app", "", "", 5),
+		scoredItem(tr, KindReview, "group:connected-apps|x_app|account:x:@me|family:can post", "connected-apps", "27 X apps can post and delete posts as you", finding.SevHigh, "x_app", "", finding.BlastPosts, 27),
 	}
 	high := []*Item{
-		scoredItem(tr, KindFix, "group:github|github_org_setting|check:org-2fa-not-required", "github-orgs", "Two-factor authentication not required in 5 GitHub orgs", finding.SevHigh, "github_org_setting", "org-2fa-not-required", 5),
-		scoredItem(tr, KindFix, "finding:backup", "mac", "No Time Machine backup is configured", finding.SevHigh, "macos_setting", "backup-none", 1),
-		scoredItem(tr, KindReview, "group:google-personal|oauth_grant|account:me@gmail.com|severity:high", "google", "Review 5 apps with high-risk access to me@gmail.com", finding.SevHigh, "oauth_grant", "", 5),
-		scoredItem(tr, KindFix, "group:google-personal|sso|account:me@gmail.com", "google", "Google account me@gmail.com is the login for 7 financial and cloud services", finding.SevHigh, "sso_dependency", "", 1),
+		scoredItem(tr, KindFix, "group:github|github_org_setting|check:org-2fa-not-required", "github-orgs", "Two-factor authentication not required in 5 GitHub orgs", finding.SevHigh, "github_org_setting", "org-2fa-not-required", finding.BlastOrgAccess, 5),
+		scoredItem(tr, KindFix, "finding:backup", "mac", "No Time Machine backup is configured", finding.SevHigh, "macos_setting", "backup-none", finding.BlastDevice, 1),
+		scoredItem(tr, KindReview, "group:google-personal|oauth_grant|account:me@gmail.com|severity:high", "google", "Review 5 apps with high-risk access to me@gmail.com", finding.SevHigh, "oauth_grant", "", finding.BlastMailAndFiles, 5),
+		scoredItem(tr, KindFix, "group:google-personal|sso|account:me@gmail.com", "google", "Google account me@gmail.com is the login for 7 financial and cloud services", finding.SevHigh, "google_login_dependency", "me@gmail.com", finding.BlastLogin, 1),
 	}
 	now := t0.Add(time.Hour)
 	for _, h := range high {
@@ -75,11 +77,59 @@ func TestDoNextRanksByBlastRadius(t *testing.T) {
 	}
 }
 
+// Ranking reads what a connector declares, never the wording of a title: a title that reads like a
+// high-blast one changes nothing, and a declared blast counts whatever the title says. Data dumps
+// the connector is not sure of are discounted.
+func TestBlastAndConfidenceComeFromTheFindingsNotTheTitle(t *testing.T) {
+	tr := New(t0)
+	now := t0.Add(time.Hour)
+	worded := scoredItem(tr, KindFix, "finding:w", "google", "Account x is the login for 7 services; no Time Machine backup; can delete your repositories", finding.SevHigh, "x", "", "", 1)
+	declared := scoredItem(tr, KindReview, "finding:d", "connected-apps", "gh can do things", finding.SevHigh, "github_oauth_app", "", finding.BlastAllRepos, 1)
+	if f := tr.Score(worded, now).factor("blast"); f.Value != 1 {
+		t.Errorf("a title moved the blast: %+v", f)
+	}
+	if f := tr.Score(declared, now).factor("blast"); f.Value != 1.5 || f.Why != "write access to every repository you own" {
+		t.Errorf("declared blast: %+v", f)
+	}
+	// The worst blast of an item's findings counts.
+	mixed := scoredItem(tr, KindReview, "finding:m", "connected-apps", "apps", finding.SevHigh, "x_app", "", finding.BlastPosts, 2)
+	mixed.Findings[1].Blast = finding.BlastAllRepos
+	if f := tr.Score(mixed, now).factor("blast"); f.Value != 1.5 {
+		t.Errorf("mixed blast: %+v", f)
+	}
+
+	possible := scoredItem(tr, KindFix, "group:local-secrets|data_dump|repo:~/src/p", "data-dumps", "2 database dumps in the git history of ~/src/p", finding.SevMedium, "data_dump", "", finding.BlastPersonalData, 2)
+	for i := range possible.Findings {
+		possible.Findings[i].Unconfirmed = true
+	}
+	if f := tr.Score(possible, now).factor("confidence"); f.Value != 0.7 || f.Why != "possibly not a real problem" {
+		t.Errorf("unconfirmed dumps: %+v", f)
+	}
+	possible.Findings[0].Unconfirmed = false
+	if f := tr.Score(possible, now).factor("confidence"); f.Value != 1 {
+		t.Errorf("one confirmed dump: %+v", f)
+	}
+	if f := tr.Score(scoredItem(tr, KindFix, "finding:p", "x", "Possible thing", finding.SevHigh, "x", "", "", 1), now).factor("confidence"); f.Value != 1 {
+		t.Errorf("a title moved the confidence: %+v", f)
+	}
+
+	// A sync keeps what the connector declared on the item's refs.
+	out := filepath.Join(t.TempDir(), "out")
+	f := fnd("macos", "", "Mac", "macos_setting", "backup-none", "backup-none", finding.SevHigh, "Backups", t0)
+	f.Blast, f.Unconfirmed = finding.BlastDevice, true
+	writeRun(t, out, t0, "macos.jsonl", f, okStatus("macos", "Mac"))
+	synced := New(t0)
+	syncOrDie(t, synced, out, now)
+	if r := byTitle(t, synced, "Backups").Findings[0]; r.Blast != finding.BlastDevice || !r.Unconfirmed {
+		t.Errorf("ref %+v", r)
+	}
+}
+
 // A decision that blocks items is a Do next entry worth part of them, and shows what it unblocks.
 func TestDecisionThatUnblocksItemsIsADoNextEntry(t *testing.T) {
 	tr := New(t0)
 	for _, r := range []string{"a", "b", "c"} {
-		scoredItem(tr, KindFix, "group:local-secrets|data_dump|repo:~/src/"+r, "data-dumps", "2 database dumps in the git history of ~/src/"+r, finding.SevHigh, "data_dump", "", 2)
+		scoredItem(tr, KindFix, "group:local-secrets|data_dump|repo:~/src/"+r, "data-dumps", "2 database dumps in the git history of ~/src/"+r, finding.SevHigh, "data_dump", "", finding.BlastPersonalData, 2)
 	}
 	d := tr.AddDecision("decide:purge-data-dumps", "Purge the data dumps from git history?", []string{"yes", "no"}, t0)
 	now := t0.Add(time.Hour)

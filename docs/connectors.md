@@ -95,6 +95,8 @@ One JSON object per finding (`internal/finding`):
 | `severity` | Connector | `info`, `low`, `medium`, `high`, `critical`, exactly; anything else from an external connector fails the run (see "Severity") |
 | `title` | Connector | One line a person understands without the evidence. No secret, no token |
 | `evidence` | Connector | Whatever backs the finding: scopes, dates, paths, counts. Never a secret value |
+| `blast` | Connector | Optional: what the finding puts at stake beyond its severity, which ranks the tracker's "Do next": `login`, `org-access`, `device`, `mail-and-files`, `browser`, `personal-data`, `all-repositories`, `org-write`, `posts`, `money`, `leftovers` (`internal/finding`, weights in architecture.md, "Do next"). Any other value counts as none |
+| `unconfirmed` | Connector | Optional: `true` when the connector is not sure the problem is real (a file only named like a database dump); ranking discounts it |
 | `created_at`, `last_used_at` | Connector | What the provider reports, RFC 3339. `null` when it reports nothing, never a made-up date |
 | `remediation` | Connector | `summary` says what to do by hand; `url` is the page where it is done; `action` names an automatable remediation or is empty; `automatable` is computed by the core |
 | `observed_at` | Core | When the record was written; a connector's own value is replaced |

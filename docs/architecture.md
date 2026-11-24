@@ -420,10 +420,10 @@ findings)"):
 | Factor | Values |
 |---|---|
 | impact | the priority: P0 10, P1 6, P2 3, P3 1, none 0.5 |
-| blast | what is at stake beyond one finding's severity, first match: a Google account that is the login for other services 3, 2FA not required (or members without it) in GitHub orgs 3, no Time Machine backup 2.5, high-risk Google OAuth grants 2.5, a browser with a remote debugging port 2, data dumps 2, apps that can delete or write every repository 1.5, every org member can write every repository 1.5, spend limits and budgets 0.7, X apps 0.6, endpoint-agent leftovers 0.5; else 1 |
+| blast | what is at stake beyond one finding's severity, as the connector declares it (the finding's `blast`, see docs/connectors.md), the first of these one of the item's findings declares: `login` (a Google account that is the login for other services) 3, `org-access` (2FA not required, or members without it, in GitHub orgs) 3, `device` (no Time Machine backup) 2.5, `mail-and-files` (high-risk Google OAuth grants) 2.5, `browser` (a remote debugging port) 2, `personal-data` (data dumps) 2, `all-repositories` (apps that can delete or write every repository) 1.5, `org-write` (every org member can write every repository) 1.5, `posts` (X apps) 0.6, `money` (spend limits and budgets) 0.7, `leftovers` (endpoint agents) 0.5; else 1. Titles are never read |
 | exposure (secrets) | worst copy remote 1.5, shared 1, local 0.7 |
 | liveness (secrets) | live and leaked 2 (see "Correlation"), live 1.5, attributed mine 1.3, attributed not-mine 0.3 |
-| confidence | a secret nothing shows still valid 0.8, a review list 0.8, a "possible" dump 0.7 |
+| confidence | a secret nothing shows still valid 0.8, a review list 0.8, every finding `unconfirmed` (a file only named like a dump) 0.7 |
 | effort | rotate with `rotations replace` 1, rotate by hand 1.5, a history rewrite (dumps) 3, a review list 1 + entries/20 (3 at most), else 1; doubled when a pending decision blocks the item |
 | quick win | 1.5 when segurata does it after confirmation, or one fix closes 3 findings or more |
 

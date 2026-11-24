@@ -96,7 +96,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 	}
 
 	acme := rec.findings[0]
-	if acme.Account != "a@example.test" || acme.Kind != finding.KindGrant || acme.Severity != finding.SevHigh {
+	if acme.Account != "a@example.test" || acme.Kind != finding.KindGrant || acme.Severity != finding.SevHigh || acme.Blast != finding.BlastMailAndFiles {
 		t.Errorf("acme: %+v", acme)
 	}
 	if acme.Resource != (finding.Resource{Type: "oauth_grant", ID: "ACME", Name: "Acme Sync"}) {
@@ -278,7 +278,7 @@ func TestLoginDependencyNamesFinancialAndCloudServices(t *testing.T) {
 			}
 			continue
 		}
-		if fmt.Sprint(f.Evidence["services"]) != fmt.Sprint(tc.want) || f.Severity != tc.severity {
+		if fmt.Sprint(f.Evidence["services"]) != fmt.Sprint(tc.want) || f.Severity != tc.severity || f.Blast != finding.BlastLogin {
 			t.Errorf("%v: services %v severity %s", tc.apps, f.Evidence["services"], f.Severity)
 		}
 		want := fmt.Sprintf("Google account me@example.test is the login for %d financial/cloud services: use a passkey/security key and consider Advanced Protection", len(tc.want))
