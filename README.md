@@ -34,37 +34,47 @@ Ads; `info` for Sign in with Google only. Accounts where Google asks for a fresh
 - To remove access: the finding's remediation URL. On Google, "Remove all access" there also
   removes that app's Sign in with Google link.
 
-## Connected apps outside Google
+## Connected apps outside Google (`connected-apps`)
 
 ```bash
-node connected-apps/inventory.mjs              # every service
-node connected-apps/inventory.mjs github x     # only those
+./securizame inventory connected-apps
 ```
 
-Using the sessions the browser already has open, lists the apps with access to each account,
-their permissions, and the authorization or last-used date when the service shows it. `href`
-points to the page where access is revoked.
+Reads each service's settings pages in the browser's existing sessions and reports every app with
+access to the account: its permissions, the dates the page shows, and the page where access is
+revoked (`remediation.url`). Severity is table-driven: write access, reading direct messages,
+deleting repositories, administering organizations and billing are `high`; broad read-only access is
+`medium`; profile or email only is `low` or `info`. When the page gives a last-used date older than
+a year, the severity goes up one level.
 
 | Service | What it lists |
 |---|---|
-| GitHub | OAuth apps (scopes and organizations with access), authorized and installed GitHub Apps, web sessions; SSH, signing and GPG keys via `gh api` (title, type, dates, never the key) |
+| GitHub | OAuth apps (scopes, organizations with access, last use), installed GitHub Apps, web sessions; SSH, signing and GPG keys via `gh api` (title, type, dates, never the key). Authorized GitHub Apps and the permissions of installed ones need sudo mode: `reauth` |
 | X | Connected apps with scopes and authorization date |
-| Slack | Installed apps and their scope count, in every workspace the browser is signed in to |
-| Notion | Developer connections of the active workspace, with capabilities, owner and date |
-| Microsoft, Dropbox | Detects whether there is a session; when signed in it saves the page text under `out/` for review, because the reader has not been checked against the real page |
+| Slack | Installed apps and their scope count, in every workspace the browser is signed in to (15 or more scopes is `high`) |
+| Notion | Developer connections of the active workspace, with capabilities, owner and date. Settings › Connections is a dialog with no URL: review it by hand |
+| Facebook | Active apps under Settings › Apps and websites, with the information each one receives. Only the first page: the "See more" button is not clicked, and the status says so |
+| Instagram, LinkedIn | Whether any app or service is connected. Only the empty list has been seen; a non-empty one is reported as `unverified`, to review by hand |
+| Microsoft, Dropbox | Whether there is a session. The reader has never seen the signed-in page: `unverified` |
 
-`status` of each row: `ok`; `signedout`; `reauth` when the service wants identity confirmed
-(GitHub requires sudo mode for authorized GitHub Apps: open the page, confirm, run again);
-`noscope` when `gh` lacks a scope (the message carries the exact `gh auth refresh`);
-`ratelimited`; `unverified`; `error`.
+Statuses: `ok`; `signedout`; `reauth` (the service wants identity confirmed: open the page,
+confirm, run again); `noscope` (`gh` lacks a scope; the detail carries the exact
+`gh auth refresh` command); `unverified`; `error`.
 
-- Requires the same browser setup as the Google script, plus a signed-in `gh` for GitHub keys.
-- Output: `out/connected-apps-<date>.jsonl` and a summary with counts, apps with broad
-  permissions (write, full control, delete, or more than 15 Slack scopes) and services without data.
-- X rate-limits its connected-apps API hard. The script loads the list page once and reads the
-  app list from that page's own API response (the grant tokens in it are dropped, never stored);
-  opening each app's page exhausts the limit. If X answers "Rate limit exceeded", wait 15 minutes.
-- Notion has no URL for Settings > Connections (it is a modal): review those by hand.
+- Requires the browser setup of `google-personal`, plus a signed-in `gh` for GitHub keys.
+- One instance per service, if you want them separate, through `services` (default: all):
+
+  ```json
+  "connected-apps:x":      {"config": {"services": ["x"]}},
+  "connected-apps:github": {"config": {"services": ["github"]}}
+  ```
+
+- Read-only: it only navigates and reads. It never clicks a button, never submits a form, loads
+  each listing page once per run, and closes every page it opens.
+- X rate-limits its connected-apps API hard. The connector loads the list page once and reads the
+  app list from that page's own API response; the grant tokens in it are dropped on decode, never
+  stored. Opening each app's page would exhaust the limit. If X answers "Rate limit exceeded", wait
+  15 minutes.
 
 ## Google Workspace: admin audit
 

@@ -12,20 +12,21 @@ service's login page.
 |---|---|---|
 | Google | https://myaccount.google.com/connections | `google-personal` |
 | Google Workspace (admin) | Admin console › Security › API controls | `workspace/` prototype |
-| GitHub OAuth apps | https://github.com/settings/applications | `connected-apps/` prototype |
-| GitHub Apps (installed) | https://github.com/settings/installations | `connected-apps/` prototype |
-| X | https://x.com/settings/connected_apps | `connected-apps/` prototype |
-| Slack | `<workspace>.slack.com/apps/manage` | `connected-apps/` prototype |
-| Notion | Settings › Connections (a dialog with no URL) | `connected-apps/` prototype, developer connections only |
-| Microsoft | https://account.live.com/consent/Manage | `connected-apps/` prototype, unverified |
-| Dropbox | https://www.dropbox.com/account/connected_apps | `connected-apps/` prototype, unverified |
-| Facebook | https://www.facebook.com/settings/?tab=applications | Manual |
-| Instagram | https://www.instagram.com/accounts/manage_access/ | Manual |
-| LinkedIn | https://www.linkedin.com/mypreferences/d/permitted-services (now redirects to "Data sharing for permitted services") | Manual |
+| GitHub OAuth apps | https://github.com/settings/applications | `connected-apps` |
+| GitHub Apps (installed) | https://github.com/settings/installations | `connected-apps`, names only (permissions need sudo mode) |
+| X | https://x.com/settings/connected_apps | `connected-apps` |
+| Slack | `<workspace>.slack.com/apps/manage` | `connected-apps` |
+| Notion | Settings › Connections (a dialog with no URL) | `connected-apps`, developer connections only |
+| Microsoft | https://account.live.com/consent/Manage | `connected-apps`, session check only (unverified) |
+| Dropbox | https://www.dropbox.com/account/connected_apps | `connected-apps`, session check only (unverified) |
+| Facebook | https://www.facebook.com/settings/?tab=applications | `connected-apps`, first page only ("See more" is not clicked) |
+| Instagram | https://www.instagram.com/accounts/manage_access/ | `connected-apps`; a non-empty list is `unverified` |
+| LinkedIn | https://www.linkedin.com/mypreferences/d/data-sharing-for-permitted-services (the old `/permitted-services` redirects here) | `connected-apps`; a non-empty list is `unverified` |
 | Spotify | https://www.spotify.com/account/apps/ | Manual |
 | Apple (Sign in with Apple) | https://account.apple.com/account/manage › Sign in with Apple | Manual |
 
 The old GitHub path `/settings/connections/applications` redirects to `/settings/applications`.
 
-Facebook, Instagram and LinkedIn are candidates for a browser (CDP) connector: they show the list on
-a page of the signed-in account, like X and Dropbox.
+Facebook keeps the list under Settings › Apps and websites. Accounts Center's "App connections"
+is a different list (Meta AI links to other services). Instagram's page has Active, Expired and
+Removed tabs; the connector reads Active.
