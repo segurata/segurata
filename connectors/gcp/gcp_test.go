@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -209,8 +211,11 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		`"Server geocoding" in demo-shop has no application restrictions`:                       finding.SevHigh,
 		`"Android app" in demo-shop is restricted`:                                              finding.SevInfo,
 		// billing
-		"Billing account 000000-AAAAAA-111111 has 1 budget(s) with alerts":                        finding.SevInfo,
-		"Project demo-shop is billed to 000000-AAAAAA-111111 but no budget with alerts covers it": finding.SevHigh,
+		"Billing account 000000-AAAAAA-111111 has 2 budgets: 'Blog only' 20 EUR/month, demo-blog; 'Silent' 100 EUR/month, all projects":                                                                                                 finding.SevInfo,
+		"Budget 'Blog only' (20 EUR/month, demo-blog) has no forecasted threshold: add one at 100% to hear before the money is spent":                                                                                                   finding.SevLow,
+		"Budgets on billing account 000000-AAAAAA-111111 only notify: none is wired to a Pub/Sub topic or a spend cap, so nothing stops spend; 2 unrestricted API keys and 2 user-managed service account keys in projects billed here": finding.SevMedium,
+		"Budget 'Blog only' (20 EUR/month, demo-blog) leaves out demo-shop (2 unrestricted API keys and 2 user-managed service account keys)":                                                                                           finding.SevLow,
+		"Project demo-shop is billed to billing account 000000-AAAAAA-111111 but no budget with alerts covers it":                                                                                                                       finding.SevHigh,
 		// the projects each account sees, for attribution
 		"owner@example.com sees 3 projects": finding.SevInfo,
 	}
@@ -313,7 +318,7 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		{finding.Finding{Account: "owner@example.com", Scope: "demo-blog"}, true},
 		{finding.Finding{Account: "owner@example.com", Scope: "billing:000000-BBBBBB-222222"}, true},
 		{finding.Finding{Account: "work@example.org", Scope: "any-project"}, true}, // reauth: the whole account
-		{rec.byTitle(t, "has 1 budget(s) with alerts"), false},                     // ci@ is a service account: not used, so no billing:* failure
+		{rec.byTitle(t, "has 2 budgets"), false},                                   // ci@ is a service account: not used, so no billing:* failure
 	} {
 		if _, got := cov.UncheckedFinding(c.f); got != c.unchecked {
 			t.Errorf("%s %s: unchecked %v, want %v", c.f.Account, finding.ScopeOf(c.f), got, c.unchecked)
@@ -360,7 +365,7 @@ func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 	if f.Severity != finding.SevHigh || f.Kind != finding.KindSpend {
 		t.Errorf("budgetless billing account: %+v", f)
 	}
-	if got := f.Evidence["linked_projects"]; len(got.([]string)) != 1 || got.([]string)[0] != "demo-blog" {
+	if got := f.Evidence["units"]; len(got.([]string)) != 1 || got.([]string)[0] != "demo-blog" {
 		t.Errorf("linked projects: %v", got)
 	}
 	// The person's account the config leaves out is declared skipped; the service account is not.
@@ -496,19 +501,48 @@ func TestGoogleManagedServiceAgentsAreSkipped(t *testing.T) {
 	}
 }
 
-func TestBudgetAlertingAndCoverage(t *testing.T) {
-	var bs []budget
-	if err := json.Unmarshal([]byte(fixture(t, "budgets_main.json")), &bs); err != nil {
+func TestBudgetMapping(t *testing.T) {
+	var bs []gcpBudget
+	if err := json.Unmarshal([]byte(fixture(t, "budgets_quality.json")), &bs); err != nil {
 		t.Fatal(err)
 	}
-	if !bs[0].alerting() || bs[1].alerting() {
-		t.Errorf("threshold rules alert unless every recipient is disabled")
+	ids := map[string]string{"100000000001": "demo-shop"}
+	got := make([]budget.Budget, len(bs))
+	for i, b := range bs {
+		got[i] = b.neutral("EUR", ids)
 	}
-	if !bs[0].covers("demo-blog", "100000000002") || bs[0].covers("demo-shop", "100000000001") || !bs[1].covers("any", "") {
-		t.Errorf("project filter coverage wrong")
+	want := []budget.Budget{
+		{ID: "q-1", Name: "Team total", Amount: 110, Currency: "EUR", Period: budget.PeriodMonth,
+			Thresholds: []budget.Threshold{{Percent: 50}}, Notifies: []string{budget.NotifyAdmins}},
+		{ID: "q-2", Name: "Auto map budget", Amount: 75.5, Currency: "EUR", Period: budget.PeriodQuarter,
+			Thresholds: []budget.Threshold{{Percent: 100}, {Percent: 100, Forecast: true}},
+			Scope:      budget.Scope{Units: []string{"demo-shop"}, Filters: []string{"3 services (" + finding.StableID("services/AAAA-BBBB", "services/CCCC-DDDD", "services/EEEE-FFFF")[:6] + ")"}},
+			Notifies:   []string{budget.NotifyProject, budget.NotifyMonitoring}},
+		{ID: "q-3", Name: "Follows last month", Currency: "EUR", Period: budget.PeriodMonth, LastPeriod: true,
+			Thresholds: []budget.Threshold{{Percent: 100}},
+			Scope:      budget.Scope{Filters: []string{"folders/123", "label env=[prod]"}},
+			Notifies:   []string{budget.NotifyAdmins, budget.NotifyPubSub}, Actions: []string{budget.ActionPubSub}},
+		{ID: "q-4", Name: "Capped", Amount: 30, Currency: "EUR", Period: budget.PeriodCustom,
+			Thresholds: []budget.Threshold{{Percent: 100}}, Scope: budget.Scope{Units: []string{"unknown-project"}},
+			Notifies: []string{budget.NotifyAdmins, budget.NotifyProject}, Actions: []string{budget.ActionSpendCap}},
 	}
-	if (budget{}).alerting() {
-		t.Errorf("a budget without thresholds does not alert")
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Errorf("budget %d:\n got %+v\nwant %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestProjectRisks(t *testing.T) {
+	fs := []finding.Finding{
+		{Resource: finding.Resource{Type: "api_key"}, Severity: finding.SevHigh},
+		{Resource: finding.Resource{Type: "api_key"}, Severity: finding.SevInfo},
+		{Resource: finding.Resource{Type: "service_account_key"}, Severity: finding.SevMedium},
+		{Resource: finding.Resource{Type: "service_account_key"}, Severity: finding.SevLow}, // disabled
+	}
+	want := []budget.Risk{{Unit: "p", What: "unrestricted API key", Count: 1}, {Unit: "p", What: "user-managed service account key", Count: 1}}
+	if got := projectRisks("p", fs); !reflect.DeepEqual(got, want) {
+		t.Errorf("risks %+v", got)
 	}
 }
 

@@ -136,7 +136,12 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 
 	targets, usable := c.plan(ctx, g, accounts, cfg, emit)
-	bill := &billing{g: g, billingProject: cfg.billingProject, accounts: map[string]*billingState{}}
+	bill := &billing{g: g, billingProject: cfg.billingProject, accounts: map[string]*billingState{}, ids: map[string]string{}}
+	for _, t := range targets {
+		if t.number != "" {
+			bill.ids[t.number] = t.project
+		}
+	}
 	for _, a := range usable {
 		bill.discover(ctx, a, emit)
 	}
@@ -314,6 +319,7 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		}
 	}
 
+	var found []finding.Finding // this project's credential findings, counted as spend risks
 	var policy iamPolicy
 	if _, ok := run("iam policy", func(a string) error {
 		return g.json(ctx, &policy, "projects", "get-iam-policy", t.project, "--account="+a)
@@ -330,7 +336,9 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		if _, ok := run("keys of "+sa.Email, func(a string) error {
 			return g.json(ctx, &keys, "iam", "service-accounts", "keys", "list", "--iam-account="+sa.Email, "--managed-by=user", proj, "--account="+a)
 		}); ok {
-			emitAll(saKeyFindings(t.accounts[0], t.project, sa, keys, c.now()))
+			fs := saKeyFindings(t.accounts[0], t.project, sa, keys, c.now())
+			found = append(found, fs...)
+			emitAll(fs)
 		}
 	}
 
@@ -338,14 +346,17 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	if _, ok := run("api keys", func(a string) error {
 		return g.json(ctx, &keys, "services", "api-keys", "list", proj, "--account="+a)
 	}); ok {
-		emitAll(apiKeyFindings(t.accounts[0], t.project, keys))
+		fs := apiKeyFindings(t.accounts[0], t.project, keys)
+		found = append(found, fs...)
+		emitAll(fs)
 	}
 
 	var info billingInfo
 	if a, ok := run("billing", func(a string) error {
 		return g.json(ctx, &info, "billing", "projects", "describe", t.project, "--account="+a)
 	}); ok && info.BillingEnabled && info.BillingAccountName != "" {
-		bill.link(a, t, strings.TrimPrefix(info.BillingAccountName, "billingAccounts/"))
+		bill.link(a, linkedProject{id: t.project, number: t.number, risks: projectRisks(t.project, found)},
+			strings.TrimPrefix(info.BillingAccountName, "billingAccounts/"))
 	}
 
 	if len(denied) > 0 {
@@ -368,12 +379,14 @@ type billing struct {
 	billingProject string
 	mu             sync.Mutex
 	accounts       map[string]*billingState
+	ids            map[string]string // project number to id, for budget filters
 }
 
 type billingState struct {
-	account string // gcloud account used to read it
-	open    *bool
-	linked  []linkedProject
+	account  string // gcloud account used to read it
+	open     *bool
+	currency string // the account's currency, for budgets whose amount leaves it out
+	linked   []linkedProject
 }
 
 func (b *billing) state(id, account string) *billingState {
@@ -397,15 +410,16 @@ func (b *billing) discover(ctx context.Context, account string, emit connector.E
 	defer b.mu.Unlock()
 	for _, ba := range list {
 		open := ba.Open
-		b.state(strings.TrimPrefix(ba.Name, "billingAccounts/"), account).open = &open
+		st := b.state(strings.TrimPrefix(ba.Name, "billingAccounts/"), account)
+		st.open, st.currency = &open, ba.CurrencyCode
 	}
 }
 
-func (b *billing) link(account string, t target, id string) {
+func (b *billing) link(account string, p linkedProject, id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	st := b.state(id, account)
-	st.linked = append(st.linked, linkedProject{id: t.project, number: t.number})
+	st.linked = append(st.linked, p)
 }
 
 // judge reads budgets for every billing account that is open or pays for a project we saw.
@@ -419,14 +433,14 @@ func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 		if b.billingProject != "" {
 			args = append(args, "--billing-project="+b.billingProject)
 		}
-		var budgets []budget
+		var budgets []gcpBudget
 		if err := b.g.json(ctx, &budgets, args...); err != nil {
 			state, why := classify(err)
 			emit.Status(finding.Status{Account: st.account, Scope: billingScope(id), State: state,
 				Detail: fmt.Sprintf("billing account %s: cannot read budgets, so spend alerts are unknown for %s: %s", id, projectList(st.linked), why)})
 			continue
 		}
-		for _, f := range billingFindings(st.account, id, budgets, st.linked) {
+		for _, f := range billingFindings(st.account, id, st.currency, budgets, st.linked, b.ids) {
 			f.Scope = billingScope(id)
 			emit.Finding(f)
 		}

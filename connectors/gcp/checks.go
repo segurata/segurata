@@ -5,9 +5,11 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -58,25 +60,47 @@ type billingInfo struct {
 }
 
 type billingAccount struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
-	Open        bool   `json:"open"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName"`
+	Open         bool   `json:"open"`
+	CurrencyCode string `json:"currencyCode"`
 }
 
-type budget struct {
+// gcpBudget is a Budget API v1 budget as `gcloud billing budgets list` prints it.
+type gcpBudget struct {
 	Name         string `json:"name"`
 	DisplayName  string `json:"displayName"`
 	BudgetFilter struct {
-		Projects []string `json:"projects"`
+		Projects          []string       `json:"projects"`
+		ResourceAncestors []string       `json:"resourceAncestors"`
+		Services          []string       `json:"services"`
+		Subaccounts       []string       `json:"subaccounts"`
+		Labels            map[string]any `json:"labels"`
+		CalendarPeriod    string         `json:"calendarPeriod"`
+		CustomPeriod      any            `json:"customPeriod"`
 	} `json:"budgetFilter"`
+	Amount struct {
+		SpecifiedAmount *struct {
+			CurrencyCode string `json:"currencyCode"`
+			Units        string `json:"units"`
+			Nanos        int64  `json:"nanos"`
+		} `json:"specifiedAmount"`
+		LastPeriodAmount any `json:"lastPeriodAmount"`
+	} `json:"amount"`
 	ThresholdRules []struct {
 		ThresholdPercent float64 `json:"thresholdPercent"`
+		SpendBasis       string  `json:"spendBasis"`
 	} `json:"thresholdRules"`
 	NotificationsRule struct {
 		PubsubTopic                    string   `json:"pubsubTopic"`
 		MonitoringNotificationChannels []string `json:"monitoringNotificationChannels"`
 		DisableDefaultIamRecipients    bool     `json:"disableDefaultIamRecipients"`
+		EnableProjectLevelRecipients   bool     `json:"enableProjectLevelRecipients"`
 	} `json:"notificationsRule"`
+	SpendCap *struct {
+		InputState  string `json:"inputState"`
+		OutputState string `json:"outputState"`
+	} `json:"spendCap"`
 }
 
 func consoleURL(path, project string) string {
@@ -244,31 +268,10 @@ func iamFindings(account, project string, p iamPolicy) []finding.Finding {
 	return out
 }
 
-// alerting reports whether a budget would notify someone when a threshold is crossed.
-func (b budget) alerting() bool {
-	if len(b.ThresholdRules) == 0 {
-		return false
-	}
-	n := b.NotificationsRule
-	return !n.DisableDefaultIamRecipients || n.PubsubTopic != "" || len(n.MonitoringNotificationChannels) > 0
+type linkedProject struct {
+	id, number string
+	risks      []budget.Risk
 }
-
-// covers reports whether the budget includes usage from the project. A budget with no project
-// filter covers the whole billing account; filters name projects by number or id.
-func (b budget) covers(projectID, projectNumber string) bool {
-	if len(b.BudgetFilter.Projects) == 0 {
-		return true
-	}
-	for _, p := range b.BudgetFilter.Projects {
-		p = strings.TrimPrefix(p, "projects/")
-		if p == projectID || (projectNumber != "" && p == projectNumber) {
-			return true
-		}
-	}
-	return false
-}
-
-type linkedProject struct{ id, number string }
 
 // projectIDs returns the sorted ids of the linked projects.
 func projectIDs(ps []linkedProject) []string {
@@ -280,58 +283,145 @@ func projectIDs(ps []linkedProject) []string {
 	return ids
 }
 
-// billingFindings judges one billing account: no alerting budget at all is one high finding for
-// the account; otherwise each linked project that no alerting budget covers is high.
-func billingFindings(account, billingID string, budgets []budget, linked []linkedProject) []finding.Finding {
-	var alerting []budget
-	for _, b := range budgets {
-		if b.alerting() {
-			alerting = append(alerting, b)
+// neutral maps a Budget API budget to the shared model. The filter names projects by number;
+// ids maps the numbers of every project this run saw to their ids. currency is the billing
+// account's, for a specifiedAmount that leaves its own out.
+func (b gcpBudget) neutral(currency string, ids map[string]string) budget.Budget {
+	nb := budget.Budget{ID: lastSegment(b.Name), Name: b.DisplayName, Currency: currency, Period: budget.PeriodMonth}
+	if nb.Name == "" {
+		nb.Name = nb.ID
+	}
+	if a := b.Amount.SpecifiedAmount; a != nil {
+		units, _ := strconv.ParseFloat(a.Units, 64)
+		nb.Amount = units + float64(a.Nanos)/1e9
+		if a.CurrencyCode != "" {
+			nb.Currency = a.CurrencyCode
 		}
 	}
-	ids := projectIDs(linked)
-	rem := finding.Remediation{
-		Summary: "Create a budget on the billing account with threshold alerts (for example 50%, 90% and 100%) " +
-			"so someone is emailed before the bill grows. A budget alerts, it does not cap spend.",
-		URL: "https://cloud.google.com/billing/docs/how-to/budgets",
+	nb.LastPeriod = b.Amount.LastPeriodAmount != nil
+	f := b.BudgetFilter
+	switch {
+	case f.CustomPeriod != nil:
+		nb.Period = budget.PeriodCustom
+	case f.CalendarPeriod == "QUARTER":
+		nb.Period = budget.PeriodQuarter
+	case f.CalendarPeriod == "YEAR":
+		nb.Period = budget.PeriodYear
 	}
-	accountRes := finding.Resource{Type: "billing_account", ID: billingID, Name: billingID}
-	if len(alerting) == 0 {
-		return []finding.Finding{{
-			Account:     account,
-			Resource:    accountRes,
-			Kind:        finding.KindSpend,
-			Severity:    finding.SevHigh,
-			Title:       fmt.Sprintf("Billing account %s has no budget with alerts", billingID),
-			Evidence:    map[string]any{"billing_account": billingID, "budgets": len(budgets), "linked_projects": ids},
-			Remediation: rem,
-		}}
+	for _, p := range f.Projects {
+		p = strings.TrimPrefix(p, "projects/")
+		if id, ok := ids[p]; ok {
+			p = id
+		}
+		nb.Scope.Units = append(nb.Scope.Units, p)
 	}
-	out := []finding.Finding{{
-		Account:     account,
-		Resource:    accountRes,
-		Kind:        finding.KindSpend,
-		Severity:    finding.SevInfo,
-		Title:       fmt.Sprintf("Billing account %s has %d budget(s) with alerts", billingID, len(alerting)),
-		Evidence:    map[string]any{"billing_account": billingID, "budgets": len(budgets), "alerting_budgets": len(alerting), "linked_projects": ids},
-		Remediation: finding.Remediation{Summary: "Nothing to do.", URL: rem.URL},
-	}}
+	// Folders and organizations cannot be matched to projects without more calls: like services,
+	// they narrow what is counted but are not taken as leaving any linked project out.
+	for _, a := range f.ResourceAncestors {
+		nb.Scope.Filters = append(nb.Scope.Filters, a)
+	}
+	if n := len(f.Services); n > 0 {
+		nb.Scope.Filters = append(nb.Scope.Filters, countOf(n, "service", f.Services))
+	}
+	if n := len(f.Subaccounts); n > 0 {
+		nb.Scope.Filters = append(nb.Scope.Filters, countOf(n, "subaccount", f.Subaccounts))
+	}
+	for _, k := range slices.Sorted(maps.Keys(f.Labels)) {
+		nb.Scope.Filters = append(nb.Scope.Filters, fmt.Sprintf("label %s=%v", k, f.Labels[k]))
+	}
+	for _, t := range b.ThresholdRules {
+		nb.Thresholds = append(nb.Thresholds, budget.Threshold{Percent: t.ThresholdPercent * 100, Forecast: t.SpendBasis == "FORECASTED_SPEND"})
+	}
+	n := b.NotificationsRule
+	if !n.DisableDefaultIamRecipients {
+		nb.Notifies = append(nb.Notifies, budget.NotifyAdmins)
+	}
+	if n.EnableProjectLevelRecipients && len(f.Projects) == 1 {
+		nb.Notifies = append(nb.Notifies, budget.NotifyProject)
+	}
+	if len(n.MonitoringNotificationChannels) > 0 {
+		nb.Notifies = append(nb.Notifies, budget.NotifyMonitoring)
+	}
+	if n.PubsubTopic != "" {
+		nb.Notifies = append(nb.Notifies, budget.NotifyPubSub)
+		nb.Actions = append(nb.Actions, budget.ActionPubSub)
+	}
+	if c := b.SpendCap; c != nil && (c.InputState == "CONFIGURED" || c.OutputState == "CONFIGURED" || c.OutputState == "ENFORCED") {
+		nb.Actions = append(nb.Actions, budget.ActionSpendCap)
+	}
+	return nb
+}
+
+// countOf names a short list in full and a long one by its count, keeping the identity exact.
+func countOf(n int, noun string, items []string) string {
+	sorted := slices.Sorted(slices.Values(items))
+	if n <= 2 {
+		return noun + "s " + strings.Join(sorted, ", ")
+	}
+	return fmt.Sprintf("%d %ss (%s)", n, noun, finding.StableID(sorted...)[:6])
+}
+
+// billingWording is how the shared budget rules speak about a GCP billing account.
+func billingWording(billingID string) budget.Wording {
+	return budget.Wording{
+		UnitNoun:   "project",
+		AllScope:   "all projects",
+		ConsoleURL: "https://console.cloud.google.com/billing/" + billingID + "/budgets",
+		DocsURL:    "https://cloud.google.com/billing/docs/how-to/budgets",
+		ActionNoun: "a Pub/Sub topic or a spend cap",
+		CapHowTo: "Budgets only email. To stop spend, publish a budget's notifications to a Pub/Sub topic and deploy the " +
+			"function from Google's guide that removes billing from the project when the budget is exceeded. It shuts " +
+			"down every service in the project and some resources may not come back, so try it on a test budget first.",
+		CapURL:     "https://cloud.google.com/billing/docs/how-to/disable-billing-with-notifications",
+		RisksWhere: "in projects billed here",
+	}
+}
+
+// billingFindings judges one billing account's budgets with the shared rules. The risks are the
+// unrestricted API keys and user-managed service account keys this run found in linked projects.
+func billingFindings(account, billingID, currency string, budgets []gcpBudget, linked []linkedProject, ids map[string]string) []finding.Finding {
+	c := budget.Container{
+		ID:       billingID,
+		Label:    "billing account " + billingID,
+		Units:    projectIDs(linked),
+		NoBudget: finding.Resource{Type: "billing_account", ID: billingID, Name: billingID},
+	}
 	for _, p := range linked {
-		if slices.ContainsFunc(alerting, func(b budget) bool { return b.covers(p.id, p.number) }) {
-			continue
+		c.Risks = append(c.Risks, p.risks...)
+	}
+	nb := make([]budget.Budget, len(budgets))
+	for i, b := range budgets {
+		nb[i] = b.neutral(currency, ids)
+	}
+	fs := budget.Evaluate(c, nb, billingWording(billingID))
+	for i := range fs {
+		fs[i].Account = account
+		if fs[i].Evidence == nil {
+			fs[i].Evidence = map[string]any{}
 		}
-		out = append(out, finding.Finding{
-			Account:  account,
-			Resource: finding.Resource{Type: "project_budget", ID: billingID + "/" + p.id, Name: p.id},
-			Kind:     finding.KindSpend,
-			Severity: finding.SevHigh,
-			Title:    fmt.Sprintf("Project %s is billed to %s but no budget with alerts covers it", p.id, billingID),
-			Evidence: map[string]any{"billing_account": billingID, "project": p.id},
-			Remediation: finding.Remediation{
-				Summary: "Add this project to an existing budget's scope, or create a budget for it with threshold alerts.",
-				URL:     rem.URL,
-			},
-		})
+		fs[i].Evidence["billing_account"] = billingID
+	}
+	return fs
+}
+
+// projectRisks counts what this run found in a project that lets someone run spend up: API keys
+// without restrictions and enabled user-managed service account keys.
+func projectRisks(project string, fs []finding.Finding) []budget.Risk {
+	var keys, saKeys int
+	for _, f := range fs {
+		switch {
+		case f.Resource.Type == "api_key" && f.Severity == finding.SevHigh:
+			keys++
+		case f.Resource.Type == "service_account_key" && f.Severity != finding.SevLow:
+			saKeys++
+		}
+	}
+	var out []budget.Risk
+	if keys > 0 {
+		out = append(out, budget.Risk{Unit: project, What: "unrestricted API key", Count: keys})
+	}
+	if saKeys > 0 {
+		out = append(out, budget.Risk{Unit: project, What: "user-managed service account key", Count: saKeys})
 	}
 	return out
 }
