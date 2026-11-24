@@ -49,6 +49,13 @@ backups.
 4. So it does not happen again: a pre-commit hook running `gitleaks git --pre-commit --staged`, and
    GitHub push protection in every organisation.
 
+segurata already discounts what is not yours or not live: copies in third-party repositories and
+in history a fork inherited from its upstream, test-data values in fixture paths, checksum files
+and lockfiles, notebook outputs, expired STS keys and credentials for localhost or `example.com`
+([what counts against the owner](architecture.md#what-counts-against-the-owner)). If a
+third-party repository is in fact yours (an organization you left, a client's), add its owner to
+`owned_owners` in the connector config.
+
 If the finding is a false positive (test fixture, sample key), add the gitleaks `Fingerprint`
 (`commit:file:rule:line`, printed by `gitleaks git` in that repo) to `.gitleaksignore`, and mark the
 item with `segurata rotations ignore <id> --reason …`.

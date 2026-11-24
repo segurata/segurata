@@ -89,6 +89,8 @@ type settings struct {
 	timeout     time.Duration // gitleaks_timeout, per repository
 	gitCache    bool          // git_cache: scan only commits added since the last run
 	dumps       dumpMode      // data_dumps: true, false or "only"
+	emitNoise   bool          // emit_noise: emit noise findings too, not only their counts
+	ownedOwners []string      // owned_owners: GitHub users and organizations that are the owner's
 }
 
 func parseSettings(cfg map[string]any, home string) (settings, error) {
@@ -101,6 +103,23 @@ func parseSettings(cfg map[string]any, home string) (settings, error) {
 	}
 	if v, ok := cfg["git_cache"].(bool); ok {
 		s.gitCache = v
+	}
+	if v, ok := cfg["emit_noise"].(bool); ok {
+		s.emitNoise = v
+	}
+	if v, ok := cfg["owned_owners"]; ok {
+		errOwners := fmt.Errorf("owned_owners must be a list of GitHub user or organization names")
+		list, _ := v.([]any)
+		if list == nil {
+			return s, errOwners
+		}
+		for _, o := range list {
+			name, ok := o.(string)
+			if !ok || name == "" {
+				return s, errOwners
+			}
+			s.ownedOwners = append(s.ownedOwners, name)
+		}
 	}
 	var err error
 	if s.dumps, err = parseDumpMode(cfg["data_dumps"]); err != nil {
@@ -201,9 +220,12 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		return ctx.Err()
 	}
 
-	findings := s.findings()
+	findings, noise := s.findings()
 	for _, f := range findings {
 		emit.Finding(f)
+	}
+	if sum, ok := noise.summary(); ok {
+		emit.Finding(sum)
 	}
 	detail := fmt.Sprintf("%d findings", len(findings))
 	switch {
@@ -217,6 +239,10 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if s.omitted > 0 {
 		detail += fmt.Sprintf("; %d omitted because the value appeared in the path or note", s.omitted)
 	}
+	if s.selfSkipped > 0 {
+		detail += fmt.Sprintf("; %d in segurata's own repositories skipped (test corpus)", s.selfSkipped)
+	}
+	detail += noise.String()
 	if cfg.dumps == dumpsOff {
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
 		return nil
@@ -238,11 +264,14 @@ type scan struct {
 	now  time.Time
 	emit connector.Emitter
 
-	mu      sync.Mutex
-	rows    map[string]*row
-	omitted int
+	mu          sync.Mutex
+	rows        map[string]*row
+	omitted     int
+	selfSkipped int
 
 	git   gitCache
+	own   ownership
+	nb    notebooks
 	stats historyStats
 	historyOnce
 	dumps dumpState
@@ -390,6 +419,12 @@ func fixFor(ev secretrisk.Evidence) string {
 // add records one secret at one location. value is what gets fingerprinted (the raw secret, or the
 // body of a PEM key); it never leaves this function.
 func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
+	if root := s.repoRoot(abs); root != "" && s.isSelf(root) {
+		s.mu.Lock()
+		s.selfSkipped++
+		s.mu.Unlock()
+		return
+	}
 	ev, ok := s.prepare(abs, ev, value)
 	if !ok {
 		s.omit(1)
@@ -416,6 +451,14 @@ func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secret
 		if !strings.Contains(abs, "/.git/") {
 			ev.Tracked, ev.Remote = s.trackedFile(abs)
 		}
+		if ev.Tracked {
+			ev.Origin = s.originOf(s.repoRoot(abs)).origin
+		}
+		if st, err := os.Stat(abs); err == nil {
+			secretrisk.ExpireTemporaryAWS(&ev, st.ModTime(), s.now)
+		}
+	} else {
+		secretrisk.ExpireTemporaryAWS(&ev, commitDay(ev.Date), s.now)
 	}
 	ev.Path = s.tilde(abs)
 	ev.Fingerprint = s.fp.Of(value)
@@ -444,26 +487,56 @@ func (s *scan) store(ev secretrisk.Evidence) {
 	s.rows[key] = &row{ev: ev}
 }
 
-// findings turns the aggregated rows into findings, sorted by path. A private-key row is dropped
-// when the same key in the same file was already reported as a GCP service account key.
-func (s *scan) findings() []finding.Finding {
+// findings turns the aggregated rows into findings, sorted by path, after the steps that need
+// every row at once (rows.go): a private-key row is dropped when the same key in the same file was
+// already reported as a GCP service account key; a fork's working copy of an inherited secret is
+// the upstream's too; a third-party copy of a value the owner also holds counts as the owner's;
+// temporary AWS credentials collapse to one finding per file. Noise findings are only counted
+// unless emit_noise is set.
+func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sa := map[string]bool{}
 	for _, r := range s.rows {
 		if r.ev.Type == "gcp-service-account" {
-			sa[r.ev.Path+"\x00"+r.ev.Fingerprint] = true
+			sa[fileValueKey(r.ev)] = true
 		}
 	}
-	var out []finding.Finding
+	var evs []secretrisk.Evidence
 	for _, r := range s.rows {
-		if r.ev.Type == privateKeyType && sa[r.ev.Path+"\x00"+r.ev.Fingerprint] {
+		if r.ev.Type == privateKeyType && sa[fileValueKey(r.ev)] {
 			continue
 		}
-		out = append(out, toFinding(r.ev))
+		evs = append(evs, r.ev)
+	}
+	evs = collapseTemporaryAWS(markReused(inheritForkUpstream(evs)))
+	// A noise copy of a value that has a real copy elsewhere is emitted all the same: it is one more
+	// place the secret went (a generic match in pushed history of the key in ~/.aws/credentials).
+	fs := make([]finding.Finding, len(evs))
+	real := map[string]bool{}
+	for i, ev := range evs {
+		fs[i] = toFinding(ev)
+		if !isNoise(fs[i]) {
+			real[ev.Fingerprint] = true
+		}
+	}
+	noise := noiseCounts{}
+	var out []finding.Finding
+	for i, ev := range evs {
+		if !s.cfg.emitNoise && isNoise(fs[i]) && !real[ev.Fingerprint] {
+			noise.add(ev)
+			continue
+		}
+		out = append(out, fs[i])
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Resource.ID < out[j].Resource.ID })
-	return out
+	return out, noise
+}
+
+// isNoise reports whether a finding is noise: an exposure without a priority. An SSH key with a
+// passphrase is info too, but a setting worth showing.
+func isNoise(f finding.Finding) bool {
+	return f.Severity == finding.SevInfo && f.Kind == finding.KindExposure
 }
 
 func toFinding(ev secretrisk.Evidence) finding.Finding {

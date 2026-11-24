@@ -2,6 +2,7 @@ package localsecrets
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
@@ -50,9 +51,10 @@ var gitList = cli.Allowlist{"ls-files", "rev-list"}
 // (which could run an external diff or textconv program) and never --output.
 var gitLogFlags = []string{"--all", "--remotes", "--full-history", "--no-renames", "--name-only", "--raw", "--no-abbrev", "-z", "--diff-filter=", "--format="}
 
-// gitCheck is gitList plus the data-dump check's reads (dumpscan.go): `git log` with gitLogFlags
-// and `git cat-file -s <object>` (a size). Options before the subcommand must be --git-dir= or
-// --work-tree=.
+// gitCheck is gitList plus the data-dump check's reads (dumpscan.go), `git log` with gitLogFlags
+// and `git cat-file -s <object>` (a size), and the notebook check's (notebook.go), `git cat-file
+// blob <commit>:<path>` (a file as committed; cat-file runs no textconv without --textconv).
+// Options before the subcommand must be --git-dir= or --work-tree=.
 var gitCheck = cli.CheckFunc(func(args []string) error {
 	i := 0
 	for i < len(args) && (strings.HasPrefix(args[i], "--git-dir=") || strings.HasPrefix(args[i], "--work-tree=")) {
@@ -74,6 +76,9 @@ var gitCheck = cli.CheckFunc(func(args []string) error {
 		return nil
 	case rest[0] == "cat-file":
 		if len(rest) == 3 && rest[1] == "-s" && hexID.MatchString(rest[2]) {
+			return nil
+		}
+		if len(rest) == 3 && rest[1] == "blob" && commitPath.MatchString(rest[2]) {
 			return nil
 		}
 		return refuse(args)
@@ -99,12 +104,19 @@ var gitHeadCheck = cli.CheckFunc(func(args []string) error {
 	return refuse(args)
 })
 
-// ghCheck allows only `gh repo view <owner/name> --json visibility`.
+// commitPath is `<abbreviated commit>:<path>`, the only object name cat-file blob may read.
+var commitPath = regexp.MustCompile(`\A[0-9a-f]{7,40}:[^\x00]+\z`)
+
+// ghCheck allows only `gh repo view <owner/name> --json visibility` and the two reads of who the
+// user is (origin.go): `gh api user` and `gh api user/orgs?per_page=100`, both GET.
 var ghCheck = cli.CheckFunc(func(args []string) error {
-	if len(args) == 5 && args[0] == "repo" && args[1] == "view" && githubSlugRe.MatchString(args[2]) && args[3] == "--json" && args[4] == "visibility" {
-		return nil
+	switch {
+	case len(args) == 5 && args[0] == "repo" && args[1] == "view" && githubSlugRe.MatchString(args[2]) && args[3] == "--json" && args[4] == "visibility":
+	case len(args) == 2 && args[0] == "api" && (args[1] == "user" || args[1] == "user/orgs?per_page=100"):
+	default:
+		return refuse(args)
 	}
-	return refuse(args)
+	return nil
 })
 
 // sshKeygenCheck allows exactly two shapes: print the public key of a key opened with an empty

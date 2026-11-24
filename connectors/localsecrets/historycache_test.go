@@ -102,7 +102,8 @@ func (r *historyRepo) run(gitCache bool, key byte) (map[string]bool, [][]string)
 		r.t.Fatal(err)
 	}
 	got := map[string]bool{}
-	for _, f := range s.findings() {
+	fs, _ := s.findings()
+	for _, f := range fs {
 		got[evidence(f, "fingerprint")] = true
 	}
 	return got, r.scans
@@ -245,12 +246,12 @@ func (r *historyRepo) cacheFile(t *testing.T) string {
 func TestCachedJWTExpiresOnReplay(t *testing.T) {
 	now := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
 	c := cachedLeak{Evidence: secretrisk.Evidence{Type: "jwt", Note: "role=service_role"}, Expires: now.Add(-time.Hour).Unix()}
-	ev := c.evidence(now, true)
+	ev := c.evidence(now, true, "")
 	if !ev.Public || ev.Note != "role=service_role expired" || !ev.Remote {
 		t.Errorf("expired token replayed as %+v", ev)
 	}
 	c.Expires = now.Add(time.Hour).Unix()
-	if ev := c.evidence(now, false); ev.Public || ev.Note != "role=service_role" {
+	if ev := c.evidence(now, false, ""); ev.Public || ev.Note != "role=service_role" {
 		t.Errorf("valid token replayed as %+v", ev)
 	}
 }

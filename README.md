@@ -382,8 +382,11 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   (`ssh-keygen -y -P ""`). A key without one is an `exposure` finding; a key with one, an `info`
   `setting`.
 - Severity is the rotation priority of that one copy (P0 `critical` … P3 `low`, see
-  [Rotation ledger](docs/architecture.md#rotation-ledger)). Generic matches (`assignment`,
-  gitleaks `generic-api-key`), anon or expired JWTs and encrypted private keys are `info`.
+  [Rotation ledger](docs/architecture.md#rotation-ledger)). Noise is `info`: generic matches
+  (`assignment`, gitleaks `generic-api-key`), anon or expired JWTs, expired STS keys, public OAuth
+  clients, encrypted private keys, copies in other people's repositories, and the other cases in
+  [what counts against the owner](docs/architecture.md#what-counts-against-the-owner). Noise is
+  not emitted by default: the run's status line counts it by type and by repository.
 - A finding in a working file that group or others can read carries the `file.chmod600` action:
   `segurata remediate <finding-id>` closes the file. The secret still has to be rotated.
 - Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history; `gh` (optional) for
@@ -393,7 +396,10 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   gitleaks and keeps the fast scan), `git_cache` (default true; false scans every repository's
   whole history and leaves the cache alone), `gitleaks_workers` (default 6), `gitleaks_timeout`
   (per repository, default `"10m"`), `data_dumps` (default true; false turns the dump check off,
-  `"only"` runs nothing else, about a minute cold and seconds from the cache).
+  `"only"` runs nothing else, about a minute cold and seconds from the cache), `emit_noise`
+  (default false; true emits the noise findings too), `owned_owners` (GitHub users and
+  organizations that are yours, added to what `gh api user` and `gh api user/orgs` say; see
+  [repository origin](docs/architecture.md#what-counts-against-the-owner)).
 - What to do with each finding: [docs/secrets.md](docs/secrets.md); each finding's `evidence.fix`
   links the section.
 

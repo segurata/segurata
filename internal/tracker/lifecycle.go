@@ -354,8 +354,9 @@ func (t *Tracker) find(ref string, keep func(*Item) bool, hint string) (*Item, e
 	return nil, fmt.Errorf("%q matches %d items, use more characters", ref, len(hits))
 }
 
-// Sort orders items most urgent first: priority, then (secrets) worst exposure, then severity,
-// then service or title, then id.
+// Sort orders items most urgent first: priority, then (secrets) worst exposure, a copy in one of
+// the owner's repositories, the most recent commit, service and id; other items by severity,
+// title and id.
 func Sort(items []*Item) {
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i], items[j]
@@ -365,6 +366,12 @@ func Sort(items []*Item) {
 		if a.Secret != nil && b.Secret != nil {
 			if ra, rb := spotRank(a.worst()), spotRank(b.worst()); ra != rb {
 				return ra > rb
+			}
+			if oa, ob := a.owned(), b.owned(); oa != ob {
+				return oa
+			}
+			if da, db := a.lastCommitted(), b.lastCommitted(); da != db {
+				return da > db
 			}
 			if a.Secret.Service != b.Secret.Service {
 				return a.Secret.Service < b.Secret.Service

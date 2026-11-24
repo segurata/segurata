@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // A database dump committed to git (production_latest_backup.sql, app.sqlite3) exposes every row
@@ -43,10 +44,7 @@ var dataExts = []string{".csv", ".json", ".xlsx", ".csv.gz", ".json.gz"}
 var (
 	prodWords = map[string]bool{"prod": true, "production": true, "prd": true, "live": true, "backup": true, "backups": true, "bkp": true, "dump": true, "dumps": true}
 	dbWords   = map[string]bool{"db": true, "sql": true, "database": true, "dump": true, "backup": true, "postgres": true, "postgresql": true, "pg": true, "pgsql": true, "mysql": true, "mariadb": true, "mongo": true, "sqlite": true}
-	testDirs  = map[string]bool{"test": true, "tests": true, "spec": true, "fixtures": true, "testdata": true, "__tests__": true, "__fixtures__": true}
 	migDirs   = map[string]bool{"migrations": true, "migration": true, "migrate": true, "drizzle": true, "flyway": true, "alembic": true, "liquibase": true}
-	// vendorDirs hold third-party code: their sample databases are not the owner's data.
-	vendorDirs = map[string]bool{"vendor": true, "third_party": true, "third-party": true, "node_modules": true, "bower_components": true}
 )
 
 var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
@@ -63,14 +61,16 @@ func anyWord(ws []string, set map[string]bool) bool {
 }
 
 // classifyDumpName judges a repository-relative path by its name alone. Schema, structure and
-// migration files, seeds, vendored code and Thumbs.db never match; files under test folders need
-// dumpLargeSize.
+// migration files, seeds, vendored code (their sample databases are not the owner's data) and
+// Thumbs.db never match; files under test folders need dumpLargeSize. Test and vendor folders are
+// the ones secretrisk.RoleOf uses for secrets.
 func classifyDumpName(rel string) dumpName {
 	lower := strings.ToLower(rel)
 	base := path.Base(lower)
 	dirs := strings.Split(path.Dir(lower), "/")
+	inTest, inVendor := secretrisk.DirRoles(lower)
 	if base == "thumbs.db" || strings.Contains(base, "schema") || strings.Contains(base, "structure") || strings.Contains(lower, "seed") ||
-		anyWord(dirs, migDirs) || anyWord(dirs, vendorDirs) {
+		anyWord(dirs, migDirs) || inVendor {
 		return dumpName{}
 	}
 	ws := words(base)
@@ -92,7 +92,7 @@ func classifyDumpName(rel string) dumpName {
 	default:
 		return dumpName{}
 	}
-	if anyWord(dirs, testDirs) && n.minSize < dumpLargeSize {
+	if inTest && n.minSize < dumpLargeSize {
 		n.minSize = dumpLargeSize
 	}
 	return n

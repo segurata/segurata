@@ -138,6 +138,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		r := folded[l]
 		if r.isSecrets() {
 			rep.Secrets.add(t.SyncSecrets(Sightings(r.findings), now, opt.IncludeNoise))
+			rep.Secrets.add(t.SyncNoise(NoiseOnly(r.findings), now))
 		}
 		for _, f := range r.findings {
 			if ev, ok := secretEvidence(f); ok {

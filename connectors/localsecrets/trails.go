@@ -186,7 +186,7 @@ func (t *Trails) find(path, mode, text string, matches func(string) [][]int) []H
 			case "gcp-service-account":
 				ok = false
 			default:
-				ev, value, ok = valueEvidence(c.p, c.subs(mt), c.varName, t.s.now)
+				ev, value, ok = valueEvidence(c.p, c.subs(mt), c.varName, strings.TrimSuffix(line, "\n"), t.s.now)
 				g := c.p.group
 				start, end = loc[0]+c.idx[2*g], loc[0]+c.idx[2*g+1]
 			}

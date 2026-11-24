@@ -1,11 +1,13 @@
 package localsecrets
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -64,7 +66,9 @@ func (s *scan) hs(rels []string) []string {
 // assignment pattern too; logs and transcripts only the specific ones. Without a git history scan
 // the whole working tree under repos_root is searched instead of just its secret files.
 func (s *scan) passes(history bool) []pass {
-	noCode := []string{"--max-filesize", "50M"}
+	// gcloud's own logs record its API calls (segurata's gcp connector among them): ~70 info
+	// matches a run, none a secret.
+	noCode := []string{"--max-filesize", "50M", "-g", "!**/gcloud/logs"}
 	for _, e := range codeExts {
 		noCode = append(noCode, "-g", "!*."+e)
 	}
@@ -147,10 +151,63 @@ func rgArgsFor(p pass) []string {
 	return append(append(args, "--"), paths...)
 }
 
+// rg runs one pass. Matches whose judgement needs the whole line (a token in a URL's query
+// string is judged by the URL's host, which ripgrep's -o output leaves out) are read back from
+// their file afterwards, one read per file.
 func (s *scan) rg(p pass) {
-	if args := rgArgsFor(p); args != nil {
-		eachRGMatch(s.rgOutput(args), func(path string, line int, text string) { s.match(path, line, text, p.patterns) })
+	args := rgArgsFor(p)
+	if args == nil {
+		return
 	}
+	type hit struct {
+		line int
+		text string
+	}
+	deferred := map[string][]hit{}
+	eachRGMatch(s.rgOutput(args), func(path string, line int, text string) {
+		if c, ok := classify(path, text, p.patterns); ok && needsLine[c.p.typ] {
+			deferred[path] = append(deferred[path], hit{line, text})
+			return
+		}
+		s.match(path, line, text, "", p.patterns)
+	})
+	for path, hits := range deferred {
+		want := map[int]bool{}
+		for _, h := range hits {
+			want[h.line] = true
+		}
+		lines := linesAt(path, want)
+		for _, h := range hits {
+			s.match(path, h.line, h.text, lines[h.line], p.patterns)
+		}
+	}
+}
+
+// needsLine are the types judged with the line around the match.
+var needsLine = map[string]bool{"url-token-param": true}
+
+// linesAt reads the wanted (1-based) lines of a file of at most 50 MB, streaming.
+func linesAt(path string, want map[int]bool) map[int]string {
+	out := map[int]string{}
+	f, err := os.Open(path)
+	if err != nil {
+		return out
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || st.Size() > 50<<20 {
+		return out
+	}
+	r := bufio.NewReader(f)
+	for n := 1; len(out) < len(want); n++ {
+		l, err := r.ReadString('\n')
+		if want[n] {
+			out[n] = strings.TrimRight(l, "\r\n")
+		}
+		if err != nil {
+			break
+		}
+	}
+	return out
 }
 
 // eachRGMatch reads `path\0line:match` lines.
@@ -224,10 +281,11 @@ func classify(path, text string, patterns []pattern) (classified, bool) {
 	return classified{}, false
 }
 
-// match classifies one ripgrep match and records it.
-func (s *scan) match(path string, line int, text string, patterns []pattern) {
+// match classifies one ripgrep match and records it. context is the whole line when the pattern
+// needs it (needsLine), else "".
+func (s *scan) match(path string, line int, text, context string, patterns []pattern) {
 	c, ok := classify(path, text, patterns)
-	if !ok {
+	if !ok || s.fileNotebookOutput(path, line) {
 		return
 	}
 	kind := s.kindOf(path)
@@ -237,12 +295,12 @@ func (s *scan) match(path string, line int, text string, patterns []pattern) {
 	case "gcp-service-account":
 		s.serviceAccount(path, line, kind)
 	default:
-		s.value(path, line, kind, c.p, c.subs(text), c.varName)
+		s.value(path, line, kind, c.p, c.subs(text), c.varName, context)
 	}
 }
 
-func (s *scan) value(path string, line int, kind string, p *pattern, m []string, varName string) {
-	ev, secret, ok := valueEvidence(p, m, varName, s.now)
+func (s *scan) value(path string, line int, kind string, p *pattern, m []string, varName, context string) {
+	ev, secret, ok := valueEvidence(p, m, varName, context, s.now)
 	if !ok {
 		return
 	}
@@ -251,7 +309,8 @@ func (s *scan) value(path string, line int, kind string, p *pattern, m []string,
 }
 
 // valueEvidence judges a value match: the evidence without its location, and the raw secret.
-func valueEvidence(p *pattern, m []string, varName string, now time.Time) (secretrisk.Evidence, string, bool) {
+// context is the line the match came from, when known: a URL token's host is read from it.
+func valueEvidence(p *pattern, m []string, varName, context string, now time.Time) (secretrisk.Evidence, string, bool) {
 	v, ok := judge(p, m[p.group], varName, now)
 	if !ok {
 		return secretrisk.Evidence{}, "", false
@@ -260,13 +319,40 @@ func valueEvidence(p *pattern, m []string, varName string, now time.Time) (secre
 	if note == "" {
 		note = varName
 	}
-	if p.typ == "url-credentials" {
+	switch p.typ {
+	case "url-credentials":
 		if i, j := strings.Index(m[0], "://"), strings.LastIndex(m[0], "@"); i > 0 && j > i {
-			note = m[0][:i+3] + "…" + m[0][j:] // scheme and host only
+			note = secretrisk.URLNote(m[0][:i], m[0][j+1:], "")
 		}
+	case "url-token-param":
+		scheme, host := urlBefore(context, m[0])
+		note = secretrisk.URLNote(scheme, host, queryParam(m[0]))
 	}
 	return secretrisk.Evidence{Source: "scan", Type: p.typ, Redacted: secretrisk.Redact(p.typ, p.prefix, v.secret),
-		Note: note, Public: v.public}, v.secret, true
+		Note: note, Public: v.public, Sample: sampleValue(v.secret)}, v.secret, true
+}
+
+// queryParam is the parameter name of a `?name=value` or `&name=value` match.
+func queryParam(m string) string {
+	name, _, _ := strings.Cut(strings.TrimLeft(m, "?&"), "=")
+	return strings.ToLower(name)
+}
+
+var urlStart = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]{1,20})://(?:[^\s/@"'<>]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])[^\s"'<>]*$`)
+
+// urlBefore finds the URL a query-string match belongs to in its line: the scheme and host of
+// the URL that runs, without a break, up to the match. Empty when the line is unknown or the
+// match is not inside a URL.
+func urlBefore(line, match string) (scheme, host string) {
+	i := strings.Index(line, match)
+	if i < 0 {
+		return "", ""
+	}
+	m := urlStart.FindStringSubmatch(line[max(0, i-2048):i])
+	if m == nil {
+		return "", ""
+	}
+	return strings.ToLower(m[1]), strings.ToLower(strings.Trim(m[2], "[]"))
 }
 
 // privateKey fingerprints the key body. A header with no body in a transcript or a log is

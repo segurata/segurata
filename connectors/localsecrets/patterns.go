@@ -46,6 +46,9 @@ var specific = compile([]pattern{
 	{typ: "github-pat", src: `\bgithub_pat_[A-Za-z0-9_]{60,}`, prefix: "github_pat_"},
 	{typ: "gitlab", src: `\bglpat-[A-Za-z0-9_-]{20,}`, prefix: "glpat-"},
 	{typ: "aws-secret-key", src: `(?i)aws_?secret_?access_?key["']?\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})\b`, group: 1},
+	// A pre-signed URL names its key id in X-Amz-Credential (SigV4) or AWSAccessKeyId (SigV2); it
+	// starts before the bare key id, so it wins the leftmost match.
+	{typ: "aws-presigned-url", src: `(?:X-Amz-Credential|AWSAccessKeyId)=((?:AKIA|ASIA)[A-Z0-9]{16})\b`, prefix: "AKIA|ASIA", group: 1},
 	{typ: "aws-access-key-id", src: `\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`, prefix: "AKIA|ASIA"},
 	{typ: "google-api-key", src: `\bAIza[0-9A-Za-z_-]{35}`, prefix: "AIza"},
 	{typ: "google-oauth-client-secret", src: `\bGOCSPX-[A-Za-z0-9_-]{28}`, prefix: "GOCSPX-"},
@@ -175,6 +178,9 @@ func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
 	if secret == "" || placeholder.MatchString(secret) || entropy(body) < minEntropy {
 		return verdict{}, false
 	}
+	if note, ok := publicValue(secret); ok {
+		return verdict{secret: secret, note: note, public: true}, true
+	}
 	switch p.typ {
 	case "assignment":
 		if strings.ContainsAny(secret, "(${<%") || notSecretValue.MatchString(secret) || notSecretName.MatchString(name) {
@@ -206,6 +212,54 @@ func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
 		return verdict{secret: secret, note: strings.Join(notes, " "), public: role == "anon" || expired, expires: int64(exp)}, true
 	}
 	return verdict{secret: secret}, true
+}
+
+// publicClients are OAuth client secrets published in the source of the tools that use them, so
+// not secret: gcloud's own client (Google Cloud SDK, googlecloudsdk/core/config.py,
+// CLOUDSDK_CLIENT_NOTSOSECRET) and the one `gcloud auth application-default login` uses
+// (googlecloudsdk/api_lib/auth/util.py). They sit in gcloud's ADC and legacy_credentials files.
+// Each is recognised by its first seven and last four characters and its length, so the value
+// itself is not repeated here.
+var publicClients = []struct{ head, tail, name string }{
+	{"ZmssLNj", "ejr2", "Google Cloud SDK"},
+	{"d-FL95Q", "D0Ty", "gcloud application-default login"},
+}
+
+const publicClientLen = 24
+
+// publicValue recognises a value that is public by design, with the note that says why.
+func publicValue(v string) (string, bool) {
+	if len(v) != publicClientLen {
+		return "", false
+	}
+	for _, c := range publicClients {
+		if strings.HasPrefix(v, c.head) && strings.HasSuffix(v, c.tail) {
+			return "public OAuth client of " + c.name, true
+		}
+	}
+	return "", false
+}
+
+// sampleMarks are what test data reads like; a run of four equal characters counts too.
+var sampleMarks = regexp.MustCompile(`(?i)test|fake|sample|demo|mock|fixture|dummy|foo|bar|baz|qwerty|1234|abcd`)
+
+// sampleValue reports whether a value reads like test data. Real random keys hit this now and
+// then, which is why it only lowers secrets found in test, example or documentation paths.
+func sampleValue(v string) bool {
+	if sampleMarks.MatchString(v) {
+		return true
+	}
+	run := 1
+	for i := 1; i < len(v); i++ {
+		if v[i] == v[i-1] {
+			if run++; run >= 4 {
+				return true
+			}
+		} else {
+			run = 1
+		}
+	}
+	return false
 }
 
 func jwtClaims(token string) (map[string]any, bool) {

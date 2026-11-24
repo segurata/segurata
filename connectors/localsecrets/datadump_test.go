@@ -487,7 +487,7 @@ func TestGitleaksReplayMarksMatchesInDumps(t *testing.T) {
 	if err := sc.gitleaks(r.dir); err != nil {
 		t.Fatal(err)
 	}
-	got := sc.findings()
+	got, _ := sc.findings()
 	if len(got) != 1 || evidence(got[0], "in_data_dump") != "true" || got[0].Severity == finding.SevInfo {
 		t.Fatalf("live Stripe key inside a dump: %+v", got)
 	}
@@ -503,7 +503,7 @@ func TestGitleaksReplayMarksMatchesInDumps(t *testing.T) {
 	if err := off.gitleaks(r.dir); err != nil {
 		t.Fatal(err)
 	}
-	if got := off.findings(); len(got) != 1 || evidence(got[0], "in_data_dump") != "<nil>" {
+	if got, _ := off.findings(); len(got) != 1 || evidence(got[0], "in_data_dump") != "<nil>" {
 		t.Fatalf("marked with data_dumps off: %+v", got[0].Evidence)
 	}
 }
