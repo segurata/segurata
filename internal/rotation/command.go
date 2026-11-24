@@ -104,14 +104,13 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 	if err != nil {
 		return c.fail(err)
 	}
-	rep, err := t.Sync(opt, now)
+	t, rep, err := tracker.SyncAndSave(t, path, opt, now, func(rep tracker.SyncReport) error {
+		if !rep.FoldedSecrets() {
+			return fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", tracker.SecretsConnector, *out, tracker.SecretsConnector)
+		}
+		return nil
+	})
 	if err != nil {
-		return c.fail(err)
-	}
-	if !rep.FoldedSecrets() {
-		return c.fail(fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", tracker.SecretsConnector, *out, tracker.SecretsConnector))
-	}
-	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
 	r := rep.Secrets

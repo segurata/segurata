@@ -131,7 +131,7 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	rep, err := syncAndSave(t, path, opt, now)
+	_, rep, err := SyncAndSave(t, path, opt, now, nil)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -141,20 +141,24 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	return 0
 }
 
-// syncAndSave folds the runs into t and saves it. When tracker.json changed after t was loaded
-// (saved by something that does not take the lock: an edit, an older binary), it folds the same
-// runs once more into that version instead of failing a scheduled sync or dropping the change.
-func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time) (SyncReport, error) {
+// SyncAndSave folds the runs into t and saves it, unless require (nil for none) rejects the sync's
+// report; it returns the tracker it saved. When tracker.json changed after t was loaded (saved by
+// something that does not take the lock: an edit, an older binary), it folds the same runs once
+// more into that version instead of failing a scheduled sync or dropping the change.
+func SyncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, require func(SyncReport) error) (*Tracker, SyncReport, error) {
 	for again := false; ; again = true {
 		rep, err := t.Sync(opt, now)
+		if err == nil && require != nil {
+			err = require(rep)
+		}
 		if err != nil {
-			return rep, err
+			return t, rep, err
 		}
 		if err = t.Save(path); again || !errors.Is(err, ErrChanged) {
-			return rep, err
+			return t, rep, err
 		}
 		if t, err = Load(path); err != nil {
-			return rep, err
+			return t, rep, err
 		}
 	}
 }
