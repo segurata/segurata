@@ -1249,5 +1249,6 @@ redaction removes the copy that stays on disk, in backups and in sync tools.
 ## Prior art
 
 Prowler and ScoutSuite already audit AWS, Azure and GCP security posture in depth. When that depth
-is needed they get wrapped as external connectors rather than rewritten. segurata covers what they
+is needed they get wrapped as external connectors rather than rewritten
+([plugins/prowler](../plugins/prowler/README.md) runs Prowler's GCP checks). segurata covers what they
 don't: consumer accounts, personal OAuth grants, AI-provider keys and spend, and local secrets.

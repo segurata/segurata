@@ -94,9 +94,12 @@ jobs:
             done
           done
 
-  hibp-example:
+  python-connectors:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      matrix:
+        dir: [examples/hibp, plugins/prowler]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,5 +108,5 @@ jobs:
         with:
           python-version: "3.13"
       - name: unittest
-        working-directory: examples/hibp
+        working-directory: ${{ matrix.dir }}
         run: python -m unittest -v
