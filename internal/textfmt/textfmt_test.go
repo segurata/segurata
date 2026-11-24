@@ -97,3 +97,14 @@ func TestUSD(t *testing.T) {
 		t.Errorf("USD(42) = %q", got)
 	}
 }
+
+func TestJoinAnd(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
+		want string
+	}{{nil, ""}, {[]string{"a"}, "a"}, {[]string{"a", "b"}, "a and b"}, {[]string{"a", "b", "c"}, "a, b and c"}} {
+		if got := JoinAnd(c.in); got != c.want {
+			t.Errorf("JoinAnd(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

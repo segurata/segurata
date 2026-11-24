@@ -28,6 +28,14 @@ func Count(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, Plural(n, one, many))
 }
 
+// JoinAnd lists items as prose: "a", "a and b", "a, b and c"; "" for none.
+func JoinAnd(items []string) string {
+	if len(items) <= 1 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+}
+
 // USD writes an amount of dollars with cents: "$42.50".
 func USD(v float64) string { return fmt.Sprintf("$%.2f", v) }
 

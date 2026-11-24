@@ -2,6 +2,9 @@ package connectedapps
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"sort"
@@ -21,9 +24,24 @@ const (
 var slackSigninJS = inPage(`
   return {...page, rows: [...document.querySelectorAll('a[href*=".slack.com/"]')].map((a) => ({href: a.href}))};`)
 
-const slackAppSel = `a[href*="/integrations/profile/"]`
+const (
+	slackAppSel   = `a[href*="/integrations/profile/"]`
+	slackListPath = "/api/admin.apps.installed.list"
+)
 
-var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `')};`)
+// slackAppsJS reads the app rows when the list renders, and whether the page has fetched its app
+// list (from its resource timing: it sends nothing). In a hidden target the list may never render
+// (checked 2026-11-24), so the fetched list is what counts.
+var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `'),
+  fetched: performance.getEntriesByType("resource").some((e) => e.name.includes(` + strconv.Quote(slackListPath) + `))};`)
+
+var slackListRE = regexp.MustCompile(regexp.QuoteMeta(slackListPath))
+
+// slackPage is what slackAppsJS returns.
+type slackPage struct {
+	listPage
+	Fetched bool `json:"fetched"`
+}
 
 var (
 	slackScopesRE      = regexp.MustCompile(`^(\d+) (ámbitos?|scopes?)$`)
@@ -53,16 +71,21 @@ func slackWorkspaces(rows []row) []string {
 }
 
 type slackApp struct {
-	name, href, note string
-	count            int
-	pending          bool // approval required or restricted: requested, not installed
+	id, name, href, note string
+	count                int
+	pending              bool // approval required or restricted: requested, not installed
 }
 
-// parseSlackApp reads a row of <workspace>/apps/manage. The list shows only how many scopes each
-// app has; the app's own page shows the developer's defaults, not what this workspace granted,
-// so it is not read.
+// slackAppIDRE reads an app's id from its link: …/integrations/profile/<app>/….
+var slackAppIDRE = regexp.MustCompile(`/integrations/profile/(A[A-Z0-9]+)`)
+
+// parseSlackApp reads a row of <workspace>/apps/manage: the list shows how many scopes each app
+// has and whether it waits for approval.
 func parseSlackApp(r row) slackApp {
 	a := slackApp{name: r.Name, href: r.Href}
+	if m := slackAppIDRE.FindStringSubmatch(r.Href); m != nil {
+		a.id = m[1]
+	}
 	var notes []string
 	for _, l := range r.Lines {
 		if m := slackScopesRE.FindStringSubmatch(l); m != nil && a.count == 0 {
@@ -77,8 +100,50 @@ func parseSlackApp(r row) slackApp {
 	return a
 }
 
+// slackInstalled is one app of the admin.apps.installed.list response the manage page fetches:
+// the scopes declared for this workspace, the bot's and the user token's. Fields not named here
+// are discarded by the decoder.
+type slackInstalled struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	BotScopes  []string `json:"declared_bot_scopes"`
+	UserScopes []string `json:"declared_user_scopes"`
+	Internal   bool     `json:"is_internal"`
+}
+
+// parseSlackInstalled reads the captured app list.
+func parseSlackInstalled(resp *response) ([]slackInstalled, error) {
+	if resp == nil {
+		return nil, errors.New("the page did not fetch its app list")
+	}
+	if resp.status != 200 {
+		return nil, fmt.Errorf("the app list answered HTTP %d", resp.status)
+	}
+	var v struct {
+		OK    bool             `json:"ok"`
+		Error string           `json:"error"`
+		Apps  []slackInstalled `json:"apps"`
+	}
+	if err := json.Unmarshal(resp.body, &v); err != nil {
+		return nil, fmt.Errorf("the app list is not the JSON segurata knows: %v", err)
+	}
+	if !v.OK {
+		return nil, fmt.Errorf("the app list answered %q", v.Error)
+	}
+	return v.Apps, nil
+}
+
 // slackListed reports whether a workspace's app page shows its apps or its empty message.
 func slackListed(p listPage) bool { return len(p.Rows) > 0 || slackEmptyRE.MatchString(p.Text) }
+
+// slackReady passes once the page is a sign-in page, or has fetched its app list or shown its rows
+// for two reads in a row (the response can finish a moment after its timing entry appears).
+func slackReady() func(json.RawMessage) bool {
+	return twice(func(raw json.RawMessage) bool {
+		p, ok := decode[slackPage](raw)
+		return ok && p.URL != "" && (slackSignedOutRE.MatchString(p.URL) || p.Fetched || slackListed(p.listPage))
+	})
+}
 
 // slackSignedIn reports whether the sign-in page lists a workspace this browser is signed in to.
 func slackSignedIn(p listPage) bool { return len(slackWorkspaces(p.Rows)) > 0 }
@@ -99,36 +164,85 @@ func slack(ctx context.Context, e *env) {
 		if ctx.Err() != nil {
 			return
 		}
-		manage := "https://" + host + "/apps/manage"
-		raw, err := e.b.load(ctx, manage, slackAppsJS, readyWhen(func(p listPage) bool {
-			return slackSignedOutRE.MatchString(p.URL) || slackListed(p)
-		}), 40)
-		if err != nil {
-			e.fail(host, err)
-			continue
+		slackWorkspace(ctx, e, host)
+	}
+}
+
+// slackWorkspace reports the apps of one workspace: those in the app list the manage page fetches,
+// classified by their declared scopes, and the rows the page shows that the list lacks (apps
+// waiting for approval), by their scope count. The page is loaded once; no app page is opened.
+func slackWorkspace(ctx context.Context, e *env, host string) {
+	manage := "https://" + host + "/apps/manage"
+	raw, resp, err := e.b.capture(ctx, manage, slackAppsJS, slackReady(), 40, slackListRE)
+	if err != nil {
+		e.fail(host, err)
+		return
+	}
+	p, _ := decode[slackPage](raw)
+	if p.URL == "" || slackSignedOutRE.MatchString(p.URL) {
+		e.status(host, finding.StateSignedOut, "signed out of this workspace: %s", manage)
+		return
+	}
+	team := slackTeam(p.URL, p.Rows)
+	installed, listErr := parseSlackInstalled(resp)
+	if listErr != nil && !slackListed(p.listPage) {
+		e.status(host, finding.StateUnverified, "%v and no app row rendered, so segurata cannot list the apps: review %s by hand", listErr, manage)
+		return
+	}
+	rowApps := make([]slackApp, len(p.Rows))
+	byID := map[string]slackApp{}
+	for i, r := range p.Rows {
+		rowApps[i] = parseSlackApp(r)
+		if id := rowApps[i].id; id != "" {
+			byID[id] = rowApps[i]
 		}
-		p, _ := decode[listPage](raw)
-		if p.URL == "" || slackSignedOutRE.MatchString(p.URL) {
-			e.status(host, finding.StateSignedOut, "signed out of this workspace: %s", manage)
-			continue
+	}
+	listed := map[string]bool{}
+	for _, in := range installed {
+		listed[in.ID] = true
+		a := byID[in.ID]
+		href := a.href
+		if href == "" && team != "" {
+			href = "https://app.slack.com/apps-manage/" + team + "/integrations/profile/" + in.ID + "/permissions"
 		}
-		for _, r := range p.Rows {
-			a := parseSlackApp(r)
+		e.report(grant{who: host, scope: host, resType: "slack_app", name: in.Name, scopes: nonNil(in.BotScopes), userScopes: nonNil(in.UserScopes),
+			count: len(in.BotScopes) + len(in.UserScopes), note: a.note, url: href, revoke: slackRevoke,
+			extra: map[string]any{"pending_approval": false, "internal": in.Internal, "capabilities": slackCapList(slackCaps(in.BotScopes, in.UserScopes))}})
+	}
+	n := len(installed)
+	for _, a := range rowApps {
+		if a.id == "" || !listed[a.id] {
 			e.report(grant{who: host, scope: host, resType: "slack_app", name: a.name, count: a.count, note: a.note,
 				url: a.href, revoke: slackRevoke, extra: map[string]any{"pending_approval": a.pending}})
+			n++
 		}
-		if team := slackTeam(p.Rows); team != "" {
-			e.emit.Finding(slackWorkspaceFinding(e.account(host), host, team))
-		}
-		e.status(host, finding.StateOK, "%d apps", len(p.Rows))
 	}
+	if team != "" {
+		e.emit.Finding(slackWorkspaceFinding(e.account(host), host, team))
+	}
+	if listErr != nil {
+		e.status(host, finding.StateUnverified, "%d apps by scope count only: %v; review their permissions at %s", n, listErr, manage)
+		return
+	}
+	e.status(host, finding.StateOK, "%d apps", n)
+}
+
+// nonNil is s, or an empty list for nil: an app the list declares no scopes of has none.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // slackTeamRE reads the workspace id from an app's link: app.slack.com/apps-manage/<team>/integrations/….
 var slackTeamRE = regexp.MustCompile(`/apps-manage/(T[A-Z0-9]{6,})/`)
 
-// slackTeam is the workspace id the apps' links name, or "" for a workspace with no app listed.
-func slackTeam(rows []row) string {
+// slackTeam is the workspace id the page's URL or its apps' links name, or "".
+func slackTeam(pageURL string, rows []row) string {
+	if m := slackTeamRE.FindStringSubmatch(pageURL); m != nil {
+		return m[1]
+	}
 	for _, r := range rows {
 		if m := slackTeamRE.FindStringSubmatch(r.Href); m != nil {
 			return m[1]
