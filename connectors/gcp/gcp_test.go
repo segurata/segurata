@@ -67,6 +67,7 @@ type recorder struct {
 	mu       sync.Mutex
 	findings []finding.Finding
 	statuses []finding.Status
+	skipped  []string
 }
 
 func (r *recorder) Finding(f finding.Finding) {
@@ -83,6 +84,13 @@ func (r *recorder) Status(s finding.Status) {
 	r.statuses = append(r.statuses, s)
 }
 
+func (r *recorder) Scope(id string, inspected bool, _ string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !inspected {
+		r.skipped = append(r.skipped, id)
+	}
+}
 func (r *recorder) Log(string) {}
 
 func (r *recorder) byTitle(t *testing.T, sub string) finding.Finding {
@@ -154,9 +162,7 @@ func fullScenario() map[string][]outcome {
 		"auth list":                      {{stdout: "auth_list.json"}},
 		"projects list " + owner:         {{stdout: "projects_owner.json"}},
 		"projects list " + work:          {{stderr: "reauth.txt"}},
-		"projects list " + ci:            {{stdout: "projects_sa.json"}},
 		"billing accounts list " + owner: {{stdout: "billing_accounts_owner.json"}},
-		"billing accounts list " + ci:    {{stderr: "disabled_billing.txt"}},
 
 		"projects get-iam-policy demo-shop " + owner:      {{stdout: "iam_policy_shop.json"}},
 		"iam service-accounts list " + shop + " " + owner: {{stdout: "sa_list_shop.json"}},
@@ -254,9 +260,7 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		state           finding.State
 	}{
 		{"owner@example.com", "3 project(s) visible", finding.StateOK},
-		{"ci@demo-shop.iam.gserviceaccount.com", "1 project(s) visible", finding.StateOK},
 		{"work@example.org", "projects list: credentials expired", finding.StateReauth},
-		{"ci@demo-shop.iam.gserviceaccount.com", "billing accounts list: API not enabled", finding.StateError},
 		{"owner@example.com", "project demo-blog: permission denied for api keys", finding.StateError},
 		{"owner@example.com", "billing account 000000-BBBBBB-222222: cannot read budgets, so spend alerts are unknown for demo-blog: permission denied", finding.StateError},
 	}
@@ -277,6 +281,35 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 	for k := range statuses {
 		if strings.Contains(k, "Help Token") || strings.Contains(k, "authenticated as") {
 			t.Errorf("status detail not summarized: %s", k)
+		}
+	}
+
+	// Permission denied on demo-blog leaves only demo-blog's findings unresolved.
+	var tally finding.Tally
+	for _, s := range rec.statuses {
+		tally.Status(s)
+	}
+	end := tally.End(connectorName, "", time.Now(), time.Now(), nil)
+	cov := finding.CoverageOf(&end)
+	if key.Scope != "demo-shop" || adc.Scope != "" {
+		t.Errorf("scopes: project finding %q, local finding %q", key.Scope, adc.Scope)
+	}
+	if b := rec.byTitle(t, "no budget with alerts covers it"); b.Scope != "billing:000000-AAAAAA-111111" {
+		t.Errorf("billing finding scope %q", b.Scope)
+	}
+	for _, c := range []struct {
+		f         finding.Finding
+		unchecked bool
+	}{
+		{key, false},
+		{adc, false},
+		{finding.Finding{Account: "owner@example.com", Scope: "demo-blog"}, true},
+		{finding.Finding{Account: "owner@example.com", Scope: "billing:000000-BBBBBB-222222"}, true},
+		{finding.Finding{Account: "work@example.org", Scope: "any-project"}, true}, // reauth: the whole account
+		{rec.byTitle(t, "has 1 budget(s) with alerts"), false},                     // ci@ is a service account: not used, so no billing:* failure
+	} {
+		if _, got := cov.UncheckedFinding(c.f); got != c.unchecked {
+			t.Errorf("%s %s: unchecked %v, want %v", c.f.Account, finding.ScopeOf(c.f), got, c.unchecked)
 		}
 	}
 
@@ -321,6 +354,72 @@ func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 	}
 	if got := f.Evidence["linked_projects"]; len(got.([]string)) != 1 || got.([]string)[0] != "demo-blog" {
 		t.Errorf("linked projects: %v", got)
+	}
+}
+
+func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t *testing.T) {
+	shop := "--project=demo-shop"
+	plays := map[string][]outcome{
+		"auth list":                      {{stdout: "auth_list.json"}},
+		"projects list " + owner:         {{stdout: "projects_owner.json"}},
+		"projects list " + work:          {{stdout: "projects_owner.json"}},
+		"billing accounts list " + owner: {{}},
+		"billing accounts list " + work:  {{}},
+
+		"projects get-iam-policy demo-shop " + owner:      {{stderr: "denied_apikeys.txt"}},
+		"projects get-iam-policy demo-shop " + work:       {{}},
+		"iam service-accounts list " + shop + " " + owner: {{stderr: "denied_apikeys.txt"}},
+		"iam service-accounts list " + shop + " " + work:  {{}},
+		"services api-keys list " + shop + " " + owner:    {{stderr: "denied_apikeys.txt"}},
+		"services api-keys list " + shop + " " + work:     {{stderr: "denied_apikeys.txt"}},
+		"billing projects describe demo-shop " + owner:    {{}},
+	}
+	c, runner := testConnector(t, t.TempDir(), plays, nil)
+	rec := &recorder{}
+	cfg := map[string]any{"skip_projects": []any{"demo-blog"}}
+	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1, Config: cfg}, rec); err != nil {
+		t.Fatal(err)
+	}
+	var projectStatuses []string
+	for _, s := range rec.statuses {
+		if strings.HasPrefix(s.Detail, "project ") {
+			projectStatuses = append(projectStatuses, s.Account+" | "+s.Detail)
+		}
+	}
+	want := "owner@example.com | project demo-shop: permission denied for api keys (to every account that lists it: owner@example.com, work@example.org)"
+	if len(projectStatuses) != 1 || projectStatuses[0] != want {
+		t.Fatalf("project statuses %q, want only %q", projectStatuses, want)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(call, "demo-blog") || strings.Contains(call, "iam.gserviceaccount.com") {
+			t.Errorf("skipped project or service account used: %s", call)
+		}
+	}
+	// The skipped project is declared, so findings earlier runs made there are not taken as
+	// resolved. The service account is not: nothing is scoped to it, and declaring it would mark
+	// every run partial.
+	if got := strings.Join(rec.skipped, ","); got != "demo-blog" {
+		t.Errorf("skipped scopes %q", got)
+	}
+}
+
+func TestServiceAccountListedInConfigIsUsed(t *testing.T) {
+	plays := map[string][]outcome{
+		"projects list " + ci:                                 {{stdout: "projects_sa.json"}},
+		"billing accounts list " + ci:                         {{stderr: "disabled_billing.txt"}},
+		"projects get-iam-policy demo-shop " + ci:             {{}},
+		"iam service-accounts list --project=demo-shop " + ci: {{}},
+		"services api-keys list --project=demo-shop " + ci:    {{}},
+		"billing projects describe demo-shop " + ci:           {{}},
+	}
+	c, _ := testConnector(t, t.TempDir(), plays, nil)
+	rec := &recorder{}
+	cfg := map[string]any{"accounts": []any{"ci@demo-shop.iam.gserviceaccount.com"}}
+	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1, Config: cfg}, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.statuses) == 0 || rec.statuses[0].Account != "ci@demo-shop.iam.gserviceaccount.com" || rec.statuses[0].State != finding.StateOK {
+		t.Fatalf("statuses: %+v", rec.statuses)
 	}
 }
 

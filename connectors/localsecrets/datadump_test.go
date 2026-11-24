@@ -136,7 +136,7 @@ func TestDumpSeverity(t *testing.T) {
 	if f.Title != "Production database dump in the git history of ~/src/shop: db/production_latest_backup.sql (12 MB, pushed)" {
 		t.Errorf("title %q", f.Title)
 	}
-	if f.Kind != finding.KindExposure || f.Resource.Type != "data_dump" || f.Resource.ID != "~/src/shop:db/production_latest_backup.sql" || f.Remediation.Action != "" {
+	if f.Kind != finding.KindExposure || f.Resource.Type != "data_dump" || f.Resource.ID != "~/src/shop:db/production_latest_backup.sql" || f.Remediation.Action != "" || f.Scope != "dumps:~/src/shop" {
 		t.Errorf("finding %+v", f)
 	}
 	for _, want := range []string{"git filter-repo --path 'db/production_latest_backup.sql' --invert-paths", "force-push", "re-clone", "segurata never rewrites history", urlAEPDBreaches, urlEDPBBreaches} {

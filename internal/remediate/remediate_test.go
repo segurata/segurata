@@ -3,7 +3,6 @@ package remediate
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/runtest"
 )
 
 var enable = connector.Step{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "on"}, Sudo: true}
@@ -89,9 +89,12 @@ func (f *fakeRemediator) Apply(context.Context, finding.Finding, connector.Plan,
 var target = finding.Finding{ID: "abc123", Connector: "macos", Account: "mac", Severity: finding.SevMedium, Title: "Firewall is off",
 	Remediation: finding.Remediation{Action: "macos.firewall.enable", Automatable: true}}
 
+// results is a check run that finished, inspected everything and reports ids.
 func results(ids ...string) Reinventory {
 	return func(context.Context) ([]*run.Result, error) {
-		r := &run.Result{Name: "macos"}
+		var tally finding.Tally
+		tally.Declare("mac", true, "")
+		r := &run.Result{Name: "macos", End: tally.End("macos", "", time.Now(), time.Now(), nil)}
 		for _, id := range ids {
 			r.Findings = append(r.Findings, finding.Finding{ID: id})
 		}
@@ -262,16 +265,7 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 
 func TestLatestFilesTakeEachConnectorsNewestRun(t *testing.T) {
 	out := t.TempDir()
-	write := func(day, name string, recs ...any) {
-		dir := filepath.Join(out, day)
-		_ = os.MkdirAll(dir, 0o700)
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		for _, r := range recs {
-			_ = enc.Encode(r)
-		}
-		_ = os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0o600)
-	}
+	write := func(day, name string, recs ...any) { runtest.Write(t, filepath.Join(out, day, name), recs...) }
 	_ = os.MkdirAll(filepath.Join(out, "notes"), 0o700)
 	_ = os.WriteFile(filepath.Join(out, "2026-12-31.jsonl"), nil, 0o600) // a file, not a run directory
 	write("2026-11-01", "macos.jsonl", finding.Finding{Type: "finding", ID: "old00000"})

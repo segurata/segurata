@@ -25,11 +25,21 @@ type Run struct {
 	File     string
 	Date     string // YYYY-MM-DD of the run
 	PrevDate string // "" when there is no earlier run to compare with
-	Findings []finding.Finding
-	Statuses []finding.Status
-	New      []finding.Finding // in this run, not in the previous one
-	Resolved []finding.Finding // in the previous run, gone from this one
-	Changed  []Change          // same finding, other severity
+	// Unfinished is the date of a newer run without run_end that was passed over, or "".
+	Unfinished string
+	Coverage   finding.Coverage
+	Findings   []finding.Finding
+	Statuses   []finding.Status
+	New        []finding.Finding // in this run, not in the previous one
+	Resolved   []finding.Finding // in the previous run, gone from this one, and its scope inspected
+	NotChecked []NotChecked      // in the previous run, missing from this one, its scope not inspected
+	Changed    []Change          // same finding, other severity
+}
+
+// NotChecked is a finding of the previous run that the latest run could not have seen.
+type NotChecked struct {
+	finding.Finding
+	Reason string
 }
 
 // Change is a finding whose severity moved between runs.
@@ -64,6 +74,7 @@ type Report struct {
 	Runs      []*Run
 	Accepted  []Accepted
 	Rotations Rotations
+	tr        *tracker.Tracker // names the setup item of each status
 }
 
 // Inputs are the files and options a report reads.
@@ -74,6 +85,8 @@ type Inputs struct {
 	TrackerPath string
 	MinSev      finding.Severity
 	Top         int // findings per connector in "Top findings"
+	// Expect applies the config's expected rules to each status (nil for none).
+	Expect func(*finding.Status)
 }
 
 // maxP0 is how many P0 rotation items the report names.
@@ -82,58 +95,73 @@ const maxP0 = 5
 // Build reads the latest run of every connector instance and its previous run, and annotates
 // every finding with the tracker's acceptances as of today.
 func Build(in Inputs) (*Report, error) {
-	files, err := remediate.LatestFiles(in.OutDir)
+	latest, err := remediate.LatestRuns(in.OutDir)
 	if err != nil {
 		return nil, err
 	}
 	annotate := in.Tracker.Annotator(func() time.Time { return in.Now })
-	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top}
+	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top, tr: in.Tracker}
 	reported := map[string]bool{} // finding ids in a latest run
-	ran := map[string]bool{}      // connectors with a latest run
-	for _, f := range files {
-		run, err := readRun(f, annotate)
+	byLabel := map[string]*Run{}
+	for _, l := range latest {
+		run, err := readRun(l, annotate)
 		if err != nil {
 			return nil, err
 		}
+		if in.Expect != nil {
+			for i := range run.Statuses {
+				in.Expect(&run.Statuses[i])
+			}
+		}
 		for _, x := range run.Findings {
 			reported[x.ID] = true
-			ran[x.Connector] = true
 		}
-		for _, st := range run.Statuses {
-			ran[st.Connector] = true
-		}
+		byLabel[run.Label] = run
 		r.Runs = append(r.Runs, run)
 	}
 	sort.SliceStable(r.Runs, func(i, j int) bool { return r.Runs[i].Label < r.Runs[j].Label })
 	for _, it := range in.Tracker.AcceptedItems() {
 		for _, f := range it.Findings {
+			gone := false
+			if run, ok := byLabel[f.Label()]; ok && !reported[f.ID] {
+				_, unchecked := run.Coverage.Unchecked(f.Account, f.Scope)
+				gone = !unchecked
+			}
 			r.Accepted = append(r.Accepted, Accepted{ID: f.ID, Connector: f.Connector, Title: it.Title, Reason: it.Accepted.Reason,
-				Until: it.Accepted.Until, Expired: it.AcceptanceExpired(in.Now), Gone: ran[f.Connector] && !reported[f.ID]})
+				Until: it.Accepted.Until, Expired: it.AcceptanceExpired(in.Now), Gone: gone})
 		}
 	}
 	r.Rotations = summarise(in.Tracker, in.TrackerPath, in.Now)
 	return r, nil
 }
 
-func readRun(file string, annotate func(*finding.Finding)) (*Run, error) {
-	findings, statuses, err := remediate.ReadRun(file)
+func dateOf(file string) string { return filepath.Base(filepath.Dir(file)) }
+
+// readRun reads a latest run and diffs it with the previous one. A finding missing from it is
+// resolved only when the run inspected its scope; findings of a previous run without run_end carry
+// no reliable scope, so any skipped scope makes them not checked.
+func readRun(l remediate.Latest, annotate func(*finding.Finding)) (*Run, error) {
+	rf, err := remediate.ReadRun(l.File)
 	if err != nil {
 		return nil, err
 	}
-	run := &Run{File: file, Date: filepath.Base(filepath.Dir(file)), Findings: findings, Statuses: statuses}
-	run.Label = tracker.RunLabel(file, findings, statuses)
+	run := &Run{File: l.File, Date: dateOf(l.File), Coverage: rf.Coverage(), Findings: rf.Findings, Statuses: rf.Statuses}
+	run.Label = tracker.RunLabel(l.File, rf)
+	if l.Unfinished != "" {
+		run.Unfinished = dateOf(l.Unfinished)
+	}
 	for i := range run.Findings {
 		annotate(&run.Findings[i])
 	}
-	prevFile, err := remediate.PreviousFile(file)
-	if err != nil || prevFile == "" {
-		return run, err
+	if l.Prev == "" {
+		return run, nil
 	}
-	prev, _, err := remediate.ReadRun(prevFile)
+	prevRun, err := remediate.ReadRun(l.Prev)
 	if err != nil {
 		return nil, err
 	}
-	run.PrevDate = filepath.Base(filepath.Dir(prevFile))
+	prev := prevRun.Findings
+	run.PrevDate = dateOf(l.Prev)
 	before := make(map[string]finding.Finding, len(prev))
 	for _, f := range prev {
 		before[f.ID] = f
@@ -149,10 +177,19 @@ func readRun(file string, annotate func(*finding.Finding)) (*Run, error) {
 		delete(before, f.ID)
 	}
 	for _, f := range prev { // file order, not map order
-		if _, gone := before[f.ID]; gone {
-			annotate(&f)
-			run.Resolved = append(run.Resolved, f)
+		if _, gone := before[f.ID]; !gone {
+			continue
 		}
+		annotate(&f)
+		scope := finding.ScopeOf(f)
+		if prevRun.End == nil {
+			scope = ""
+		}
+		if why, unchecked := run.Coverage.Unchecked(f.Account, scope); unchecked {
+			run.NotChecked = append(run.NotChecked, NotChecked{Finding: f, Reason: why})
+			continue
+		}
+		run.Resolved = append(run.Resolved, f)
 	}
 	return run, nil
 }

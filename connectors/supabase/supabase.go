@@ -31,6 +31,14 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
+// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
+func (c *Connector) SetupHint(secret string) string {
+	if secret != secretName {
+		return ""
+	}
+	return setupHint
+}
+
 func (c *Connector) Describe() connector.Description {
 	return connector.Description{
 		Name:     "supabase",
@@ -103,6 +111,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	var projects []project
 	if err := api.Get(ctx, "/v1/projects", nil, &projects); err != nil {
 		failed["supabase"] = append(failed["supabase"], "projects: "+err.Error())
+		emit.Scope(projectScope("*"), false, "projects not listed: "+err.Error())
 	}
 	for _, p := range projects {
 		if p.Status == "REMOVED" {
@@ -115,7 +124,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		}
 		for _, k := range keys {
 			f := keyFinding(p, k)
-			f.Account = p.OrganizationSlug
+			f.Account, f.Scope = p.OrganizationSlug, projectScope(p.Ref)
 			emit.Finding(f)
 		}
 	}
@@ -123,6 +132,10 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	emitStatuses(orgs, failed, emit)
 	return nil
 }
+
+// projectScope scopes a project's findings, which come from the project list: when it fails, the
+// organizations still read, but none of the projects.
+func projectScope(ref string) string { return "project:" + ref }
 
 // emitStatuses reports one status per organization and per account with failures, in name order.
 func emitStatuses(orgs []organization, failed map[string][]string, emit connector.Emitter) {

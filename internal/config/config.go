@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,8 @@ import (
 type ConnectorConfig struct {
 	Config  map[string]any    `json:"config,omitempty"`
 	Secrets map[string]string `json:"secrets,omitempty"` // key -> reference (env:, keychain:, op://)
+	// Expected are the statuses other than ok this instance reports on purpose (see Expect).
+	Expected []Expected `json:"expected,omitempty"`
 }
 
 // Instance is one configured account of a connector. A config key "openrouter" gives the unnamed
@@ -54,6 +57,9 @@ func Load(path string) (Config, error) {
 		}
 		if cfg.Connectors == nil {
 			cfg.Connectors = map[string]ConnectorConfig{}
+		}
+		if err := cfg.validate(); err != nil {
+			return cfg, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	if env := os.Getenv("SEGURATA_CDP"); env != "" {

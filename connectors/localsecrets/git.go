@@ -226,7 +226,7 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 					mu.Lock()
 					failed++
 					mu.Unlock()
-					s.emit.Status(finding.Status{Account: s.tilde(repo), State: finding.StateError, Detail: "gitleaks: " + err.Error()})
+					s.emit.Status(finding.Status{Account: s.tilde(repo), Scope: historyScope(s.tilde(repo)), State: finding.StateError, Detail: "gitleaks: " + err.Error()})
 				}
 			}
 		}()

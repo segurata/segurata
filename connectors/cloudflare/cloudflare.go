@@ -63,6 +63,14 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
+// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
+func (c *Connector) SetupHint(secret string) string {
+	if secret != secretName {
+		return ""
+	}
+	return setupHint
+}
+
 func (c *Connector) Describe() connector.Description {
 	return connector.Description{
 		Name:     name,
@@ -277,6 +285,16 @@ func (s *scan) finding(f finding.Finding) {
 	s.emit.Finding(f)
 }
 
+// Account and zone findings come from the account and zone lists, so when a list fails or is
+// capped, every finding it would have produced is declared unread by scope.
+func accountScope(label string) string { return "account:" + label }
+func zoneScope(name string) string     { return "zone:" + name }
+
+func (s *scan) scoped(scope string, f finding.Finding) {
+	f.Scope = scope
+	s.finding(f)
+}
+
 func (s *scan) run() {
 	v, err := verify(s.ctx, s.cl)
 	switch {
@@ -312,6 +330,7 @@ func (s *scan) accounts() {
 	accts, _, err := list[account](s.ctx, s.cl, "/accounts", nil, 0)
 	if err != nil {
 		s.fail(userAccount, "accounts", err)
+		s.emit.Scope(accountScope("*"), false, "accounts not listed: "+err.Error())
 	}
 	for _, a := range accts {
 		label := a.label()
@@ -319,7 +338,7 @@ func (s *scan) accounts() {
 		if _, err := s.cl.get(s.ctx, "/accounts/"+url.PathEscape(a.ID), nil, &details); err != nil {
 			s.fail(label, "account settings", err)
 		} else {
-			s.finding(accountFinding(details, label))
+			s.scoped(accountScope(label), accountFinding(details, label))
 		}
 		members, _, err := list[member](s.ctx, s.cl, "/accounts/"+url.PathEscape(a.ID)+"/members", nil, 0)
 		if err != nil {
@@ -328,7 +347,7 @@ func (s *scan) accounts() {
 		}
 		enforced := details.Settings != nil && details.Settings.EnforceTwofactor
 		for _, f := range memberFindings(a.ID, label, members, enforced) {
-			s.finding(f)
+			s.scoped(accountScope(label), f)
 		}
 	}
 }
@@ -348,9 +367,12 @@ func (s *scan) zones() {
 	zones, total, err := list[zone](s.ctx, s.cl, "/zones", nil, s.cfg.maxZones)
 	if err != nil {
 		s.fail(userAccount, "zones", err)
+		s.emit.Scope(zoneScope("*"), false, "zones not listed: "+err.Error())
 	}
 	if total > len(zones) && len(zones) == s.cfg.maxZones {
-		s.emit.Log(fmt.Sprintf("checked the first %d of %d zones; raise max_zones in the cloudflare config to check more", len(zones), total))
+		msg := fmt.Sprintf("checked the first %d of %d zones; raise max_zones in the cloudflare config to check more", len(zones), total)
+		s.emit.Log(msg)
+		s.emit.Scope(zoneScope("*"), false, msg) // which zones were left out is unknown
 	}
 	results := make([]zoneResult, len(zones))
 	jobs := make(chan int)
@@ -375,7 +397,7 @@ func (s *scan) zones() {
 			s.fail(label, e.what, e.err)
 		}
 		for _, f := range r.findings {
-			s.finding(f)
+			s.scoped(zoneScope(zones[i].Name), f)
 		}
 	}
 }

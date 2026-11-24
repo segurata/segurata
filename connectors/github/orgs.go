@@ -19,12 +19,12 @@ type membership struct {
 // It returns false when they could not be listed; the status says why.
 func (r *run) memberships(ctx context.Context, login string) ([]membership, bool) {
 	if !r.scopes.has("read:org") {
-		r.status(account(login), finding.StateNoScope, "organizations not inspected: gh's token lacks read:org; run: %s", refresh("read:org"))
+		r.scopedStatus(account(login), orgScope("*"), finding.StateNoScope, "organizations not inspected: gh's token lacks read:org; run: %s", refresh("read:org"))
 		return nil, false
 	}
 	ms, err := list[membership](ctx, r, "/user/memberships/orgs?state=active&per_page=100")
 	if err != nil {
-		r.status(account(login), stateOrNoScope(err), "%s", describe(err, "organizations not inspected; to grant access run: "+refresh("read:org")))
+		r.scopedStatus(account(login), orgScope("*"), stateOrNoScope(err), "%s", describe(err, "organizations not inspected; to grant access run: "+refresh("read:org")))
 		return nil, false
 	}
 	return ms, true
@@ -51,7 +51,7 @@ func (r *run) orgs(ctx context.Context, ms []membership) {
 	for _, m := range ms {
 		org := m.Organization.Login
 		if m.Role != "admin" {
-			r.status(account(org), finding.StateOK, "%s member, not owner: organization settings are visible only to owners", m.Role)
+			r.status(account(org), finding.StateOK, "%s, not owner: organization settings are visible only to owners", strings.ReplaceAll(m.Role, "_", " "))
 			continue
 		}
 		r.org(ctx, org)
@@ -117,20 +117,26 @@ func (o *orgReport) fail(what string, err error) {
 	o.notes = append(o.notes, describe(err, what+" not read"))
 }
 
+// Account-level checks have scopes of their own, so a missing token scope for one of them does not
+// leave the account's repositories (also under github:<login>) uninspected: "user:<login>" for the
+// signed-in user's own settings, "org:<org>" for an organization's settings.
+func userScope(login string) string { return "user:" + login }
+func orgScope(org string) string    { return "org:" + org }
+
 // org reads one organization the user owns and reports what falls short.
 func (r *run) org(ctx context.Context, org string) {
 	acct := account(org)
 	if !r.scopes.has("admin:org") {
-		r.status(acct, finding.StateNoScope, "owner, but organization settings need admin:org; run: %s", refresh("admin:org"))
+		r.scopedStatus(acct, orgScope(org), finding.StateNoScope, "owner, but organization settings need admin:org; run: %s", refresh("admin:org"))
 		return
 	}
 	var d orgDetails
 	if err := r.get(ctx, "/orgs/"+org, &d); err != nil {
-		r.status(acct, stateOrNoScope(err), "%s", describe(err, "organization settings not read"))
+		r.scopedStatus(acct, orgScope(org), stateOrNoScope(err), "%s", describe(err, "organization settings not read"))
 		return
 	}
 	if d.TwoFactorRequired == nil {
-		r.status(acct, finding.StateNoScope, "GitHub returned the organization without its owner-only settings; run: %s", refresh("admin:org"))
+		r.scopedStatus(acct, orgScope(org), finding.StateNoScope, "GitHub returned the organization without its owner-only settings; run: %s", refresh("admin:org"))
 		return
 	}
 
@@ -161,6 +167,7 @@ func (r *run) org(ctx context.Context, org string) {
 	for _, f := range o.found {
 		r.emit.Finding(finding.Finding{
 			Account:     acct,
+			Scope:       orgScope(org),
 			Resource:    finding.Resource{Type: "github_org_setting", ID: string(f.check), Name: org},
 			Kind:        finding.KindSetting,
 			Severity:    severities[f.check],
@@ -173,7 +180,7 @@ func (r *run) org(ctx context.Context, org string) {
 	if o.incomplete {
 		state = finding.StateError
 	}
-	r.status(acct, state, "owner; %d findings; %s", len(o.found), strings.Join(o.notes, "; "))
+	r.scopedStatus(acct, orgScope(org), state, "owner; %d findings; %s", len(o.found), strings.Join(o.notes, "; "))
 }
 
 // orgPeople reports members and outside collaborators without two-factor authentication.

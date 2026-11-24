@@ -41,9 +41,16 @@ type Request struct {
 }
 
 // Emitter receives records as the connector produces them.
+//
+// Statuses already say which accounts (or, with Status.Scope, which parts of one) were inspected.
+// Scope declares coverage no status carries: a repository the rate limit left unread, a project
+// beyond a cap. Every scope a connector meant to inspect and did not must be either a status other
+// than ok or a Scope(id, false, reason); otherwise its findings look resolved. See
+// docs/connectors.md, "Coverage".
 type Emitter interface {
 	Finding(finding.Finding)
 	Status(finding.Status)
+	Scope(id string, inspected bool, reason string)
 	Log(msg string)
 }
 
@@ -52,6 +59,13 @@ type Connector interface {
 	// Inventory is read-only. It returns an error only when it could not start at all;
 	// per-account problems are reported as statuses.
 	Inventory(ctx context.Context, req Request, emit Emitter) error
+}
+
+// SetupHinter is optional: a connector that implements it says how to set up one of the secrets
+// its Description needs. When a secret reference in the config cannot be resolved, the core owns
+// the one missing_credentials status and does not call Inventory; the hint goes in its detail.
+type SetupHinter interface {
+	SetupHint(secret string) string
 }
 
 var builtins = map[string]Connector{}

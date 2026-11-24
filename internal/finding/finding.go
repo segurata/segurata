@@ -67,6 +67,7 @@ type Finding struct {
 	Connector   string         `json:"connector"`
 	Instance    string         `json:"instance,omitempty"` // config label, for several accounts of one provider
 	Account     string         `json:"account"`
+	Scope       string         `json:"scope,omitempty"` // part of the account inspected as a unit, when narrower; see ScopeOf
 	Resource    Resource       `json:"resource"`
 	Kind        Kind           `json:"kind"`
 	Severity    Severity       `json:"severity"`
@@ -145,16 +146,26 @@ const (
 	StateMissingCredentials State = "missing_credentials"
 	StateUnsupported        State = "unsupported"
 	StateError              State = "error"
+	// StateExpected is a status other than ok that the owner's config says to expect (see
+	// Status.Expected): it opens no setup item, and its scope still counts as not inspected.
+	StateExpected State = "expected"
 )
 
-// Status says whether an account could be inspected, and why not.
+// Status says whether an account could be inspected, and why not. Scope, when set, narrows it to
+// one part of the account (a project, a repository): a status other than ok then leaves only that
+// scope uninspected instead of the whole account. See RunEnd.
 type Status struct {
 	Type      string `json:"type"` // always "status"
 	Connector string `json:"connector"`
 	Instance  string `json:"instance,omitempty"`
 	Account   string `json:"account"`
+	Scope     string `json:"scope,omitempty"`
 	State     State  `json:"state"`
 	Detail    string `json:"detail,omitempty"`
+	// Expected is the reason of the config rule that made the state expected; Was is the state
+	// the connector reported. Both are set by the core, never by a connector.
+	Expected string `json:"expected,omitempty"`
+	Was      State  `json:"was,omitempty"`
 }
 
 // Redact keeps a short prefix and the length, enough to recognise a key without leaking it.

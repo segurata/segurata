@@ -26,7 +26,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `inventory` | Lists what exists: grants, keys, settings, spend | Never |
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
-| `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Only segurata's own `tracker.json` (the "since" mark) and, with `--write`, `status.md` and `status.html` |
+| `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Nothing by default; with `--mark-seen` segurata's own `tracker.json` (the "since" mark); with `--write` that mark plus `status.md` and `status.html` |
 | `track` | Lists, shows and changes tracker items; `track sync` folds the latest runs in | Only segurata's own `tracker.json` |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only segurata's own `tracker.json` |
 | `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
@@ -48,6 +48,72 @@ A connector emits JSON records (`internal/finding`): one `finding` per thing wor
 derived fields: the stable id (a hash of connector, instance, account, resource type and resource
 id), the connector name, `observed_at`, `automatable` and `accepted`. `evidence` never holds a
 secret. Fields, kinds, stable-id and severity rules: [connectors.md](connectors.md#finding-model).
+The core ends each run with a `run_end` record (next section).
+
+## Run completeness
+
+A finding missing from a run is resolved only if that run looked where the finding was. A run
+killed halfway, a connector that stopped at the GitHub rate limit, a gitleaks scan that timed out
+on one repository, a GCP project with permission denied or a signed-out service all leave findings
+out without fixing anything. So every run says what it covered, and every consumer checks it
+before calling a finding gone.
+
+**Envelope.** `run.Inventory` writes one last record per connector instance:
+
+```json
+{"type": "run_end", "connector": "github", "started_at": "…", "ended_at": "…", "complete": false,
+ "scopes": {"inspected": ["github:octo", "repo:octo"], "inspected_count": 2,
+            "skipped": [{"scope": "repo:acme/api", "reason": "the GitHub API rate limit ran low"}],
+            "skipped_count": 1}}
+```
+
+`complete` is true when nothing was skipped and the connector returned no error (then `error`
+holds it). The lists are capped (50 inspected, 200 skipped); the counts are not. A file without
+`run_end` was killed, is still running, or was written before this record existed.
+
+**Scopes.** A finding belongs to a scope: its `scope` field when the connector inspects the
+account in parts, otherwise its account (`finding.ScopeOf`). Examples: `repo:<owner>/<name>` and
+`repo:<owner>`, `user:<login>` and `org:<org>` (github), `history:<repo>`, `dumps:<repo>` and `files` (local-secrets), the project
+id and `billing:<id>` (gcp), the service name (connected-apps), `profile <name>` (aws),
+`check:<id>` (macos). The run's
+coverage is derived (`finding.Tally`):
+
+- a status `ok` marks its account (or `scope`) inspected;
+- any other status, `unverified` included, leaves its `scope`, or else its account, uninspected; a
+  status with neither leaves everything uninspected;
+- a connector declares what no status carries with `Emitter.Scope(id, false, reason)` (external
+  connectors: a `scope` record);
+- a connector error, a cancelled context, or a run where no status said `ok` and nothing was
+  declared inspected, leaves everything (`*`) uninspected; so does a skipped list over the cap;
+- a skipped scope ending in `*` covers every scope with that prefix.
+
+A finding is not checked by a run when the run has no `run_end`, when everything was skipped, or
+when a skipped scope matches its scope or its account (`finding.Coverage`).
+
+**Consumers.**
+
+- `remediate.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
+  and the newest such run before it as the previous one; a newer file without `run_end` is passed
+  over and named. `remediate.ReadRun` drops a half-written last line of such a file.
+- `report` lists a finding missing from the latest run as "not checked this run" with the reason,
+  never as resolved, when the run did not inspect its scope. Its "Run completeness" section names
+  partial runs and their skipped scopes, runs without `run_end`, and newer runs that did not
+  finish; the headline marks them `(partial)` or `(no run_end)`. An accepted risk counts as no
+  longer reported only when its scope was inspected.
+- `track sync` marks a finding gone only when its scope was inspected, so it never closes or
+  verifies an item on an incomplete run, and logs `not checked in run <label> of <ended_at>
+  (<reason>)` once per run on each item it held back. A setup item's status ref counts as gone
+  only in a run that inspected something, in one that reports the item's key again with other
+  details (stale details, or a ref recorded before one ref per detail), or in one that reports the
+  same state for the whole instance (no account): that status covers the per-account one.
+- `remediate --apply` returns "could not verify the fix" (`remediate.ErrUnverified`) when the
+  check run did not inspect the finding's scope, instead of reporting it fixed.
+
+**Older files.** Files without `run_end` (from before this record, or killed) stay usable for
+display: the report lists their findings and notes the unknown completeness. They never prove a
+finding gone: nothing in them closes or verifies an item, and a finding missing from one is not
+checked. Findings and tracker refs recorded before scopes existed carry no scope; for them any
+skipped scope counts, so only a complete run proves them gone.
 
 ## Tracker
 
@@ -83,12 +149,14 @@ truth, and every change goes through the CLI.
     `decide` (with `decision`: question, options, answer, answered_at), `setup` (what keeps
     segurata from seeing an account) or `review` (a list to keep or prune).
   - `status`: `open`, `in_progress`, `done`, `accepted` (with `accepted`: reason, until,
-    accepted_at), `ignored` or `snoozed` (with `snoozed_until`).
+    accepted_at), `ignored` (by the owner), `snoozed` (with `snoozed_until`), `reclassified`
+    (closed by segurata: every current sighting of the secret is now noise, see "Rotation
+    ledger") or `expected` (a setup item the config says to expect, see "Expected statuses").
   - `priority` is computed: a rotate item's comes from the rotation model below; others map the
     worst linked severity (critical P0, high P1, medium P2, low P3). `priority_override`
     (priority, reason, at) wins when set.
-  - `history` events are `found`, `seen`, `status`, `note`, `verified`, `reopened`, `decided` or
-    `priority`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
+  - `history` events are `found`, `seen`, `status`, `note`, `verified`, `reopened`, `decided`,
+    `priority` or `reclassified`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
     `snooze-expired`, `acceptance-expired`, `history-only`, `redacted`, `next`, …).
 - **Theme**: `{id, title, description}`, seeded in every tracker: `rotations`, `data-dumps`,
   `transcripts`, `mac`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`,
@@ -117,6 +185,19 @@ connector and resource type, first match wins:
 | anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked) | fix |
 | a connector status other than `ok` | instance, account and state | setup |
 
+A setup item keeps one ref per distinct status detail (`status:<key>#<hash of the detail>`), so
+gcp's six "project X: permission denied …" statuses for one account are six refs of one item,
+titled "gcp: permission denied on 6 projects for <account>" (or "… failed on 6 projects" when
+the problems differ, "(N problems)" when the details name no common kind of scope). Its next step
+puts the command the detail names into `next.command` (`gcloud auth login <account>` for "run
+gcloud auth login for this account", `gh auth refresh -h github.com -s read:user`, a backquoted
+`security add-generic-password …`), with the rerun at the end of the action; without one, the
+command is the rerun. Actions are state-specific and name the real config key:
+`connectors."<label>".secrets` for missing credentials, `connectors."connected-apps".config.services`
+for a signed-out service, and `segurata track expect <id>` (see "Expected statuses") for a
+limitation kept on purpose. An `unsupported` check that needs administrator rights asks for no
+install.
+
 A finding that has an item of its own (key `finding:<id>`) always goes there before any rule: one
 accepted apart from its group, or one grouped per finding anyway. The title and next step come
 from the rule and the worst finding's remediation (`segurata remediate <id>` and `who:
@@ -124,27 +205,99 @@ segurata` when the only finding is automatable). Only generic decisions are seed
 (whether to install the daily schedule). Questions about an owner's own projects are added with
 `segurata track add --kind decide` and live only in that owner's tracker, never in the code.
 
+### Expected statuses
+
+Some statuses other than `ok` are known and kept on purpose: an ephemeral key, an IAM user limited
+by design, other people's accounts signed in to the same browser. The config says so per connector
+instance, under the key that runs it (`connectors.<name>` or `connectors.<name:label>`):
+
+```json
+{"connectors": {"anthropic:personal": {"expected": [
+   {"state": "missing_credentials", "reason": "admin key only set when I audit"}]},
+ "google-personal": {"expected": [
+   {"state": "reauth", "account": "*@example.com", "reason": "colleagues' accounts in my browser"}]},
+ "gcp": {"expected": [
+   {"state": "error", "account": "a@x.com", "detail": "/^project (example|yukids)-play:/", "reason": "Play-only projects"}]}}}
+```
+
+Empty fields match anything. `account` is a glob (`*`, `?`, `\` escapes); `detail` is a
+substring of the status detail, or a regular expression between slashes; `reason` is required.
+`config.Load` rejects a rule without a reason, with a bad glob or regular expression, or matching
+`ok`.
+
+- A matching status gets state `expected` (`finding.StateExpected`), with `expected` (the
+  reason) and `was` (the state the connector reported). The core applies the rules as each
+  status is written, and again whenever it reads a run (`track sync`, `report`), so a rule
+  added or removed after the run counts.
+- Expected is not inspected: run completeness counts the scope as skipped, exactly as before, so
+  nothing in it is ever taken as resolved.
+- A setup item whose every current status is expected closes as `expected` (history `status` /
+  `expected`, next step "Nothing: expected by your config (…)"); a new one is created already
+  closed, so no setup item is ever opened for it. Its key keeps the reported state, so the item
+  it closes is the one that state opened. If one of several statuses under a key is not
+  expected, the item stays open. When a status no rule covers comes back the item opens again
+  (`auto-reopen`); when the status is gone the item is done like any other.
+- `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
+  setup blockers and needs attention; `inventory` prints one line per instance and reason.
+- `segurata track expect <setup-id> --reason "…" [--detail text] [--dry-run]` writes the rule
+  that matches the item (its instance's key, the reported state, the account with glob characters
+  escaped, the detail only when given) into the config and closes the item as expected. The
+  config is rewritten atomically, mode 0600, with two-space indentation and its keys in their
+  original order; the previous file is kept as `config.json.segurata-bak-<UTC time>`. An equal
+  rule already there is not added twice. `--dry-run` prints the rule and changes nothing.
+
+### Decisions and rules
+
+A decision can carry effects. `track add --kind decide --question "Are the legacy repos dead?"
+--option "yes=ignore:path:~/src/i4a" --option "no"` stores the option labels and, for each
+`label=effect:scope`, an entry in `decision.effects` (`{option, effect, scope}`). Effects are
+`ignore` or `accept`; scopes are `path:<dir>` (rotate items whose every location, and other
+items whose every reported finding, lie under it: the `repo` or `path` a local finding names),
+`repo:<owner/name>` (GitHub findings of that repository, case-insensitive), `account:<glob>`
+(findings of matching accounts) and `gcp-project:<id>`. Decide and setup items are never in scope.
+
+`track decide <id> --answer "…" [--ignore-scope s]... [--accept-scope s]...` answers it and adds
+a rule to the tracker's top-level `rules` for the option the answer picks (the label, or the
+label followed by ":" or a space) and for every scope given:
+
+```json
+"rules": [{"effect": "ignore", "scope": "path:~/src/i4a", "reason": "Are the legacy repos dead? yes",
+           "decision": "T-0002", "at": "…"}]
+```
+
+Rules apply at once and at the end of every sync: an open, in-progress or snoozed item in scope
+is ignored (or accepted, with no end date) with the reason "by decision T-0002: …", so a finding
+in scope found later never stays open. An item reopened by hand after the rule was added is left
+alone. Reopening the decision removes its rules; the items they closed stay as they are. A pending
+decision with effects shows its leverage in `status` and `track show`: `answering "yes" closes 128
+open items (P0 120, P1 8) by ignore path:~/src/i4a`.
+
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
-run of every connector instance (`remediate.LatestFiles`) and:
+finished run of every connector instance (`remediate.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
    syncing two output folders (interactive and scheduled) never makes items flap.
 2. Folds local-secrets findings into rotate items (below) and every other finding at low or above
    into the item its rule names, creating it (`found`) or adding the new finding (`seen`).
 3. Marks a linked finding `gone` when its connector instance ran and did not report it, unless
-   that run could not inspect the finding's account (a non-ok status for that account, or for all).
+   that run did not inspect the finding's scope (see "Run completeness"); then it logs
+   `not checked in run …` once per run on an item that would otherwise have closed.
 4. Moves items on:
-   - open, in progress or snoozed, with every finding gone: done, `verified (no longer reported)`;
+   - open, in progress, snoozed or expected, with every finding gone: done, `verified (no longer
+     reported)`;
+   - a setup item whose every current status is expected: `expected`; an expected one with a
+     status no rule covers: open again (see "Expected statuses");
    - done: verified once every finding is gone in a run after it was marked done; reopened
      (`auto-reopen`) if a run after it was marked done or verified reports one again. A sync
      that only reads the run from before the item was marked done changes nothing;
-   - accepted and ignored items only get their findings updated;
+   - accepted, ignored, reclassified and expected items only get their findings updated;
    - a snooze past its date, or an acceptance past its last day, opens the item again. An
      expired acceptance stays on the item, so its findings show "(acceptance expired)" until the
      owner acts.
-5. Adds any missing theme or seeded decision.
+5. Applies the decisions' rules (see "Decisions and rules").
+6. Adds any missing theme or seeded decision.
 
 Rotate items keep the rotation rules below instead: they are never closed because a secret
 stopped being reported (git history and transcripts do not forget, and a redacted copy still
@@ -160,9 +313,11 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
-- `schema_version` 1 is the current format. A future format change adds an upgrade step from
-  version n to n+1 on the raw JSON, applied in order when loading; a newer file than the binary
-  knows is refused.
+- `schema_version` 2 is the current format. A format change adds an upgrade step from version n
+  to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
+  refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
+  `effects`; a version 1 file holds none of them, so it loads as it is and is saved as version 2
+  (the version 1 file stays as `tracker.json.bak`).
 
 ### Migration from the former state files
 
@@ -202,7 +357,7 @@ replace --to-keychain`.
 ### `segurata status`
 
 ```
-segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]
+segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] [--mark-seen]
 ```
 
 The briefing, built with the report's document model and renderers (`internal/doc`), so text,
@@ -210,9 +365,10 @@ Markdown and HTML say the same thing: a headline (open items by priority and the
 verified in the last 7 days, accepted, ignored, snoozed), "Do next" (the ten most urgent entries
 with their next step, command and page; secrets count as one entry per priority pointing to
 `segurata rotations next`), pending decisions, setup blockers, the changes since the last
-unfiltered status (events counted, the latest listed) and the accepted risks. `--write` also
-writes `status.md` and `status.html` next to the tracker, mode 0600. `report` stays the per-run
-view.
+seen status (events counted, the latest listed) and the accepted risks. Reading it changes
+nothing: an unfiltered `status --mark-seen` records the "since" mark, and `--write` (which implies
+`--mark-seen`) also writes `status.md` and `status.html` next to the tracker, mode 0600. `report`
+stays the per-run view. Likewise `rotations next` only logs a `next` history event with `--log`.
 
 ## Remediation
 
@@ -230,7 +386,8 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
 - One finding per run. Without `--apply` it stops after the plan. With `--apply` it asks on the
   terminal and refuses when stdin is not a terminal, unless `--yes`.
 - After applying, the core runs that connector instance's inventory again and reports whether the
-  finding is gone. A finding still reported, or a check that could not run, is an error.
+  finding is gone. A finding still reported, a check that could not run, or a check run that did
+  not inspect the finding's scope ("could not verify the fix") is an error.
 - A built-in connector remediates by implementing the optional `connector.Remediator` interface
   (`Plan`, `Apply`). `Apply` recomputes the plan and refuses one that differs from what was shown.
 - Every command an action may run is on a per-action allowlist of exact argument lists, written by
@@ -285,10 +442,8 @@ imported once (see "Tracker").
 `segurata report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
 changes:
 
-- the latest run of every connector instance, through `remediate.LatestFiles` and
-  `remediate.ReadRun` (findings and statuses);
-- for each, its previous run: `remediate.PreviousFile`, the same file name in the newest earlier
-  `out/<date>/` folder;
+- the latest finished run of every connector instance and the finished run before it, through
+  `remediate.LatestRuns` and `remediate.ReadRun` (findings, statuses and `run_end`);
 - the tracker's acceptances, which annotate every finding as `inventory` does, so an acceptance
   made after the run counts and an expired one shows again;
 - the tracker's rotate items.
@@ -297,7 +452,8 @@ The only write is the one-time import of the former state files, when the tracke
 yet.
 
 The diff is by finding id: an id only in the latest file is new, one only in the previous file is
-resolved, one in both with another severity changed. That is why ids must stay stable (see
+resolved if the latest run inspected its scope and "not checked this run" otherwise, one in both
+with another severity changed. That is why ids must stay stable (see
 "Accepted risks"). Runs compare per connector instance, because each connector runs on its own
 schedule.
 
@@ -600,6 +756,13 @@ Priority is impact × exposure, both table-driven:
 - Noise is left out by default: generic `NAME=value` matches, gitleaks `generic-api-key`, anon or
   expired JWTs, encrypted private keys and the cases below. `sync --include-noise` tracks them
   without a priority, but the connector emits noise only with `emit_noise: true`.
+- A secret that already has an item and whose best current sighting is now noise (a corrected
+  rule) is updated, not skipped: impact `noise`, no priority, and an open, in-progress, snoozed or
+  ignored item closes as `reclassified` (history event `reclassified`, detail "every current
+  sighting is noise (<type>)"; an ignored item's detail starts "was ignored: <owner's reason>").
+  Done and accepted items keep their status. Reclassified items are not counted as ignored: the
+  ignored count is what the owner judged. If a later sighting is not noise, the item opens again
+  (`auto-reopen`), or goes back to ignored with the owner's reason when it was ignored before.
 - `sync` merges locations (never drops one: git history and transcripts do not forget) and
   refreshes `last_seen` only for secrets it saw. Expired snoozes go back to `open`.
 - After a real rotation the old value is revoked, so only a working file that still holds it

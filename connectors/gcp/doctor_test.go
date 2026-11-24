@@ -14,14 +14,13 @@ func TestDoctorReportsExpiredAccounts(t *testing.T) {
 		"auth list":                             {{stdout: "auth_list.json"}},
 		"projects list " + owner + " --limit=1": {{stdout: "projects_owner.json"}},
 		"projects list " + work + " --limit=1":  {{stderr: "reauth.txt"}},
-		"projects list " + ci + " --limit=1":    {{stderr: "denied_apikeys.txt"}},
 	}, nil)
 	checks := c.Doctor(context.Background(), connector.Request{})
 	got := map[string]connector.Check{}
 	for _, ch := range checks {
 		got[ch.What] = ch
 	}
-	if ch := got["gcloud"]; ch.Level != connector.OK || !strings.Contains(ch.Detail, "3 credentialed") {
+	if ch := got["gcloud"]; ch.Level != connector.OK || !strings.Contains(ch.Detail, "2 credentialed") {
 		t.Errorf("gcloud: %+v", ch)
 	}
 	if ch := got["gcloud account owner@example.com"]; ch.Level != connector.OK {
@@ -30,8 +29,8 @@ func TestDoctorReportsExpiredAccounts(t *testing.T) {
 	if ch := got["gcloud account work@example.org"]; ch.Level != connector.Fail || ch.Fix != "gcloud auth login work@example.org" {
 		t.Errorf("work: %+v", ch)
 	}
-	if ch := got["gcloud account ci@demo-shop.iam.gserviceaccount.com"]; ch.Level != connector.Warn {
-		t.Errorf("ci: %+v", ch)
+	if ch, ok := got["gcloud account ci@demo-shop.iam.gserviceaccount.com"]; ok {
+		t.Errorf("a service account gcloud activated is not an inventory account: %+v", ch)
 	}
 }
 

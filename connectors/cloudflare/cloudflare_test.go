@@ -227,9 +227,24 @@ func TestPaginationAndMaxZones(t *testing.T) {
 	if len(rec.Logs) != 1 || !strings.Contains(rec.Logs[0], "first 70 of 120") {
 		t.Fatalf("logs %v", rec.Logs)
 	}
+	// Which zones the cap left out is unknown, so no zone finding counts as rechecked.
+	if len(rec.Scopes) != 1 || rec.Scopes[0].ID != "zone:*" || rec.Scopes[0].Inspected || !strings.Contains(rec.Scopes[0].Reason, "max_zones") {
+		t.Fatalf("scopes %+v", rec.Scopes)
+	}
+	zoneScopes := map[string]bool{}
+	for _, f := range rec.Findings {
+		if strings.HasPrefix(f.Scope, "zone:z0") && strings.HasSuffix(f.Scope, ".example") {
+			zoneScopes[f.Scope] = true
+		}
+	}
+	if len(zoneScopes) != 70 {
+		t.Fatalf("%d zone scopes, want one per zone checked", len(zoneScopes))
+	}
 
 	srv2 := newServer(t, routes)
-	run(t, srv2, testToken, nil)
+	if rec2 := run(t, srv2, testToken, nil); len(rec2.Scopes) != 0 {
+		t.Fatalf("every zone read, yet scopes %+v", rec2.Scopes)
+	}
 	if srv2.Hits["/zones"] != 3 || srv2.Hits["/zones/z119/dnssec"] != 1 {
 		t.Fatalf("default cap: zone pages %d, z119 %d", srv2.Hits["/zones"], srv2.Hits["/zones/z119/dnssec"])
 	}

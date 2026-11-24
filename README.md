@@ -52,19 +52,23 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 ## Tracker and status
 
 ```bash
-./segurata status                         # the briefing: what to do next, decisions, blockers, changes
+./segurata status                         # the briefing: what to do next, decisions, blockers, changes (read-only)
+./segurata status --mark-seen             # same, and start "Since the last status" from now
 ./segurata status --priority P0,P1 --theme github-orgs
-./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600)
+./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600); implies --mark-seen
 ./segurata track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
 ./segurata track show T-0042
 ./segurata track start|done|reopen T-0042 [--note "..."]
 ./segurata track note T-0042 "ordered a backup disk"
 ./segurata track snooze T-0042 --until 2027-01-15
 ./segurata track ignore T-0042 --reason "test fixture"
+./segurata track expect T-3153 --reason "ephemeral key on purpose" [--dry-run]   # a setup item kept on purpose: config rule
+
 ./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
-./segurata track decide T-0003 --answer "yes"
+./segurata track decide T-0003 --answer "yes" [--ignore-scope path:~/src/old] [--accept-scope repo:acme/site]
 ./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
 ./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
+./segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no
 ./segurata track sync [--out out]         # also run by inventory and rotations sync
 ```
 
@@ -73,8 +77,23 @@ is the single record of what to do, what is done and what is pending, and surviv
 item per thing a person would act on. Five GitHub orgs that do not require 2FA are one item; each
 secret to rotate, each data dump and each Mac setting is its own item; a connector that needs a
 fresh sign-in is a setup item; info findings make none. Items have a kind (fix, rotate, decide,
-setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed), a computed
+setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed, and two
+segurata sets itself: reclassified, a secret a corrected rule now rates as noise, and expected), a computed
 priority that `prioritize` can override, the findings they link, the next step and a history.
+
+A decision can carry effects: answering it adds rules (`ignore` or `accept` a scope:
+`path:<dir>`, `repo:<owner/name>`, `account:<glob>`, `gcp-project:<id>`) that close the items in
+scope now and at every sync, with the decision named in the reason. A pending decision shows
+how many open items each answer would close. Details:
+[docs/architecture.md](docs/architecture.md#decisions-and-rules).
+
+A status other than `ok` that is kept on purpose (an ephemeral key, an IAM user limited by design,
+other people's accounts) goes in the config as an expected rule, by hand or with `track expect`:
+`{"connectors": {"anthropic:personal": {"expected": [{"state": "missing_credentials", "reason":
+"…"}]}}}`, with optional `account` (a glob) and `detail` (substring, or `/regexp/`). It then opens
+no setup item and is counted on one line, "N expected (by your config)", but its scope still
+counts as not inspected. Details:
+[docs/architecture.md](docs/architecture.md#expected-statuses).
 
 A done item is verified when a later run no longer reports its findings, and reopened if one does;
 an item whose findings vanish on their own is closed as "verified (no longer reported)". Expired
@@ -96,8 +115,19 @@ imports both, history included, and renames them to `*.migrated-<date>`. Details
 
 Walks every Google account signed in to the browser and reports each linked app with its scopes,
 the date access was given and a severity: `high` for full Gmail, Drive, Sheets, Cloud data or Google
-Ads; `info` for Sign in with Google only. Accounts where Google asks for a fresh sign-in show up as
-`reauth` statuses.
+Ads. Apps linked for Sign in with Google only are one `info` finding per account listing them (with
+their dates in the evidence). Accounts where Google asks for a fresh sign-in show up as `reauth`
+statuses.
+
+- An account that is the login (Sign in with Google or a grant) for financial or cloud services
+  gets one more finding: "Google account X is the login for N financial/cloud services: use a
+  passkey/security key and consider Advanced Protection". It is `high` when one of them can move
+  money (crypto exchanges, Wise, Revolut, PayPal, Stripe, banks) and `medium` for investing
+  platforms (Crowdcube, Wefunder, AngelList…) and cloud consoles (AWS, Cloudflare, Vercel…) only.
+  The list of names is `loginServices` in `connectors/googlepersonal/accountview.go`.
+- `{"connectors": {"google-personal": {"config": {"accounts": ["me@example.com"]}}}}` inventories
+  only those accounts; other accounts signed in to the browser (a shared mailbox, a colleague's)
+  get no status and are declared skipped scopes, so their earlier findings are not taken as resolved.
 
 - Requires Brave or Chrome started with `--remote-debugging-port=9222` (another address via
   `cdp_url` in the config or `SEGURATA_CDP`). Pages open in the background and always close,
@@ -117,6 +147,17 @@ revoked (`remediation.url`). Severity is table-driven: write access, reading dir
 deleting repositories, administering organizations and billing are `high`; broad read-only access is
 `medium`; profile or email only is `low` or `info`. When the page gives a last-used date older than
 a year, the severity goes up one level.
+
+- X apps approved more than 10 years ago are one finding, "Revoke N X apps authorized before
+  <month year> (services mostly defunct)", as severe as the worst of them and listing each with
+  its date; newer apps are listed oldest first, each with `age_years`.
+- A Notion integration whose owner is you ("(You)") is `low` and says "(your own integration)":
+  its token is yours, and a leaked copy is a local-secrets finding.
+- Grants segurata runs on are labelled "(segurata depends on it)" and never told to revoke: for the
+  GitHub CLI the fix narrows it with `gh auth refresh -h github.com -r <scopes>` (`delete_repo`,
+  `admin:org`, `admin:enterprise`, whichever it holds) and a read-only token for segurata. In
+  google-personal, the Google Cloud SDK grant gets the same label and the Firebase CLI grant
+  "(developer tool)", with the CLI's own sign-out command as the fix.
 
 | Service | What it lists |
 |---|---|
@@ -358,7 +399,7 @@ every secret as new.
 ```bash
 ./segurata rotations sync                    # from the latest out/<date>/local-secrets.jsonl
 ./segurata rotations list --priority P0,P1   # what to rotate first
-./segurata rotations next --priority P0      # the most urgent item and exactly what to do
+./segurata rotations next --priority P0      # the most urgent item and exactly what to do (--log records it was shown)
 ./segurata rotations show <id>               # locations, where the new value goes, rotate URL
 ./segurata rotations replace <id>            # after rotating: plan with the new value from the clipboard
 ./segurata rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]
@@ -427,7 +468,24 @@ flagging those without a developer signature), and whether Brave runs with
 `--remote-debugging-port`. Browser extensions are the `browser-extensions` connector, below.
 
 - A passing check emits no finding (only a log line with `--verbose`); a check that cannot run here
-  is an `unsupported` status. Findings are kind `setting`.
+  is an `unsupported` status, and one whose tool failed or timed out is an `error` status that says
+  so. Findings are kind `setting`.
+- Idle lock: the screen locks when the screen saver starts or the display sleeps. The check reads
+  the screen saver's `idleTime` with `defaults -currentHost read com.apple.screensaver`, then the
+  global domain when the per-host key is unset, and `displaysleep` from `pmset -g`. It passes when
+  the earlier of the two is 10 minutes or less; longer is `low`, both off is `medium`, and a failed
+  read is an `error` status naming what could not be read.
+- Login and background items: `sfltool dumpbtm` gets two minutes (it slows down on a busy Mac). When
+  it fails or answers nothing, the check lists one item per launchd label from the plists in
+  `/Library/LaunchDaemons`, `/Library/LaunchAgents` and `~/Library/LaunchAgents` and the
+  `launchctl list` jobs no plist names, leaving out Apple's and the transient `application.*` jobs
+  launchd creates for running apps. Either way, a plist whose `Program` (or `ProgramArguments[0]`)
+  does not exist, or a helper in `/Library/PrivilegedHelperTools` from a vendor no installed app
+  belongs to (by the first two labels of the bundle id, e.g. `com.tunnelbear`), is a `low`
+  "leftover privileged helper" finding instead of a background item. Binary plists are read with
+  `plutil -convert xml1 -o - <file>`, allowed for that file only.
+- A listening port that would be an `info` row (an app's own network feature) is added to the
+  background item that runs the process, when there is one, instead of getting its own row.
 - The remote debugging port is a `high` finding even though the google-personal and connected-apps
   connectors need it: while the port is open, any local process can drive the browser with every
   signed-in session. Start Brave with the flag only for those connectors.

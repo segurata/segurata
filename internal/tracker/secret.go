@@ -124,13 +124,17 @@ func secretEvidence(f finding.Finding) (secretrisk.Evidence, bool) {
 // SecretReport counts what folding secret sightings changed.
 type SecretReport struct {
 	Secrets, Created, Updated, Reopened, Skipped int
+	// Reclassified counts items closed because every current sighting is now noise.
+	Reclassified int
 	// HistoryOnly counts rotated items seen again only in history, transcripts or logs, noted for
 	// the first time in this sync.
 	HistoryOnly int
 }
 
 // SyncSecrets folds sightings into rotate items. Secrets whose every sighting is noise (generic
-// matches, public or encrypted values) are skipped unless includeNoise. A done item found again
+// matches, public or encrypted values) are skipped unless includeNoise; when such a secret already
+// has an item (a rule was corrected since), the item is updated to noise and closed as
+// reclassified (see reclassify). A done item found again
 // with the same fingerprint is reopened only when a sighting is in a working file (see
 // rotatedSeen). Items not seen keep their history and last_seen: git history and transcripts do
 // not forget, and a redacted copy still reached the model provider.
@@ -150,13 +154,16 @@ func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		g := groups[fp]
 		best := bestSighting(g)
 		impact := secretrisk.ImpactOf(best.Evidence)
-		if impact == secretrisk.Noise && !includeNoise {
+		noise := impact == secretrisk.Noise && !includeNoise
+		it, ok := existing[fp]
+		if noise && !ok {
 			rep.Skipped++
 			continue
 		}
-		rep.Secrets++
 		seen := latest(g, now)
-		it, ok := existing[fp]
+		if !noise {
+			rep.Secrets++
+		}
 		if !ok {
 			it = t.newItem(KindRotate, "rotate:"+fp, "rotations", "", now)
 			it.Fingerprint = fp
@@ -164,7 +171,7 @@ func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise 
 			existing[fp] = it
 			it.Log(now, EvFound, actFound, fmt.Sprintf("found in %d %s", len(g), textfmt.Plural(len(g), "place", "places")))
 			rep.Created++
-		} else {
+		} else if !noise {
 			rep.Updated++
 		}
 		s := it.Secret
@@ -175,12 +182,64 @@ func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		for _, x := range g {
 			it.merge(x.Evidence, seen)
 		}
-		if it.Status == Done {
+		switch {
+		case noise:
+			if it.reclassify(now, best.Evidence.Type) {
+				rep.Reclassified++
+			}
+		case it.Status == Reclassified:
+			if it.unreclassify(now) {
+				rep.Reopened++
+			}
+		case it.Status == Done:
 			it.rotatedSeen(g, now, &rep)
 		}
 		it.derive()
 	}
 	return rep
+}
+
+// reclassify closes an item whose every current sighting is noise, and reports whether it did.
+// Done and accepted items keep their status: the owner settled them. An ignored item becomes
+// reclassified too, its ignore reason kept in the event, so the "ignored" count holds only what
+// the owner ignored about real secrets.
+func (it *Item) reclassify(now time.Time, typ string) bool {
+	switch it.Status {
+	case Open, InProgress, Snoozed, Ignored:
+	default:
+		return false
+	}
+	detail := "every current sighting is noise (" + typ + ")"
+	if it.Status == Ignored {
+		detail = wasIgnored + it.lastDetail(actIgnore) + "; " + detail
+	}
+	it.setStatus(now, Reclassified, EvReclassified, actReclassify, detail)
+	return true
+}
+
+// wasIgnored starts a reclassified event's detail when the item had been ignored by the owner.
+const wasIgnored = "was ignored: "
+
+// unreclassify puts back a reclassified item whose secret is no longer noise: ignored again with
+// the owner's reason when it was ignored before, open otherwise; it reports whether it reopened.
+func (it *Item) unreclassify(now time.Time) bool {
+	if prev, ok := strings.CutPrefix(it.lastDetail(actReclassify), wasIgnored); ok {
+		reason, _, _ := strings.Cut(prev, "; every current sighting is noise")
+		it.setStatus(now, Ignored, EvStatus, actIgnore, reason)
+		return false
+	}
+	it.setStatus(now, Open, EvReopened, actAutoReopen, "a current sighting is no longer noise")
+	return true
+}
+
+// lastDetail is the detail of the latest history event with that action, or "".
+func (it *Item) lastDetail(action string) string {
+	for i := len(it.History) - 1; i >= 0; i-- {
+		if it.History[i].Action == action {
+			return it.History[i].Detail
+		}
+	}
+	return ""
 }
 
 // rotatedSeen handles a done item seen again. After a real rotation the old value is revoked, so

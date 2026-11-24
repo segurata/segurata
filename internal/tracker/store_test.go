@@ -150,3 +150,48 @@ func TestRetireNeverOverwrites(t *testing.T) {
 		t.Errorf("retired files %v", names)
 	}
 }
+
+// A schema 1 tracker, as the previous binary wrote it, loads with every field intact and is saved
+// as the current schema; an older binary then refuses the file instead of misreading new statuses.
+func TestSchema1UpgradesLosslessly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tracker.json")
+	tr := New(t0)
+	tr.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false))}, t0, false)
+	it, _ := tr.FindRotate("aaaa")
+	if err := it.Ignore(t0, "a fixture"); err != nil {
+		t.Fatal(err)
+	}
+	tr.SchemaVersion = 1
+	v1, err := json.MarshalIndent(tr, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, v1, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SchemaVersion != SchemaVersion {
+		t.Errorf("schema %d after load", got.SchemaVersion)
+	}
+	got.SchemaVersion = 1
+	again, _ := json.MarshalIndent(got, "", "  ")
+	if !bytes.Equal(again, v1) {
+		t.Errorf("the upgrade changed data:\n%s\n---\n%s", v1, again)
+	}
+	if err := got.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	var head struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	raw, _ := os.ReadFile(path)
+	if _ = json.Unmarshal(raw, &head); head.SchemaVersion != 2 {
+		t.Errorf("saved as schema %d", head.SchemaVersion)
+	}
+	if bak, _ := os.ReadFile(path + ".bak"); !bytes.Equal(bak, v1) {
+		t.Error("the schema 1 file is not kept as the backup")
+	}
+}

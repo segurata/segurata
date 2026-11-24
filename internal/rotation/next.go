@@ -17,12 +17,13 @@ import (
 // maxLeaks is how many locations `next` lists; `show` lists them all.
 const maxLeaks = 8
 
-// next prints the single most urgent active item with everything needed to rotate it, and logs
-// that it was shown.
+// next prints the single most urgent active item with everything needed to rotate it. It is a
+// read-only view: only with --log does it record in the item's history that it was shown.
 func (c CLI) next(t *tracker.Tracker, path string, args []string, now time.Time) int {
 	fs := newFlags("next", c.Err)
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0 or P0,P1")
 	service := fs.String("service", "", "comma-separated services, e.g. stripe,aws")
+	logIt := fs.Bool("log", false, "record in the item's history that it was shown")
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
@@ -33,6 +34,9 @@ func (c CLI) next(t *tracker.Tracker, path string, args []string, now time.Time)
 	}
 	it := items[0]
 	printNext(c.Out, it, items)
+	if !*logIt {
+		return 0
+	}
 	if n := len(it.History); n == 0 || it.History[n-1].Action != tracker.ActNext {
 		it.Log(now, tracker.EvNote, tracker.ActNext, "")
 		if err := t.Save(path); err != nil {

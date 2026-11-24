@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -315,3 +316,68 @@ func TestUpstreamLocationsDoNotRaisePriority(t *testing.T) {
 		t.Errorf("the owner's token pushed to a third-party repository: %s", it.Priority)
 	}
 }
+
+// A corrected rule turns a tracked secret into noise: its item is updated, not left behind.
+func TestASecretNowNoiseIsReclassified(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	real := []Sighting{
+		sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false)),
+		sight(ev("bbbbbbbbbbbbbbbb", "anthropic", "~/src/log/test.log", "scan", "log", "644", false, false)),
+	}
+	l.SyncSecrets(real, t0, false)
+	open, _ := l.FindRotate("aaaa")
+	ignored, _ := l.FindRotate("bbbb")
+	if err := ignored.Ignore(t0, "test suite fixtures in a gitignored Rails test log"); err != nil {
+		t.Fatal(err)
+	}
+	noise := []Sighting{
+		sight(ev("aaaaaaaaaaaaaaaa", "assignment", "~/.zshrc", "scan", "config", "644", false, false)),
+		sight(ev("bbbbbbbbbbbbbbbb", "assignment", "~/src/log/test.log", "scan", "log", "644", false, false)),
+	}
+	rep := l.SyncSecrets(noise, t0.Add(time.Hour), false)
+	if rep.Reclassified != 2 || rep.Skipped != 0 || rep.Secrets != 0 {
+		t.Fatalf("report %+v", rep)
+	}
+	for _, it := range []*Item{open, ignored} {
+		last := it.History[len(it.History)-1]
+		if it.Status != Reclassified || it.Priority != "" || it.Secret.Impact != "noise" || last.Event != EvReclassified ||
+			!strings.Contains(last.Detail, "every current sighting is noise (assignment)") {
+			t.Errorf("%s: %s %q %s %+v", it.ID, it.Status, it.Priority, it.Secret.Impact, last)
+		}
+	}
+	if d := ignored.History[len(ignored.History)-1].Detail; !strings.HasPrefix(d, "was ignored: test suite fixtures in a gitignored Rails test log; ") {
+		t.Errorf("ignore reason lost: %q", d)
+	}
+	var b strings.Builder
+	if err := doc.Render(&b, l.Status("tracker.json", t0.Add(time.Hour), Filter{}), doc.Text); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "ignored 0, reclassified as noise 2") {
+		t.Errorf("headline:\n%s", b.String())
+	}
+	// Seen again as noise: nothing changes.
+	if rep := l.SyncSecrets(noise, t0.Add(2*time.Hour), false); rep.Reclassified != 0 || len(open.History) != 2 {
+		t.Errorf("second noise sync %+v, history %+v", rep, open.History)
+	}
+	// The rule changes back: the open one reopens, the ignored one is ignored again with its reason.
+	rep = l.SyncSecrets(real, t0.Add(3*time.Hour), false)
+	if rep.Reopened != 1 || open.Status != Open || open.Priority == "" {
+		t.Errorf("open item back: %+v %s %q", rep, open.Status, open.Priority)
+	}
+	if ignored.Status != Ignored || ignored.lastDetail(actIgnore) != "test suite fixtures in a gitignored Rails test log" {
+		t.Errorf("ignored item back: %s %q", ignored.Status, ignored.lastDetail(actIgnore))
+	}
+}
+
+// Done and accepted items stay as the owner left them.
+func TestReclassifyLeavesSettledItems(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false))}, t0, false)
+	it, _ := l.FindRotate("aaaa")
+	it.Done(t0, "rotated")
+	rep := l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "assignment", "~/.zshrc", "scan", "config", "644", false, false))}, t0.Add(time.Hour), false)
+	if rep.Reclassified != 0 || it.Status != Done || it.Secret.Impact != "noise" {
+		t.Errorf("%+v %s %s", rep, it.Status, it.Secret.Impact)
+	}
+}
+

@@ -151,7 +151,12 @@ func Load(path string) (*Tracker, error) {
 
 // upgrades turns a tracker of schema version n into n+1, on the raw JSON. Each future format
 // change adds one entry; Load applies them in order before decoding.
-var upgrades = map[int]func(map[string]any) error{}
+var upgrades = map[int]func(map[string]any) error{
+	// 2 adds the statuses reclassified and expected, the top-level rules and decision effects. A
+	// version 1 file holds none of them, so its data carries over as it is; the bump keeps an older
+	// binary from loading a file with values it does not know.
+	1: func(map[string]any) error { return nil },
+}
 
 func parse(raw []byte) (*Tracker, error) {
 	var head struct {
@@ -228,6 +233,11 @@ func (t *Tracker) validate() error {
 			return fmt.Errorf("decide item %s has no decision", it.ID)
 		}
 		ids[it.ID], keys[it.Key] = true, true
+	}
+	for i, r := range t.Rules {
+		if err := r.validate(); err != nil {
+			return fmt.Errorf("rule %d: %w", i+1, err)
+		}
 	}
 	return nil
 }

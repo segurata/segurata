@@ -216,8 +216,9 @@ type firstLog struct {
 	msg string
 }
 
-func (l *firstLog) Finding(finding.Finding) {}
-func (l *firstLog) Status(finding.Status)   {}
+func (l *firstLog) Finding(finding.Finding)    {}
+func (l *firstLog) Status(finding.Status)      {}
+func (l *firstLog) Scope(string, bool, string) {}
 func (l *firstLog) Log(m string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -20,6 +20,9 @@ type SyncOptions struct {
 	OutDir       string // inventory output directory; the latest run of every connector instance
 	From         string // a local-secrets output to use instead of its latest run ("" for none)
 	IncludeNoise bool   // track noise-only secrets too, without a priority
+	// Expect applies the config's expected rules to each status read (config.Config.Expect); nil
+	// for none. Statuses are matched at every sync, so a rule added or removed since the run counts.
+	Expect func(*finding.Status)
 }
 
 // SyncReport counts what a sync changed.
@@ -29,6 +32,10 @@ type SyncReport struct {
 	Secrets SecretReport
 	// Items other than secrets.
 	Created, Verified, Reopened int
+	// Expected counts setup items closed (or created closed) because the config expects them.
+	Expected int
+	// Ruled counts items closed by a decision's rule.
+	Ruled int
 	// Every item.
 	Woken, Lapsed int
 }
@@ -39,7 +46,20 @@ type run struct {
 	at       time.Time
 	findings []finding.Finding
 	statuses []finding.Status
-	blocked  map[string]bool // accounts (or "" for all) with a status other than ok
+	cov      finding.Coverage // which scopes it inspected
+}
+
+// wholeInstance reports whether the run has a status of that state for no account in particular.
+func (r *run) wholeInstance(state finding.State) bool {
+	return slices.ContainsFunc(r.statuses, func(st finding.Status) bool {
+		return st.Account == "" && st.Scope == "" && reported(st).State == state
+	})
+}
+
+// notChecked is the history note for a finding a run did not inspect, the same for every item and
+// sync that folds that run, so each item logs it once.
+func (r *run) notChecked(why string) string {
+	return fmt.Sprintf("not checked in run %s of %s (%s)", r.label, r.at.Format(time.RFC3339), why)
 }
 
 // Sync folds the latest run of every connector instance into the items:
@@ -53,7 +73,9 @@ type run struct {
 // longer reported)"; a done item is verified once a run after it was marked done no longer reports
 // its findings, and reopened if a run after that reports one again; expired snoozes and
 // acceptances open their items again. Accepted and ignored items only get their findings updated.
-// A finding counts as gone only when its connector instance ran and could inspect its account.
+// A finding counts as gone only when its connector instance's run finished (ends with run_end) and
+// inspected the finding's scope; otherwise the item keeps it and logs "not checked in run …" once
+// per run instead of closing. See docs/architecture.md, "Run completeness".
 func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	var rep SyncReport
 	runs, err := readRuns(opt)
@@ -65,6 +87,11 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		if prev, ok := t.Sources[r.label]; ok && r.at.Before(prev) {
 			rep.Stale = append(rep.Stale, r.label)
 			continue
+		}
+		if opt.Expect != nil {
+			for i := range r.statuses {
+				opt.Expect(&r.statuses[i])
+			}
 		}
 		folded[r.label] = r
 	}
@@ -114,9 +141,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		for _, st := range r.statuses {
 			if st.State != finding.StateOK {
 				key, p := setupProposal(r.label, st)
-				if pp := propose(key, p); len(pp.refs) == 0 {
-					pp.refs = p.refs
-				}
+				propose(key, p).addStatus(st, r.at)
 			}
 		}
 	}
@@ -125,18 +150,24 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	for _, key := range order {
 		p := proposals[key]
 		it, existed := byKey[key]
+		expected := p.expectedReasons()
 		if !existed {
 			it = t.newItem(p.kind, key, p.theme, "", now)
 			byKey[key] = it
 			it.Log(now, EvFound, actFound, count(len(p.refs), "finding", "findings"))
-			rep.Created++
+			if expected == nil {
+				rep.Created++
+			}
 		}
 		seen[it] = map[string]bool{}
 		if added := it.upsert(p.refs, seen[it]); added > 0 && existed {
 			it.Log(now, EvSeen, actSeen, count(added, "new finding", "new findings"))
 		}
-		if strings.HasPrefix(key, "transcripts:") {
+		switch {
+		case strings.HasPrefix(key, "transcripts:"):
 			p.finishTranscripts()
+		case p.kind == KindSetup:
+			p.finishSetup(it.ID)
 		}
 		p.finish(it.ID)
 		if p.title != "" {
@@ -147,16 +178,21 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		}
 		it.Severity = p.severity()
 		it.Priority = priorityOf(it.Severity)
+		if p.kind == KindSetup && it.expectedMoves(expected, now) {
+			rep.Expected++
+		}
 	}
 
 	for _, it := range t.Items {
 		if it.Kind == KindRotate || len(it.Findings) == 0 {
 			continue
 		}
-		it.markGone(seen[it], folded)
+		held := it.markGone(seen[it], folded)
 		t.lifecycle(it, folded, now, &rep)
+		it.noteHeld(held, now)
 	}
 	t.expireAll(now, &rep)
+	rep.Ruled = t.applyRules(now)
 	t.seed(now)
 	if t.Sources == nil {
 		t.Sources = map[string]time.Time{}
@@ -181,8 +217,8 @@ func (r SyncReport) FoldedSecrets() bool {
 
 // SyncLine is the one-line summary of what a sync did to items other than secrets.
 func SyncLine(r SyncReport) string {
-	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened; %d snoozes and %d acceptances expired.\n",
-		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Woken, r.Lapsed)
+	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config, %d closed by decisions; %d snoozes and %d acceptances expired.\n",
+		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Woken, r.Lapsed)
 	if len(r.Stale) > 0 {
 		s += fmt.Sprintf("Skipped older runs than the tracker already holds: %s.\n", strings.Join(r.Stale, ", "))
 	}
@@ -195,6 +231,7 @@ func (s *SecretReport) add(o SecretReport) {
 	s.Updated += o.Updated
 	s.Reopened += o.Reopened
 	s.Skipped += o.Skipped
+	s.Reclassified += o.Reclassified
 	s.HistoryOnly += o.HistoryOnly
 }
 
@@ -224,81 +261,16 @@ func (p *proposal) finishTranscripts() {
 	p.title = fmt.Sprintf("Redact secrets from %s (agent transcripts, shell histories, logs)", count(len(files), "trail file", "trail files"))
 }
 
-// setupProposal is the setup item for a connector status other than ok.
-func setupProposal(lbl string, st finding.Status) (string, proposal) {
-	key := "setup:" + lbl + "|" + st.Account + "|" + string(st.State)
-	sev := finding.SevMedium
-	if st.State == finding.StateUnsupported || st.State == finding.StateUnverified {
-		sev = finding.SevLow
-	}
-	who := lbl
-	if st.Account != "" {
-		who += " · " + st.Account
-	}
-	action, cmd := StatusAction(st, lbl)
-	detail := st.Detail
-	if detail == "" {
-		detail = string(st.State)
-	}
-	p := proposal{theme: "setup", kind: KindSetup, connector: st.Connector, instance: st.Instance, account: st.Account,
-		title: who + ": " + statePhrase[st.State], next: &Next{Who: You, Action: action, Command: cmd},
-		refs: []FindingRef{{ID: "status:" + key, Connector: st.Connector, Instance: st.Instance, Account: st.Account,
-			Title: detail, Severity: sev}}}
-	return key, p
-}
-
-var statePhrase = map[finding.State]string{
-	finding.StateReauth:             "needs a fresh sign-in",
-	finding.StateSignedOut:          "is signed out",
-	finding.StateNoScope:            "lacks a permission",
-	finding.StateUnverified:         "reader never checked against a real page",
-	finding.StateMissingCredentials: "has no credentials configured",
-	finding.StateUnsupported:        "is not supported here",
-	finding.StateError:              "failed",
-}
-
-// StatusAction is what to do about a status, and the command that checks it afterwards.
-// Connectors usually put the exact fix in the detail (a command to run, a page to open); then the
-// action points there instead of guessing from the state alone.
-func StatusAction(st finding.Status, label string) (string, string) {
-	rerun := "segurata inventory " + label
-	if detailHasFix(st.Detail) {
-		return "Do what the status detail says.", rerun
-	}
-	switch st.State {
-	case finding.StateReauth:
-		return "Sign in to this account again (in the browser for browser connectors, with the provider's CLI otherwise).", rerun
-	case finding.StateSignedOut:
-		return "Sign in to this account in the browser segurata drives, or drop it from the config if it is gone.", rerun
-	case finding.StateMissingCredentials:
-		return "Check the secret reference for " + label + " in ~/.config/segurata/config.json (Keychain item, 1Password field or environment variable).", rerun
-	case finding.StateNoScope:
-		return "Grant the permission the detail names to the credential this connector uses.", rerun
-	case finding.StateUnsupported:
-		return "Install what the detail names (respecting the 4-day quarantine), or remove " + label + " from the config.", rerun
-	}
-	return "Run it again with connector logs to see what failed.", rerun + " --verbose"
-}
-
-// detailHasFix reports whether a status detail already carries a concrete step.
-func detailHasFix(detail string) bool {
-	d := strings.ToLower(detail)
-	for _, cue := range []string{"run:", "run gcloud", "run gh", "run aws", "run az", "; run ", "open http", "store it with", "raise ", "create an "} {
-		if strings.Contains(d, cue) {
-			return true
-		}
-	}
-	return false
-}
-
 // RunLabel names a connector instance from its records, which carry the exact connector name and
-// instance label; an empty run falls back to the file name.
-func RunLabel(file string, findings []finding.Finding, statuses []finding.Status) string {
+// instance label; a run with none falls back to the file name.
+func RunLabel(file string, rf remediate.RunFile) string {
 	switch {
-	case len(findings) > 0:
-		return label(findings[0].Connector, findings[0].Instance)
-	case len(statuses) > 0:
-		return label(statuses[0].Connector, statuses[0].Instance)
+	case rf.End != nil:
+		return label(rf.End.Connector, rf.End.Instance)
+	case len(rf.Findings) > 0:
+		return label(rf.Findings[0].Connector, rf.Findings[0].Instance)
+	case len(rf.Statuses) > 0:
+		return label(rf.Statuses[0].Connector, rf.Statuses[0].Instance)
 	}
 	base := filepath.Base(file)
 	return base[:len(base)-len(filepath.Ext(base))]
@@ -335,12 +307,15 @@ func readRuns(opt SyncOptions) ([]*run, error) {
 }
 
 func readRunFile(file string) (*run, error) {
-	findings, statuses, err := remediate.ReadRun(file)
+	rf, err := remediate.ReadRun(file)
 	if err != nil {
 		return nil, err
 	}
-	r := &run{label: RunLabel(file, findings, statuses), findings: findings, statuses: statuses, blocked: map[string]bool{}}
-	for _, f := range findings {
+	r := &run{label: RunLabel(file, rf), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
+	if rf.End != nil {
+		r.at = rf.End.EndedAt
+	}
+	for _, f := range rf.Findings {
 		if f.ObservedAt.After(r.at) {
 			r.at = f.ObservedAt
 		}
@@ -353,11 +328,6 @@ func readRunFile(file string) (*run, error) {
 		r.at = st.ModTime()
 	}
 	r.at = r.at.UTC()
-	for _, st := range statuses {
-		if st.State != finding.StateOK {
-			r.blocked[st.Account] = true
-		}
-	}
 	return r, nil
 }
 
@@ -384,9 +354,15 @@ func (it *Item) upsert(refs []FindingRef, seen map[string]bool) int {
 	return added
 }
 
-// markGone flags the refs this sync did not see, when their connector instance ran and could
-// inspect their account. A status ref (setup items) is gone as soon as the run lacks that status.
-func (it *Item) markGone(seen map[string]bool, folded map[string]*run) {
+// markGone flags the refs this sync did not see, when their connector instance's run inspected
+// their scope; it returns, by ref id, the "not checked" note of each ref it held back instead. A
+// status ref (setup items) is gone as soon as a run that inspected anything lacks that status; when
+// the run reports the item's key with other details (the details changed, or the ref predates one
+// ref per detail); or when the run reports the same state for the whole instance (no account),
+// which covers it: the core's one missing_credentials status replaces the one a connector used to
+// emit per account.
+func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[string]string {
+	held := map[string]string{}
 	for i := range it.Findings {
 		r := &it.Findings[i]
 		if seen[r.ID] {
@@ -396,10 +372,45 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) {
 		if !ok {
 			continue
 		}
-		if !strings.HasPrefix(r.ID, "status:") && (run.blocked[r.Account] || run.blocked[""]) {
+		why, unchecked := run.cov.Unchecked(r.Account, r.Scope)
+		if strings.HasPrefix(r.ID, "status:") {
+			why, unchecked = run.cov.NoneChecked()
+			if len(seen) > 0 || r.Account != "" && run.wholeInstance(finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])) {
+				unchecked = false
+			}
+		}
+		if unchecked {
+			held[r.ID] = run.notChecked(why)
 			continue
 		}
 		r.Gone = true
+	}
+	return held
+}
+
+// noteHeld logs, once per run, why an item that would have closed or been verified did not: every
+// finding still counted as reported belongs to a scope its latest run did not inspect.
+func (it *Item) noteHeld(held map[string]string, now time.Time) {
+	if len(held) == 0 || (it.Closed() && !(it.Status == Done && it.VerifiedAt == nil)) {
+		return
+	}
+	var notes []string
+	for _, r := range it.Findings {
+		if r.Gone {
+			continue
+		}
+		note, ok := held[r.ID]
+		if !ok {
+			return // something inspected still reports it: nothing was held back
+		}
+		if !slices.Contains(notes, note) {
+			notes = append(notes, note)
+		}
+	}
+	for _, note := range notes {
+		if !slices.ContainsFunc(it.History, func(e Event) bool { return e.Action == actNotChecked && e.Detail == note }) {
+			it.Log(now, EvNote, actNotChecked, note)
+		}
 	}
 }
 
@@ -417,7 +428,7 @@ func (it *Item) reportedAfter(t time.Time) bool {
 func (t *Tracker) lifecycle(it *Item, folded map[string]*run, now time.Time, rep *SyncReport) {
 	present := it.reported()
 	switch it.Status {
-	case Open, InProgress, Snoozed:
+	case Open, InProgress, Snoozed, Expected:
 		if !present {
 			it.setStatus(now, Done, EvVerified, actAutoDone, "verified (no longer reported)")
 			at := now.UTC()

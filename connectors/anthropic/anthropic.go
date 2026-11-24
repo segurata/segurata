@@ -42,6 +42,14 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
+// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
+func (c *Connector) SetupHint(secret string) string {
+	if secret != secretName {
+		return ""
+	}
+	return setupHint
+}
+
 func (c *Connector) Describe() connector.Description {
 	return connector.Description{
 		Name:     name,

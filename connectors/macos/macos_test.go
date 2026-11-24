@@ -117,17 +117,35 @@ func TestHealthyMacEmitsOnlyInformationalFindings(t *testing.T) {
 			t.Errorf("kind %s account %s", f.Kind, f.Account)
 		}
 	}
-	rec.ByResource(t, "macos_setting", "screensaver")
 	rec.ByResource(t, "background_item", "btm:16.com.example.helper")
-	// systemsetup needs admin: it is reported as a skipped check.
-	var skipped []string
-	for _, s := range rec.Statuses {
-		if s.State == finding.StateUnsupported {
-			skipped = append(skipped, s.Detail)
+	for _, f := range rec.Findings {
+		if f.Resource.ID == "screensaver" {
+			t.Errorf("display sleep at 10 minutes passes the idle lock check: %+v", f)
 		}
 	}
-	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], "remote-login:") {
-		t.Fatalf("skipped %v", skipped)
+	// systemsetup needs admin: it is reported as a skipped check.
+	// It leaves only that check uninspected: the machine itself was.
+	var skipped []string
+	ok := 0
+	for _, s := range rec.Statuses {
+		switch s.State {
+		case finding.StateUnsupported:
+			skipped = append(skipped, s.Scope+" "+s.Detail)
+		case finding.StateOK:
+			ok++
+		}
+	}
+	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], "check:remote-login remote-login:") || ok != 1 {
+		t.Fatalf("skipped %v, ok statuses %d", skipped, ok)
+	}
+	if f := rec.ByResource(t, "background_item", "btm:16.com.example.helper"); f.Scope != "check:btm" {
+		t.Errorf("background items share one scope, got %q", f.Scope)
+	}
+	slow := healthy()
+	slow["/usr/bin/pmset -g"] = "System-wide power settings:\n displaysleep         30\n"
+	c, _, _ = newTest(t, slow)
+	if f := inventory(t, c).ByResource(t, "macos_setting", "screensaver"); f.Scope != "check:screensaver" || f.Severity != finding.SevLow {
+		t.Errorf("a check's finding is scoped to the check, got %q %s", f.Scope, f.Severity)
 	}
 }
 

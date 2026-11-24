@@ -245,6 +245,7 @@ func (h dumpHit) toFinding() finding.Finding {
 	}
 	return finding.Finding{
 		Account:     localAccount,
+		Scope:       dumpsScope(h.Repo),
 		Resource:    finding.Resource{Type: "data_dump", ID: h.Repo + ":" + h.Path, Name: h.Path},
 		Kind:        finding.KindExposure,
 		Severity:    h.severity(),

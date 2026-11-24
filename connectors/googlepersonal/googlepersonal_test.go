@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -41,11 +42,17 @@ type recorder struct {
 	findings []finding.Finding
 	statuses []finding.Status
 	logs     []string
+	skipped  []string
 }
 
 func (r *recorder) Finding(f finding.Finding) { r.findings = append(r.findings, f) }
 func (r *recorder) Status(s finding.Status)   { r.statuses = append(r.statuses, s) }
-func (r *recorder) Log(m string)              { r.logs = append(r.logs, m) }
+func (r *recorder) Scope(id string, inspected bool, reason string) {
+	if !inspected {
+		r.skipped = append(r.skipped, id+": "+reason)
+	}
+}
+func (r *recorder) Log(m string) { r.logs = append(r.logs, m) }
 
 const base = "https://myaccount.google.com/u/0/linkedapps/"
 
@@ -75,7 +82,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 		connectionsURL(3):            conns("never@example.test", "must not be reached"),
 	}}
 	rec := &recorder{}
-	if err := inventory(context.Background(), b, rec, now); err != nil {
+	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,11 +124,14 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 	}
 
 	ex := rec.findings[1]
-	if ex.Resource.Type != "sign_in_with_google" || ex.Severity != finding.SevInfo || ex.CreatedAt != nil {
-		t.Errorf("sign-in app: %+v", ex)
+	if ex.Resource.Type != "sign_in_with_google_summary" || ex.Severity != finding.SevInfo || ex.Account != "a@example.test" {
+		t.Errorf("sign-in summary: %+v", ex)
 	}
-	if ex.Title != "example.test can sign you in with your Google account" {
-		t.Errorf("sign-in title %q", ex.Title)
+	if ex.Title != "a@example.test is the Sign in with Google login for 1 app" || fmt.Sprint(ex.Evidence["services"]) != "[example.test]" {
+		t.Errorf("sign-in summary %q %v", ex.Title, ex.Evidence)
+	}
+	if ex.Remediation.URL != connectionsURL(0) {
+		t.Errorf("summary points to %q", ex.Remediation.URL)
 	}
 	if len(rec.logs) != 1 || !strings.Contains(rec.logs[0], `unparsed access date "sometime"`) {
 		t.Errorf("logs %q", rec.logs)
@@ -143,7 +153,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 
 func TestInventoryReportsSignedOutBrowser(t *testing.T) {
 	rec := &recorder{}
-	if err := inventory(context.Background(), &fakeBrowser{}, rec, now); err != nil {
+	if err := inventory(context.Background(), &fakeBrowser{}, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateSignedOut || len(rec.findings) != 0 {
@@ -169,10 +179,10 @@ func TestInventoryReportsUnreadableAppsAndKeepsTheRest(t *testing.T) {
 		},
 	}
 	rec := &recorder{}
-	if err := inventory(context.Background(), b, rec, now); err != nil {
+	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.findings) != 1 || rec.findings[0].Resource.ID != "EXAMPLE" {
+	if len(rec.findings) != 1 || fmt.Sprint(rec.findings[0].Evidence["services"]) != "[example.test]" {
 		t.Fatalf("findings %+v", rec.findings)
 	}
 	var details []string
@@ -194,16 +204,16 @@ func TestFindingIDIgnoresGoogleTokensAndSeparatesRepeatedNames(t *testing.T) {
 	run := func(token string) []string {
 		b := &fakeBrowser{pages: map[string]any{
 			connectionsURL(0): conns("a@example.test", "",
-				appLink{Name: "example.test", Href: base + "overview/" + token + "1"},
-				appLink{Name: "example.test", Href: base + "overview/" + token + "2"},
-				appLink{Name: "Acme Sync", Href: base + "overview/" + token + "3"},
+				appLink{Name: "Acme Sync", Href: base + "overview/" + token + "1"},
+				appLink{Name: "Acme Sync", Href: base + "overview/" + token + "2"},
+				appLink{Name: "example.test", Href: base + "overview/" + token + "3"},
 			),
-			base + "overview/" + token + "1": page(overviewENSignIn),
-			base + "overview/" + token + "2": page(overviewENSignIn),
-			base + "overview/" + token + "3": page(overviewENAccess),
+			base + "overview/" + token + "1": page(overviewENAccess),
+			base + "overview/" + token + "2": page(overviewENAccess),
+			base + "overview/" + token + "3": page(overviewENSignIn),
 		}}
 		rec := &recorder{}
-		inventory(context.Background(), b, rec, now)
+		inventory(context.Background(), b, rec, now, nil)
 		var ids []string
 		for _, f := range rec.findings {
 			ids = append(ids, f.ID)
@@ -216,6 +226,68 @@ func TestFindingIDIgnoresGoogleTokensAndSeparatesRepeatedNames(t *testing.T) {
 	}
 	if len(first) != 3 || first[0] == first[1] || first[1] == first[2] {
 		t.Fatalf("ids must be distinct: %v", first)
+	}
+}
+
+func TestAccountsFilterSkipsOtherAccountsWithoutStatus(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{
+		connectionsURL(0):   conns("me@example.test", "", appLink{Name: "example.test", Href: base + "overview/E"}),
+		base + "overview/E": page(overviewENSignIn),
+		connectionsURL(1):   conns("shared@example.test", reauthEN),
+	}}
+	only, err := accountFilter(map[string]any{"accounts": []any{"Me@example.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now, only); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.statuses) != 1 || rec.statuses[0].Account != "me@example.test" {
+		t.Fatalf("statuses %+v", rec.statuses)
+	}
+	if len(rec.skipped) != 1 || rec.skipped[0] != "shared@example.test: not in connectors.google-personal.config.accounts" {
+		t.Fatalf("an account the config leaves out is a skipped scope: %q", rec.skipped)
+	}
+	if _, err := accountFilter(map[string]any{"accounts": "me@example.test"}); err == nil {
+		t.Fatal("a non-list accounts setting must be rejected")
+	}
+}
+
+func TestLoginDependencyNamesFinancialAndCloudServices(t *testing.T) {
+	app := func(n string) finding.Finding { return finding.Finding{Resource: finding.Resource{Name: n}} }
+	cases := []struct {
+		apps     []string
+		want     []string
+		severity finding.Severity
+	}{
+		{[]string{"binance.com", "Bybit", "Spotify", "Wise", "Crowdcube", "Otherwise Ltd"}, []string{"binance.com", "Bybit", "Wise", "Crowdcube"}, finding.SevHigh},
+		{[]string{"Amazon Web Services", "Cloudflare Dashboard", "Wefunder"}, []string{"Amazon Web Services", "Cloudflare Dashboard", "Wefunder"}, finding.SevMedium},
+		{[]string{"Stripe", "Claude"}, []string{"Stripe"}, finding.SevHigh},
+		{[]string{"Spotify", "Chess.com"}, nil, ""},
+	}
+	for _, tc := range cases {
+		var apps []finding.Finding
+		for _, n := range tc.apps {
+			apps = append(apps, app(n))
+		}
+		f, ok := loginDependency("me@example.test", apps)
+		if !ok {
+			if tc.want != nil {
+				t.Errorf("%v: no finding", tc.apps)
+			}
+			continue
+		}
+		if fmt.Sprint(f.Evidence["services"]) != fmt.Sprint(tc.want) || f.Severity != tc.severity {
+			t.Errorf("%v: services %v severity %s", tc.apps, f.Evidence["services"], f.Severity)
+		}
+		want := fmt.Sprintf("Google account me@example.test is the login for %d financial/cloud services: use a passkey/security key and consider Advanced Protection", len(tc.want))
+		if len(tc.want) == 1 {
+			want = strings.Replace(want, "services", "service", 1)
+		}
+		if f.Title != want || f.Remediation.URL != urlPasskeys || !strings.Contains(f.Remediation.Summary, urlAdvancedProtection) {
+			t.Errorf("finding %q %+v", f.Title, f.Remediation)
+		}
 	}
 }
 
@@ -249,5 +321,36 @@ func TestInventoryFailsToStartWithoutBrowser(t *testing.T) {
 	err := GooglePersonal{}.Inventory(context.Background(), connector.Request{CDPURL: "http://127.0.0.1:1"}, &recorder{})
 	if err == nil {
 		t.Fatal("expected an error when CDP is unreachable")
+	}
+}
+
+func TestGcloudGrantIsADependencyNotARevocation(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{
+		connectionsURL(0):   conns("a@example.test", "", appLink{Name: "Google Cloud SDK", Href: base + "overview/G"}),
+		base + "overview/G": page(overviewENAccess),
+	}}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	f := rec.findings[0]
+	if !strings.HasSuffix(f.Title, "(segurata depends on it)") || f.Evidence["dependency"] != "segurata depends on it" ||
+		!strings.Contains(f.Remediation.Summary, "gcloud auth revoke") || strings.Contains(f.Remediation.Summary, "Remove all access") {
+		t.Errorf("gcloud grant: %q %q", f.Title, f.Remediation.Summary)
+	}
+}
+
+// A page that fails to load stops the walk before accounts whose address is unknown: the status
+// leaves every scope uninspected, so none of their findings look resolved.
+func TestUnreadableAccountPageLeavesEverythingUninspected(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{connectionsURL(0): conns("a@example.test", "Third-party apps")},
+		fail: map[string]error{connectionsURL(1): errors.New("target closed")}}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	last := rec.statuses[len(rec.statuses)-1]
+	if last.Account != "authuser 1" || last.State != finding.StateError || last.Scope != finding.ScopeAll {
+		t.Fatalf("status %+v", last)
 	}
 }

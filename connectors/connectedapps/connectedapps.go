@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +114,11 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if c.now != nil {
 		now = c.now
 	}
+	for _, s := range services {
+		if !slices.ContainsFunc(selected, func(x service) bool { return x.name == s.name }) {
+			emit.Scope(s.name, false, `not in the "services" config`)
+		}
+	}
 	for _, s := range selected {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -142,7 +148,8 @@ type env struct {
 }
 
 // account labels a service account: "github:octocat", or just "github" when the page did not
-// say who is signed in.
+// say who is signed in. Findings are scoped to the service, so a status for the bare service name
+// (signed out, nobody known) leaves every finding of that service uninspected.
 func (e *env) account(who string) string {
 	if who == "" {
 		return e.service
@@ -206,7 +213,19 @@ func (e *env) report(g grant) {
 	if g.stale {
 		title += " (not used for over a year)"
 	}
+	if g.resType == "notion_integration" && ownIntegration(g.publisher) {
+		title += " (your own integration)"
+	}
 	ev := map[string]any{"service": e.service}
+	summary := g.revoke
+	if summary == "" {
+		summary = "If you no longer use it, open the page and revoke its access."
+	}
+	if dep, ok := dependencyOf(g); ok {
+		title += " (" + dep.label + ")"
+		ev["dependency"] = dep.label
+		summary = dep.fix
+	}
 	if g.scopes != nil {
 		ev["scopes"] = g.scopes
 	}
@@ -232,13 +251,10 @@ func (e *env) report(g grant) {
 	if kind == "" {
 		kind = finding.KindGrant
 	}
-	summary := g.revoke
-	if summary == "" {
-		summary = "If you no longer use it, open the page and revoke its access."
-	}
 	e.emit.Finding(finding.Finding{
 		ID:          finding.StableID(name, g.resType, id),
 		Account:     e.account(g.who),
+		Scope:       e.service,
 		Resource:    finding.Resource{Type: g.resType, ID: id, Name: g.name},
 		Kind:        kind,
 		Severity:    sev,

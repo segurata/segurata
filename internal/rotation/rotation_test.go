@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/runtest"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -23,22 +24,16 @@ func ev(fp, typ, path, source, kind, mode string, tracked, remote bool) secretri
 
 func writeFindings(t *testing.T, path string, evs ...secretrisk.Evidence) {
 	t.Helper()
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
+	var recs []any
 	for _, e := range evs {
 		raw, _ := json.Marshal(e)
 		var m map[string]any
 		_ = json.Unmarshal(raw, &m)
-		_ = enc.Encode(finding.Finding{Type: "finding", Connector: tracker.SecretsConnector, Evidence: m, ObservedAt: t0})
+		recs = append(recs, finding.Finding{Type: "finding", Connector: tracker.SecretsConnector, Evidence: m, ObservedAt: t0})
 	}
-	_ = enc.Encode(finding.Status{Type: "status", Connector: tracker.SecretsConnector, State: finding.StateOK})
-	_ = enc.Encode(finding.Finding{Type: "finding", Connector: "aws", Evidence: map[string]any{"fingerprint": "zzzz"}})
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, b.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	recs = append(recs, finding.Status{Type: "status", Connector: tracker.SecretsConnector, State: finding.StateOK},
+		finding.Finding{Type: "finding", Connector: "aws", Evidence: map[string]any{"fingerprint": "zzzz"}})
+	runtest.Write(t, path, recs...)
 }
 
 func TestCommands(t *testing.T) {

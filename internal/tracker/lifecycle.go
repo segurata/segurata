@@ -30,10 +30,14 @@ const (
 	actUnaccept    = "unaccept"
 	actAcceptLapse = "acceptance-expired"
 	actNote        = "note"
+	actNotChecked  = "not-checked"
 	actDecide      = "decide"
 	actPrioritize  = "prioritize"
 	actHistory     = "history-only"
 	actRedacted    = "redacted"
+	actReclassify  = "reclassified"
+	actExpected    = "expected"
+	actRule        = "rule"
 	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `segurata rotations`.
 	ActNext          = "next"
 	ActReplacePlan   = "replace-plan"
@@ -83,8 +87,7 @@ func (it *Item) leaveAccepted() { it.Accepted = nil }
 
 // Start marks the item in progress.
 func (it *Item) Start(at time.Time, note string) error {
-	switch it.Status {
-	case Done, Ignored, Accepted:
+	if it.Closed() {
 		return fmt.Errorf("%s is %s: reopen it first", it.ID, it.Status)
 	}
 	it.setStatus(at, InProgress, EvStatus, actStart, note)
@@ -253,6 +256,15 @@ func (it *Item) AcceptanceExpired(now time.Time) bool {
 	}
 	d, err := time.ParseInLocation(time.DateOnly, it.Accepted.Until, now.Location())
 	return err != nil || !now.Before(d.AddDate(0, 0, 1))
+}
+
+// Closed reports whether the item is off the to-do list for a reason other than a snooze.
+func (it *Item) Closed() bool {
+	switch it.Status {
+	case Done, Ignored, Accepted, Reclassified, Expected:
+		return true
+	}
+	return false
 }
 
 // Active reports whether the item is on the to-do list: open, in progress, or snoozed past its date.

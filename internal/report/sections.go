@@ -22,6 +22,7 @@ func (r *Report) document() *doc.Doc {
 	d.P(fmt.Sprintf("Generated %s from the latest run of each connector instance under %s. Findings below %s and accepted risks are left out of the lists.",
 		r.Generated.Format("2006-01-02 15:04"), r.OutDir, r.MinSev))
 	r.headline(d)
+	r.completeness(d)
 	r.attention(d)
 	r.changes(d)
 	r.topFindings(d)
@@ -51,7 +52,7 @@ func (r *Report) headline(d *doc.Doc) {
 			counts[sevIndex(f.Severity)]++
 		}
 		counts[len(severities)+1] = len(needsAttention(run.Statuses))
-		row := []doc.Cell{{Text: run.Label}, {Text: run.Date}}
+		row := []doc.Cell{{Text: run.Label}, {Text: run.Date + coverageTag(run.Coverage)}}
 		for i, n := range counts {
 			total[i] += n
 			row = append(row, doc.Cell{Text: strconv.Itoa(n), Num: true})
@@ -63,6 +64,51 @@ func (r *Report) headline(d *doc.Doc) {
 		row = append(row, doc.Cell{Text: strconv.Itoa(n), Num: true})
 	}
 	d.Table(head, append(rows, row))
+}
+
+// coverageTag marks a run in the headline that does not prove findings gone.
+func coverageTag(c finding.Coverage) string {
+	switch {
+	case !c.Known:
+		return " (no run_end)"
+	case !c.Complete():
+		return " (partial)"
+	}
+	return ""
+}
+
+// completeness names the runs that are not complete and what they left out.
+func (r *Report) completeness(d *doc.Doc) {
+	d.H(2, "Run completeness")
+	var items []doc.Item
+	for _, run := range r.Runs {
+		c := run.Coverage
+		if run.Unfinished != "" {
+			items = append(items, doc.Item{Badge: "unfinished", Text: fmt.Sprintf("%s: the run of %s did not finish", run.Label, run.Unfinished),
+				Meta: fmt.Sprintf("no run_end record: killed or still running; the run of %s is shown instead", run.Date)})
+		}
+		switch {
+		case !c.Known:
+			why, _ := c.NoneChecked()
+			items = append(items, doc.Item{Badge: "unknown", Text: fmt.Sprintf("%s (%s): completeness unknown", run.Label, run.Date), Meta: why})
+		case !c.Complete():
+			sk := c.Skipped()
+			it := doc.Item{Badge: "partial", Text: fmt.Sprintf("%s (%s): %s not inspected", run.Label, run.Date, count(len(sk), "scope"))}
+			for _, s := range sk[:min(len(sk), r.Top)] {
+				it.Details = append(it.Details, doc.Detail{Label: s.Scope, Text: s.Reason})
+			}
+			if len(sk) > r.Top {
+				it.Details = append(it.Details, doc.Detail{Label: "…", Text: fmt.Sprintf("and %d more in %s", len(sk)-r.Top, run.File)})
+			}
+			items = append(items, it)
+		}
+	}
+	if len(items) == 0 {
+		d.P("Every latest run finished and inspected everything it covers.")
+		return
+	}
+	d.List(items)
+	d.P("Findings missing from a run that did not inspect their scope are listed as not checked, never as resolved, and the tracker does not close their items.")
 }
 
 func sevIndex(s finding.Severity) int {
@@ -77,7 +123,7 @@ func sevIndex(s finding.Severity) int {
 func needsAttention(sts []finding.Status) []finding.Status {
 	var out []finding.Status
 	for _, st := range sts {
-		if st.State != finding.StateOK {
+		if st.State != finding.StateOK && st.State != finding.StateExpected {
 			out = append(out, st)
 		}
 	}
@@ -87,9 +133,15 @@ func needsAttention(sts []finding.Status) []finding.Status {
 func (r *Report) attention(d *doc.Doc) {
 	d.H(2, "Needs attention")
 	var items []doc.Item
+	expected := map[string]int{}
 	for _, run := range r.Runs {
+		for _, st := range run.Statuses {
+			if st.State == finding.StateExpected {
+				expected[st.Expected]++
+			}
+		}
 		for _, st := range needsAttention(run.Statuses) {
-			action, cmd := tracker.StatusAction(st, run.Label)
+			action, cmd := tracker.StatusAction(st, run.Label, r.setupItem(run.Label, st))
 			text := run.Label
 			if st.Account != "" {
 				text += " · " + st.Account
@@ -99,11 +151,25 @@ func (r *Report) attention(d *doc.Doc) {
 			items = append(items, it)
 		}
 	}
-	if len(items) == 0 {
+	line := tracker.ExpectedLine(expected)
+	if len(items) == 0 && line == "" {
 		d.P("Nothing: every connector could inspect every account.")
-		return
 	}
 	d.List(items)
+	if line != "" {
+		d.P(line)
+	}
+}
+
+// setupItem is the id of the tracker's setup item for a status, or "".
+func (r *Report) setupItem(lbl string, st finding.Status) string {
+	if r.tr == nil {
+		return ""
+	}
+	if it := r.tr.ByKey(tracker.SetupKey(lbl, st)); it != nil {
+		return it.ID
+	}
+	return ""
 }
 
 func (r *Report) changes(d *doc.Doc) {
@@ -118,6 +184,13 @@ func (r *Report) changes(d *doc.Doc) {
 		compared++
 		added := visible(run.New, r.MinSev)
 		resolved := atLeast(run.Resolved, r.MinSev)
+		var unchecked []NotChecked
+		for _, n := range run.NotChecked {
+			if n.Severity.Rank() >= r.MinSev.Rank() {
+				unchecked = append(unchecked, n)
+			}
+		}
+		sort.SliceStable(unchecked, func(i, j int) bool { return unchecked[i].Severity.Rank() > unchecked[j].Severity.Rank() })
 		var changed []Change
 		for _, c := range run.Changed {
 			if !c.Hidden() && max(c.Severity.Rank(), c.From.Rank()) >= r.MinSev.Rank() {
@@ -126,11 +199,11 @@ func (r *Report) changes(d *doc.Doc) {
 		}
 		sort.SliceStable(changed, func(i, j int) bool { return changed[i].Severity.Rank() > changed[j].Severity.Rank() })
 		d.H(3, fmt.Sprintf("%s: %s to %s", run.Label, run.PrevDate, run.Date))
-		if len(added)+len(resolved)+len(changed) == 0 {
+		if len(added)+len(resolved)+len(unchecked)+len(changed) == 0 {
 			d.P(fmt.Sprintf("No change at or above %s.", r.MinSev))
 			continue
 		}
-		d.P(fmt.Sprintf("%d new, %d resolved, %d with another severity.", len(added), len(resolved), len(changed)))
+		d.P(fmt.Sprintf("%d new, %d resolved, %d not checked this run, %d with another severity.", len(added), len(resolved), len(unchecked), len(changed)))
 		var items []doc.Item
 		for _, f := range capped(added, r.Top) {
 			items = append(items, doc.Item{Badge: string(f.Severity), Text: "New: " + f.DisplayTitle(), Meta: meta(f)})
@@ -144,6 +217,11 @@ func (r *Report) changes(d *doc.Doc) {
 			items = append(items, doc.Item{Badge: "resolved", Text: fmt.Sprintf("Gone (was %s): %s", f.Severity, f.Title), Meta: meta(f)})
 		}
 		items = append(items, more(len(resolved), r.Top, "resolved findings"))
+		for _, n := range unchecked[:min(len(unchecked), r.Top)] {
+			items = append(items, doc.Item{Badge: "not checked", Text: fmt.Sprintf("Not checked this run (was %s): %s", n.Severity, n.Title),
+				Meta: meta(n.Finding), Details: []doc.Detail{{Label: "Why", Text: n.Reason}}})
+		}
+		items = append(items, more(len(unchecked), r.Top, "findings not checked this run"))
 		d.List(nonEmpty(items))
 	}
 	if len(first) > 0 {
@@ -254,9 +332,9 @@ func (r *Report) rotations(d *doc.Doc) {
 		d.P("No secrets in the tracker yet ("+s.Path+"): after a local-secrets inventory, run ", doc.Code("segurata rotations sync"), ".")
 		return
 	}
-	d.P(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored.",
+	d.P(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored, %d reclassified as noise.",
 		s.Open[secretrisk.P0], s.Open[secretrisk.P1], s.Open[secretrisk.P2], s.Open[secretrisk.P3],
-		s.Total, s.ByStatus[tracker.Done], s.ByStatus[tracker.Snoozed], s.ByStatus[tracker.Ignored]))
+		s.Total, s.ByStatus[tracker.Done], s.ByStatus[tracker.Snoozed], s.ByStatus[tracker.Ignored], s.ByStatus[tracker.Reclassified]))
 	if len(s.TopP0) > 0 {
 		d.H(3, "Rotate first (P0)")
 		var items []doc.Item

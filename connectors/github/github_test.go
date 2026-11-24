@@ -239,7 +239,7 @@ func TestInventoryAccountAndOrganizations(t *testing.T) {
 		t.Errorf("members without 2FA: %q %v", members.Title, members.Evidence)
 	}
 
-	if s := statusOf(t, rec, "github:other-org"); s.State != finding.StateOK || !strings.Contains(s.Detail, "not owner") {
+	if s := statusOf(t, rec, "github:other-org"); s.State != finding.StateOK || !strings.HasPrefix(s.Detail, "member, not owner:") {
 		t.Errorf("member organization: %+v", s)
 	}
 	if s := statusOf(t, rec, "github:tidy-free"); s.State != finding.StateOK || !strings.Contains(s.Detail, "not available on the Free plan") {
@@ -255,7 +255,7 @@ func TestInventoryRepositories(t *testing.T) {
 	rec := inventory(t, gh, nil)
 
 	site := rec.ByResource(t, "github_repo", "101")
-	if site.Severity != finding.SevHigh || site.Account != "github:octo-tester" || site.Resource.Name != "octo-tester/site" {
+	if site.Severity != finding.SevHigh || site.Account != "github:octo-tester" || site.Resource.Name != "octo-tester/site" || site.Scope != "repo:octo-tester/site" {
 		t.Errorf("site: %+v", site)
 	}
 	for _, part := range []string{"active webhook 7 to http://hooks.example.com delivers over plain HTTP",
@@ -281,7 +281,7 @@ func TestInventoryRepositories(t *testing.T) {
 	}
 
 	dep := rec.ByResource(t, "github_repo_setting", string(repoNoDependabotUpdates))
-	if dep.Account != "github:octo-tester" || dep.Severity != finding.SevLow {
+	if dep.Account != "github:octo-tester" || dep.Severity != finding.SevLow || dep.Scope != "repo:octo-tester" {
 		t.Errorf("dependabot roll-up: %+v", dep)
 	}
 	var rolled []string
@@ -320,6 +320,21 @@ func TestInventoryRepositories(t *testing.T) {
 	if !strings.Contains(repos, "ok: 5 repositories you administer inspected, 5 with issues; 1 archived skipped") {
 		t.Errorf("repository status: %s", repos)
 	}
+	if len(rec.Scopes) != 0 {
+		t.Errorf("every repository read, yet skipped scopes declared: %+v", rec.Scopes)
+	}
+}
+
+// skippedScopes are the scopes a run declared skipped, sorted.
+func skippedScopes(rec *httpxtest.Recorder) []string {
+	var out []string
+	for _, s := range rec.Scopes {
+		if !s.Inspected {
+			out = append(out, s.ID+" ("+s.Reason+")")
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func statesFor(rec *httpxtest.Recorder, acct string) string {
@@ -396,6 +411,14 @@ func TestMissingScopesBecomeStatuses(t *testing.T) {
 	if gh.called("/user/memberships/orgs?state=active&per_page=100") || gh.called("/user/repos?affiliation=owner,organization_member&per_page=100") {
 		t.Error("requests made for scopes the token lacks")
 	}
+	// Each missing token scope leaves only what it hides uninspected, never the whole account.
+	var scopes []string
+	for _, s := range statusesOf(rec, "github:octo-tester") {
+		scopes = append(scopes, s.Scope)
+	}
+	if strings.Join(scopes, ",") != "org:*,user:octo-tester,repo:*" {
+		t.Errorf("status scopes %v", scopes)
+	}
 }
 
 func TestOwnerWithoutAdminOrgScope(t *testing.T) {
@@ -470,6 +493,20 @@ func TestRateLimitBudgetSkipsRemainingRepositories(t *testing.T) {
 			t.Errorf("a half-read repository was reported: %s", f.Title)
 		}
 	}
+	// Each unread repository is declared, with its owner's rolled-up findings, so the findings it
+	// reported last time are not taken as resolved.
+	got2 := strings.Join(skippedScopes(rec), "\n")
+	for _, want := range []string{"repo:acme-corp/api (the GitHub API rate limit ran low)", "repo:octo-tester/site (the GitHub API rate limit ran low)",
+		"repo:octo-tester (the GitHub API rate limit ran low for octo-tester/forked)"} {
+		if !strings.Contains(got2, want) {
+			t.Errorf("skipped scopes lack %q:\n%s", want, got2)
+		}
+	}
+	for _, s := range statusesOf(rec, "github:octo-tester") {
+		if s.State != finding.StateOK && s.Scope != "repo:octo-tester" {
+			t.Errorf("the repositories summary must be scoped to them, not the whole account: %+v", s)
+		}
+	}
 }
 
 func TestRateLimitResponseMidRun(t *testing.T) {
@@ -489,6 +526,28 @@ func TestMaxReposCap(t *testing.T) {
 	}
 	if gh.called("/repos/tidy-free/web") {
 		t.Error("inspected past max_repos")
+	}
+	if got := strings.Join(skippedScopes(rec), "\n"); !strings.Contains(got, "repo:tidy-free/web (beyond max_repos in the github config)") {
+		t.Errorf("repositories past max_repos not declared skipped:\n%s", got)
+	}
+}
+
+func TestRepositoriesNotListedLeaveEveryRepositoryUninspected(t *testing.T) {
+	gh := world()
+	gh.errs["/user/repos?affiliation=owner,organization_member&per_page=100"] = httpErr("Server Error", 500)
+	rec := inventory(t, gh, nil)
+	failed := 0
+	for _, s := range statusesOf(rec, "github:octo-tester") {
+		if s.State == finding.StateOK {
+			continue
+		}
+		failed++
+		if s.Scope != "repo:*" {
+			t.Errorf("a failed repository listing must leave every repository scope uninspected: %+v", s)
+		}
+	}
+	if failed != 1 {
+		t.Errorf("want one status for the failed listing, got %d", failed)
 	}
 }
 

@@ -65,7 +65,7 @@ func (t *Tracker) Status(path string, now time.Time, f Filter) *doc.Doc {
 	d.P(fmt.Sprintf("As of %s. Tracker %s, %s.", now.Format("2006-01-02 15:04"), path, sync))
 	t.headline(d, items, now)
 	t.doNext(d, items, now)
-	decisions(d, items, now)
+	t.decisions(d, items, now)
 	blockers(d, items, now)
 	t.changes(d, items, now)
 	accepted(d, items, now)
@@ -101,9 +101,9 @@ func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
 	for _, n := range open {
 		active += n
 	}
-	d.P(fmt.Sprintf("%d open: P0 %d, P1 %d, P2 %d, P3 %d. Done in the last 7 days: %d (%d verified by a later run). Accepted %d, ignored %d, snoozed %d.",
+	d.P(fmt.Sprintf("%d open: P0 %d, P1 %d, P2 %d, P3 %d. Done in the last 7 days: %d (%d verified by a later run). Accepted %d, ignored %d, reclassified as noise %d, expected %d, snoozed %d.",
 		active, open[secretrisk.P0], open[secretrisk.P1], open[secretrisk.P2], open[secretrisk.P3], doneWeek, verifiedWeek,
-		byStatus[Accepted], byStatus[Ignored], byStatus[Snoozed]))
+		byStatus[Accepted], byStatus[Ignored], byStatus[Reclassified], byStatus[Expected], byStatus[Snoozed]))
 	if active == 0 {
 		return
 	}
@@ -198,13 +198,16 @@ func itemDoc(it *Item, t *Tracker) doc.Item {
 	return out
 }
 
-func decisions(d *doc.Doc, items []*Item, now time.Time) {
+func (t *Tracker) decisions(d *doc.Doc, items []*Item, now time.Time) {
 	d.H(2, "Pending decisions")
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Kind == KindDecide && it.Active(now) }) {
 		out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: it.Decision.Question, Meta: it.ID}
 		if len(it.Decision.Options) > 0 {
 			out.Details = append(out.Details, doc.Detail{Label: "Options", Text: strings.Join(it.Decision.Options, " | ")})
+		}
+		for _, l := range t.Leverage(it, now) {
+			out.Details = append(out.Details, doc.Detail{Label: "Leverage", Text: l})
 		}
 		out.Details = append(out.Details, doc.Detail{Label: "Answer", Text: "segurata track decide " + it.ID + ` --answer "…"`, Kind: doc.DCode})
 		list = append(list, out)
@@ -233,6 +236,24 @@ func blockers(d *doc.Doc, items []*Item, now time.Time) {
 		d.P("None: every connector could inspect every account.")
 	}
 	d.List(list)
+	if line := ExpectedLine(ExpectedReasons(items)); line != "" {
+		d.P(line)
+	}
+}
+
+// ExpectedLine is the one line that stands for the statuses the config expects, with their
+// reasons: "3 expected (by your config): ephemeral key (1); other people's accounts (2)." or "".
+func ExpectedLine(byReason map[string]int) string {
+	if len(byReason) == 0 {
+		return ""
+	}
+	n := 0
+	var parts []string
+	for _, r := range slices.Sorted(maps.Keys(byReason)) {
+		n += byReason[r]
+		parts = append(parts, fmt.Sprintf("%s (%d)", r, byReason[r]))
+	}
+	return fmt.Sprintf("%d expected (by your config): %s.", n, strings.Join(parts, "; "))
 }
 
 // changes counts the history events since the last status, secrets apart, and lists the latest
