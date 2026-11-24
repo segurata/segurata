@@ -43,9 +43,10 @@ The path must be absolute (`~` is not expanded). Keep the file mode at `0600`.
 
 A service account that `gcloud auth activate-service-account` added shows in `gcloud auth list`
 next to people; it is a credential (its key on disk is a finding), not an identity to inventory
-with, so it is skipped unless `accounts` names it. Skipped service accounts and `skip_projects`
-are declared as skipped scopes (docs/connectors.md, "Coverage"), so findings an earlier run made
-there are not taken as resolved.
+with, so it is skipped unless `accounts` names it. Projects in `skip_projects` are declared as
+skipped scopes (docs/connectors.md, "Coverage"), so findings an earlier run made there are not
+taken as resolved. Skipped service accounts are not declared: no finding is scoped to one, and
+declaring them would mark every run partial.
 
 Each project is inspected once, with the first account that lists it. A check that account is
 denied is retried with the next account that lists the project, so a project another account can

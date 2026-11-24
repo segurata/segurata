@@ -395,8 +395,10 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 			t.Errorf("skipped project or service account used: %s", call)
 		}
 	}
-	// Both are declared skipped, so findings earlier runs made there are not taken as resolved.
-	if got := strings.Join(rec.skipped, ","); got != "ci@demo-shop.iam.gserviceaccount.com,demo-blog" {
+	// The skipped project is declared, so findings earlier runs made there are not taken as
+	// resolved. The service account is not: nothing is scoped to it, and declaring it would mark
+	// every run partial.
+	if got := strings.Join(rec.skipped, ","); got != "demo-blog" {
 		t.Errorf("skipped scopes %q", got)
 	}
 }

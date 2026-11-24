@@ -115,9 +115,10 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
 		return nil
 	}
-	accounts, err := c.accounts(ctx, g, cfg, func(sa string) {
-		emit.Scope(sa, false, "service account: not used as an inventory account (list it in connectors.gcp.config.accounts to use it)")
-	})
+	// Service accounts are credentials, not identities to inventory: no finding is ever scoped to
+	// one, so declaring them skipped would only mark every run partial. They are left out silently
+	// (list one in connectors.gcp.config.accounts to inventory with it).
+	accounts, err := c.accounts(ctx, g, cfg, func(string) {})
 	if err != nil {
 		_, why := classify(err)
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateError, Detail: "gcloud auth list: " + why})
