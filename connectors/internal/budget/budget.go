@@ -52,14 +52,18 @@ const (
 
 // Notification channels. A budget with none of them and no action alerts nobody.
 const (
-	NotifyAdmins      = "email-admins"       // the provider's default billing recipients
-	NotifyEmails      = "email-list"         // addresses set on the budget
-	NotifyRoles       = "email-roles"        // everyone holding named roles
-	NotifyProject     = "email-project"      // owners of the one project the budget covers
-	NotifyMonitoring  = "monitoring"         // monitoring notification channels
-	NotifySubscribers = "subscribers"        // provider subscribers whose kind is not read
-	NotifyPubSub      = "pubsub"             // a message topic
-	NotifyActionGroup = "action-group"       // an alerting group that can call code
+	NotifyAdmins      = "email-admins"  // the provider's default billing recipients
+	NotifyEmails      = "email-list"    // addresses set on the budget
+	NotifyRoles       = "email-roles"   // everyone holding named roles
+	NotifyProject     = "email-project" // owners of the one project the budget covers
+	NotifyMonitoring  = "monitoring"    // monitoring notification channels
+	NotifySubscribers = "subscribers"   // provider subscribers whose kind is not read
+	NotifyPubSub      = "pubsub"        // a message topic
+	NotifyActionGroup = "action-group"  // an alerting group that can call code
+)
+
+// Automatic actions: what can stop spend instead of telling someone about it.
+const (
 	ActionPubSub      = "pubsub-topic"       // GCP: a topic a function can act on
 	ActionSpendCap    = "spend-cap"          // GCP: the budget's own spend cap
 	ActionBudget      = "budget-action"      // AWS: an IAM, SCP or instance action
