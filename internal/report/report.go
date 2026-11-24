@@ -85,6 +85,8 @@ type Inputs struct {
 	TrackerPath string
 	MinSev      finding.Severity
 	Top         int // findings per connector in "Top findings"
+	// Expect applies the config's expected rules to each status (nil for none).
+	Expect func(*finding.Status)
 }
 
 // maxP0 is how many P0 rotation items the report names.
@@ -105,6 +107,11 @@ func Build(in Inputs) (*Report, error) {
 		run, err := readRun(l, annotate)
 		if err != nil {
 			return nil, err
+		}
+		if in.Expect != nil {
+			for i := range run.Statuses {
+				in.Expect(&run.Statuses[i])
+			}
 		}
 		for _, x := range run.Findings {
 			reported[x.ID] = true

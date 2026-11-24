@@ -62,6 +62,8 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 ./segurata track note T-0042 "ordered a backup disk"
 ./segurata track snooze T-0042 --until 2027-01-15
 ./segurata track ignore T-0042 --reason "test fixture"
+./segurata track expect T-3153 --reason "ephemeral key on purpose" [--dry-run]   # a setup item kept on purpose: config rule
+
 ./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
 ./segurata track decide T-0003 --answer "yes"
 ./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
@@ -74,8 +76,17 @@ is the single record of what to do, what is done and what is pending, and surviv
 item per thing a person would act on. Five GitHub orgs that do not require 2FA are one item; each
 secret to rotate, each data dump and each Mac setting is its own item; a connector that needs a
 fresh sign-in is a setup item; info findings make none. Items have a kind (fix, rotate, decide,
-setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed), a computed
+setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed, and two
+segurata sets itself: reclassified, a secret a corrected rule now rates as noise, and expected), a computed
 priority that `prioritize` can override, the findings they link, the next step and a history.
+
+A status other than `ok` that is kept on purpose (an ephemeral key, an IAM user limited by design,
+other people's accounts) goes in the config as an expected rule, by hand or with `track expect`:
+`{"connectors": {"anthropic:personal": {"expected": [{"state": "missing_credentials", "reason":
+"…"}]}}}`, with optional `account` (a glob) and `detail` (substring, or `/regexp/`). It then opens
+no setup item and is counted on one line, "N expected (by your config)", but its scope still
+counts as not inspected. Details:
+[docs/architecture.md](docs/architecture.md#expected-statuses).
 
 A done item is verified when a later run no longer reports its findings, and reopened if one does;
 an item whose findings vanish on their own is closed as "verified (no longer reported)". Expired

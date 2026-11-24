@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/doc"
 
 	"github.com/segurata/segurata/internal/finding"
@@ -293,5 +294,27 @@ func TestCLIWritesPrivateFile(t *testing.T) {
 	}
 	if code := c.Run([]string{"--dir", filepath.Join(x.dir, "missing")}); code != 1 {
 		t.Errorf("missing out dir: exit %d", code)
+	}
+}
+
+// A status the config expects leaves "Needs attention" and is counted on one line with its reason.
+func TestExpectedStatusesAreOneLine(t *testing.T) {
+	x := newFx(t)
+	tr, err := tracker.Load(x.tracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"aws": {Expected: []config.Expected{
+		{State: finding.StateMissingCredentials, Reason: "no AWS account on this Mac"}}}}}
+	r, err := Build(Inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10, Expect: cfg.Expect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := render(t, r, Text)
+	if strings.Contains(out, "segurata inventory aws") || !strings.Contains(out, "1 expected (by your config): no AWS account on this Mac (1).") {
+		t.Errorf("report:\n%s", out)
+	}
+	if !strings.Contains(out, "segurata inventory openrouter:work") {
+		t.Error("a status no rule covers left the report")
 	}
 }

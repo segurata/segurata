@@ -203,6 +203,47 @@ segurata` when the only finding is automatable). Only generic decisions are seed
 (whether to install the daily schedule). Questions about an owner's own projects are added with
 `segurata track add --kind decide` and live only in that owner's tracker, never in the code.
 
+### Expected statuses
+
+Some statuses other than `ok` are known and kept on purpose: an ephemeral key, an IAM user limited
+by design, other people's accounts signed in to the same browser. The config says so per connector
+instance, under the key that runs it (`connectors.<name>` or `connectors.<name:label>`):
+
+```json
+{"connectors": {"anthropic:personal": {"expected": [
+   {"state": "missing_credentials", "reason": "admin key only set when I audit"}]},
+ "google-personal": {"expected": [
+   {"state": "reauth", "account": "*@example.com", "reason": "colleagues' accounts in my browser"}]},
+ "gcp": {"expected": [
+   {"state": "error", "account": "a@x.com", "detail": "/^project (example|yukids)-play:/", "reason": "Play-only projects"}]}}}
+```
+
+Empty fields match anything. `account` is a glob (`*`, `?`, `\` escapes); `detail` is a
+substring of the status detail, or a regular expression between slashes; `reason` is required.
+`config.Load` rejects a rule without a reason, with a bad glob or regular expression, or matching
+`ok`.
+
+- A matching status gets state `expected` (`finding.StateExpected`), with `expected` (the
+  reason) and `was` (the state the connector reported). The core applies the rules as each
+  status is written, and again whenever it reads a run (`track sync`, `report`), so a rule
+  added or removed after the run counts.
+- Expected is not inspected: run completeness counts the scope as skipped, exactly as before, so
+  nothing in it is ever taken as resolved.
+- A setup item whose every current status is expected closes as `expected` (history `status` /
+  `expected`, next step "Nothing: expected by your config (…)"); a new one is created already
+  closed, so no setup item is ever opened for it. Its key keeps the reported state, so the item
+  it closes is the one that state opened. If one of several statuses under a key is not
+  expected, the item stays open. When a status no rule covers comes back the item opens again
+  (`auto-reopen`); when the status is gone the item is done like any other.
+- `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
+  setup blockers and needs attention; `inventory` prints one line per instance and reason.
+- `segurata track expect <setup-id> --reason "…" [--detail text] [--dry-run]` writes the rule
+  that matches the item (its instance's key, the reported state, the account with glob characters
+  escaped, the detail only when given) into the config and closes the item as expected. The
+  config is rewritten atomically, mode 0600, with two-space indentation and its keys in their
+  original order; the previous file is kept as `config.json.segurata-bak-<UTC time>`. An equal
+  rule already there is not added twice. `--dry-run` prints the rule and changes nothing.
+
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
@@ -216,7 +257,10 @@ finished run of every connector instance (`remediate.LatestFiles`) and:
    that run did not inspect the finding's scope (see "Run completeness"); then it logs
    `not checked in run …` once per run on an item that would otherwise have closed.
 4. Moves items on:
-   - open, in progress or snoozed, with every finding gone: done, `verified (no longer reported)`;
+   - open, in progress, snoozed or expected, with every finding gone: done, `verified (no longer
+     reported)`;
+   - a setup item whose every current status is expected: `expected`; an expected one with a
+     status no rule covers: open again (see "Expected statuses");
    - done: verified once every finding is gone in a run after it was marked done; reopened
      (`auto-reopen`) if a run after it was marked done or verified reports one again. A sync
      that only reads the run from before the item was marked done changes nothing;

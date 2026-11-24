@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -83,6 +84,7 @@ type sink struct {
 	enc      *json.Encoder
 	verbose  io.Writer
 	annotate func(*finding.Finding)
+	expect   func(*finding.Status) // the config's expected rules
 	res      *Result
 	tally    finding.Tally
 }
@@ -103,6 +105,9 @@ func (s *sink) Status(st finding.Status) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st.Type, st.Connector, st.Instance = "status", s.name, s.inst
+	if s.expect != nil {
+		s.expect(&st)
+	}
 	s.res.Statuses = append(s.res.Statuses, st)
 	s.tally.Status(st)
 	_ = s.enc.Encode(st)
@@ -167,7 +172,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		res.Err = err
 		return res
 	}
-	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, res: res}
+	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
 
 	req, errs := NewRequest(cfg, t.Instance)
 	if missing := unresolved(t.Connector, errs, s); !missing {
@@ -233,10 +238,18 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 		if r.Err != nil {
 			fmt.Fprintf(w, "! %s: %v\n", r.Name, r.Err)
 		}
+		expected := map[string]int{}
 		for _, st := range r.Statuses {
-			if st.State != finding.StateOK {
+			switch st.State {
+			case finding.StateOK:
+			case finding.StateExpected:
+				expected[st.Expected]++
+			default:
 				fmt.Fprintf(w, "~ %s %s: %s %s\n", r.Name, st.Account, st.State, st.Detail)
 			}
+		}
+		for _, reason := range slices.Sorted(maps.Keys(expected)) {
+			fmt.Fprintf(w, "~ %s: %d expected (by your config: %s)\n", r.Name, expected[reason], reason)
 		}
 		if sk := r.End.Scopes.Skipped; r.Err == nil && len(sk) > 0 {
 			fmt.Fprintf(w, "~ %s: incomplete run, %d %s not inspected (first %s: %s); missing findings there are not resolved\n",

@@ -19,6 +19,7 @@ const usage = "usage: segurata report [--format text|md|html] [--out file] [--di
 type CLI struct {
 	Out, Err io.Writer
 	Paths    tracker.Paths // zero means tracker.DefaultPaths
+	Config   string        // config file whose expected rules apply to statuses; "" means none
 	Now      func() time.Time
 }
 
@@ -56,7 +57,11 @@ func (c CLI) Run(args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	r, err := Build(Inputs{OutDir: *dir, Now: now, Tracker: t, TrackerPath: paths.Tracker,
+	expect, err := tracker.Expectations(c.Config)
+	if err != nil {
+		return c.fail(err)
+	}
+	r, err := Build(Inputs{OutDir: *dir, Now: now, Tracker: t, TrackerPath: paths.Tracker, Expect: expect,
 		MinSev: finding.Severity(*minSev), Top: *top})
 	if err != nil {
 		return c.fail(err)

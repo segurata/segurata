@@ -123,7 +123,7 @@ func sevIndex(s finding.Severity) int {
 func needsAttention(sts []finding.Status) []finding.Status {
 	var out []finding.Status
 	for _, st := range sts {
-		if st.State != finding.StateOK {
+		if st.State != finding.StateOK && st.State != finding.StateExpected {
 			out = append(out, st)
 		}
 	}
@@ -133,7 +133,13 @@ func needsAttention(sts []finding.Status) []finding.Status {
 func (r *Report) attention(d *doc.Doc) {
 	d.H(2, "Needs attention")
 	var items []doc.Item
+	expected := map[string]int{}
 	for _, run := range r.Runs {
+		for _, st := range run.Statuses {
+			if st.State == finding.StateExpected {
+				expected[st.Expected]++
+			}
+		}
 		for _, st := range needsAttention(run.Statuses) {
 			action, cmd := tracker.StatusAction(st, run.Label, r.setupItem(run.Label, st))
 			text := run.Label
@@ -145,11 +151,14 @@ func (r *Report) attention(d *doc.Doc) {
 			items = append(items, it)
 		}
 	}
-	if len(items) == 0 {
+	line := tracker.ExpectedLine(expected)
+	if len(items) == 0 && line == "" {
 		d.P("Nothing: every connector could inspect every account.")
-		return
 	}
 	d.List(items)
+	if line != "" {
+		d.P(line)
+	}
 }
 
 // setupItem is the id of the tracker's setup item for a status, or "".

@@ -99,6 +99,8 @@ type FindingRef struct {
 	Severity finding.Severity `json:"severity,omitempty"`
 	LastSeen time.Time        `json:"last_seen"`
 	Gone     bool             `json:"gone,omitempty"`
+	// Expected is, on a setup item's status ref, the reason of the config rule that expects it.
+	Expected string `json:"expected,omitempty"`
 }
 
 // Label is the connector instance as the command line names it: name or name:label.

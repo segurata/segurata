@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
@@ -28,6 +30,7 @@ const trackUsage = `usage: segurata track <command>
   decide     <id> --answer text
   snooze     <id> --until YYYY-MM-DD [--note text]
   ignore     <id> --reason text
+  expect     <setup-id> --reason text [--detail text] [--dry-run]   write a config rule that expects its status, close it
   reopen     <id> [--note text]
   prioritize <id> P0|P1|P2|P3|auto [--reason text]
   add        --title text [--kind fix|decide|setup|review] [--theme t] [--priority P2] [--note text]
@@ -40,7 +43,8 @@ const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P
 // CLI is `segurata track` and `segurata status`.
 type CLI struct {
 	Out, Err io.Writer
-	Paths    Paths // zero means DefaultPaths
+	Paths    Paths  // zero means DefaultPaths
+	Config   string // config file with the expected rules; "" means none (and no track expect)
 	Now      func() time.Time
 }
 
@@ -92,7 +96,7 @@ func (c CLI) Track(args []string) int {
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
-	case "list", "show", "add", "sync", "start", "done", "note", "decide", "snooze", "ignore", "reopen", "prioritize":
+	case "list", "show", "add", "sync", "start", "done", "note", "decide", "snooze", "ignore", "reopen", "prioritize", "expect":
 	default:
 		fmt.Fprintln(c.Err, trackUsage)
 		return 2
@@ -111,6 +115,8 @@ func (c CLI) Track(args []string) int {
 		return c.add(t, path, rest, now)
 	case "sync":
 		return c.sync(t, path, rest, now)
+	case "expect":
+		return c.expect(t, path, rest, now)
 	}
 	return c.change(t, path, cmd, rest, now)
 }
@@ -124,7 +130,11 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, trackUsage)
 		return 2
 	}
-	rep, err := t.Sync(SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise}, now)
+	expect, err := Expectations(c.Config)
+	if err != nil {
+		return c.fail(err)
+	}
+	rep, err := t.Sync(SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise, Expect: expect}, now)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -134,6 +144,55 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	s := rep.Secrets
 	fmt.Fprintf(c.Out, "Secrets: %d (%d new, %d reopened, %d reclassified as noise, %d noise-only skipped).\n", s.Secrets, s.Created, s.Reopened, s.Reclassified, s.Skipped)
 	fmt.Fprint(c.Out, SyncLine(rep))
+	return 0
+}
+
+// expect writes the config rule that expects a setup item's status and closes the item as
+// expected; --dry-run prints the rule and changes nothing.
+func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
+	fs := flags("track expect", c.Err)
+	reason := fs.String("reason", "", "why this status is expected")
+	detail := fs.String("detail", "", "only statuses whose detail contains this text (or matches /regexp/)")
+	dry := fs.Bool("dry-run", false, "print the rule and change nothing")
+	pos, err := cliflag.Parse(fs, args)
+	if err != nil || len(pos) != 1 {
+		fmt.Fprintln(c.Err, "usage: segurata track expect <setup-item-id> --reason text [--detail text] [--dry-run]")
+		return 2
+	}
+	it, err := t.Find(pos[0])
+	if err != nil {
+		return c.fail(err)
+	}
+	key, rule, err := it.ExpectRule(*reason, *detail)
+	if err != nil {
+		return c.fail(err)
+	}
+	if c.Config == "" {
+		return c.fail(errors.New("no config file to write the rule to"))
+	}
+	raw, _ := json.MarshalIndent(rule, "  ", "  ")
+	if *dry {
+		fmt.Fprintf(c.Out, "Would add to connectors.%q.expected in %s:\n  %s\nand close %s (%s) as expected. Nothing written (--dry-run).\n",
+			key, c.Config, raw, it.ID, it.Title)
+		return 0
+	}
+	changed, backup, err := config.AddExpected(c.Config, key, rule, now)
+	if err != nil {
+		return c.fail(err)
+	}
+	if changed {
+		fmt.Fprintf(c.Out, "Added to connectors.%q.expected in %s:\n  %s\n", key, c.Config, raw)
+		if backup != "" {
+			fmt.Fprintf(c.Out, "The previous config is kept as %s.\n", backup)
+		}
+	} else {
+		fmt.Fprintf(c.Out, "connectors.%q.expected in %s already has this rule.\n", key, c.Config)
+	}
+	it.Expect(now, rule, c.Config)
+	if err := t.Save(path); err != nil {
+		return c.fail(err)
+	}
+	fmt.Fprintf(c.Out, "%s · %s: %s\n", it.ID, it.Title, it.Status)
 	return 0
 }
 

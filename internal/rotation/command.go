@@ -25,6 +25,7 @@ type CLI struct {
 	In       io.Reader     // confirmations, and the new value with replace --stdin
 	TTY      bool          // In is a terminal
 	Paths    tracker.Paths // zero means tracker.DefaultPaths
+	Config   string        // config file whose expected rules sync applies; "" means none
 	KeyPath  string        // fingerprint key; "" means fingerprint.DefaultPath
 	Home     func() (string, error)
 	User     string // Keychain account for replace --to-keychain
@@ -104,7 +105,11 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
-	rep, err := t.Sync(tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise}, now)
+	expect, err := tracker.Expectations(c.Config)
+	if err != nil {
+		return c.fail(err)
+	}
+	rep, err := t.Sync(tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise, Expect: expect}, now)
 	if err != nil {
 		return c.fail(err)
 	}

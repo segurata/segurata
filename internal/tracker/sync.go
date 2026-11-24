@@ -20,6 +20,9 @@ type SyncOptions struct {
 	OutDir       string // inventory output directory; the latest run of every connector instance
 	From         string // a local-secrets output to use instead of its latest run ("" for none)
 	IncludeNoise bool   // track noise-only secrets too, without a priority
+	// Expect applies the config's expected rules to each status read (config.Config.Expect); nil
+	// for none. Statuses are matched at every sync, so a rule added or removed since the run counts.
+	Expect func(*finding.Status)
 }
 
 // SyncReport counts what a sync changed.
@@ -29,6 +32,8 @@ type SyncReport struct {
 	Secrets SecretReport
 	// Items other than secrets.
 	Created, Verified, Reopened int
+	// Expected counts setup items closed (or created closed) because the config expects them.
+	Expected int
 	// Every item.
 	Woken, Lapsed int
 }
@@ -73,6 +78,11 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		if prev, ok := t.Sources[r.label]; ok && r.at.Before(prev) {
 			rep.Stale = append(rep.Stale, r.label)
 			continue
+		}
+		if opt.Expect != nil {
+			for i := range r.statuses {
+				opt.Expect(&r.statuses[i])
+			}
 		}
 		folded[r.label] = r
 	}
@@ -131,11 +141,14 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	for _, key := range order {
 		p := proposals[key]
 		it, existed := byKey[key]
+		expected := p.expectedReasons()
 		if !existed {
 			it = t.newItem(p.kind, key, p.theme, "", now)
 			byKey[key] = it
 			it.Log(now, EvFound, actFound, count(len(p.refs), "finding", "findings"))
-			rep.Created++
+			if expected == nil {
+				rep.Created++
+			}
 		}
 		seen[it] = map[string]bool{}
 		if added := it.upsert(p.refs, seen[it]); added > 0 && existed {
@@ -156,6 +169,9 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		}
 		it.Severity = p.severity()
 		it.Priority = priorityOf(it.Severity)
+		if p.kind == KindSetup && it.expectedMoves(expected, now) {
+			rep.Expected++
+		}
 	}
 
 	for _, it := range t.Items {
@@ -191,8 +207,8 @@ func (r SyncReport) FoldedSecrets() bool {
 
 // SyncLine is the one-line summary of what a sync did to items other than secrets.
 func SyncLine(r SyncReport) string {
-	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened; %d snoozes and %d acceptances expired.\n",
-		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Woken, r.Lapsed)
+	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config; %d snoozes and %d acceptances expired.\n",
+		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Woken, r.Lapsed)
 	if len(r.Stale) > 0 {
 		s += fmt.Sprintf("Skipped older runs than the tracker already holds: %s.\n", strings.Join(r.Stale, ", "))
 	}
@@ -394,7 +410,7 @@ func (it *Item) reportedAfter(t time.Time) bool {
 func (t *Tracker) lifecycle(it *Item, folded map[string]*run, now time.Time, rep *SyncReport) {
 	present := it.reported()
 	switch it.Status {
-	case Open, InProgress, Snoozed:
+	case Open, InProgress, Snoozed, Expected:
 		if !present {
 			it.setStatus(now, Done, EvVerified, actAutoDone, "verified (no longer reported)")
 			at := now.UTC()

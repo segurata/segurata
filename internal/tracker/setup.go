@@ -21,9 +21,18 @@ func setupProposal(lbl string, st finding.Status) (string, proposal) {
 	return key, proposal{theme: "setup", kind: KindSetup, connector: st.Connector, instance: st.Instance, account: st.Account}
 }
 
-// SetupKey is the key of the setup item a status other than ok makes.
+// SetupKey is the key of the setup item a status other than ok makes. An expected status keeps
+// the key of the state the connector reported, so the item it closes is the one it opened.
 func SetupKey(lbl string, st finding.Status) string {
-	return "setup:" + lbl + "|" + st.Account + "|" + string(st.State)
+	return "setup:" + lbl + "|" + st.Account + "|" + string(reported(st).State)
+}
+
+// reported is the status as the connector reported it, before the config's expected rules.
+func reported(st finding.Status) finding.Status {
+	if st.State == finding.StateExpected && st.Was != "" {
+		st.State, st.Was, st.Expected = st.Was, "", ""
+	}
+	return st
 }
 
 // addStatus adds a status to a setup proposal: one ref per distinct detail.
@@ -37,12 +46,12 @@ func (p *proposal) addStatus(st finding.Status, at time.Time) {
 		return
 	}
 	sev := finding.SevMedium
-	if st.State == finding.StateUnsupported || st.State == finding.StateUnverified {
+	if st := reported(st); st.State == finding.StateUnsupported || st.State == finding.StateUnverified {
 		sev = finding.SevLow
 	}
 	p.statuses = append(p.statuses, st)
 	p.refs = append(p.refs, FindingRef{ID: id, Connector: st.Connector, Instance: st.Instance, Account: st.Account, Scope: st.Scope,
-		Title: detail, Severity: sev, LastSeen: at.UTC()})
+		Title: detail, Severity: sev, LastSeen: at.UTC(), Expected: st.Expected})
 }
 
 // finishSetup names a setup item and says what to do about its statuses.
@@ -50,12 +59,16 @@ func (p *proposal) finishSetup(itemID string) {
 	if len(p.statuses) == 0 {
 		return
 	}
-	st := p.statuses[0]
+	st := reported(p.statuses[0])
 	lbl := label(st.Connector, st.Instance)
 	p.title = setupTitle(lbl, st.Account, st.State, p.statuses)
+	if reasons := p.expectedReasons(); reasons != nil {
+		p.next = &Next{Who: You, Action: "Nothing: expected by your config (" + strings.Join(reasons, "; ") + ")."}
+		return
+	}
 	var actions, cmds []string
 	for _, s := range p.statuses {
-		a, c := StatusAction(s, lbl, itemID)
+		a, c := StatusAction(reported(s), lbl, itemID)
 		if !slices.Contains(actions, a) {
 			actions = append(actions, a)
 		}
@@ -74,7 +87,6 @@ var statePhrase = map[finding.State]string{
 	finding.StateMissingCredentials: "has no credentials configured",
 	finding.StateUnsupported:        "is not supported here",
 	finding.StateError:              "failed",
-	finding.StateExpected:           "is expected (by your config)",
 }
 
 // scopedDetail reads a detail of the form "<noun> <name>: <what>", as gcp words a project it could not read.

@@ -233,6 +233,24 @@ func blockers(d *doc.Doc, items []*Item, now time.Time) {
 		d.P("None: every connector could inspect every account.")
 	}
 	d.List(list)
+	if line := ExpectedLine(ExpectedReasons(items)); line != "" {
+		d.P(line)
+	}
+}
+
+// ExpectedLine is the one line that stands for the statuses the config expects, with their
+// reasons: "3 expected (by your config): ephemeral key (1); other people's accounts (2)." or "".
+func ExpectedLine(byReason map[string]int) string {
+	if len(byReason) == 0 {
+		return ""
+	}
+	n := 0
+	var parts []string
+	for _, r := range slices.Sorted(maps.Keys(byReason)) {
+		n += byReason[r]
+		parts = append(parts, fmt.Sprintf("%s (%d)", r, byReason[r]))
+	}
+	return fmt.Sprintf("%d expected (by your config): %s.", n, strings.Join(parts, "; "))
 }
 
 // changes counts the history events since the last status, secrets apart, and lists the latest

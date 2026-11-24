@@ -400,3 +400,26 @@ func TestAMissingSecretReferenceIsLeftToTheConnector(t *testing.T) {
 		t.Errorf("called=%v statuses=%v", n.called, res[0].Statuses)
 	}
 }
+
+// The core marks a status the config expects as it is written: state expected, the original state
+// and the reason kept, and the scope still not inspected.
+func TestExpectedStatusesAreMarkedAndStayUninspected(t *testing.T) {
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{
+		"needy:personal": {Secrets: map[string]string{"NEEDY_KEY": "env:SEGURATA_TEST_UNSET_NEEDY"},
+			Expected: []config.Expected{{State: finding.StateMissingCredentials, Reason: "ephemeral key on purpose"}}},
+	}}
+	res, _ := Inventory(context.Background(), cfg, mustTargets(t, cfg, &needy{}), t.TempDir(), nil, nil)
+	lines := readLines(t, res[0].File)
+	st := lines[0]
+	if st["state"] != "expected" || st["was"] != "missing_credentials" || st["expected"] != "ephemeral key on purpose" {
+		t.Errorf("status %v", st)
+	}
+	if end := lines[len(lines)-1]; end["complete"] != false {
+		t.Errorf("an expected status counted as inspected: %v", end)
+	}
+	var b bytes.Buffer
+	Summary(&b, res, finding.SevLow)
+	if !strings.Contains(b.String(), "~ needy:personal: 1 expected (by your config: ephemeral key on purpose)") || strings.Contains(b.String(), "missing_credentials") {
+		t.Errorf("summary:\n%s", b.String())
+	}
+}
