@@ -15,7 +15,7 @@ func TestStatusActionPutsTheDetailsCommandInNext(t *testing.T) {
 		{finding.Status{Connector: "gcp", Account: "a@x.com", State: finding.StateReauth, Detail: "projects list: credentials expired: run gcloud auth login for this account"},
 			"gcp", "gcloud auth login a@x.com", "Then: segurata inventory gcp."},
 		{finding.Status{Connector: "github", State: finding.StateNoScope, Detail: "two-factor authentication not checked: gh's token lacks read:user; run: gh auth refresh -h github.com -s read:user"},
-			"github", "gh auth refresh -h github.com -s read:user", "limited on purpose, record it as expected: segurata track expect T-0009"},
+			"github", "gh auth refresh -h github.com -s read:user", "Then: segurata inventory github. On purpose? segurata track expect T-0009"},
 		{finding.Status{Connector: "github", State: finding.StateNoScope, Detail: "gh lacks the admin:gpg_key scope; run: gh auth refresh -h github.com -s admin:gpg_key."},
 			"github", "gh auth refresh -h github.com -s admin:gpg_key", "Grant the missing permission with the command below."},
 		{finding.Status{Connector: "vercel", State: finding.StateMissingCredentials, Detail: "VERCEL_TOKEN is not configured: create a token, store it with `security add-generic-password -s segurata-vercel -a \"$USER\" -w` and reference it"},
@@ -43,7 +43,7 @@ func TestStatusActionPutsTheDetailsCommandInNext(t *testing.T) {
 
 func TestAdminOnlyChecksAskForNoInstall(t *testing.T) {
 	action, _ := StatusAction(finding.Status{Connector: "macos", State: finding.StateUnsupported, Detail: "remote-login: systemsetup needs admin; the listening ports check covers SSH"}, "macos", "")
-	if strings.Contains(action, "Install") || !strings.Contains(action, "administrator rights") || !strings.Contains(action, "segurata track expect <item>") {
+	if strings.Contains(action, "Install") || !strings.Contains(action, "administrator rights") || !strings.Contains(action, "On purpose? segurata track expect <item>") {
 		t.Errorf("admin-only: %q", action)
 	}
 	action, _ = StatusAction(finding.Status{Connector: "azure", State: finding.StateUnsupported, Detail: "az not found"}, "azure", "")
@@ -73,5 +73,15 @@ func TestSetupTitleCountsStatusesSharingAKey(t *testing.T) {
 		if got := setupTitle("gcp", "a@x.com", finding.StateError, c.sts); got != c.want {
 			t.Errorf("got %q, want %q", got, c.want)
 		}
+	}
+}
+
+func TestStatusURLIsThePageTheDetailSaysToOpen(t *testing.T) {
+	st := finding.Status{State: finding.StateReauth, Detail: "authorized GitHub Apps need sudo mode: open https://github.com/settings/apps/authorizations, confirm your identity, and run again"}
+	if got := StatusURL(st); got != "https://github.com/settings/apps/authorizations" {
+		t.Errorf("%q", got)
+	}
+	if got := StatusURL(finding.Status{Detail: "not signed in in the browser: https://example.com"}); got != "" {
+		t.Errorf("%q", got)
 	}
 }

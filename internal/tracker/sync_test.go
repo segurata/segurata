@@ -167,7 +167,7 @@ func TestGroupingRules(t *testing.T) {
 		t.Errorf("rotate items %d", countKind(tr, KindRotate))
 	}
 	reauth := byTitle(t, tr, "gcp · admin@x.com: needs a fresh sign-in")
-	if reauth.Kind != KindSetup || reauth.Theme != "setup" || !strings.HasSuffix(reauth.Next.Action, "Then: segurata inventory gcp.") ||
+	if reauth.Kind != KindSetup || reauth.Theme != "setup" || !strings.Contains(reauth.Next.Action, "Then: segurata inventory gcp.") ||
 		reauth.Next.Command != "gcloud auth login admin@x.com" || reauth.Findings[0].Title != "run gcloud auth login admin@x.com" {
 		t.Errorf("setup item %+v %+v", reauth, reauth.Next)
 	}

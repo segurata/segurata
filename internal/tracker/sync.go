@@ -224,6 +224,7 @@ func (s *SecretReport) add(o SecretReport) {
 	s.Updated += o.Updated
 	s.Reopened += o.Reopened
 	s.Skipped += o.Skipped
+	s.Reclassified += o.Reclassified
 	s.HistoryOnly += o.HistoryOnly
 }
 

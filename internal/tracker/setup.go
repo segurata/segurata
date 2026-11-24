@@ -76,7 +76,7 @@ func (p *proposal) finishSetup(itemID string) {
 			cmds = append(cmds, c)
 		}
 	}
-	p.next = &Next{Who: You, Action: strings.Join(actions, " "), Command: strings.Join(cmds, " && ")}
+	p.next = &Next{Who: You, Action: strings.Join(actions, " "), Command: strings.Join(cmds, " && "), URL: StatusURL(reported(st))}
 }
 
 var statePhrase = map[finding.State]string{
@@ -162,14 +162,15 @@ func adminOnly(detail string) bool {
 }
 
 // StatusAction is what to do about a status, and the command to run: the fix the detail names
-// when it names one (then the action ends with the rerun), otherwise the rerun that checks it.
-// itemID names the setup item in the "record it as expected" hint ("" for a generic placeholder).
+// when it names one (then the action says to rerun the connector after it), otherwise the rerun
+// that checks it. The action ends with how to keep the limitation on purpose, when that makes
+// sense; itemID names the setup item there ("" for a placeholder).
 func StatusAction(st finding.Status, lbl, itemID string) (string, string) {
 	rerun := "segurata inventory " + lbl
 	if itemID == "" {
 		itemID = "<item>"
 	}
-	expect := "If that is on purpose, record it as expected: segurata track expect " + itemID + ` --reason "…".`
+	expect := "On purpose? segurata track expect " + itemID + ` --reason "…"`
 	cmd := StatusCommand(st)
 	var action string
 	switch st.State {
@@ -178,45 +179,60 @@ func StatusAction(st finding.Status, lbl, itemID string) (string, string) {
 		if cmd != "" {
 			action = "Sign in again with the command below."
 		}
-		action += " If the account is not yours to sign in to, record it as expected: segurata track expect " + itemID + ` --reason "…".`
+		expect = "Not your account to sign in to? segurata track expect " + itemID + ` --reason "…"`
 	case finding.StateSignedOut:
 		action = "Sign in to this account in the browser segurata drives."
+		expect = "No longer used? segurata track expect " + itemID + ` --reason "…"`
 		if st.Connector == "connected-apps" {
-			action += fmt.Sprintf(` If you no longer use the service, list only the ones you use in connectors.%q.config.services.`, lbl)
-		} else {
-			action += " If you no longer use it: segurata track expect " + itemID + ` --reason "…".`
+			expect = fmt.Sprintf(`No longer used? List only the services you use in connectors.%q.config.services.`, lbl)
 		}
 	case finding.StateMissingCredentials:
-		action = fmt.Sprintf(`Set the secret reference under connectors.%q.secrets in ~/.config/segurata/config.json (Keychain item, 1Password field or environment variable); the detail has the steps.`, lbl)
+		action = fmt.Sprintf(`Reference the credential under connectors.%q.secrets in ~/.config/segurata/config.json (Keychain item, 1Password field or environment variable); the detail has the steps.`, lbl)
 		if cmd != "" {
-			action = "Store the credential with the command below, then reference it " + strings.TrimPrefix(action, "Set the secret reference ")
+			action = "Store the credential with the command below, then r" + action[1:]
 		}
-		action += " " + expect
 	case finding.StateNoScope:
 		action = "Grant the permission the detail names to the credential this connector uses."
 		if cmd != "" {
 			action = "Grant the missing permission with the command below."
 		}
-		action += " If the credential is limited on purpose, record it as expected: segurata track expect " + itemID + ` --reason "…".`
 	case finding.StateUnsupported:
+		action = "Install what the detail names (respecting the 4-day quarantine)."
 		if adminOnly(st.Detail) {
-			action = "This check needs administrator rights, which segurata does not use; nothing to install. " + expect
-		} else {
-			action = "Install what the detail names (respecting the 4-day quarantine). " + expect
+			action = "This check needs administrator rights, which segurata does not use; nothing to install."
 		}
 	case finding.StateError:
-		if denied.MatchString(st.Detail) {
-			action = "The credential was denied some reads (see the detail): grant them. " + expect
-		} else if cmd == "" {
+		switch {
+		case denied.MatchString(st.Detail):
+			action = "The credential was denied some reads (see the detail): grant them."
+		case cmd == "":
 			return "Run it again with connector logs to see what failed.", rerun + " --verbose"
-		} else {
+		default:
 			action = "Run the command below."
 		}
 	default:
-		action = "See the status detail."
+		action, expect = "See the status detail.", ""
 	}
-	if cmd == "" {
-		return action, rerun
+	if cmd != "" {
+		action += " Then: " + rerun + "."
+	} else {
+		cmd = rerun
 	}
-	return action + " Then: " + rerun + ".", cmd
+	if expect != "" {
+		action += " " + expect
+		if !strings.HasSuffix(expect, ".") {
+			action += "."
+		}
+	}
+	return action, cmd
+}
+
+var openURL = regexp.MustCompile(`\bopen (https?://[^\s,;]+[^\s,;.)])`)
+
+// StatusURL is the page a status detail says to open, or "".
+func StatusURL(st finding.Status) string {
+	if m := openURL.FindStringSubmatch(st.Detail); m != nil {
+		return m[1]
+	}
+	return ""
 }
