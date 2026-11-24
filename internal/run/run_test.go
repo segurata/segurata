@@ -12,7 +12,9 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -508,5 +510,47 @@ func TestRemediationSecretsAreNeverResolvedForARequest(t *testing.T) {
 	t.Setenv("SEGURATA_TEST_WRITE_UNSET", "write-value")
 	if v, err := cs.Write("OPENAI_ADMIN_WRITE_KEY"); err != nil || v != "write-value" {
 		t.Fatalf("Write resolves at call time: %q %v", v, err)
+	}
+}
+
+// flaky fails the writes numbered in fail (1-based) with ENOSPC and keeps the rest.
+type flaky struct {
+	buf  bytes.Buffer
+	n    int
+	fail map[int]bool
+}
+
+func (w *flaky) Write(p []byte) (int, error) {
+	w.n++
+	if w.fail[w.n] {
+		return 0, syscall.ENOSPC
+	}
+	return w.buf.Write(p)
+}
+
+// A record the sink could not write makes the run fail: run_end carries the error, so the
+// findings that were lost never count as resolved.
+func TestALostRecordFailsTheRun(t *testing.T) {
+	w := &flaky{fail: map[int]bool{2: true}}
+	s := &sink{name: "fake", out: w, res: &Result{}}
+	s.Status(finding.Status{Account: "acct", State: finding.StateOK})
+	s.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "lost"}, Severity: finding.SevHigh, Title: "lost"})
+	ended, err := s.end(context.Background(), time.Now(), nil, nil)
+	if !errors.Is(err, syscall.ENOSPC) || !ended {
+		t.Fatalf("end: ended=%v err=%v", ended, err)
+	}
+	if s.res.End.Complete || !strings.Contains(s.res.End.Error, "no space left") {
+		t.Fatalf("run_end %+v", s.res.End)
+	}
+	if !bytes.Contains(w.buf.Bytes(), []byte(`"error":"writing the run file: no space left`)) {
+		t.Fatalf("the written run_end does not carry the error:\n%s", w.buf.String())
+	}
+
+	// run_end itself lost: the run did not end.
+	w = &flaky{fail: map[int]bool{2: true}}
+	s = &sink{name: "fake", out: w, res: &Result{}}
+	s.Status(finding.Status{Account: "acct", State: finding.StateOK})
+	if ended, err := s.end(context.Background(), time.Now(), nil, nil); ended || err == nil {
+		t.Fatalf("lost run_end: ended=%v err=%v", ended, err)
 	}
 }

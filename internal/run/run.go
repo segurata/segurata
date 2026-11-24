@@ -89,12 +89,28 @@ type sink struct {
 	name     string
 	label    string
 	inst     string
-	enc      *json.Encoder
+	out      io.Writer
 	verbose  io.Writer
 	annotate func(*finding.Finding)
 	expect   func(*finding.Status) // the config's expected rules
 	res      *Result
 	tally    finding.Tally
+	werr     error // the first record that could not be written
+}
+
+// write appends one record as a JSON line. The first failure is kept for run_end: a run that lost
+// a record must not count as complete, or the lost findings would look resolved. Unlike
+// json.Encoder, which fails for good after one error, a later record is still tried, so run_end
+// can say what was lost. The caller holds mu.
+func (s *sink) write(v any) error {
+	b, err := json.Marshal(v)
+	if err == nil {
+		_, err = s.out.Write(append(b, '\n'))
+	}
+	if err != nil && s.werr == nil {
+		s.werr = fmt.Errorf("writing the run file: %w", err)
+	}
+	return err
 }
 
 func (s *sink) Finding(f finding.Finding) {
@@ -106,7 +122,7 @@ func (s *sink) Finding(f finding.Finding) {
 		s.annotate(&f)
 	}
 	s.res.Findings = append(s.res.Findings, f)
-	_ = s.enc.Encode(f)
+	_ = s.write(f)
 }
 
 func (s *sink) Status(st finding.Status) {
@@ -118,7 +134,7 @@ func (s *sink) Status(st finding.Status) {
 	}
 	s.res.Statuses = append(s.res.Statuses, st)
 	s.tally.Status(st)
-	_ = s.enc.Encode(st)
+	_ = s.write(st)
 }
 
 // Scope records coverage in the run_end record only; it writes no line of its own.
@@ -128,17 +144,19 @@ func (s *sink) Scope(id string, inspected bool, reason string) {
 	s.tally.Declare(id, inspected, reason)
 }
 
-// end writes the run_end record. err is the connector's own error; a cancelled context counts as
-// one, since the connector may have stopped early without saying so.
-func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[string]string) {
+// end writes the run_end record and reports whether it was written, with the first write error.
+// err is the connector's own error; a cancelled context counts as one, since the connector may
+// have stopped early without saying so, and so does a record that could not be written.
+func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[string]string) (ended bool, werr error) {
 	if err == nil && ctx.Err() != nil {
 		err = fmt.Errorf("interrupted: %w", ctx.Err())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.res.End = s.tally.End(s.name, s.inst, started, time.Now(), err)
+	s.res.End = s.tally.End(s.name, s.inst, started, time.Now(), errors.Join(err, s.werr))
 	s.res.End.SecretFingerprints = fps
-	_ = s.enc.Encode(s.res.End)
+	ended = s.write(s.res.End) == nil
+	return ended, s.werr
 }
 
 func (s *sink) Log(msg string) {
@@ -182,14 +200,16 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		return res
 	}
 	partial := f.Name()
-	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
+	s := &sink{name: name, label: label, inst: t.Instance.Label, out: f, verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
 
 	req, errs := NewRequest(cfg, t.Instance)
 	if missing := unresolved(t.Connector, errs, s); !missing {
 		res.Err = t.Connector.Inventory(ctx, req, s)
 	}
-	s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
-	if err := f.Close(); err != nil {
+	ended, werr := s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
+	res.Err = errors.Join(res.Err, werr)
+	// A file without its run_end, or one that did not close, never replaces an earlier run.
+	if err := f.Close(); err != nil || !ended {
 		res.Err = errors.Join(res.Err, err)
 		_ = os.Remove(partial)
 		return res
