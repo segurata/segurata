@@ -39,9 +39,12 @@ func (e Env) Run(ctx context.Context, connectors []string) error {
 	if len(connectors) == 0 {
 		connectors = e.DefaultConnectors()
 	}
+	// The snapshot before is only what notifications compare with: a run file it cannot read must
+	// not stop the inventory that writes the file replacing it.
 	before, err := e.serious(p.Out)
 	if err != nil {
-		return err
+		fmt.Fprintf(e.IO.Err, "previous findings unreadable, every high or critical finding counts as new: %v\n", err)
+		before = map[string]finding.Finding{}
 	}
 	stamp := func(msg string) { fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg) }
 	stamp("inventory " + strings.Join(connectors, " "))

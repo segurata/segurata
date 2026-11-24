@@ -18,7 +18,7 @@ import (
 )
 
 // fakeRunner records every command. launchctl print succeeds when loaded is set; the segurata
-// inventory writes the findings in inventory to the --out directory.
+// inventory writes the findings in inventory to the --out directory, as a finished run.
 type fakeRunner struct {
 	calls     [][]string
 	loaded    bool
@@ -49,6 +49,7 @@ func (r *fakeRunner) Run(_ context.Context, name string, args []string, _, _ io.
 			f.Type = "finding"
 			_ = json.NewEncoder(&buf).Encode(f)
 		}
+		buf.WriteString(`{"type":"run_end","connector":"macos","complete":true}` + "\n")
 		return os.WriteFile(filepath.Join(dir, "macos.jsonl"), buf.Bytes(), 0o600)
 	}
 	return nil
@@ -305,6 +306,30 @@ func TestRunOnLinuxLogsInsteadOfNotifying(t *testing.T) {
 	}
 	if len(r.ran(osascript, "-e")) != 0 || !strings.Contains(out.String(), "Something bad") {
 		t.Fatalf("calls %v out %s", r.calls, out)
+	}
+}
+
+// A torn file from the previous run must not stop the run that writes the file replacing it: the
+// "before" snapshot is best-effort.
+func TestRunScansEvenWhenThePreviousRunIsUnreadable(t *testing.T) {
+	env, r, out := testEnv(t, "darwin")
+	dir := filepath.Join(env.Paths().Out, "2026-11-23")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	torn := "{\"type\":\"finding\",\"id\n{\"type\":\"run_end\",\"connector\":\"macos\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "macos.jsonl"), []byte(torn), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.inventory = []finding.Finding{high("a", "Firewall is off")}
+	if err := env.Run(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ran(env.Exe, "inventory")) != 1 || len(r.ran(env.Exe, "report")) != 1 {
+		t.Fatalf("calls %v", r.calls)
+	}
+	if errs := env.IO.Err.(*bytes.Buffer).String(); !strings.Contains(errs, "macos.jsonl") {
+		t.Errorf("no warning about the unreadable run: %q (out %s)", errs, out)
 	}
 }
 
