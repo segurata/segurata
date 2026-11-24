@@ -12,6 +12,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // credentialProfile is what the scan keeps from one [section]: never the secret.
@@ -46,6 +47,9 @@ func (p provider) String() string {
 	}
 	return "AWS"
 }
+
+// awsKeyPrefixes are the prefixes a key id hint shows (secretrisk.RedactID).
+const awsKeyPrefixes = "AKIA|ASIA"
 
 // providerOf tells an AWS profile from one pointed at Cloudflare R2 or another S3-compatible
 // service. AWS access key ids start with AKIA (long-lived) or ASIA (temporary); an R2 access key
@@ -179,7 +183,7 @@ func localKeyFinding(path string, mode fs.FileMode, p credentialProfile, by prov
 		Kind:     finding.KindExposure,
 		Severity: finding.SevMedium,
 		Title:    fmt.Sprintf("Long-lived AWS access key for profile %q stored in plain text", p.Name),
-		Evidence: map[string]any{"file": path, "mode": fmt.Sprintf("%04o", mode.Perm()), "key_id": finding.Redact(p.KeyID)},
+		Evidence: map[string]any{"file": path, "mode": fmt.Sprintf("%04o", mode.Perm()), "key_id": secretrisk.RedactID(awsKeyPrefixes, p.KeyID)},
 		Remediation: finding.Remediation{
 			Summary: "Switch the profile to IAM Identity Center (`aws configure sso`) and delete the key; until then keep the file at mode 0600.",
 			URL:     urlSSO,

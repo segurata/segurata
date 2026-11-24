@@ -333,7 +333,7 @@ func TestKeyFinding(t *testing.T) {
 			if f.Severity != tc.want || !strings.Contains(f.Title, tc.title) {
 				t.Fatalf("got %s %q", f.Severity, f.Title)
 			}
-			if f.Evidence["key_id"] == k.AccessKeyId || f.LastUsedAt != tc.lastUsed {
+			if f.Evidence["key_id"] != "AKIA…MPLE(20)" || f.LastUsedAt != tc.lastUsed {
 				t.Fatalf("evidence must redact the key id and keep the provider's last use: %+v", f)
 			}
 		})

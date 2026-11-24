@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/segurata/segurata/internal/config"
 	"io"
 	"io/fs"
 	"os"
@@ -15,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/segurata/segurata/internal/config"
 
 	"github.com/segurata/segurata/internal/statefile"
 )

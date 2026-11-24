@@ -81,6 +81,26 @@ func TestAssess(t *testing.T) {
 		{"slack 4", "slack", grant{resType: "slack_app", scope: "w.slack.com", count: 4}, finding.SevLow, "use 4 permissions in w.slack.com"},
 		{"slack unknown", "slack", grant{resType: "slack_app", scope: "w.slack.com"}, finding.SevMedium, "act in w.slack.com"},
 		{"slack pending", "slack", grant{resType: "slack_app", scope: "w.slack.com", count: 40, extra: map[string]any{"pending_approval": true}}, finding.SevInfo, "be installed once a workspace admin approves it"},
+		// Declared scopes: graded by what they let the app do, whatever their number.
+		{"slack admin scope", "slack", slackGrant([]string{"admin.users:read"}, nil), finding.SevHigh, "administer the workspace"},
+		{"slack user-token history", "slack", slackGrant(nil, []string{"im:history"}), finding.SevHigh, "read messages as the person who installed it, direct messages included"},
+		{"slack user-token search", "slack", slackGrant(nil, []string{"search:read.private", "users:read"}), finding.SevHigh, "read messages as the person who installed it, direct messages included"},
+		{"slack post and history", "slack", slackGrant([]string{"chat:write", "channels:history", "users:read"}, nil), finding.SevHigh, "post as a bot and read the history of the conversations it is in"},
+		{"slack post as user and bot history", "slack", slackGrant([]string{"groups:history"}, []string{"chat:write"}), finding.SevHigh, "post as the person who installed it and read the history of the conversations it is in"},
+		{"slack post only", "slack", slackGrant([]string{"chat:write", "chat:write.public", "chat:write.customize", "commands"}, nil), finding.SevMedium,
+			"post as a bot, post in public channels it was not added to and post under any name and icon"},
+		{"slack history only", "slack", slackGrant([]string{"channels:history"}, nil), finding.SevMedium, "read the history of the conversations it is in"},
+		{"slack files", "slack", slackGrant([]string{"files:read", "files:write"}, nil), finding.SevMedium, "read and upload files"},
+		{"slack emails", "slack", slackGrant([]string{"users:read", "users:read.email"}, nil), finding.SevLow, "see members' email addresses"},
+		{"slack webhook", "slack", slackGrant([]string{"incoming-webhook"}, nil), finding.SevLow, "post to a channel through an incoming webhook"},
+		{"slack metadata", "slack", slackGrant([]string{"channels:read", "team:read", "reactions:read"}, nil), finding.SevLow, "see the workspace's channels and members"},
+		{"slack no scopes", "slack", slackGrant([]string{}, []string{}), finding.SevLow, "see the workspace's channels and members"},
+		// A user-token chat:write without history is posting only.
+		{"slack user post only", "slack", slackGrant(nil, []string{"chat:write", "users:read"}), finding.SevMedium, "post as the person who installed it"},
+		// Many scopes of metadata are still low: the count no longer decides.
+		{"slack many metadata scopes", "slack", slackGrant([]string{"channels:read", "groups:read", "im:read", "mpim:read", "team:read", "users:read",
+			"emoji:read", "reactions:read", "pins:read", "bookmarks:read", "links:read", "usergroups:read", "dnd:read", "calls:read", "commands", "app_mentions:read"}, nil),
+			finding.SevLow, "see the workspace's channels and members"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -90,6 +110,14 @@ func TestAssess(t *testing.T) {
 			}
 		})
 	}
+}
+
+// slackGrant is a Slack app the workspace's app list declares these bot and user scopes for.
+func slackGrant(bot, user []string) grant {
+	if bot == nil && user != nil {
+		bot = []string{}
+	}
+	return grant{resType: "slack_app", scope: "w.slack.com", scopes: bot, userScopes: user, count: len(bot) + len(user)}
 }
 
 func TestReportMarksStaleDates(t *testing.T) {

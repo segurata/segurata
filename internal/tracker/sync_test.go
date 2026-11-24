@@ -386,6 +386,24 @@ func TestSeedDecisionsAreCreatedOnce(t *testing.T) {
 	}
 }
 
+// A tracker made by an older version shows the themes under their current titles.
+func TestSeedRenamesKnownThemes(t *testing.T) {
+	tr := New(t0)
+	for i := range tr.Themes {
+		if tr.Themes[i].ID == "transcripts" {
+			tr.Themes[i].Title = "Secrets in trail files"
+		}
+	}
+	tr.Themes = append(tr.Themes, Theme{ID: "mine", Title: "Mine"})
+	tr.seed(t0.Add(time.Hour))
+	if got := tr.ThemeTitle("transcripts"); got != "Trail files to redact" {
+		t.Errorf("transcripts theme %q", got)
+	}
+	if got := tr.ThemeTitle("mine"); got != "Mine" {
+		t.Errorf("a theme segurata does not define changed: %q", got)
+	}
+}
+
 // Several statuses under one setup key (gcp: one per project it could not read) make one item that
 // keeps a ref per distinct detail and counts them in its title.
 func TestSetupStatusesSharingAKeyKeepEveryRef(t *testing.T) {
@@ -495,5 +513,48 @@ func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
 	syncOrDie(t, tr, out, t0.Add(4*time.Hour))
 	if strings.Contains(repo.Next.Action, "Blocked by decision") || tr.BlockedBy(repo, t0.Add(4*time.Hour)) != nil {
 		t.Errorf("still blocked after the answer: %s", repo.Next.Action)
+	}
+}
+
+// Group titles agree in number with their count, and a group no rule names says how many more
+// findings are like its worst one instead of showing a bare count.
+func TestGroupTitlesAgreeInNumber(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	app := func(typ, name, title string) finding.Finding {
+		return fnd("connected-apps", "", "notion:me", typ, "notion:"+name, name, finding.SevHigh, name+" "+title, t0)
+	}
+	writeRun(t, out, t0, "connected-apps.jsonl",
+		app("notion_integration", "N1", "can read and change the Notion pages shared with it"),
+		app("notion_integration", "N2", "can read and change the Notion pages shared with it"),
+		app("notion_integration", "M1", "can read the Notion pages shared with it (your own integration)"),
+		app("notion_integration", "M2", "can read the Notion pages shared with it (your own integration)"),
+		app("github_app_installed", "G1", "can act on the repositories it is installed on (its permissions need sudo mode to read)"),
+		app("github_app_installed", "G2", "can act on the repositories it is installed on (its permissions need sudo mode to read)"),
+		app("github_app_authorized", "A1", "can act on your behalf within its GitHub App permissions"),
+		app("github_app_authorized", "A2", "can act on your behalf within its GitHub App permissions"),
+		app("x_app", "Solo", "can read your direct messages"),
+		okStatus("connected-apps", "notion:me"))
+	secret := func(app string, sev finding.Severity) finding.Finding {
+		return fnd("azure", "", "tenant", "azure_app_secret", app+"/k", app, sev, `Expired client secret of app "`+app+`" is still registered`, t0)
+	}
+	writeRun(t, out, t0, "azure.jsonl", secret("Alpha", finding.SevMedium), secret("Beta", finding.SevHigh), secret("Gamma", finding.SevMedium), okStatus("azure", "tenant"))
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0.Add(time.Hour))
+	for _, want := range []string{
+		"2 Notion integrations can read and change the Notion pages shared with them",
+		"2 Notion integrations can read the Notion pages shared with them (your own integrations)",
+		"2 GitHub Apps can act on the repositories they are installed on (their permissions need sudo mode to read)",
+		"2 authorized GitHub Apps can act on your behalf within their GitHub App permissions",
+		"Solo can read your direct messages",
+		`Expired client secret of app "Beta" is still registered, and 2 more like it`,
+	} {
+		if it := byTitle(t, tr, want); it.Title != want {
+			t.Errorf("title %q, want %q", it.Title, want)
+		}
+	}
+	for _, it := range tr.Items {
+		if strings.Contains(it.Title, "…") || strings.HasSuffix(it.Title, ")") && strings.Contains(it.Title, "(3)") {
+			t.Errorf("leftover family form in %q", it.Title)
+		}
 	}
 }

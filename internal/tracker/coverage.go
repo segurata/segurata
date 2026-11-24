@@ -103,7 +103,7 @@ func (t *Tracker) coverageLine(instances []string, now time.Time) string {
 			s += ", partial"
 		}
 		if info.Expected > 0 {
-			s += fmt.Sprintf(" (%s left out as expected)", count(info.Expected, "scope", "scopes"))
+			s += fmt.Sprintf(" (%s left out as expected)", textfmt.Count(info.Expected, "scope", "scopes"))
 		}
 		parts = append(parts, s)
 	}

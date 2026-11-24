@@ -222,7 +222,7 @@ a year, the severity goes up one level.
 |---|---|
 | GitHub | OAuth apps (scopes, organizations with access, last use), installed GitHub Apps, web sessions; SSH, signing and GPG keys via `gh api` (title, type, dates, never the key). Authorized GitHub Apps and the permissions of installed ones need sudo mode: `reauth` |
 | X | Connected apps with scopes and authorization date |
-| Slack | Installed apps and their scope count, in every workspace the browser is signed in to (15 or more scopes is `high`) |
+| Slack | Installed apps in every workspace the browser is signed in to, with the bot and user-token scopes the workspace's app list declares for each (read from the response the manage page fetches; no app page is opened). Graded by capability: admin scopes, reading messages with a user token, or posting together with reading history are `high`; posting, reading history or files alone `medium`; members' emails, an incoming webhook or metadata `low`. An app waiting for approval is `info`; one only the rows show is graded by its scope count (15 or more is `high`). A workspace whose app list did not load and shows no row is `unverified` |
 | Notion | Developer connections of the active workspace, with capabilities, owner and date. Settings › Connections is a dialog with no URL: review it by hand |
 | Facebook | Active apps under Settings › Apps and websites, with the information each one receives. Only the first page: the "See more" button is not clicked, and the status says so |
 | Instagram, LinkedIn | Whether any app or service is connected. Only the empty list has been seen; a non-empty one is reported as `unverified`, to review by hand |

@@ -139,7 +139,7 @@ func TestInventoryFindsOrphanAndUnusedKeysAndCost(t *testing.T) {
 	if busy.LastUsedAt != nil {
 		t.Error("LastUsedAt must stay nil: the API has no last-used timestamp")
 	}
-	if busy.CreatedAt == nil || busy.Evidence["workspace"] != "prod" || busy.Evidence["redacted"] != "sk-ant-api03-R2D...igAA" {
+	if busy.CreatedAt == nil || busy.Evidence["workspace"] != "prod" || busy.Evidence["redacted"] != "sk-ant-api03-R2D…igAA(?)" {
 		t.Errorf("finding: created=%v evidence=%v", busy.CreatedAt, busy.Evidence)
 	}
 	if got := rec.ByResource(t, "workspace", "wrkspc_prod").Evidence["cost_30d_usd"]; got != 12.5 {

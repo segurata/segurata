@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Setup items: one per connector instance, account and state other than ok. A connector may
@@ -118,7 +119,7 @@ func setupTitle(lbl, account string, state finding.State, sts []finding.Status) 
 		}
 		noun = m[1]
 	}
-	n := count(len(sts), noun, noun+"s")
+	n := textfmt.Count(len(sts), noun, noun+"s")
 	if what == "-" {
 		return fmt.Sprintf("%s: %s on %s", who, statePhrase[state], n)
 	}

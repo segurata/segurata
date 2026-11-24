@@ -173,24 +173,78 @@ func TestAcceptedConnectorFindingIsNotClaimed(t *testing.T) {
 	}
 }
 
-func TestNormalHint(t *testing.T) {
-	for in, want := range map[string]secretrisk.Hint{
-		"AKIA…(20)":               {Prefix: "AKIA", Len: 20},
-		"sk-or-v1-27e...d4d":      {Prefix: "sk-or-v1-27e", Tail: "d4d"},
-		"sk-proj-********xxkA":    {Prefix: "sk-proj-", Tail: "xxkA"},
-		"sk-ant-api03-R2D...igAA": {Prefix: "sk-ant-api03-R2D", Tail: "igAA"},
-		"sk-or-v1-…fd4d(73)":      {Prefix: "sk-or-v1-", Tail: "fd4d", Len: 73},
-		"sk-proj-****…****j_MA":   {Prefix: "sk-proj-", Tail: "j_MA"},
-	} {
-		if got, ok := normalHint(in); !ok || got != want {
-			t.Errorf("normalHint(%q) = %+v %v, want %+v", in, got, ok, want)
+// A provider key matched by its hint puts the provider's facts in the rotate item's title (its name,
+// in use, spend this month), with the confidence of the match; a hint that fits two secrets merges
+// into neither and is recorded on both as possible, leaving the connector's item alone.
+func TestHintMatchConfidenceFactsAndAmbiguity(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	ev := func(fp, redacted, path string) secretrisk.Evidence {
+		typ := "openrouter"
+		if strings.HasPrefix(redacted, "sk-proj-") {
+			typ = "openai"
+		}
+		return secretrisk.Evidence{Fingerprint: fp, Type: typ, Redacted: redacted, Path: path, Source: "scan", Kind: "transcript", Mode: "600", Bucket: "2-trail", Count: 1}
+	}
+	used := t0.Add(-48 * time.Hour)
+	key := func(id, name, redacted string, spend float64) finding.Finding {
+		f := withEvidence(fnd("openrouter", "personal", "Default Workspace", "api_key", id, name, finding.SevMedium, `API key "`+name+`": in use with a credit limit`, t0),
+			map[string]any{"redacted": redacted, "usage_month": spend})
+		f.LastUsedAt = &used
+		return f
+	}
+	writeRun(t, out, t0, "local-secrets.jsonl",
+		leak(ev("1111111111111111", "sk-or-v1-…fd4d(73)", "~/.claude/projects/a/s.jsonl"), t0),
+		leak(ev("2222222222222222", "sk-or-v1-…ab12(73)", "~/.claude/projects/b/s.jsonl"), t0),
+		leak(ev("3333333333333333", "sk-or-v1-…ab12(73)", "~/.claude/projects/c/s.jsonl"), t0),
+		leak(ev("4444444444444444", "sk-proj-…j_MA(164)", "~/.claude/projects/d/s.jsonl"), t0),
+		okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0, "openrouter-personal.jsonl",
+		key("k1", "Claude Code", "sk-or-v1-27e…d4d(?)", 42),
+		key("k2", "Shared", "sk-or-v1-9f0…ab12(?)", 0),
+		okStatus("openrouter", "Default Workspace"))
+	writeRun(t, out, t0, "openai.jsonl",
+		withEvidence(fnd("openai", "", "org", "api_key", "key_x", "ci", finding.SevMedium, `API key "ci" in project "lab": never used`, t0),
+			map[string]any{"redacted": "sk-proj-…j_MA(164)"}),
+		okStatus("openai", "org"))
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0.Add(time.Minute))
+
+	cc := mustRotate(t, tr, "11111111")
+	if len(cc.Findings) != 1 || cc.Findings[0].Match != byHint || cc.Findings[0].Confidence != confMedium {
+		t.Errorf("Claude Code key refs: %+v", cc.Findings)
+	}
+	if want := `sk-or-v1-…fd4d(73) = "Claude Code" (in use, $42.00 this month) in `; !strings.Contains(cc.Title, want) {
+		t.Errorf("title %q lacks %q", cc.Title, want)
+	}
+
+	// The OpenAI key shows its length and four characters: a high-confidence match, never used.
+	ci := mustRotate(t, tr, "44444444")
+	if len(ci.Findings) != 1 || ci.Findings[0].Confidence != confHigh || !strings.Contains(ci.Title, `(164) = "ci" in `) {
+		t.Errorf("OpenAI key: %q %+v", ci.Title, ci.Findings)
+	}
+
+	for _, fp := range []string{"22222222", "33333333"} {
+		it := mustRotate(t, tr, fp)
+		if len(it.Findings) != 0 || len(it.Possible) != 1 || it.Possible[0].Match != byPossible || it.Possible[0].Resource != "k2" {
+			t.Errorf("%s: findings %+v possible %+v", fp, it.Findings, it.Possible)
+		}
+		if strings.Contains(it.Title, `"Shared"`) || it.Priority != secretrisk.P1 && it.Priority != secretrisk.P2 && it.Priority != secretrisk.P3 {
+			t.Errorf("%s: a possible match named or raised the item: %s %q", fp, it.Priority, it.Title)
+		}
+		if r := strings.Join(it.Secret.Reasons, "; "); !strings.Contains(r, `possibly: openrouter:personal: API key "Shared": in use with a credit limit (its hint fits 2 secrets)`) {
+			t.Errorf("%s: reasons %q", fp, r)
 		}
 	}
-	if _, ok := normalHint("PEM"); ok {
-		t.Error("PEM is not a hint of one value")
+	// The ambiguous key keeps its own item.
+	shared := byTitle(t, tr, "Revoke or limit 1 OpenRouter API key")
+	if len(shared.Findings) != 1 || shared.Findings[0].Resource != "k2" || shared.Status != Open {
+		t.Errorf("shared key item: %s %+v", shared.Status, shared.Findings)
 	}
-	if !hintsFit(secretrisk.Hint{Prefix: "AKIA", Len: 20}, secretrisk.Hint{Prefix: "AKIARB", Len: 20}) ||
-		hintsFit(secretrisk.Hint{Prefix: "AKIA", Len: 20}, secretrisk.Hint{Tail: "NCZX", Len: 40}) {
-		t.Error("hintsFit")
+
+	// The next sync without the ambiguous key drops the possible refs.
+	writeRun(t, out, t0.Add(time.Hour), "openrouter-personal.jsonl", key("k1", "Claude Code", "sk-or-v1-27e…d4d(?)", 42), okStatus("openrouter", "Default Workspace"))
+	syncOrDie(t, tr, out, t0.Add(2*time.Hour))
+	if it := mustRotate(t, tr, "22222222"); len(it.Possible) != 0 {
+		t.Errorf("stale possible refs: %+v", it.Possible)
 	}
 }

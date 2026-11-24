@@ -20,23 +20,26 @@ import (
 // key that also leaked out of the machine ranks first. See docs/architecture.md, "Correlation".
 
 // credential says which connector findings stand for a secret, which rotate items they may match
-// (by the secrets' service; empty matches any) and the evidence keys holding the redacted hint and
-// the file.
+// (by the secrets' service; empty matches any), the evidence keys holding the redacted hint and
+// the file, and, for a provider's key, whether the finding names the key (facts) and the evidence
+// key of its spend this month.
 type credential struct {
 	connector string
 	resources []string
 	services  []string
 	hint      string
 	path      string
+	facts     bool
+	spend     string
 }
 
 var credentials = []credential{
-	{"aws", []string{"aws_local_credentials"}, []string{"aws"}, "key_id", "file"},
-	{"aws", []string{"r2_local_credentials", "s3_local_credentials"}, nil, "key_id", "file"},
-	{"gcp", []string{"local_credential"}, []string{"gcp", "google", "oauth", "private-key"}, "", "path"},
-	{"openai", []string{"api_key"}, []string{"openai"}, "redacted", ""},
-	{"openrouter", []string{"api_key"}, []string{"openrouter"}, "redacted", ""},
-	{"anthropic", []string{"api_key"}, []string{"anthropic"}, "redacted", ""},
+	{"aws", []string{"aws_local_credentials"}, []string{"aws"}, "key_id", "file", false, ""},
+	{"aws", []string{"r2_local_credentials", "s3_local_credentials"}, nil, "key_id", "file", false, ""},
+	{"gcp", []string{"local_credential"}, []string{"gcp", "google", "oauth", "private-key"}, "", "path", false, ""},
+	{"openai", []string{"api_key"}, []string{"openai"}, "redacted", "", true, ""},
+	{"openrouter", []string{"api_key"}, []string{"openrouter"}, "redacted", "", true, "usage_month"},
+	{"anthropic", []string{"api_key"}, []string{"anthropic"}, "redacted", "", true, ""},
 }
 
 func credentialFor(f finding.Finding) *credential {
@@ -48,12 +51,34 @@ func credentialFor(f finding.Finding) *credential {
 	return nil
 }
 
-// Ways a credential matched a secret, strongest first.
+// Ways a credential matched a secret, strongest first. byPossible is a hint that fits more than
+// one secret: recorded on each of them, merged into none.
 const (
 	byFingerprint = "fingerprint"
 	byHint        = "hint"
 	byPath        = "path"
+	byPossible    = "possible"
 )
+
+// How sure a match is: certain by fingerprint; high by a hint that shows four or more characters of
+// the value's end and the same known length on both sides; medium by a shorter tail, a length one
+// side does not give, or the file.
+const (
+	confCertain = "certain"
+	confHigh    = "high"
+	confMedium  = "medium"
+)
+
+// confRank orders match confidences.
+var confRank = map[string]int{confMedium: 1, confHigh: 2, confCertain: 3}
+
+// hintConfidence is how sure a fit between two hints is.
+func hintConfidence(a, b secretrisk.Hint) string {
+	if a.Len > 0 && b.Len > 0 && min(len(a.Tail), len(b.Tail)) >= 4 {
+		return confHigh
+	}
+	return confMedium
+}
 
 // claim is a connector finding (or a secret a connector signs in with) that stands for the secret
 // of a rotate item.
@@ -88,32 +113,45 @@ func (t *Tracker) secretIndex() secretIndex {
 	return x
 }
 
-// match finds the rotate item a credential finding stands for: the one with its fingerprint (a
+// candidate is a rotate item a credential finding may stand for, and how sure that is.
+type candidate struct {
+	item       *Item
+	confidence string
+}
+
+// match finds the rotate items a credential finding may stand for: the one with its fingerprint (a
 // finding that carries one matches nothing else: the key in the file may have been rotated since
-// the leak); else, among items of its services, one whose redacted hint fits the finding's and shows at
-// least three characters of the value's end (enough to tell keys apart); else one in the file the
-// finding names whose hint, when both have one, fits. Among several, the most urgent wins.
-func (x secretIndex) match(f finding.Finding, c *credential) (*Item, string) {
+// the leak); else, among items of its services, those whose redacted hint fits the finding's and
+// shows at least three characters of the value's end (enough to tell keys apart); else the most
+// urgent of those in the file the finding names whose hint, when both have one, fits. Only a hint
+// can give more than one candidate: two secrets whose hints both fit are told apart by nothing the
+// provider shows, so the caller merges into neither. A file can hold several parts of one
+// credential (ADC's client secret and refresh token), so there the most urgent stands for it.
+func (x secretIndex) match(f finding.Finding, c *credential) ([]candidate, string) {
 	str := func(k string) string { s, _ := f.Evidence[k].(string); return s }
 	if fp := str("fingerprint"); fp != "" {
 		if it := x.byFP[fp]; it != nil {
-			return it, byFingerprint
+			return []candidate{{it, confCertain}}, byFingerprint
 		}
 		return nil, ""
 	}
-	hint, hasHint := normalHint(str(c.hint))
+	hint, hasHint := secretrisk.ReadHint(str(c.hint))
 	serviceOK := func(it *Item) bool { return len(c.services) == 0 || slices.Contains(c.services, it.Secret.Service) }
 	if hasHint && len(hint.Tail) >= 3 {
-		var hits []*Item
+		var hits []candidate
 		for _, s := range c.services {
 			for _, it := range x.byService[s] {
-				if h, ok := normalHint(it.Secret.Redacted); ok && hintsFit(h, hint) {
-					hits = append(hits, it)
+				if h, ok := secretrisk.ParseHint(it.Secret.Redacted); ok && h.Agrees(hint) {
+					hits = append(hits, candidate{it, hintConfidence(h, hint)})
 				}
 			}
 		}
-		if it := mostUrgent(hits); it != nil {
-			return it, byHint
+		switch {
+		case len(hits) == 1:
+			return hits, byHint
+		case len(hits) > 1:
+			sort.Slice(hits, func(i, j int) bool { return hits[i].item.ID < hits[j].item.ID })
+			return hits, byPossible
 		}
 	}
 	if p := homePath(str(c.path)); p != "" {
@@ -122,13 +160,13 @@ func (x secretIndex) match(f finding.Finding, c *credential) (*Item, string) {
 			if !serviceOK(it) || it.Priority == "" {
 				continue
 			}
-			if h, ok := normalHint(it.Secret.Redacted); hasHint && ok && !hintsFit(h, hint) {
+			if h, ok := secretrisk.ParseHint(it.Secret.Redacted); hasHint && ok && !h.Agrees(hint) {
 				continue
 			}
 			hits = append(hits, it)
 		}
 		if it := mostUrgent(hits); it != nil {
-			return it, byPath
+			return []candidate{{it, confMedium}}, byPath
 		}
 	}
 	return nil, ""
@@ -141,35 +179,6 @@ func mostUrgent(items []*Item) *Item {
 	items = slices.Clone(items)
 	Sort(items)
 	return items[0]
-}
-
-// normalHint reads the redacted forms connectors use: segurata's own ("AKIA…(20)", "sk-or-v1-…d4d1(73)"),
-// OpenRouter's ("sk-or-v1-27e...d4d") and OpenAI's ("sk-proj-****…xxkA"). Len is 0 when the form
-// does not give it. ok is false when the text is not a hint of one value.
-func normalHint(s string) (secretrisk.Hint, bool) {
-	if h, ok := secretrisk.ParseHint(s); ok {
-		return h, true
-	}
-	for _, sep := range []string{"...", "…"} {
-		if i := strings.Index(s, sep); i > 0 {
-			pre, tail := s[:i], s[i+len(sep):]
-			return secretrisk.Hint{Prefix: strings.TrimRight(pre, "*"), Tail: strings.TrimLeft(tail, "*")}, true
-		}
-	}
-	if i, j := strings.IndexByte(s, '*'), strings.LastIndexByte(s, '*'); i > 0 && j < len(s)-1 {
-		return secretrisk.Hint{Prefix: s[:i], Tail: s[j+1:]}, true
-	}
-	return secretrisk.Hint{}, false
-}
-
-// hintsFit reports whether two hints can describe the same value: one prefix starts the other,
-// one tail ends the other, and the lengths agree when both are known.
-func hintsFit(a, b secretrisk.Hint) bool {
-	if a.Len > 0 && b.Len > 0 && a.Len != b.Len {
-		return false
-	}
-	return (strings.HasPrefix(a.Prefix, b.Prefix) || strings.HasPrefix(b.Prefix, a.Prefix)) &&
-		(strings.HasSuffix(a.Tail, b.Tail) || strings.HasSuffix(b.Tail, a.Tail))
 }
 
 // homePath writes an absolute path under the home directory as ~/…, the way locations are kept.
@@ -185,8 +194,10 @@ func homePath(p string) string {
 
 // correlate finds, in the folded runs, every credential finding that stands for a rotate item's
 // secret, and every secret a connector signed in with (run_end's secret fingerprints) that is one.
-// A finding whose item the owner accepted stays there: that risk was kept on purpose.
-func (t *Tracker) correlate(folded map[string]*run) map[string]claim {
+// A finding whose hint fits several secrets is merged into none: it comes back in possible, once
+// per secret it may be. A finding whose item the owner accepted stays there: that risk was kept on
+// purpose.
+func (t *Tracker) correlate(folded map[string]*run) (claims map[string]claim, possible []claim) {
 	x := t.secretIndex()
 	accepted := map[string]bool{}
 	for _, it := range t.Items {
@@ -196,17 +207,23 @@ func (t *Tracker) correlate(folded map[string]*run) map[string]claim {
 			}
 		}
 	}
-	out := map[string]claim{}
+	claims = map[string]claim{}
 	for _, r := range folded {
 		for _, f := range r.findings {
 			c := credentialFor(f)
 			if c == nil || accepted[f.ID] {
 				continue
 			}
-			if it, how := x.match(f, c); it != nil {
+			hits, how := x.match(f, c)
+			for _, h := range hits {
 				ref := refOf(f)
-				ref.Match = how
-				out[f.ID] = claim{item: it, ref: ref}
+				ref.Match, ref.Confidence, ref.Key = how, h.confidence, keyFactsOf(f, c)
+				if how == byPossible {
+					ref.Title += fmt.Sprintf(" (its hint fits %d secrets)", len(hits))
+					possible = append(possible, claim{item: h.item, ref: ref})
+				} else {
+					claims[f.ID] = claim{item: h.item, ref: ref}
+				}
 			}
 		}
 		for _, name := range sortedKeys(r.fingerprints) {
@@ -220,10 +237,24 @@ func (t *Tracker) correlate(folded map[string]*run) map[string]claim {
 				title += " and its run of " + r.at.Format(time.DateOnly) + " worked"
 			}
 			id := "uses:" + r.label + ":" + name
-			out[id] = claim{item: it, ref: FindingRef{ID: id, Connector: conn, Instance: inst, Title: title, LastSeen: r.at, Match: byFingerprint}}
+			claims[id] = claim{item: it, ref: FindingRef{ID: id, Connector: conn, Instance: inst, Title: title, LastSeen: r.at,
+				Match: byFingerprint, Confidence: confCertain}}
 		}
 	}
-	return out
+	return claims, possible
+}
+
+// keyFactsOf is what a provider's key finding says about the key: its name, last use and spend
+// this month. Nil for credentials that are not a provider's keys.
+func keyFactsOf(f finding.Finding, c *credential) *KeyFacts {
+	if !c.facts {
+		return nil
+	}
+	k := &KeyFacts{Name: f.Resource.Name, LastUsed: f.LastUsedAt}
+	if v, ok := f.Evidence[c.spend].(float64); c.spend != "" && ok {
+		k.SpendMonthUSD = &v
+	}
+	return k
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -235,31 +266,41 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-// attachLive puts on each rotate item the claims of this sync, replacing the ones the same
-// connector instances made before; claims of instances not folded now stay.
-func (t *Tracker) attachLive(claims map[string]claim, folded map[string]*run) {
-	by := map[*Item][]FindingRef{}
+// attachLive puts on each rotate item the claims and possible matches of this sync, replacing the
+// ones the same connector instances made before; those of instances not folded now stay.
+func (t *Tracker) attachLive(claims map[string]claim, possible []claim, folded map[string]*run) {
+	live, maybe := map[*Item][]FindingRef{}, map[*Item][]FindingRef{}
 	for _, c := range claims {
-		by[c.item] = append(by[c.item], c.ref)
+		live[c.item] = append(live[c.item], c.ref)
+	}
+	for _, c := range possible {
+		maybe[c.item] = append(maybe[c.item], c.ref)
 	}
 	for _, it := range t.Items {
 		if it.Kind != KindRotate {
 			continue
 		}
-		kept := it.Findings[:0]
-		for _, r := range it.Findings {
-			if _, now := folded[r.Label()]; !now {
-				kept = append(kept, r)
-			}
-		}
-		refs := append(kept, by[it]...)
-		sort.Slice(refs, func(i, j int) bool { return refs[i].ID < refs[j].ID })
-		if len(refs) == 0 {
-			refs = nil
-		}
-		it.Findings = refs
+		it.Findings = replaceRefs(it.Findings, live[it], folded)
+		it.Possible = replaceRefs(it.Possible, maybe[it], folded)
 		it.derive()
 	}
+}
+
+// replaceRefs keeps the refs of instances not folded now, adds this sync's, sorted by id; nil when
+// none are left.
+func replaceRefs(old, now []FindingRef, folded map[string]*run) []FindingRef {
+	kept := old[:0]
+	for _, r := range old {
+		if _, ok := folded[r.Label()]; !ok {
+			kept = append(kept, r)
+		}
+	}
+	refs := append(kept, now...)
+	sort.Slice(refs, func(i, j int) bool { return refs[i].ID < refs[j].ID })
+	if len(refs) == 0 {
+		return nil
+	}
+	return refs
 }
 
 // claimedBy maps each claimed finding to the rotate item that took it.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 const (
@@ -124,7 +125,10 @@ func secretFinding(a app, p passwordCredential, now time.Time) finding.Finding {
 	if p.DisplayName != "" {
 		name += " / " + p.DisplayName
 	}
-	ev := map[string]any{"app_id": a.AppID, "key_id": p.KeyID, "hint": p.Hint}
+	ev := map[string]any{"app_id": a.AppID, "key_id": p.KeyID}
+	if p.Hint != "" { // Graph's hint is the secret's first characters; it gives no length
+		ev["hint"] = secretrisk.Hint{Prefix: p.Hint}.String()
+	}
 	if p.EndDateTime != nil {
 		ev["expires_at"] = p.EndDateTime.UTC().Format(time.RFC3339)
 	}

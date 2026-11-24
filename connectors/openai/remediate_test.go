@@ -89,7 +89,7 @@ func TestDeletePlanIsExactAndBlockedWithoutAWriteKey(t *testing.T) {
 	if !reflect.DeepEqual(p.Calls, want) || len(p.Commands) != 0 || len(p.Undo) != 0 {
 		t.Fatalf("plan %+v", p)
 	}
-	if !strings.Contains(p.Summary, `project API key "stale" in project "lab" (sk-proj-…key_stale)`) || !strings.Contains(p.Summary, "200 days ago") {
+	if !strings.Contains(p.Summary, `project API key "stale" in project "lab" (sk-proj-…tale(?))`) || !strings.Contains(p.Summary, "200 days ago") {
 		t.Errorf("summary %q", p.Summary)
 	}
 	if !strings.Contains(p.Blocked, "remediation_secrets") || !strings.Contains(p.SideEffects[0], "No undo") {

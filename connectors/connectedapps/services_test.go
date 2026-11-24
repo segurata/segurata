@@ -150,6 +150,92 @@ func TestSlackReadsEachSignedInWorkspace(t *testing.T) {
 	}
 }
 
+// slackList is an admin.apps.installed.list response with these apps.
+func slackList(apps ...map[string]any) *response {
+	body, _ := json.Marshal(map[string]any{"ok": true, "apps": apps})
+	return &response{status: 200, body: body}
+}
+
+func slackInstalledApp(id, name string, bot, user []string) map[string]any {
+	return map[string]any{"id": id, "name": name, "declared_bot_scopes": bot, "declared_user_scopes": user, "is_internal": false,
+		"icons": map[string]any{"image_32": "https://example.test/i.png"}}
+}
+
+// The manage page's own app list gives each app's declared scopes, per workspace: an app is graded
+// by what they let it do, the scope count stays as evidence, and a row the list lacks (an app
+// waiting for approval) keeps the row's reading. A workspace whose list renders no row still has
+// its apps and its id (from the page URL). The page is loaded once per workspace.
+func TestSlackGradesAppsByTheirDeclaredScopes(t *testing.T) {
+	const acmeURL = "https://app.slack.com/apps-manage/T0ACME123/integrations/installed"
+	const prof = "https://app.slack.com/apps-manage/T0ACME123/integrations/profile/"
+	acme := map[string]any{"url": acmeURL, "text": "Installed apps", "fetched": true, "rows": rows(
+		row{Name: "Poster", Href: prof + "A1/permissions", Lines: []string{"Poster", "3 scopes", "Approved"}},
+		row{Name: "Wanted Bot", Href: prof + "A9/permissions", Lines: []string{"Wanted Bot", "20 scopes", "Approval required"}},
+	)}
+	zeta := map[string]any{"url": "https://app.slack.com/apps-manage/T0ZETA999/integrations/installed", "text": "Installed apps", "fetched": true}
+	b := &fakeBrowser{pages: map[string]any{
+		slackSignin: page(slackSignin, "Your workspaces", rows(row{Href: "https://acme-team.slack.com/"}, row{Href: "https://zeta-team.slack.com/"})),
+		"https://acme-team.slack.com/apps/manage": acme,
+		"https://zeta-team.slack.com/apps/manage": zeta,
+	}, responses: map[string]*response{
+		"https://acme-team.slack.com/apps/manage": slackList(
+			slackInstalledApp("A1", "Poster", []string{"chat:write", "chat:write.public", "commands"}, nil),
+			slackInstalledApp("A2", "Reader", nil, []string{"channels:history", "im:history", "users:read"}),
+			slackInstalledApp("A3", "Shared Bot", []string{"incoming-webhook"}, nil),
+		),
+		"https://zeta-team.slack.com/apps/manage": slackList(
+			slackInstalledApp("A3", "Shared Bot", []string{"chat:write", "channels:history"}, nil),
+		),
+	}}
+	rec := run(t, b, nil, "slack")
+
+	poster := rec.byName(t, "Poster")
+	if poster.Severity != finding.SevMedium || poster.Title != "Poster can post as a bot and post in public channels it was not added to" ||
+		poster.Evidence["scope_count"] != 3 || poster.Remediation.URL != prof+"A1/permissions" || poster.Evidence["note"] != "Approved" {
+		t.Errorf("poster: %+v", poster)
+	}
+	if caps, _ := poster.Evidence["capabilities"].([]string); !reflect.DeepEqual(caps, []string{"post", "post_public"}) {
+		t.Errorf("poster capabilities %v", poster.Evidence["capabilities"])
+	}
+	reader := rec.byName(t, "Reader")
+	if reader.Severity != finding.SevHigh || !strings.Contains(reader.Title, "read messages as the person who installed it") ||
+		!reflect.DeepEqual(reader.Evidence["user_scopes"], []string{"channels:history", "im:history", "users:read"}) ||
+		reader.Remediation.URL != prof+"A2/permissions" {
+		t.Errorf("reader: %+v", reader)
+	}
+	if w := rec.byName(t, "Wanted Bot"); w.Severity != finding.SevInfo || w.Evidence["scope_count"] != 20 {
+		t.Errorf("pending app: %+v", w)
+	}
+	// One app, two workspaces, two declarations.
+	var shared []finding.Finding
+	for _, f := range rec.findings {
+		if f.Resource.Name == "Shared Bot" {
+			shared = append(shared, f)
+		}
+	}
+	if len(shared) != 2 || shared[0].Account != "slack:acme-team.slack.com" || shared[0].Severity != finding.SevLow ||
+		shared[1].Account != "slack:zeta-team.slack.com" || shared[1].Severity != finding.SevHigh ||
+		shared[1].Remediation.URL != "https://app.slack.com/apps-manage/T0ZETA999/integrations/profile/A3/permissions" {
+		t.Errorf("shared bot: %+v", shared)
+	}
+	if ws := rec.byName(t, "zeta-team.slack.com"); ws.Evidence["team_id"] != "T0ZETA999" {
+		t.Errorf("zeta workspace record: %+v", ws)
+	}
+	if d := rec.detail("slack:acme-team.slack.com", finding.StateOK); d != "4 apps" {
+		t.Errorf("acme status %q (%+v)", d, rec.statuses)
+	}
+
+	// No list and no row: nothing can be listed, so the workspace is unverified, not "0 apps".
+	b = &fakeBrowser{pages: map[string]any{
+		slackSignin: page(slackSignin, "Your workspaces", rows(row{Href: "https://acme-team.slack.com/"})),
+		"https://acme-team.slack.com/apps/manage": map[string]any{"url": acmeURL, "text": "Installed apps\nFilter"},
+	}, responses: map[string]*response{"https://acme-team.slack.com/apps/manage": {status: 200, body: []byte(`{"ok":false,"error":"not_allowed"}`)}}}
+	rec = run(t, b, nil, "slack")
+	if d := rec.detail("slack:acme-team.slack.com", finding.StateUnverified); !strings.Contains(d, `the app list answered "not_allowed"`) || len(rec.findings) != 0 {
+		t.Errorf("unlisted workspace: %+v %+v", rec.statuses, rec.findings)
+	}
+}
+
 func TestNotionReadsDeveloperConnections(t *testing.T) {
 	b := &fakeBrowser{pages: map[string]any{notionURL: map[string]any{"url": notionURL, "text": "Integrations", "cells": [][][]string{
 		{{"W", "Writer Bot", "Read, update, and insert content, read and insert comments, and read user information"}, {"API token", "Internal to Example Space"}, {"Ada Example"}, {"Nov 11, 2026"}},

@@ -118,8 +118,21 @@ type FindingRef struct {
 	Type     string `json:"type,omitempty"`
 	Resource string `json:"resource,omitempty"`
 	// Match, on a rotate item's ref, says how the connector's credential was matched with the
-	// secret: fingerprint, hint (redacted hint and service) or path (the file holding it).
-	Match string `json:"match,omitempty"`
+	// secret: fingerprint, hint (redacted hint and service), path (the file holding it) or possible
+	// (a hint that fits this secret and others, in Item.Possible). Confidence says how sure:
+	// certain, high or medium (see correlate.go).
+	Match      string `json:"match,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
+	// Key is what a provider's key finding says about the key, on a rotate item's ref.
+	Key *KeyFacts `json:"key,omitempty"`
+}
+
+// KeyFacts are a provider's facts about a key that a rotate item's secret is: its name in the
+// provider's console, its last use and its spend this month, when the connector reports them.
+type KeyFacts struct {
+	Name          string     `json:"name,omitempty"`
+	LastUsed      *time.Time `json:"last_used,omitempty"`
+	SpendMonthUSD *float64   `json:"spend_month_usd,omitempty"`
 }
 
 // Label is the connector instance as the command line names it: name or name:label.
@@ -177,18 +190,21 @@ type Item struct {
 	PriorityOverride *Override           `json:"priority_override,omitempty"`
 	Severity         finding.Severity    `json:"severity,omitempty"` // worst linked finding
 	Findings         []FindingRef        `json:"findings,omitempty"`
-	Fingerprint      string              `json:"fingerprint,omitempty"` // rotate items
-	Secret           *Secret             `json:"secret,omitempty"`      // rotate items
-	Next             *Next               `json:"next,omitempty"`
-	Decision         *Decision           `json:"decision,omitempty"`
-	Accepted         *Acceptance         `json:"accepted,omitempty"`
-	SnoozedUntil     string              `json:"snoozed_until,omitempty"`
-	MergedInto       string              `json:"merged_into,omitempty"` // status merged: the item that owns the problem
-	StatusAt         time.Time           `json:"status_at"`             // last status change
-	VerifiedAt       *time.Time          `json:"verified_at,omitempty"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
-	History          []Event             `json:"history"`
+	// Possible are, on a rotate item, credential findings whose hint fits this secret and another:
+	// shown as possible, never merged, never raising the priority.
+	Possible     []FindingRef `json:"possible,omitempty"`
+	Fingerprint  string       `json:"fingerprint,omitempty"` // rotate items
+	Secret       *Secret      `json:"secret,omitempty"`      // rotate items
+	Next         *Next        `json:"next,omitempty"`
+	Decision     *Decision    `json:"decision,omitempty"`
+	Accepted     *Acceptance  `json:"accepted,omitempty"`
+	SnoozedUntil string       `json:"snoozed_until,omitempty"`
+	MergedInto   string       `json:"merged_into,omitempty"` // status merged: the item that owns the problem
+	StatusAt     time.Time    `json:"status_at"`             // last status change
+	VerifiedAt   *time.Time   `json:"verified_at,omitempty"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+	History      []Event      `json:"history"`
 }
 
 // Theme groups items for the briefing.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 type repo struct {
@@ -434,7 +435,7 @@ func (r *run) reportRepos(repos []repo, results []repoResult) {
 			Resource:    finding.Resource{Type: "github_repo_setting", ID: string(k.check), Name: k.owner},
 			Kind:        finding.KindSetting,
 			Severity:    severities[k.check],
-			Title:       fmt.Sprintf(ru.title, len(names), plural(len(names), "repository", "repositories"), k.owner),
+			Title:       fmt.Sprintf(ru.title, len(names), textfmt.Plural(len(names), "repository", "repositories"), k.owner),
 			Evidence:    map[string]any{"check": string(k.check), "count": len(names), "repositories": listed},
 			Remediation: remedy(ru.fix, ru.url, k.owner, k.check),
 		})

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 type membership struct {
@@ -189,7 +190,7 @@ func (r *run) orgPeople(ctx context.Context, o *orgReport) {
 	if ms, err := list[login](ctx, r, "/orgs/"+o.org+"/members?filter=2fa_disabled&per_page=100"); err != nil {
 		o.fail("members without 2FA", err)
 	} else if len(ms) > 0 {
-		o.add(orgMembersNo2FA, fmt.Sprintf("%d %s of %s %s no two-factor authentication", len(ms), plural(len(ms), "member", "members"), o.org, plural(len(ms), "has", "have")),
+		o.add(orgMembersNo2FA, fmt.Sprintf("%d %s of %s %s no two-factor authentication", len(ms), textfmt.Plural(len(ms), "member", "members"), o.org, textfmt.Plural(len(ms), "has", "have")),
 			"Ask them to enable two-factor authentication, then require it for the organization.",
 			"https://github.com/orgs/"+o.org+"/people", map[string]any{"count": len(ms), "logins": logins(ms)})
 	}
@@ -206,7 +207,7 @@ func (r *run) orgPeople(ctx context.Context, o *orgReport) {
 	if err != nil {
 		o.fail("outside collaborators without 2FA", err)
 	} else if len(cs) > 0 {
-		o.add(orgCollaboratorsNo2FA, fmt.Sprintf("%d outside %s of %s %s no two-factor authentication", len(cs), plural(len(cs), "collaborator", "collaborators"), o.org, plural(len(cs), "has", "have")),
+		o.add(orgCollaboratorsNo2FA, fmt.Sprintf("%d outside %s of %s %s no two-factor authentication", len(cs), textfmt.Plural(len(cs), "collaborator", "collaborators"), o.org, textfmt.Plural(len(cs), "has", "have")),
 			"Ask them to enable two-factor authentication, or remove their access, then require it for the organization.",
 			"https://github.com/orgs/"+o.org+"/outside-collaborators", map[string]any{"count": len(cs), "logins": logins(cs)})
 	}
@@ -316,11 +317,4 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
 }

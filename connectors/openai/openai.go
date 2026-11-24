@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 const (
@@ -250,6 +251,17 @@ type adminKey struct {
 	} `json:"owner"`
 }
 
+// keyHint writes a key's redacted_value in secretrisk.Redact's format. OpenAI masks one star per
+// hidden character (an sk-proj key's redacted_value is 164 characters long, the length of the key;
+// checked 2026-11-24), so a long run of stars gives the key's length; a short mask does not.
+func keyHint(redacted string) string {
+	n := 0
+	if strings.Count(redacted, "*") >= 20 {
+		n = len(redacted)
+	}
+	return secretrisk.Masked(redacted, n)
+}
+
 // adminKeyPrefix marks real admin keys in redacted_value; everything else in the admin listing
 // is a project key.
 const adminKeyPrefix = "sk-admin"
@@ -457,7 +469,7 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 	created, lastUsed, expires := httpx.Unix(k.CreatedAt), httpx.Unix(k.LastUsedAt), httpx.Unix(k.ExpiresAt)
 	a := keyAssessment(lastUsed, expires, k.OwnerProjectAccess == "inactive", cover, now)
 	ev := map[string]any{
-		"redacted":   k.RedactedValue,
+		"redacted":   keyHint(k.RedactedValue),
 		"project":    p.label(),
 		"project_id": p.ID,
 		"owner":      k.Owner.label(),
@@ -500,7 +512,7 @@ func adminKeyFinding(k adminKey, now time.Time) finding.Finding {
 	if k.Name != nil && *k.Name != "" {
 		n = *k.Name
 	}
-	ev := map[string]any{"redacted": k.RedactedValue, "owner": k.Owner.Name, "issues": a.Reasons}
+	ev := map[string]any{"redacted": keyHint(k.RedactedValue), "owner": k.Owner.Name, "issues": a.Reasons}
 	if expires != nil {
 		ev["expires_at"] = expires
 	}

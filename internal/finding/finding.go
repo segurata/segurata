@@ -184,6 +184,10 @@ type Status struct {
 	Was      State  `json:"was,omitempty"`
 }
 
+// IdleAfter is how long a credential can go unused before it is worth a look; a credential used
+// more recently is in use.
+const IdleAfter = 90 * 24 * time.Hour
+
 // Redact keeps a short prefix and the length, enough to recognise a key without leaking it.
 func Redact(secret string) string {
 	const keep = 6

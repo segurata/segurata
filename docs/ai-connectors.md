@@ -2,7 +2,10 @@
 
 Three built-in connectors look for keys and accounts that can spend money without a ceiling:
 `openai`, `anthropic` and `openrouter`. They send read-only `GET` requests and never print or store
-a key value; a key appears only as the redacted hint the provider itself returns. The remediations
+a key value; a key appears only as the redacted hint the provider itself returns, rewritten in
+`secretrisk.Redact`'s format (architecture.md, "Hints"): OpenAI's `redacted_value` gives the length
+(one star per hidden character), `sk-proj-…j_MA(164)`; OpenRouter's label and Anthropic's
+`partial_key_hint` do not, `sk-or-v1-27e…d4d(?)`. The remediations
 `openai.key.delete-unused` and `openrouter.key.delete-unused` delete a key only after a confirmed
 plan, with a separate write key under `remediation_secrets` (README, "Write credentials").
 

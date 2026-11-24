@@ -171,24 +171,25 @@ func (e *env) fail(who string, err error) {
 
 // grant is one thing a service reports: a connected app, a session or a key.
 type grant struct {
-	who       string       // service account, see env.account
-	scope     string       // what keeps names apart within the service: a Slack workspace, a Notion workspace
-	resType   string       // resource type, such as "github_oauth_app"
-	kind      finding.Kind // grant for apps, credential for keys and sessions
-	name      string
-	key       string   // what identifies it when the name can change (a session's IP); defaults to name
-	scopes    []string // permissions as the service words them
-	count     int      // number of scopes when only the count is shown (Slack)
-	publisher string
-	orgs      []string // GitHub organizations the app can reach
-	created   *time.Time
-	lastUsed  *time.Time
-	usedText  string // last use as the page words it ("Last used within the last 11 months")
-	stale     bool   // last used more than a year ago, from a date or the page's wording
-	url       string // page where the owner revokes it
-	revoke    string // what to do on that page
-	note      string
-	extra     map[string]any
+	who        string       // service account, see env.account
+	scope      string       // what keeps names apart within the service: a Slack workspace, a Notion workspace
+	resType    string       // resource type, such as "github_oauth_app"
+	kind       finding.Kind // grant for apps, credential for keys and sessions
+	name       string
+	key        string   // what identifies it when the name can change (a session's IP); defaults to name
+	scopes     []string // permissions as the service words them (a Slack app's bot scopes)
+	userScopes []string // a Slack app's user-token scopes: it acts as the person who installed it
+	count      int      // number of scopes when only the count is shown (Slack)
+	publisher  string
+	orgs       []string // GitHub organizations the app can reach
+	created    *time.Time
+	lastUsed   *time.Time
+	usedText   string // last use as the page words it ("Last used within the last 11 months")
+	stale      bool   // last used more than a year ago, from a date or the page's wording
+	url        string // page where the owner revokes it
+	revoke     string // what to do on that page
+	note       string
+	extra      map[string]any
 }
 
 // report turns a grant into a finding with a stable id: service, resource type and name, plus an
@@ -236,6 +237,9 @@ func (e *env) report(g grant) {
 	}
 	if g.scopes != nil {
 		ev["scopes"] = g.scopes
+	}
+	if g.userScopes != nil {
+		ev["user_scopes"] = g.userScopes
 	}
 	if g.count > 0 {
 		ev["scope_count"] = g.count

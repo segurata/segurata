@@ -106,7 +106,7 @@ func TestInventoryFindsUncappedAndIdleKeysAcrossWorkspacesAndPages(t *testing.T)
 		t.Errorf("a key with usage but no last_used_at is idle, not never used: %v", legacy.Evidence["issues"])
 	}
 	stale := rec.ByResource(t, "api_key", "capped_stale")
-	if stale.LastUsedAt == nil || stale.CreatedAt == nil || stale.Account != "main" || stale.Evidence["redacted"] != "sk-or-v1-abc...123" {
+	if stale.LastUsedAt == nil || stale.CreatedAt == nil || stale.Account != "main" || stale.Evidence["redacted"] != "sk-or-v1-abc…123(?)" {
 		t.Errorf("finding fields: %+v", stale)
 	}
 

@@ -10,7 +10,7 @@ import (
 var themes = []Theme{
 	{"rotations", "Secrets to rotate", "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."},
 	{"data-dumps", "Data dumps in git", "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."},
-	{"transcripts", "Secrets in trail files", "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."},
+	{"transcripts", "Trail files to redact", "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."},
 	{"mac", "This Mac", "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."},
 	{"browser-extensions", "Browser extensions", "Extensions that can read or drive your pages, one item per extension."},
 	{"github-orgs", "GitHub", "Organizations and repositories you administer: 2FA, default permissions, Actions, secret scanning."},
@@ -64,11 +64,19 @@ var seedDecisions = []seedDecision{
 		[]string{"yes: segurata schedule install --apply", "not now"}, secretrisk.P3},
 }
 
-// seed adds the themes and seeded decisions that are missing.
+// seed adds the themes and seeded decisions that are missing. A theme segurata defines keeps the
+// title and description of this version, so renaming one here renames it in every tracker.
 func (t *Tracker) seed(now time.Time) {
+	defined := map[string]Theme{}
+	for _, th := range themes {
+		defined[th.ID] = th
+	}
 	have := map[string]bool{}
-	for _, th := range t.Themes {
+	for i, th := range t.Themes {
 		have[th.ID] = true
+		if def, ok := defined[th.ID]; ok {
+			t.Themes[i] = def
+		}
 	}
 	for _, th := range themes {
 		if !have[th.ID] {

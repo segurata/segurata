@@ -14,6 +14,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // SyncOptions say which runs a sync folds in.
@@ -152,7 +153,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	}
 	// A connector's credential that is a rotate item's secret goes to that item, not to a group of
 	// its own (see correlate.go).
-	claims := t.correlate(folded)
+	claims, possible := t.correlate(folded)
 	regroup := map[string]string{} // finding id -> key of the group it moves to
 	for _, l := range rep.Runs {
 		r := folded[l]
@@ -195,7 +196,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		if !existed {
 			it = t.newItem(p.kind, key, p.theme, "", now)
 			byKey[key] = it
-			it.Log(now, EvFound, actFound, count(len(p.refs), "finding", "findings"))
+			it.Log(now, EvFound, actFound, textfmt.Count(len(p.refs), "finding", "findings"))
 			if expected == nil {
 				rep.Created++
 			}
@@ -205,7 +206,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		}
 		seen[it] = map[string]bool{}
 		if added := it.upsert(p.refs, seen[it]); added > 0 && existed {
-			it.Log(now, EvSeen, actSeen, count(added, "new finding", "new findings"))
+			it.Log(now, EvSeen, actSeen, textfmt.Count(added, "new finding", "new findings"))
 		}
 		switch {
 		case strings.HasPrefix(key, "transcripts:"):
@@ -227,7 +228,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		}
 	}
 
-	t.attachLive(claims, folded)
+	t.attachLive(claims, possible, folded)
 	moved := claimedBy(claims)
 	for id, key := range regroup {
 		moved[id] = byKey[key].ID
@@ -278,7 +279,7 @@ func (r SyncReport) FoldedSecrets() bool {
 // SyncLine is the one-line summary of what a sync did to items other than secrets.
 func SyncLine(r SyncReport) string {
 	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config, %d closed by decisions, %d merged into the secret they hold; %d snoozes and %d acceptances expired.\n",
-		count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Merged, r.Woken, r.Lapsed)
+		textfmt.Count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Merged, r.Woken, r.Lapsed)
 	if len(r.Stale) > 0 {
 		s += fmt.Sprintf("Skipped older runs than the tracker already holds: %s.\n", strings.Join(r.Stale, ", "))
 	}
@@ -318,7 +319,7 @@ func (p *proposal) finishTranscripts() {
 			files[ev.Path] = true
 		}
 	}
-	p.title = fmt.Sprintf("Redact secrets from %s (agent transcripts, shell histories, logs)", count(len(files), "trail file", "trail files"))
+	p.title = fmt.Sprintf("Redact secrets from %s (agent transcripts, shell histories, logs)", textfmt.Count(len(files), "trail file", "trail files"))
 }
 
 // RunLabel names a connector instance from its records, which carry the exact connector name and

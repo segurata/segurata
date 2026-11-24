@@ -184,13 +184,13 @@ connector and resource type, first match wins:
 | github org and repository-setting checks | check, across orgs ("Two-factor authentication not required in 5 GitHub orgs") | fix |
 | github repositories | organization | fix |
 | connected-apps Slack apps | workspace and severity | review |
-| other connected-apps | account and title family ("27 X apps can post and delete posts as you") | review |
+| other connected-apps | account and title family ("27 X apps can post and delete posts as you"); the predicate agrees with the count (`textfmt.PluralPredicate`: "shared with them", "they are installed on") | review |
 | google-personal OAuth grants | account and severity | review |
 | gcp API keys, service-account keys, service-account roles | project | fix |
 | openai, anthropic, openrouter API keys | instance, account and severity | fix |
 | macos, aws | finding | fix |
 | browser-extensions | extension | review |
-| anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked) | fix |
+| anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked), titled by the worst finding: `Expired client secret of app "Billing" is still registered, and 69 more like it` | fix |
 | a connector status other than `ok` | instance, account and state | setup |
 
 A setup item keeps one ref per distinct status detail (`status:<key>#<hash of the detail>`), so
@@ -728,7 +728,7 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | Connector | How it looks | What it looks for |
 |---|---|---|
 | `google-personal` | CDP over the signed-in browser | Linked apps, scopes, dates, accounts that need a fresh sign-in |
-| `connected-apps` | CDP over the signed-in browser, `gh api` | Apps connected to GitHub (OAuth apps with scopes and organization access, GitHub Apps, sessions, SSH/signing/GPG keys), X, Slack (every signed-in workspace), Notion (developer connections), Facebook (first page of Apps and websites), Dropbox (from the page's own app-list response), Instagram and LinkedIn (empty list verified only), Microsoft personal accounts (session check only), Microsoft work accounts (My Apps enterprise apps from the page's own tiles response; Security info's MFA step-up as a scoped `reauth`). `services` in the config selects some; one instance per service is allowed |
+| `connected-apps` | CDP over the signed-in browser, `gh api` | Apps connected to GitHub (OAuth apps with scopes and organization access, GitHub Apps, sessions, SSH/signing/GPG keys), X, Slack (every signed-in workspace, from the manage page's own `admin.apps.installed.list` response: declared bot and user scopes, graded by capability in `slackscopes.go`), Notion (developer connections), Facebook (first page of Apps and websites), Dropbox (from the page's own app-list response), Instagram and LinkedIn (empty list verified only), Microsoft personal accounts (session check only), Microsoft work accounts (My Apps enterprise apps from the page's own tiles response; Security info's MFA step-up as a scoped `reauth`). `services` in the config selects some; one instance per service is allowed |
 | `local-secrets` | `rg`, `gitleaks`, `git`, `ssh-keygen`, `gh` (optional) | Plaintext secrets in config and `.env` files, shell histories, logs, agent transcripts and git history; database dumps committed to git, one finding per file; SSH keys without a passphrase; HMAC fingerprints so one secret is recognised in every place it appears |
 | `github` | `gh api`, GET on allowlisted paths | Account 2FA; organizations you own: 2FA requirement and members or outside collaborators without it, base permission, public repository creation, Actions (allowed actions, default workflow token, PR approval), code security defaults for new repositories; repositories you administer: insecure webhooks, write deploy keys, secret scanning and push protection, write workflow token on public repositories, Dependabot security updates, optional default-branch protection. Missing scopes are `noscope` with the `gh auth refresh` command |
 | `gcp` | `gcloud` CLI | Unrestricted API keys, service-account keys and their age, service accounts with broad roles, billing budgets judged by the shared spend rules (connectors.md, "Spend and budgets"), local ADC credentials and their scopes |
@@ -1035,9 +1035,18 @@ every run without a new scan.
 Hints. Every value hint the connector writes is `secretrisk.Redact`'s: the known prefix, `…`, the
 last four characters when the value is long and random, and the length, `sk_live_…a1b2(107)`;
 `secretrisk.ParseHint` reads it back. Keys and whole files have no value hint (`PEM`, empty).
+Every other connector that reports a key writes its hint in the same format, from what the
+provider shows: `secretrisk.Masked` keeps every character the provider shows in front, at most the
+last four at the end, and the length, or `(?)` when the provider does not give it
+(`sk-or-v1-27e…d4d(?)`, `sk-ant-api03-R2D…igAA(?)`, Azure's first characters `abc…(?)`);
+`secretrisk.RedactID` writes an identifier that names a key (`AKIA…WXYZ(20)`). `ParseHint` reads
+`(?)` as an unknown length (`Hint.Len` 0): such a hint agrees with any length and locates no value
+(`Hint.Fits` needs a length). `secretrisk.ReadHint` also reads a provider's raw masked form, for
+findings written before this convention.
 
-Titles. A rotate item is named `<label> <hint> in <repo>:<file> (+N places), committed YYYY-MM`:
-the location that exposed it most (among equals the owner's repository, then the latest commit),
+Titles. A rotate item is named `<label> <hint> in <repo>:<file> (+N places), committed YYYY-MM`,
+with ` = "<key name>" (in use, $N this month)` after the hint when a provider's live key matched it
+(see "Correlation"): the location that exposed it most (among equals the owner's repository, then the latest commit),
 the number of other locations, and the earliest commit date. Within a priority, secrets that are
 live and leaked come first (see "Correlation"), then by exposure, then those a working file holds
 (`used_in`), with a copy in an owned repository, with the most recent commit, and found in more
@@ -1107,7 +1116,7 @@ reported by id, and an info finding `aws_account` (`account_id`) when an alias s
 id; one info finding `gcp_projects` per gcp account with the id and number of each project it
 sees, and the gcp accounts (people, not service accounts) as emails; the google-personal accounts
 inspected (status `ok`) as emails; one info finding `slack_workspace` (`team_id`, read from the
-links of its apps; a workspace with no app gives none) per Slack workspace connected-apps reads;
+manage page's URL or the links of its apps) per Slack workspace connected-apps reads;
 the GitHub login and every organization the github and connected-apps connectors name. Each sync adds what it finds to the
 tracker's top-level `owned` and never drops a value, so a sync without an aws run still knows the
 account. Config `owned` (`aws_accounts`, `gcp_projects` (ids or numbers), `slack_teams`, `github`,
@@ -1156,16 +1165,28 @@ grouping, each credential finding of a folded run is matched with a rotate item:
 
 The match is, in order: the fingerprint, when the finding carries one (the aws connector gives the
 key id's); a finding with a fingerprint matches nothing else, since the key in the file may have
-been rotated since the copy leaked. Else the redacted hint and the service: the hint forms of
-segurata (`AKIA…(20)`), OpenRouter (`sk-or-v1-27e...d4d`) and OpenAI (`sk-proj-****…xxkA`) are
-read into prefix, tail and length (`secretrisk.Hint`), and two fit when one prefix starts the
-other, one tail ends the other and known lengths agree; a hint match needs at least three
-characters of tail, enough to tell keys apart. Else the file: a rotate item with a location at the
-finding's path (`file`, `path`) whose hint, when both have one, fits. Among several candidates the
-most urgent wins. A finding whose item the owner accepted is left alone.
+been rotated since the copy leaked. Else the service, prefix, last characters and length: both
+hints are read into prefix, tail and length (`secretrisk.Hint`, see "Hints"), and they agree when
+one prefix starts the other, one tail ends the other and known lengths are equal
+(`Hint.Agrees`); a hint match needs at least three characters of tail, enough to tell keys apart.
+A hint that fits two or more secrets merges into none: each of them records the finding under
+`possible` (match `possible`, title "… (its hint fits 2 secrets)", reason "possibly: <instance>:
+<title>"), which never raises a priority, and the connector's item stays. Else the file: a rotate
+item with a location at the finding's path (`file`, `path`) whose hint, when both have one, fits;
+among several the most urgent wins, since a file can hold several parts of one credential (ADC's
+client secret and refresh token). A finding whose item the owner accepted is left alone.
+
+Each match has a `confidence`: `certain` by fingerprint (and for a secret a connector signs in
+with), `high` by a hint with four or more tail characters and the same known length on both sides,
+`medium` by a shorter tail, an unknown length or the file. A provider's key (openai, openrouter,
+anthropic) also brings its facts (`key`: name, last use, spend this month when the connector
+reports it, OpenRouter's `usage_month`), and the rotate item's title names the key from the
+surest live ref that has them: `OpenRouter API key sk-or-v1-…fd4d(73) = "Claude Code" (in use,
+$42.00 this month) in ~/.claude/projects/p/s.jsonl` (in use: used within 90 days of that run,
+`finding.IdleAfter`; else "last used YYYY-MM-DD").
 
 A matched finding is not grouped: it goes on the rotate item as a finding ref with `match`
-(`fingerprint`, `hint` or `path`), replaced at every sync that folds its connector instance. The
+(`fingerprint`, `hint` or `path`) and `confidence`, replaced at every sync that folds its connector instance. The
 connector's item loses that ref; left with nothing reported, an open, in-progress, snoozed or done
 one closes as `merged` (history `merged`, "the same secret as T-0404, which owns it now",
 `merged_into` set, next step "Nothing here: T-0404 owns this secret"). When a later sync no longer

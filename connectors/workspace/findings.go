@@ -9,6 +9,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Help pages for each finding, checked on 2026-11-24.
@@ -273,13 +274,6 @@ func uniqueSorted(s []string) []string {
 	return out
 }
 
-func plural(n int, one string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", one)
-	}
-	return fmt.Sprintf("%d %ss", n, one)
-}
-
 // appFindings emits one grant finding per app with current grants, with its recent token activity,
 // and an info finding for apps that only show up in the activity.
 func appFindings(domain string, apps []app, activity map[string]*appActivity) []finding.Finding {
@@ -291,12 +285,12 @@ func appFindings(domain string, apps []app, activity map[string]*appActivity) []
 			"native_app": a.native, "anonymous": a.anonymous}
 		f := finding.Finding{Account: domain, Kind: finding.KindGrant, Severity: rule.sev,
 			Resource: finding.Resource{Type: "oauth_app", ID: a.clientID, Name: a.name},
-			Title:    fmt.Sprintf("%s can %s (%s)", a.name, rule.label, plural(len(a.users), "user")),
+			Title:    fmt.Sprintf("%s can %s (%s)", a.name, rule.label, textfmt.Count(len(a.users), "user", "users")),
 			Evidence: ev,
 			Remediation: finding.Remediation{URL: appsURL,
 				Summary: "In Admin console > Security > Access and data control > API controls > Manage third-party app access, trust, limit or block the app; then remove it from the accounts that should not have it"}}
 		if rule.sev == finding.SevInfo {
-			f.Title = fmt.Sprintf("%s: Sign in with Google (%s)", a.name, plural(len(a.users), "user"))
+			f.Title = fmt.Sprintf("%s: Sign in with Google (%s)", a.name, textfmt.Count(len(a.users), "user", "users"))
 		}
 		if act := lookup(activity, a.clientID, a.name); act != nil {
 			seen[activityKey(act)] = true
@@ -317,7 +311,7 @@ func appFindings(domain string, apps []app, activity map[string]*appActivity) []
 		}
 		out = append(out, finding.Finding{Account: domain, Kind: finding.KindGrant, Severity: finding.SevInfo,
 			Resource:   finding.Resource{Type: "oauth_activity", ID: k, Name: act.app},
-			Title:      fmt.Sprintf("%s: %s and %s in the last 30 days, no current grants", act.app, plural(act.authorize, "authorization"), plural(act.revoke, "revocation")),
+			Title:      fmt.Sprintf("%s: %s and %s in the last 30 days, no current grants", act.app, textfmt.Count(act.authorize, "authorization", "authorizations"), textfmt.Count(act.revoke, "revocation", "revocations")),
 			Evidence:   map[string]any{"client_id": act.clientID, "authorizations_30d": act.authorize, "revocations_30d": act.revoke},
 			LastUsedAt: httpx.ParseTime(&act.lastEvent),
 			Remediation: finding.Remediation{URL: appsURL,

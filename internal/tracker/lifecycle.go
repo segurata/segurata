@@ -410,8 +410,3 @@ func Sort(items []*Item) {
 		return idNumber(a.ID) < idNumber(b.ID)
 	})
 }
-
-// count is "1 thing" or "N things".
-func count(n int, one, many string) string {
-	return fmt.Sprintf("%d %s", n, textfmt.Plural(n, one, many))
-}
