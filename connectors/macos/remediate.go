@@ -68,13 +68,6 @@ func (c *Connector) Plan(ctx context.Context, f finding.Finding) (connector.Plan
 }
 
 func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Plan, io connector.IO) error {
-	want, err := c.Plan(ctx, f)
-	if err != nil {
-		return err
-	}
-	if err := remediate.SamePlan(want, p); err != nil {
-		return err
-	}
 	allow, err := c.allowlistFor(ctx, p.Action)
 	if err != nil {
 		return err

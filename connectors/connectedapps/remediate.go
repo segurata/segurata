@@ -103,20 +103,13 @@ func (c *Connector) planNow(ctx context.Context, f finding.Finding) (connector.P
 }
 
 func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Plan, io connector.IO) error {
-	want, remove, err := c.planNow(ctx, f)
+	_, remove, err := c.planNow(ctx, f)
 	if err != nil {
-		return err
-	}
-	if err := remediate.SamePlan(want, p); err != nil {
 		return err
 	}
 	// The one command line allowed: removing exactly the scopes the token holds now.
 	allow := remediate.Allowlist{ActionGHDropScopes: {refreshStep("-r", remove)}}
-	ex := c.exec
-	if ex == nil {
-		ex = remediate.System{}
-	}
-	return remediate.Run(ctx, p, allow, ex, io)
+	return remediate.Run(ctx, p, allow, c.exec, io)
 }
 
 func scopeNames() []string {

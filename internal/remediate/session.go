@@ -141,11 +141,21 @@ func (p planner) plan(ctx context.Context) (connector.Plan, error) {
 	return p.r.Plan(ctx, p.group[0])
 }
 
-func (p planner) apply(ctx context.Context, plan connector.Plan, io connector.IO) error {
-	if g, ok := p.r.(connector.GroupRemediator); ok {
-		return g.ApplyGroup(ctx, p.group, plan, io)
+// apply carries out confirmed, the plan the owner saw and agreed to, and only that plan: it asks the
+// remediator for the plan again, from the state as it is now, and refuses when the two differ. A
+// remediator therefore never acts on a stale or altered plan, and none needs a guard of its own.
+func (p planner) apply(ctx context.Context, confirmed connector.Plan, io connector.IO) error {
+	now, err := p.plan(ctx)
+	if err != nil {
+		return err
 	}
-	return p.r.Apply(ctx, p.group[0], plan, io)
+	if err := samePlan(now, confirmed); err != nil {
+		return err
+	}
+	if g, ok := p.r.(connector.GroupRemediator); ok {
+		return g.ApplyGroup(ctx, p.group, confirmed, io)
+	}
+	return p.r.Apply(ctx, p.group[0], confirmed, io)
 }
 
 // A fix often takes a moment to settle: a restarted process can drop its ports for a second and

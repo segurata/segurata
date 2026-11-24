@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/runtest"
@@ -225,7 +226,7 @@ func TestChmod600PlansExactlyAndApplies(t *testing.T) {
 		Undo:        []connector.Step{{Argv: []string{"/bin/chmod", "644", path}}},
 		SideEffects: p.SideEffects,
 	}
-	if err := SamePlan(want, p); err != nil || p.NeedsSudo() {
+	if err := samePlan(want, p); err != nil || p.NeedsSudo() {
 		t.Fatalf("plan %+v", p)
 	}
 	if err := fs.Apply(context.Background(), f, p, quietIO()); err != nil {
@@ -249,9 +250,16 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.Files[0].Path = filepath.Join(dir, "other")
-	if err := (Files{}).Apply(context.Background(), f, p, quietIO()); err == nil {
+	other := filepath.Join(dir, "other")
+	_ = os.WriteFile(other, nil, 0o600)
+	_ = os.Chmod(other, 0o640)
+	p.Files[0].Path = other
+	altered := &connectortest.ShownOnce{Remediator: Files{}, Shown: &p}
+	if err := Execute(context.Background(), f, altered, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t)); err == nil {
 		t.Fatal("applied an altered plan")
+	}
+	if fi, _ := os.Stat(other); fi.Mode().Perm() != 0o640 {
+		t.Fatalf("the altered plan changed %s to %o", other, fi.Mode().Perm())
 	}
 	link := filepath.Join(dir, "link")
 	_ = os.Symlink(path, link)
@@ -371,5 +379,69 @@ func TestListHidesFindingsBelowTheMinimumSeverity(t *testing.T) {
 	List(&b, all, finding.SevInfo)
 	if !strings.Contains(b.String(), "noise0001") {
 		t.Fatalf("--all must include info:\n%s", b.String())
+	}
+}
+
+// driftingRemediator states a different plan each time it is asked, and applies whatever it is
+// handed without checking: what a remediator without a copy of the stale-plan guard does.
+type driftingRemediator struct {
+	plans   []connector.Plan
+	applied []connector.Plan
+}
+
+func (d *driftingRemediator) Plan(context.Context, finding.Finding) (connector.Plan, error) {
+	p := d.plans[0]
+	if len(d.plans) > 1 {
+		d.plans = d.plans[1:]
+	}
+	return p, nil
+}
+
+func (d *driftingRemediator) Apply(_ context.Context, _ finding.Finding, p connector.Plan, _ connector.IO) error {
+	d.applied = append(d.applied, p)
+	return nil
+}
+
+func TestTheCoreRefusesAPlanThatDriftedBetweenConfirmAndApply(t *testing.T) {
+	shown := connector.Plan{Action: target.Remediation.Action, Summary: "Turn on the firewall.", Commands: []connector.Step{enable}}
+	now := shown
+	now.Summary = "Turn on the firewall, and more."
+	r := &driftingRemediator{plans: []connector.Plan{shown, now}}
+	err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t))
+	if err == nil || !strings.Contains(err.Error(), "plan changed") {
+		t.Fatalf("want a refusal, got %v", err)
+	}
+	if len(r.applied) != 0 {
+		t.Fatalf("applied %v, a plan that is no longer the one confirmed", r.applied)
+	}
+
+	same := &driftingRemediator{plans: []connector.Plan{shown}}
+	if err := Execute(context.Background(), target, same, Options{Apply: true, Yes: true, IO: quietIO()}, results()); err != nil {
+		t.Fatal(err)
+	}
+	if len(same.applied) != 1 || same.applied[0].Summary != shown.Summary {
+		t.Fatalf("applied %v, want the confirmed plan once", same.applied)
+	}
+}
+
+type driftingGroup struct{ driftingRemediator }
+
+func (d *driftingGroup) PlanGroup(ctx context.Context, fs []finding.Finding) (connector.Plan, error) {
+	return d.Plan(ctx, fs[0])
+}
+
+func (d *driftingGroup) ApplyGroup(ctx context.Context, fs []finding.Finding, p connector.Plan, io connector.IO) error {
+	return d.Apply(ctx, fs[0], p, io)
+}
+
+func TestTheCoreRefusesAGroupPlanThatDrifted(t *testing.T) {
+	a, b := grouped("a1", "owner", finding.SevHigh), grouped("b2", "owner", finding.SevHigh)
+	shown := connector.Plan{Action: a.Remediation.Action, Summary: "Enable secret scanning in 2 repositories."}
+	now := shown
+	now.Summary = "Enable secret scanning in 3 repositories."
+	r := &driftingGroup{driftingRemediator{plans: []connector.Plan{shown, now}}}
+	opt := Options{Apply: true, Yes: true, IO: quietIO(), Group: []finding.Finding{a, b}}
+	if err := Execute(context.Background(), a, r, opt, neverReinventory(t)); err == nil || len(r.applied) != 0 {
+		t.Fatalf("err=%v applied=%v", err, r.applied)
 	}
 }

@@ -101,14 +101,7 @@ func change(path string) (connector.FileChange, error) {
 	return connector.FileChange{Path: path, Mode: 0o600 | was&0o100, Was: was}, nil
 }
 
-func (fs Files) ApplyGroup(ctx context.Context, group []finding.Finding, p connector.Plan, _ connector.IO) error {
-	want, err := fs.PlanGroup(ctx, group)
-	if err != nil {
-		return err
-	}
-	if err := SamePlan(want, p); err != nil {
-		return err
-	}
+func (Files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan, _ connector.IO) error {
 	for _, c := range p.Files {
 		if err := os.Chmod(c.Path, c.Mode); err != nil {
 			return err

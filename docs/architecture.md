@@ -499,7 +499,9 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   counts as fixed for this action. A finding still offering it, a check that could not run, or a
   check run that did not inspect a finding's scope ("could not verify the fix") is an error.
 - A built-in connector remediates by implementing the optional `connector.Remediator` interface
-  (`Plan`, `Apply`). `Apply` recomputes the plan and refuses one that differs from what was shown.
+  (`Plan`, `Apply`). The confirmed plan is the plan that runs: after the confirmation the core asks
+  the remediator for the plan again, from the state as it is then, and refuses to call `Apply` when
+  it differs in any field from the one shown. A remediator carries no check of its own for this.
 - Every command an action may run is on a per-action allowlist of exact argument lists, written by
   hand (`remediate.Allowlist`). There is no pattern matching; anything else is refused before the
   first command runs. An action whose argument names a live object (an SMB share point, the home
@@ -528,8 +530,8 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   <path>`. With a group it changes every file once and leaves out, by name, files already private.
 - An external connector remediates through protocol 2: it declares its actions in `describe`
   (`remediates`), returns a plan from `segurata-<name> plan` and runs it in
-  `segurata-<name> apply` (`remediate.External`). The core shows the plan and confirms as for a
-  built-in, asks for the plan again before applying and refuses one that differs, and refuses any
+  `segurata-<name> apply` (`remediate.External`). As for a built-in, the core shows the plan, confirms
+  and refuses a plan that changed since it was shown; it also refuses any
   plan that needs sudo: a plugin's command line is never on the hand-written allowlist, so the core
   cannot vet it and will not run it as root. The plugin runs its plan as the owner; the allowlist
   binds built-in actions only. Details: [connectors.md](connectors.md#plan-v2).

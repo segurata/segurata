@@ -361,23 +361,11 @@ func (c *Connector) PlanGroup(ctx context.Context, fs []finding.Finding) (connec
 	return st.plan()
 }
 
-// ApplyGroup reads again, refuses a plan that differs from the one shown, and runs it through the
-// allowlist built from that same read.
+// ApplyGroup reads again and runs the confirmed plan through the allowlist built from that read.
 func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p connector.Plan, io connector.IO) error {
 	st, err := c.read(ctx, fs)
 	if err != nil {
 		return err
 	}
-	want, err := st.plan()
-	if err != nil {
-		return err
-	}
-	if err := remediate.SamePlan(want, p); err != nil {
-		return err
-	}
-	ex := c.Exec
-	if ex == nil {
-		ex = remediate.System{}
-	}
-	return remediate.Run(ctx, p, st.allowlist(), ex, io)
+	return remediate.Run(ctx, p, st.allowlist(), c.Exec, io)
 }

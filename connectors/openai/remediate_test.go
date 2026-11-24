@@ -11,7 +11,9 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/remediate"
 )
 
 const testWriteKey = "sk-admin-WRITE-not-a-real-key-111111111"
@@ -131,14 +133,16 @@ func TestDeleteRefusesKeysInUseGoneOrSegurataSOwn(t *testing.T) {
 			t.Errorf("%s: planned", id)
 		}
 	}
-	// A plan altered after it was shown is refused before anything is sent.
+	// A plan altered after the key was read is refused by the core before anything is sent.
 	f := keyFindingFor("api_key", "key_never")
-	p, err := r.Plan(context.Background(), f)
+	altered, err := r.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.Calls[0].URL = srv.URL + "/organization/projects/proj_lab/api_keys/key_busy"
-	if err := r.Apply(context.Background(), f, p, quietIO()); err == nil || len(srv.Deleted) != 0 {
+	altered.Calls[0].URL = srv.URL + "/organization/projects/proj_lab/api_keys/key_busy"
+	shown := &connectortest.ShownOnce{Remediator: r, Shown: &altered}
+	opt := remediate.Options{Apply: true, Yes: true, IO: quietIO()}
+	if err := remediate.Execute(context.Background(), f, shown, opt, nil); err == nil || len(srv.Deleted) != 0 {
 		t.Fatalf("altered plan: %v, deleted %v", err, srv.Deleted)
 	}
 }

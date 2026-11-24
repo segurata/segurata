@@ -134,16 +134,5 @@ func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p conn
 	if err != nil {
 		return err
 	}
-	want, err := st.plan()
-	if err != nil {
-		return err
-	}
-	if err := remediate.SamePlan(want, p); err != nil {
-		return err
-	}
-	ex := c.Exec
-	if ex == nil {
-		ex = remediate.System{}
-	}
-	return remediate.Run(ctx, p, st.allowlist(), ex, io)
+	return remediate.Run(ctx, p, st.allowlist(), c.Exec, io)
 }

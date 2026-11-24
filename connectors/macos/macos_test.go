@@ -359,7 +359,7 @@ func TestApplyRunsThePlanAndRefusesAnythingElse(t *testing.T) {
 	if err := c.Apply(context.Background(), f, tampered, termIO()); err == nil || len(ex.ran) != 0 {
 		t.Fatalf("applied a tampered plan: err=%v ran=%v", err, ex.ran)
 	}
-	// Even a plan that passed the comparison runs only allowlisted steps.
+	// The allowlist refuses it whatever calls Run.
 	if err := remediate.Run(context.Background(), tampered, allowed, ex, termIO()); !errors.Is(err, remediate.ErrRefused) || len(ex.ran) != 0 {
 		t.Fatalf("allowlist let %v through: %v", ex.ran, err)
 	}

@@ -58,9 +58,13 @@ func (System) Run(ctx context.Context, s connector.Step, io connector.IO) error 
 	return nil
 }
 
-// Run checks every command of p against the allowlist, and only when all pass runs them in order,
-// stopping at the first failure. File changes are not commands; the remediator applies them.
+// Run checks every command of p against the allowlist, and only when all pass runs them in order
+// with ex (nil is System), stopping at the first failure. File changes are not commands; the
+// remediator applies them.
 func Run(ctx context.Context, p connector.Plan, allow Allowlist, ex Executor, io connector.IO) error {
+	if ex == nil {
+		ex = System{}
+	}
 	for _, s := range p.Commands {
 		if err := allow.Check(p.Action, s); err != nil {
 			return err
@@ -75,9 +79,8 @@ func Run(ctx context.Context, p connector.Plan, allow Allowlist, ex Executor, io
 	return nil
 }
 
-// SamePlan refuses to apply a plan that differs from the one the remediator states now, so Apply
-// never acts on a stale or altered plan.
-func SamePlan(want, got connector.Plan) error {
+// samePlan refuses to apply a plan that differs from the one the remediator states now.
+func samePlan(want, got connector.Plan) error {
 	if !reflect.DeepEqual(want, got) {
 		return errors.New("the plan changed since it was shown: run remediate again to see the current one")
 	}
