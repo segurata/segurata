@@ -206,6 +206,25 @@ func TestSnoozeExpires(t *testing.T) {
 	}
 }
 
+// --until is a day in the owner's zone, as accept reads it: west of UTC, an evening snooze until
+// tomorrow is in the future, and the item comes back at local midnight, not UTC midnight.
+func TestSnoozeUntilIsALocalDate(t *testing.T) {
+	la := time.FixedZone("PST", -8*3600)
+	evening := time.Date(2026, 11, 24, 20, 0, 0, 0, la) // already 2026-11-25 in UTC
+	l := &Tracker{NextID: 1}
+	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, evening, false)
+	it, _ := l.FindRotate("aaaa")
+	if err := it.Snooze(evening, "2026-11-25", ""); err != nil {
+		t.Fatalf("snooze until tomorrow refused: %v", err)
+	}
+	if it.Active(time.Date(2026, 11, 24, 23, 0, 0, 0, la)) {
+		t.Error("awake before local midnight")
+	}
+	if !it.Active(time.Date(2026, 11, 25, 0, 0, 0, 0, la)) {
+		t.Error("still asleep at local midnight of --until")
+	}
+}
+
 func TestIDsGrowOnCollision(t *testing.T) {
 	l := &Tracker{NextID: 1}
 	l.SyncSecrets([]Sighting{
