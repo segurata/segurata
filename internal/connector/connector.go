@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -27,6 +28,19 @@ type Description struct {
 	// Remediates lists the remediation actions an external connector plans and applies itself
 	// (protocol 2 and later). Built-in connectors leave it empty and implement Remediator.
 	Remediates []string `json:"remediates,omitempty"`
+	// Timeout is how long one inventory may take by default, as a Go duration ("6h"), for a
+	// connector that routinely needs longer than the core's one hour. The instance's config
+	// `timeout` overrides it.
+	Timeout string `json:"timeout,omitempty"`
+}
+
+// RunTimeout is Timeout parsed, 0 when it is empty or not a positive duration.
+func (d Description) RunTimeout() time.Duration {
+	t, err := time.ParseDuration(d.Timeout)
+	if err != nil || t < 0 {
+		return 0
+	}
+	return t
 }
 
 // NeedsCDP reports whether the connector drives the browser over the Chrome DevTools Protocol.

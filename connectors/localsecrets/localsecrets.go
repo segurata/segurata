@@ -78,6 +78,8 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Plaintext secrets in config, .env files, histories, logs, agent transcripts, git history; database dumps committed to git; SSH keys without a passphrase",
 		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen", "cli:gh (optional)"},
+		// Each rg pass may take an hour and the history scan gitleaks_timeout per repository.
+		Timeout: "6h",
 	}
 }
 

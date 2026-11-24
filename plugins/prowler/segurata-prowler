@@ -185,6 +185,8 @@ def describe():
         "protocol": PROTOCOL,
         "summary": "Failed Prowler checks per Google Cloud project, run as each gcloud account",
         "needs": ["cli:prowler", "cli:gcloud"],
+        # Projects run `parallel` at a time, each for up to `timeout` seconds.
+        "timeout": "12h",
     }
 
 

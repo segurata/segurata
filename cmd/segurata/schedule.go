@@ -53,7 +53,7 @@ func scheduleCmd(args []string) int {
 	case "status":
 		err = env.Status(ctx)
 	case "run":
-		err = env.Run(ctx, selected)
+		err = env.Run(ctx, opt)
 	default:
 		fmt.Fprintln(os.Stderr, scheduleUsage)
 		return 2

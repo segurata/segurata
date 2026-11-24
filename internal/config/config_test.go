@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDefaultOutDirIgnoresTheWorkingDirectory(t *testing.T) {
@@ -37,5 +38,17 @@ func TestLoadRejectsInstanceLabelsThatAreNotFileNameSafe(t *testing.T) {
 	}
 	if _, err := loadBody(t, `{"connectors": {"aws:Work_1.prod-eu": {}, "aws": {}}}`); err != nil {
 		t.Errorf("good labels refused: %v", err)
+	}
+}
+
+func TestLoadRejectsATimeoutThatIsNotAPositiveDuration(t *testing.T) {
+	for _, v := range []string{"soon", "0s", "-1h", "3600"} {
+		if _, err := loadBody(t, `{"connectors": {"gcp": {"timeout": "`+v+`"}}}`); err == nil {
+			t.Errorf("%q: loaded", v)
+		}
+	}
+	cfg, err := loadBody(t, `{"connectors": {"gcp": {"timeout": "2h30m"}}}`)
+	if err != nil || cfg.Instances("gcp")[0].RunTimeout() != 150*time.Minute {
+		t.Fatalf("good timeout: %v %v", cfg.Instances("gcp"), err)
 	}
 }

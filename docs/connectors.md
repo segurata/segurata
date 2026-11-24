@@ -276,6 +276,10 @@ Prints one JSON object:
 - `remediates` (protocol 2 only): the remediation actions this connector plans and applies. A
   finding whose `remediation.action` is not in this list cannot be remediated through it. An action
   the core owns (`file.chmod600`) is always handled by the core.
+- `timeout` (optional): how long one `inventory` may take by default, as a Go duration (`"6h"`),
+  for a connector that routinely needs longer than the core's one hour. The owner's config
+  `timeout` for the instance overrides it. At the deadline the core kills the process and the run
+  ends failed, so nothing it left out is taken as resolved.
 - A description that speaks another protocol, or declares `remediates` on protocol 1, is ignored
   with a message on stderr.
 

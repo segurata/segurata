@@ -5,6 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/segurata/segurata/internal/proc"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 func TestStoreSendsTheValueOnStdinOnly(t *testing.T) {
@@ -49,5 +53,17 @@ func TestFindReadsAttributesOnly(t *testing.T) {
 	}
 	if _, err := k.Find(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing: %v", err)
+	}
+}
+
+func TestExecEndsAHungProgramWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := Exec(ctx, nil, proctest.Hung(t, "op", "")); err == nil {
+		t.Fatal("a hung program succeeded")
+	}
+	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
+		t.Fatalf("took %s", took)
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 // fakeRunner records every command. launchctl print succeeds when loaded is set; the segurata
@@ -25,10 +26,17 @@ type fakeRunner struct {
 	fail      map[string]error // by first argument
 	inventory []finding.Finding
 	exe       string
+	deadlines map[string]time.Time // by first argument, of the commands that had one
 }
 
-func (r *fakeRunner) Run(_ context.Context, name string, args []string, _, _ io.Writer) error {
+func (r *fakeRunner) Run(ctx context.Context, name string, args []string, _, _ io.Writer) error {
 	r.calls = append(r.calls, append([]string{name}, args...))
+	if d, ok := ctx.Deadline(); ok {
+		if r.deadlines == nil {
+			r.deadlines = map[string]time.Time{}
+		}
+		r.deadlines[args[0]] = d
+	}
 	if err := r.fail[args[0]]; err != nil {
 		return err
 	}
@@ -261,7 +269,7 @@ func TestRunNotifiesOnlyNewHighOrCriticalFindings(t *testing.T) {
 	accepted.Accepted = &finding.Acceptance{Reason: "agents"}
 	r.inventory = []finding.Finding{high("a", "Firewall is off"), accepted,
 		{ID: "m", Connector: "macos", Severity: finding.SevMedium, Title: "medium one"}}
-	if err := env.Run(context.Background(), nil); err != nil {
+	if err := env.Run(context.Background(), Options{}); err != nil {
 		t.Fatal(err)
 	}
 	p := env.Paths()
@@ -282,14 +290,14 @@ func TestRunNotifiesOnlyNewHighOrCriticalFindings(t *testing.T) {
 	}
 
 	// Same findings next time: nothing new. A new critical one: notified.
-	if err := env.Run(context.Background(), []string{"macos"}); err != nil {
+	if err := env.Run(context.Background(), Options{Connectors: []string{"macos"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.ran(osascript, "-e")) != 1 {
 		t.Fatal("notified again about known findings")
 	}
 	r.inventory = append(r.inventory, finding.Finding{ID: "c", Connector: "macos", Severity: finding.SevCritical, Title: `Share "Public" open to guests`})
-	if err := env.Run(context.Background(), []string{"macos"}); err != nil {
+	if err := env.Run(context.Background(), Options{Connectors: []string{"macos"}}); err != nil {
 		t.Fatal(err)
 	}
 	notes = r.ran(osascript, "-e")
@@ -301,7 +309,7 @@ func TestRunNotifiesOnlyNewHighOrCriticalFindings(t *testing.T) {
 func TestRunOnLinuxLogsInsteadOfNotifying(t *testing.T) {
 	env, r, out := testEnv(t, "linux")
 	r.inventory = []finding.Finding{high("a", "Something bad")}
-	if err := env.Run(context.Background(), []string{"local-secrets"}); err != nil {
+	if err := env.Run(context.Background(), Options{Connectors: []string{"local-secrets"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.ran(osascript, "-e")) != 0 || !strings.Contains(out.String(), "Something bad") {
@@ -322,7 +330,7 @@ func TestRunScansEvenWhenThePreviousRunIsUnreadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.inventory = []finding.Finding{high("a", "Firewall is off")}
-	if err := env.Run(context.Background(), nil); err != nil {
+	if err := env.Run(context.Background(), Options{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.ran(env.Exe, "inventory")) != 1 || len(r.ran(env.Exe, "report")) != 1 {
@@ -333,14 +341,60 @@ func TestRunScansEvenWhenThePreviousRunIsUnreadable(t *testing.T) {
 	}
 }
 
+// A scheduled run ends before the next one is due, and its inventory early enough to leave time
+// for the report: launchd starts no run while one is still going, so a hung one would stop
+// scheduled scanning for good. The interval reaches the run through the agent's command line.
+func TestRunEndsBeforeTheNextIsDue(t *testing.T) {
+	env, r, _ := testEnv(t, "darwin")
+	every := 10 * time.Hour
+	if args := env.runArgs(Options{Every: every}); !slices.Equal(args, []string{env.Exe, "schedule", "run", "--every", "10h0m0s"}) {
+		t.Fatalf("agent command %v", args)
+	}
+	if args := env.runArgs(Options{Every: DefaultEvery}); slices.Contains(args, "--every") {
+		t.Fatalf("the default interval is not spelled out: %v", args)
+	}
+	start := time.Now()
+	if err := env.Run(context.Background(), Options{Every: every}); err != nil {
+		t.Fatal(err)
+	}
+	inv, rep := r.deadlines["inventory"], r.deadlines["report"]
+	if inv.IsZero() || rep.IsZero() || !inv.Before(rep) || rep.After(start.Add(every)) || inv.Before(start.Add(every/2)) {
+		t.Fatalf("deadlines: inventory %v, report %v, run started %v", inv, rep, start)
+	}
+}
+
+// At its deadline a command is asked to stop (an inventory then writes run_end and syncs), and
+// killed if it has not after the grace period.
+func TestSystemInterruptsThenKills(t *testing.T) {
+	defer func(g time.Duration) { stopGrace = g }(stopGrace)
+	stopGrace = 200 * time.Millisecond
+	mark := filepath.Join(t.TempDir(), "stopped")
+	polite := proctest.Hung(t, "polite", "trap 'echo stopped > "+mark+"; exit 0' INT\nsleep 60 &\nwait")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_ = System{}.Run(ctx, polite, nil, io.Discard, io.Discard)
+	if _, err := os.Stat(mark); err != nil {
+		t.Fatal("the command was not interrupted first")
+	}
+	start := time.Now()
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := (System{}).Run(ctx, proctest.Hung(t, "stubborn", ""), nil, io.Discard, io.Discard); err == nil {
+		t.Fatal("a hung command succeeded")
+	}
+	if took := time.Since(start); took > stopGrace+5*time.Second {
+		t.Fatalf("took %s", took)
+	}
+}
+
 func TestRunStopsWhenInventoryFailsAndReportsAReportFailure(t *testing.T) {
 	env, r, _ := testEnv(t, "darwin")
 	r.fail = map[string]error{"inventory": errors.New("exit 1")}
-	if err := env.Run(context.Background(), nil); err == nil || len(r.ran(env.Exe, "report")) != 0 {
+	if err := env.Run(context.Background(), Options{}); err == nil || len(r.ran(env.Exe, "report")) != 0 {
 		t.Fatalf("err %v calls %v", err, r.calls)
 	}
 	r.fail = map[string]error{"report": errors.New("exit 2")}
-	if err := env.Run(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "report") {
+	if err := env.Run(context.Background(), Options{}); err == nil || !strings.Contains(err.Error(), "report") {
 		t.Fatalf("err %v", err)
 	}
 }

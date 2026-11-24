@@ -84,9 +84,18 @@ coverage is derived (`finding.Tally`):
   status with neither leaves everything uninspected;
 - a connector declares what no status carries with `Emitter.Scope(id, false, reason)` (external
   connectors: a `scope` record);
-- a connector error, a cancelled context, or a run where no status said `ok` and nothing was
-  declared inspected, leaves everything (`*`) uninspected; so does a skipped list over the cap;
+- a connector error, a cancelled context, a timeout, a record that could not be written, or a run
+  where no status said `ok` and nothing was declared inspected, leaves everything (`*`)
+  uninspected; so does a skipped list over the cap;
 - a skipped scope ending in `*` covers every scope with that prefix.
+
+**Deadlines.** Each instance's inventory runs under a deadline: the instance's `timeout` in the
+config (`"connectors": {"prowler": {"timeout": "10h"}}`, a Go duration), else the `timeout` its
+connector declares in `describe` (local-secrets `6h`, prowler `12h`), else one hour. At the
+deadline the connector's context ends, and the run ends with `error` "timed out after … (raise
+connectors.<key>.timeout)", so nothing it left out closes. Every child process the core and the
+connectors start is killed when its context ends and waited on for at most three seconds more
+(`internal/proc`), so a wrapper script that does not exec its program cannot outlive a timeout.
 
 A finding is not checked by a run when the run has no `run_end`, when everything was skipped, or
 when a skipped scope matches its scope or its account (`finding.Coverage`).
@@ -601,7 +610,7 @@ report.
 segurata schedule install [--every 24h] [--connectors a,b] [--apply [--yes]]
 segurata schedule uninstall [--apply [--yes]]
 segurata schedule status
-segurata schedule run [--connectors a,b]        what the agent executes
+segurata schedule run [--every 24h] [--connectors a,b]   what the agent executes
 ```
 
 `internal/schedule`. On macOS, `install` builds a launchd user agent,
@@ -615,7 +624,11 @@ already loaded and bootstraps the new one. `uninstall` boots it out and removes 
 reports and logs. `install` refuses a binary under the temp directory (`go run`), which would be
 gone by the first run.
 
-One `schedule run`:
+One `schedule run` ends before the next is due: it has 90% of the interval, and its inventory 80%,
+which leaves time for the report. At the deadline the inventory gets an interrupt, so it writes
+`run_end` (with the interruption as `error`) and syncs the tracker, and a kill two minutes later.
+`install` puts an interval other than 24h on the agent's command line (`schedule run --every 6h`),
+so an agent installed before that runs with the 24h bound until it is installed again.
 
 1. Reads the high and critical findings of the latest scheduled run (`~/.segurata/out`),
    leaving out accepted ones.

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/proc"
 )
 
 const externalPrefix = "segurata-"
@@ -139,7 +140,7 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	if err != nil {
 		return PlanReply{}, err
 	}
-	cmd := exec.CommandContext(ctx, e.Path, "plan")
+	cmd := proc.Command(ctx, e.Path, "plan")
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &stderr
@@ -191,7 +192,7 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, e.Path, sub)
+	cmd := proc.Command(ctx, e.Path, sub)
 	cmd.Stdin = bytes.NewReader(raw)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()

@@ -102,6 +102,11 @@ no setup item and is counted on one line, "N expected (by your config)", but its
 counts as not inspected. Details:
 [docs/architecture.md](docs/architecture.md#expected-statuses).
 
+Each connector instance's inventory runs under a deadline, one hour unless the connector declares
+more (local-secrets 6h, prowler 12h) or the instance sets `timeout`:
+`{"connectors": {"gcp": {"timeout": "2h"}}}`. A run that hits it ends failed, so nothing it left
+out is closed. Details: [docs/architecture.md](docs/architecture.md#run-completeness).
+
 A done item is verified when a later run no longer reports its findings, and reopened if one does;
 an item whose findings vanish on their own is closed as "verified (no longer reported)", and a
 setup item whose status a finished run no longer reports as "verified (status no longer

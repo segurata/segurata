@@ -121,7 +121,7 @@ In `~/.config/segurata/config.json`; every key is optional:
 | `severity_min` | none | `info`, `low`, `medium`, `high` or `critical`: Prowler runs only checks at or above it |
 | `include_overlaps` | `false` | Also run and report the checks segurata's `gcp` connector makes (table below) |
 | `prowler_path`, `gcloud_path` | `PATH` (and the SDK folders for gcloud) | Absolute paths to the CLIs |
-| `timeout` | 1800 | Seconds one project may take |
+| `timeout` | 1800 | Seconds one project may take. The whole run is bounded apart: 12 hours unless the instance sets `timeout` next to `config` (`"prowler": {"timeout": "20h", "config": {…}}`) |
 | `parallel` | 1 | Projects scanned at once; Prowler is already multi-threaded inside a run |
 | `relevance` | `true` | Weigh hygiene checks by the project's profile ([Relevance](#relevance)). With `false` the profile is still read and recorded |
 | `relevance_overrides` | none | Check id to `keep` (never adjusted by the profile) or `info` (info in every project) |

@@ -9,10 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/segurata/segurata/internal/proc"
 )
 
 // Runner runs one CLI command and returns its stdout. Connectors hold one so tests can inject a
@@ -56,7 +57,7 @@ func (e *Error) Unwrap() error { return e.Err }
 func (e Exec) Run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, e.Path, args...)
+	cmd := proc.Command(ctx, e.Path, args...)
 	if len(e.Env) > 0 {
 		cmd.Env = append(os.Environ(), e.Env...)
 	}

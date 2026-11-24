@@ -30,6 +30,20 @@ type Target struct {
 	Instance  config.Instance
 }
 
+// DefaultTimeout bounds one inventory of an instance whose config and connector name no timeout.
+const DefaultTimeout = time.Hour
+
+// Timeout bounds one inventory of the target: the instance's config `timeout`, else the
+// connector's declared default, else DefaultTimeout.
+func (t Target) Timeout() time.Duration {
+	for _, d := range []time.Duration{t.Instance.RunTimeout(), t.Connector.Describe().RunTimeout()} {
+		if d > 0 {
+			return d
+		}
+	}
+	return DefaultTimeout
+}
+
 // Label is "name" or "name:label", the same spelling as the config key.
 func (t Target) Label() string {
 	name := t.Connector.Describe().Name
@@ -145,11 +159,12 @@ func (s *sink) Scope(id string, inspected bool, reason string) {
 }
 
 // end writes the run_end record and reports whether it was written, with the first write error.
-// err is the connector's own error; a cancelled context counts as one, since the connector may
-// have stopped early without saying so, and so does a record that could not be written.
+// err is the connector's own error; a context that ended counts as one, with its cause (a
+// timeout), since the connector may have stopped early without saying so, and so does a record
+// that could not be written.
 func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[string]string) (ended bool, werr error) {
-	if err == nil && ctx.Err() != nil {
-		err = fmt.Errorf("interrupted: %w", ctx.Err())
+	if ctx.Err() != nil {
+		err = errors.Join(fmt.Errorf("interrupted: %w", context.Cause(ctx)), err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,6 +202,9 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 
 func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, annotate func(*finding.Finding)) *Result {
 	name, label := t.Connector.Describe().Name, t.Label()
+	timeout := t.Timeout()
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timed out after %s (raise connectors.%s.timeout)", timeout, label))
+	defer cancel()
 	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
 	// The run writes to a partial file of its own and renames it over <file> only once run_end is

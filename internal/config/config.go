@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
 )
@@ -22,6 +23,9 @@ type ConnectorConfig struct {
 	RemediationSecrets map[string]string `json:"remediation_secrets,omitempty"`
 	// Expected are the statuses other than ok this instance reports on purpose (see Expect).
 	Expected []Expected `json:"expected,omitempty"`
+	// Timeout bounds one inventory of this instance, as a Go duration ("3h"); empty means the
+	// connector's own default (connector.Description.Timeout), else one hour.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // Instance is one configured account of a connector. A config key "openrouter" gives the unnamed
@@ -76,6 +80,12 @@ func Load(path string) (Config, error) {
 		cfg.CDPURL = env
 	}
 	return cfg, nil
+}
+
+// RunTimeout is the instance's timeout, 0 when it sets none. Load has validated it.
+func (cc ConnectorConfig) RunTimeout() time.Duration {
+	d, _ := time.ParseDuration(cc.Timeout)
+	return d
 }
 
 // Instances returns the configured instances of a connector sorted by label, or one unnamed,

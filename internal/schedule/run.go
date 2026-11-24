@@ -31,11 +31,24 @@ func (e Env) DefaultConnectors() []string {
 // connectors, a notification for high and critical findings that were not in the previous run,
 // then `segurata report --format md`. Both commands are this same binary, run as separate
 // processes so a scheduled run does exactly what the owner would type.
-func (e Env) Run(ctx context.Context, connectors []string) error {
+//
+// The run ends before the next one is due, and the inventory early enough to leave time for the
+// report: launchd starts no run while one is still going, so one that hung would stop scheduled
+// scanning without a word.
+func (e Env) Run(ctx context.Context, o Options) error {
+	every, err := o.every()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, every*9/10)
+	defer cancel()
+	invCtx, cancelInv := context.WithTimeout(ctx, every*8/10)
+	defer cancelInv()
 	p := e.Paths()
 	if err := os.MkdirAll(p.Out, 0o700); err != nil {
 		return err
 	}
+	connectors := o.Connectors
 	if len(connectors) == 0 {
 		connectors = e.DefaultConnectors()
 	}
@@ -49,7 +62,7 @@ func (e Env) Run(ctx context.Context, connectors []string) error {
 	stamp := func(msg string) { fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg) }
 	stamp("inventory " + strings.Join(connectors, " "))
 	inv := append([]string{"inventory", "--out", p.Out}, connectors...)
-	if err := e.Runner.Run(ctx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
+	if err := e.Runner.Run(invCtx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("inventory: %w", err)
 	}
 	after, err := e.serious(p.Out)

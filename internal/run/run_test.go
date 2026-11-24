@@ -20,6 +20,8 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/proc"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 type fake struct{ got connector.Request }
@@ -552,5 +554,75 @@ func TestALostRecordFailsTheRun(t *testing.T) {
 	s.Status(finding.Status{Account: "acct", State: finding.StateOK})
 	if ended, err := s.end(context.Background(), time.Now(), nil, nil); ended || err == nil {
 		t.Fatalf("lost run_end: ended=%v err=%v", ended, err)
+	}
+}
+
+// A connector instance that hangs is stopped at its deadline (the instance's timeout, else the
+// connector's own default, else DefaultTimeout), and its run ends failed so nothing closes.
+func TestAHungInstanceTimesOutAndClosesNothing(t *testing.T) {
+	hang := emitting(func(ctx context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		<-ctx.Done()
+		return nil
+	})
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"fake": {Timeout: "50ms"}}}
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, hang), t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := res[0].End
+	if end.Complete || !strings.Contains(end.Error, "timed out after 50ms") || !strings.Contains(end.Error, "connectors.fake.timeout") {
+		t.Fatalf("run_end %+v", end)
+	}
+}
+
+type slow struct{ emitting }
+
+func (slow) Describe() connector.Description {
+	return connector.Description{Name: "fake", Version: "0", Protocol: 1, Timeout: "6h"}
+}
+
+func TestTheTimeoutComesFromTheInstanceThenTheConnector(t *testing.T) {
+	for _, c := range []struct {
+		conn connector.Connector
+		cfg  config.ConnectorConfig
+		want time.Duration
+	}{
+		{&fake{}, config.ConnectorConfig{}, DefaultTimeout},
+		{slow{}, config.ConnectorConfig{}, 6 * time.Hour},
+		{slow{}, config.ConnectorConfig{Timeout: "90m"}, 90 * time.Minute},
+		{&fake{}, config.ConnectorConfig{Timeout: "2h"}, 2 * time.Hour},
+	} {
+		tg := Target{Connector: c.conn, Instance: config.Instance{ConnectorConfig: c.cfg}}
+		if got := tg.Timeout(); got != c.want {
+			t.Errorf("%s with %+v: %s, want %s", c.conn.Describe().Timeout, c.cfg, got, c.want)
+		}
+	}
+}
+
+// An external connector that hangs in a child it did not exec is stopped too.
+func TestAHungExternalConnectorTimesOut(t *testing.T) {
+	script := proctest.Hung(t, "segurata-hang", `[ "$1" = describe ] && { echo '{"name":"hang","version":"1","protocol":1,"summary":"t","needs":[]}'; exit 0; }`)
+	t.Setenv("PATH", filepath.Dir(script)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var conns []connector.Connector
+	for _, e := range connector.Discover() {
+		if e.Describe().Name == "hang" {
+			conns = append(conns, e)
+		}
+	}
+	if len(conns) != 1 {
+		t.Fatal("external connector not discovered")
+	}
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"hang": {Timeout: "200ms"}}}
+	start := time.Now()
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, conns...), t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
+		t.Fatalf("took %s", took)
+	}
+	if end := res[0].End; end.Complete || !strings.Contains(end.Error, "timed out") {
+		t.Fatalf("run_end %+v", end)
 	}
 }

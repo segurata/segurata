@@ -9,10 +9,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/segurata/segurata/internal/proc"
 )
 
 // Runner runs one external program with stdin and returns its stdout.
@@ -26,7 +27,7 @@ const Security = "/usr/bin/security"
 func Exec(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := proc.Command(ctx, name, args...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
