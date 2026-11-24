@@ -187,6 +187,9 @@ func (r *run) inspect(ctx context.Context, base repo) repoResult {
 		case rp.Fork && (sa.SecretScanning.disabled() || sa.PushProtection.disabled()):
 			res.issues = append(res.issues, newIssue(repoForkNoSecretScanning, "secret scanning or push protection is off in a fork",
 				where+"enable secret scanning and push protection.", url))
+		case rp.Visibility != "public" && (sa.SecretScanning.disabled() || sa.PushProtection.disabled()):
+			res.issues = append(res.issues, newIssue(repoPrivateNoScanning, "secret scanning or push protection is off in a private repository",
+				where+"enable secret scanning and push protection.", url))
 		case sa.SecretScanning.disabled():
 			res.issues = append(res.issues, newIssue(repoNoSecretScanning, "secret scanning is off",
 				where+"enable secret scanning and push protection.", url))
@@ -242,8 +245,12 @@ func (r *run) inspect(ctx context.Context, base repo) repoResult {
 		if err := r.get(ctx, "/repos/"+rp.FullName+"/actions/permissions/workflow", &wp); err != nil {
 			return fail(err)
 		}
+		c := repoWorkflowWrite
+		if rp.Fork {
+			c = repoForkWorkflowWrite
+		}
 		if wp.Default == "write" {
-			res.issues = append(res.issues, newIssue(repoWorkflowWrite, "workflows get a read and write GITHUB_TOKEN by default",
+			res.issues = append(res.issues, newIssue(c, "workflows get a read and write GITHUB_TOKEN by default",
 				"Under Settings, Actions, General, Workflow permissions, choose read-only; workflows that need more ask for it with `permissions:`.", settings+"/actions"))
 		}
 	}
@@ -306,12 +313,24 @@ func insecureHook(h hook, settings string) (issue, bool) {
 		settings+"/hooks/"+strconv.FormatInt(h.ID, 10)), true
 }
 
-// rolledUp are the low-impact checks that would otherwise flag most repositories: they become one
-// finding per owner listing the repositories, instead of one line in every repository's finding.
+// rolledUp are the checks that would otherwise flag most repositories of an owner and that one
+// decision fixes (buy Secret Protection, turn a feature on everywhere, prune forks): they become
+// one finding per owner listing the repositories, instead of one line in every repository's
+// finding.
 var rolledUp = map[check]struct{ title, fix, url string }{
 	repoForkNoSecretScanning: {
 		title: "Secret scanning or push protection is off in %d forked %s of %s",
 		fix:   "Enable secret scanning and push protection in each fork you still push to (Settings, Advanced Security), or delete forks you no longer use.",
+		url:   "https://docs.github.com/en/code-security/how-tos/secure-your-secrets/detect-secret-leaks/enable-secret-scanning",
+	},
+	repoForkWorkflowWrite: {
+		title: "Workflows get a read and write GITHUB_TOKEN by default in %d forked %s of %s",
+		fix:   "In each fork whose workflows you run, choose read-only under Settings, Actions, General, Workflow permissions; delete forks you no longer use.",
+		url:   "https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository",
+	},
+	repoPrivateNoScanning: {
+		title: "Secret scanning or push protection is off in %d private %s of %s",
+		fix:   "Apply a code security configuration with secret scanning and push protection to these repositories. On private repositories they need GitHub Secret Protection, a paid add-on for Team and Enterprise plans.",
 		url:   "https://docs.github.com/en/code-security/how-tos/secure-your-secrets/detect-secret-leaks/enable-secret-scanning",
 	},
 	repoNoDependabotUpdates: {

@@ -28,6 +28,8 @@ const (
 	repoNoSecretScanning     check = "secret-scanning-disabled"
 	repoNoPushProtection     check = "push-protection-disabled"
 	repoForkNoSecretScanning check = "fork-secret-scanning-disabled"
+	repoForkWorkflowWrite    check = "fork-workflow-write"
+	repoPrivateNoScanning    check = "private-secret-scanning-disabled"
 	repoNoDependabotUpdates  check = "dependabot-security-updates-disabled"
 	repoUnprotectedDefault   check = "public-default-branch-unprotected"
 )
@@ -55,6 +57,8 @@ var severities = map[check]finding.Severity{
 	repoNoSecretScanning:     finding.SevMedium,
 	repoNoPushProtection:     finding.SevMedium,
 	repoForkNoSecretScanning: finding.SevLow, // a fork rarely receives your own commits
+	repoForkWorkflowWrite:    finding.SevLow, // a fork's workflows stay off until enabled in its Actions tab, which the API does not show
+	repoPrivateNoScanning:    finding.SevMedium,
 	repoNoDependabotUpdates:  finding.SevLow,
 	repoUnprotectedDefault:   finding.SevLow,
 }

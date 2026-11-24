@@ -103,7 +103,7 @@ func world() *fakeGH {
 			repoJSON(103, "acme-corp/old", "public", true, true) + `]` +
 			`[` + repoJSON(104, "other-org/shared", "private", false, false) + `,` +
 			repoJSON(105, "tidy-free/web", "public", false, true) + `,` +
-			strings.Replace(repoJSON(106, "octo-tester/forked", "public", false, true), `"archived"`, `"fork":true,"archived"`, 1) + `]`,
+			fork(106, "octo-tester/forked") + `,` + fork(107, "octo-tester/forked-ci") + `]`,
 
 		"/repos/octo-tester/site": withSA(repoJSON(101, "octo-tester/site", "public", false, true),
 			`{"secret_scanning":{"status":"disabled"},"secret_scanning_push_protection":{"status":"disabled"},"dependabot_security_updates":{"status":"disabled"}}`),
@@ -122,7 +122,15 @@ func world() *fakeGH {
 		"/repos/octo-tester/forked/actions/permissions":              `{"enabled":false}`,
 		"/repos/octo-tester/forked/rules/branches/main?per_page=100": `[{"type":"deletion"}]`,
 
-		"/repos/acme-corp/api":                    repoJSON(102, "acme-corp/api", "private", false, true),
+		"/repos/octo-tester/forked-ci":                                  fork(107, "octo-tester/forked-ci"),
+		"/repos/octo-tester/forked-ci/hooks?per_page=100":               `[]`,
+		"/repos/octo-tester/forked-ci/keys?per_page=100":                `[]`,
+		"/repos/octo-tester/forked-ci/actions/permissions":              `{"enabled":true}`,
+		"/repos/octo-tester/forked-ci/actions/permissions/workflow":     `{"default_workflow_permissions":"write","can_approve_pull_request_reviews":false}`,
+		"/repos/octo-tester/forked-ci/rules/branches/main?per_page=100": `[{"type":"deletion"}]`,
+
+		"/repos/acme-corp/api": withSA(repoJSON(102, "acme-corp/api", "private", false, true),
+			`{"secret_scanning":{"status":"disabled"},"secret_scanning_push_protection":{"status":"disabled"}}`),
 		"/repos/acme-corp/api/hooks?per_page=100": `[]`,
 		"/repos/acme-corp/api/keys?per_page=100":  `[]`,
 
@@ -135,8 +143,9 @@ func world() *fakeGH {
 		"/repos/tidy-free/web/branches/main/protection":            `{"url":"x"}`,
 		"/repos/octo-tester/site/rules/branches/main?per_page=100": `[]`,
 	}, errs: map[string]error{
-		"/repos/octo-tester/site/branches/main/protection":   httpErr("Branch not protected", 404),
-		"/repos/octo-tester/forked/branches/main/protection": httpErr("Branch not protected", 404),
+		"/repos/octo-tester/site/branches/main/protection":      httpErr("Branch not protected", 404),
+		"/repos/octo-tester/forked/branches/main/protection":    httpErr("Branch not protected", 404),
+		"/repos/octo-tester/forked-ci/branches/main/protection": httpErr("Branch not protected", 404),
 	}}
 }
 
@@ -144,6 +153,10 @@ func repoJSON(id int, full, vis string, archived, admin bool) string {
 	owner, _, _ := strings.Cut(full, "/")
 	return fmt.Sprintf(`{"id":%d,"full_name":%q,"visibility":%q,"archived":%t,"default_branch":"main","owner":{"login":%q},"permissions":{"admin":%t}}`,
 		id, full, vis, archived, owner, admin)
+}
+
+func fork(id int, full string) string {
+	return strings.Replace(repoJSON(id, full, "public", false, true), `"archived"`, `"fork":true,"archived"`, 1)
 }
 
 func withSA(repo, sa string) string {
@@ -279,8 +292,10 @@ func TestInventoryRepositories(t *testing.T) {
 	}
 	sort.Strings(rolled)
 	wantRolled := []string{
+		"github:acme-corp Secret scanning or push protection is off in 1 private repository of acme-corp",
 		"github:octo-tester Dependabot security updates are off in 1 repository of octo-tester",
 		"github:octo-tester Secret scanning or push protection is off in 1 forked repository of octo-tester",
+		"github:octo-tester Workflows get a read and write GITHUB_TOKEN by default in 1 forked repository of octo-tester",
 		"github:tidy-free Dependabot security updates are off in 1 repository of tidy-free",
 	}
 	if !reflect.DeepEqual(rolled, wantRolled) {
@@ -302,7 +317,7 @@ func TestInventoryRepositories(t *testing.T) {
 		t.Error("branch protection is opt-in")
 	}
 	repos := statesFor(rec, "github:octo-tester")
-	if !strings.Contains(repos, "ok: 4 repositories you administer inspected, 3 with issues; 1 archived skipped") {
+	if !strings.Contains(repos, "ok: 5 repositories you administer inspected, 5 with issues; 1 archived skipped") {
 		t.Errorf("repository status: %s", repos)
 	}
 }
@@ -447,7 +462,7 @@ func TestRateLimitBudgetSkipsRemainingRepositories(t *testing.T) {
 	gh.remain = rateReserve + 16
 	rec := inventory(t, gh, nil)
 	got := statesFor(rec, "github:octo-tester")
-	if !strings.Contains(got, "error: 0 repositories you administer inspected") || !strings.Contains(got, "4 not inspected because the GitHub API rate limit ran low") {
+	if !strings.Contains(got, "error: 0 repositories you administer inspected") || !strings.Contains(got, "5 not inspected because the GitHub API rate limit ran low") {
 		t.Errorf("status: %s", got)
 	}
 	for _, f := range rec.Findings {
@@ -469,7 +484,7 @@ func TestRateLimitResponseMidRun(t *testing.T) {
 func TestMaxReposCap(t *testing.T) {
 	gh := world()
 	rec := inventory(t, gh, map[string]any{"max_repos": float64(1)})
-	if got := statesFor(rec, "github:octo-tester"); !strings.Contains(got, "1 repositories you administer inspected") || !strings.Contains(got, "3 more not inspected: raise max_repos") {
+	if got := statesFor(rec, "github:octo-tester"); !strings.Contains(got, "1 repositories you administer inspected") || !strings.Contains(got, "4 more not inspected: raise max_repos") {
 		t.Errorf("status: %s", got)
 	}
 	if gh.called("/repos/tidy-free/web") {
@@ -507,7 +522,8 @@ func TestSeverityTableCoversEveryCheck(t *testing.T) {
 	checks := []check{accountNo2FA, accountNo2FAOwner, orgNo2FARequirement, orgMembersNo2FA, orgCollaboratorsNo2FA,
 		orgDefaultPermission, orgPublicRepoCreation, orgWorkflowWrite, orgActionsApprovePRs, orgAllActions,
 		orgNoPrivateScanning, orgNoPublicScanning, repoInsecureHook, repoInsecureHookInactive, repoWriteDeployKey,
-		repoWorkflowWrite, repoNoSecretScanning, repoNoPushProtection, repoForkNoSecretScanning, repoNoDependabotUpdates, repoUnprotectedDefault}
+		repoWorkflowWrite, repoNoSecretScanning, repoNoPushProtection, repoForkNoSecretScanning, repoForkWorkflowWrite,
+		repoPrivateNoScanning, repoNoDependabotUpdates, repoUnprotectedDefault}
 	if len(checks) != len(severities) {
 		t.Fatalf("%d checks, %d severities", len(checks), len(severities))
 	}
@@ -517,8 +533,8 @@ func TestSeverityTableCoversEveryCheck(t *testing.T) {
 		}
 	}
 	for c := range rolledUp {
-		if severities[c].Rank() > finding.SevLow.Rank() {
-			t.Errorf("%s is rolled up but above low: it belongs in each repository's finding", c)
+		if severities[c].Rank() > finding.SevMedium.Rank() {
+			t.Errorf("%s is rolled up but above medium: it belongs in each repository's finding", c)
 		}
 	}
 }
