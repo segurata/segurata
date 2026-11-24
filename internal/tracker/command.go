@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -65,27 +64,9 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// open loads the tracker; with lock it first takes the tracker lock, held until unlock, for a
-// command that saves it.
-func (c CLI) open(now time.Time, lock bool) (t *Tracker, path string, unlock func(), err error) {
-	unlock = func() {}
-	p, err := c.Paths.Resolve()
-	if err != nil {
-		return nil, "", unlock, err
-	}
-	if lock {
-		if unlock, err = Lock(p.Tracker); err != nil {
-			return nil, "", func() {}, err
-		}
-	}
-	t, err = LoadOrMigrate(p, now, c.Err)
-	return t, p.Tracker, unlock, err
-}
-
-func flags(name string, w io.Writer) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(w)
-	return fs
+// open loads the tracker; with lock it holds the tracker lock until unlock (see LoadFor).
+func (c CLI) open(now time.Time, lock bool) (*Tracker, string, func(), error) {
+	return LoadFor(c.Paths, now, lock)
 }
 
 // multi is a flag given several times.
@@ -143,7 +124,7 @@ func (c CLI) Track(args []string) int {
 }
 
 func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
-	fs := flags("track sync", c.Err)
+	fs := cliflag.New("track sync", c.Err)
 	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	from := fs.String("from", "", "local-secrets JSONL to read instead of its latest run")
 	noise := fs.Bool("include-noise", false, "also track noise-only secrets, without a priority")
@@ -186,7 +167,7 @@ func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time) (SyncR
 // expect writes the config rule that expects a setup item's status and closes the item as
 // expected; --dry-run prints the rule and changes nothing.
 func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
-	fs := flags("track expect", c.Err)
+	fs := cliflag.New("track expect", c.Err)
 	reason := fs.String("reason", "", "why this status is expected")
 	detail := fs.String("detail", "", "only statuses whose detail contains this text (or matches /regexp/)")
 	dry := fs.Bool("dry-run", false, "print the rule and change nothing")
@@ -233,7 +214,7 @@ func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
 }
 
 func (c CLI) list(t *Tracker, args []string, now time.Time) int {
-	fs := flags("track list", c.Err)
+	fs := cliflag.New("track list", c.Err)
 	all := fs.Bool("all", false, "include done, accepted, ignored and snoozed items")
 	theme := fs.String("theme", "", "comma-separated themes")
 	kind := fs.String("kind", "", "comma-separated kinds: fix, rotate, decide, setup, review")
@@ -354,7 +335,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 }
 
 func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) int {
-	fs := flags("track "+cmd, c.Err)
+	fs := cliflag.New("track "+cmd, c.Err)
 	note := fs.String("note", "", "free text kept in the history")
 	until := fs.String("until", "", "snooze: date the item comes back, YYYY-MM-DD")
 	reason := fs.String("reason", "", "ignore, prioritize: why")
@@ -447,7 +428,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 }
 
 func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
-	fs := flags("track add", c.Err)
+	fs := cliflag.New("track add", c.Err)
 	kind := fs.String("kind", string(KindFix), "fix, decide, setup or review")
 	title := fs.String("title", "", "what to do")
 	theme := fs.String("theme", "", "theme id (default: decisions for decide, else other)")
@@ -512,7 +493,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 // tracker (mode 0600). It is read-only unless asked: an unfiltered status with --mark-seen (or
 // --write, which implies it) remembers when it ran, for "Since the last status".
 func (c CLI) Status(args []string) int {
-	fs := flags("status", c.Err)
+	fs := cliflag.New("status", c.Err)
 	theme := fs.String("theme", "", "comma-separated themes")
 	kind := fs.String("kind", "", "comma-separated kinds")
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0,P1")

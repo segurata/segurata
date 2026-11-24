@@ -63,10 +63,9 @@ func newFixture(t *testing.T, cfg string) *fixture {
 		Out:        fx.out,
 		ConfigPath: filepath.Join(dir, "config.json"),
 		KeyPath:    filepath.Join(dir, "fingerprint.key"),
-		Tracker: tracker.Paths{Tracker: filepath.Join(home, ".segurata", "tracker.json"),
-			LegacyLedger: filepath.Join(home, ".segurata", "rotations.json"), LegacyAccepted: filepath.Join(dir, "accepted.json")},
-		OutDir: filepath.Join(home, "out"),
-		GOOS:   "darwin",
+		Tracker:    tracker.Paths{Tracker: filepath.Join(home, ".segurata", "tracker.json")},
+		OutDir:     filepath.Join(home, "out"),
+		GOOS:       "darwin",
 		Connectors: []connector.Connector{
 			plain{connector.Description{Name: "api", Needs: []string{"secret:API_KEY"}}},
 			plain{connector.Description{Name: "browser", Needs: []string{"cdp", "os:linux"}}},
@@ -204,7 +203,6 @@ func TestDoctorStateModes(t *testing.T) {
 	fx := newFixture(t, "")
 	write(t, fx.env.KeyPath, strings.Repeat("ab", 32)+"\n", 0o644)
 	write(t, fx.env.Tracker.Tracker, `{broken`, 0o600)
-	write(t, fx.env.Tracker.LegacyLedger, `{"version": 1, "items": []}`, 0o600)
 	if err := os.Chmod(filepath.Dir(fx.env.Tracker.Tracker), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +217,6 @@ func TestDoctorStateModes(t *testing.T) {
 		"FAIL  state   fingerprint key "+fx.env.KeyPath+": mode 0644, want 0600",
 		"fix: chmod 600 "+fx.env.KeyPath,
 		"FAIL  state   tracker "+fx.env.Tracker.Tracker+": unreadable:",
-		"WARN  state   old state file "+fx.env.Tracker.LegacyLedger+": not imported into the tracker yet",
 		"OK    state   tracker dir "+filepath.Dir(fx.env.Tracker.Tracker)+": mode 0700",
 		"WARN  state   output dir "+fx.env.OutDir+": mode 0755, want 0700",
 		"fix: chmod 700 "+fx.env.OutDir,

@@ -44,11 +44,11 @@ func init() { connector.Register(&Connector{}) }
 
 // SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
-	if secret != secretName {
-		return ""
-	}
-	return setupHint
+	return connector.HintFor(secret, secretName, setupHint)
 }
+
+// base is the API base URL: BaseURL, or the real API.
+func (c *Connector) base() string { return httpx.Base(c.BaseURL, DefaultBaseURL) }
 
 func (c *Connector) Describe() connector.Description {
 	return connector.Description{
@@ -66,18 +66,11 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: account, State: finding.StateMissingCredentials, Detail: setupHint})
 		return nil
 	}
-	base, now := c.BaseURL, time.Now
-	if base == "" {
-		base = DefaultBaseURL
-	}
-	if c.Now != nil {
-		now = c.Now
-	}
 	s := &scan{
 		ctx:  ctx,
-		api:  httpx.New(base, http.Header{"Authorization": {"Bearer " + key}}),
+		api:  httpx.New(c.base(), http.Header{"Authorization": {"Bearer " + key}}),
 		emit: emit,
-		now:  now().UTC(),
+		now:  connector.Now(c.Now),
 	}
 	s.run()
 	return nil
@@ -94,7 +87,7 @@ type scan struct {
 // fail reports a partial failure; the run goes on with whatever else it can read.
 func (s *scan) fail(err error) {
 	s.failed = true
-	s.emit.Status(finding.Status{Account: account, State: finding.StateError, Detail: err.Error()})
+	s.emit.Status(finding.Status{Account: account, State: httpx.State(err), Detail: err.Error()})
 }
 
 func (s *scan) run() {

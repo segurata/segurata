@@ -8,7 +8,7 @@ Rules every connector follows, whatever its language:
 
 - **Inventory is read-only.** It lists, reads and computes. It never revokes, deletes, clicks a
   button that changes something, or writes outside its own process. Changes happen only through a
-  remediation, one finding at a time, after the owner saw the plan and said yes.
+  remediation, one plan at a time (a plan can cover several findings), after the owner saw the plan and said yes.
 - **No secret values anywhere**: not in findings, statuses, logs, stderr, test fixtures or commit
   messages. At most a redacted prefix and the length (`finding.Redact` in Go).
 - **English** for code, finding text and docs.
@@ -28,7 +28,9 @@ Write a built-in connector when it belongs in the binary for everyone and can be
 Go standard library. Write an external one for anything else: another language, a heavy
 dependency, a private integration, an experiment. The core wraps an external connector in the same
 Go interface, so the rest of the program (inventory, summary, accepted risks, remediation, the
-rotation ledger) treats both alike. A built-in name wins over an external one with the same name.
+rotation ledger) treats both alike. An external connector must name itself after its file
+(`segurata-example` declares `example`); a built-in name wins over an external one, and the first
+`PATH` directory over a later one.
 
 A minimal built-in connector:
 
@@ -90,7 +92,7 @@ One JSON object per finding (`internal/finding`):
 | `scope` | Connector | Optional: the part of the account the finding belongs to when the connector inspects the account in parts (a repository, a project, a service); see "Coverage". Not part of the id |
 | `resource` | Connector | `type` and `id` identify the thing; `name` is for people |
 | `kind` | Connector | `grant` (third-party access), `credential` (key, token, service account), `setting` (security configuration), `spend` (spend, budget or limit), `exposure` (secret or personal data in plain sight) |
-| `severity` | Connector | `info`, `low`, `medium`, `high`, `critical` (see "Severity") |
+| `severity` | Connector | `info`, `low`, `medium`, `high`, `critical`, exactly; anything else from an external connector fails the run (see "Severity") |
 | `title` | Connector | One line a person understands without the evidence. No secret, no token |
 | `evidence` | Connector | Whatever backs the finding: scopes, dates, paths, counts. Never a secret value |
 | `created_at`, `last_used_at` | Connector | What the provider reports, RFC 3339. `null` when it reports nothing, never a made-up date |
@@ -108,7 +110,7 @@ inspected:
 | `state` | Meaning |
 |---|---|
 | `ok` | Inspected |
-| `reauth` | The service wants a fresh sign-in or identity check |
+| `reauth` | The service wants a fresh sign-in or identity check, or rejected the credential (HTTP 401) |
 | `signedout` | No session |
 | `noscope` | Signed in, but the credential lacks a permission; `detail` says which and how to grant it |
 | `unverified` | Signed in, but the reader was never checked against a real page |
@@ -256,7 +258,9 @@ subscriber kinds need one call per notification and are not read).
 
 ## External connector protocol
 
-An external connector is a `segurata-<name>` executable on `PATH`. The core runs it with one
+An external connector is a `segurata-<name>` executable in an absolute `PATH` directory; relative
+entries (`bin`, `./node_modules/.bin`) are skipped, so the working directory never adds a connector
+and an interactive run finds the same ones a scheduled run does. The core runs it with one
 subcommand and, except for `describe`, one JSON request on stdin. The core speaks protocol 1 and
 protocol 2; a connector declares the one it speaks in `describe`, and every request carries that
 number.
@@ -276,8 +280,13 @@ Prints one JSON object:
 - `remediates` (protocol 2 only): the remediation actions this connector plans and applies. A
   finding whose `remediation.action` is not in this list cannot be remediated through it. An action
   the core owns (`file.chmod600`) is always handled by the core.
-- A description that speaks another protocol, or declares `remediates` on protocol 1, is ignored
-  with a message on stderr.
+- `name`: lowercase letters, digits and dashes, starting with a letter or digit, and equal to the
+  file name without `segurata-`. The core never runs a `segurata-*` file whose suffix is not such a
+  name (a stray `segurata-example.orig`), nor one whose name a built-in connector already has.
+- `describe` runs on every command that lists connectors, once per command: it must answer within
+  10 seconds and print less than 1 MiB.
+- A description whose name is not its file's, that speaks another protocol, or declares
+  `remediates` on protocol 1, is ignored with a message on stderr.
 
 ### `inventory` (v1, v2)
 
@@ -293,9 +302,13 @@ above.
 
 - Exit 0 when it finished, even if some accounts reported error statuses. Non-zero only when the
   connector could not start at all.
-- stderr is for human diagnostics; the core shows it with `--verbose`.
+- stderr is for human diagnostics; the core shows it with `--verbose`. More than 1 MiB of it fails
+  the run.
 - The core takes the connector name from `describe`, never from the records, and computes ids.
-- Unparseable lines are ignored with a log line.
+- Every stdout line must be a `finding`, `status`, `scope` or `log` record whose fields have the
+  documented types, and every finding needs one of the five severities, in lowercase. The core
+  keeps the records it can use but fails the run on any other line ("2 malformed records, first:
+  …"), so nothing the connector reported earlier closes as resolved.
 
 ### `plan` (v2)
 

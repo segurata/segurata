@@ -6,7 +6,6 @@ package accounts
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -58,8 +57,7 @@ func (c CLI) Run(args []string) int {
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
-	fs := flag.NewFlagSet("accounts "+cmd, flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("accounts "+cmd, c.Err)
 	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	pos, err := cliflag.Parse(fs, rest)
 	if err != nil {
@@ -286,17 +284,9 @@ func (c CLI) watch(out, lbl, account string, on bool) int {
 
 // moveSetup reopens (watch) or closes (unwatch) the account's setup items in the tracker.
 func (c CLI) moveSetup(lbl, account string, on bool) int {
-	p, err := c.Paths.Resolve()
-	if err != nil {
-		return c.fail(err)
-	}
-	unlock, err := tracker.Lock(p.Tracker)
-	if err != nil {
-		return c.fail(err)
-	}
-	defer unlock()
 	now := c.Now()
-	t, err := tracker.LoadOrMigrate(p, now, c.Err)
+	t, path, unlock, err := tracker.LoadFor(c.Paths, now, true)
+	defer unlock()
 	if err != nil {
 		return c.fail(err)
 	}
@@ -309,7 +299,7 @@ func (c CLI) moveSetup(lbl, account string, on bool) int {
 	if len(moved) == 0 {
 		return 0
 	}
-	if err := t.Save(p.Tracker); err != nil {
+	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
 	for _, it := range moved {
@@ -332,7 +322,7 @@ func (c CLI) owned(out string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	t, err := tracker.LoadOrMigrate(p, c.Now(), c.Err)
+	t, err := tracker.LoadOrNew(p, c.Now())
 	if err != nil {
 		return c.fail(err)
 	}

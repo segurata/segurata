@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -14,6 +13,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/schedule"
+	"github.com/segurata/segurata/internal/searchpath"
 )
 
 const scheduleUsage = "usage: segurata schedule install|uninstall|status|run [--every 24h] [--connectors a,b] [--apply] [--yes]"
@@ -21,7 +21,7 @@ const scheduleUsage = "usage: segurata schedule install|uninstall|status|run [--
 // scheduleCmd is `segurata schedule`. install and uninstall are dry runs unless --apply; run is
 // what the installed agent executes.
 func scheduleCmd(args []string) int {
-	fs := flag.NewFlagSet("schedule", flag.ContinueOnError)
+	fs := cliflag.New("schedule", os.Stderr)
 	every := fs.Duration("every", schedule.DefaultEvery, "interval between runs")
 	conns := fs.String("connectors", "", "comma-separated connectors (default: all that do not need the browser)")
 	apply := fs.Bool("apply", false, "write and load the agent after confirmation (default: dry run)")
@@ -75,7 +75,7 @@ func scheduleEnv() (schedule.Env, error) {
 		return schedule.Env{}, err
 	}
 	return schedule.Env{
-		GOOS: runtime.GOOS, Home: home, UID: os.Getuid(), Exe: exe, Path: schedule.CleanPath(os.Getenv("PATH")), TmpDir: os.TempDir(),
+		GOOS: runtime.GOOS, Home: home, UID: os.Getuid(), Exe: exe, Path: searchpath.Clean(os.Getenv("PATH")), TmpDir: os.TempDir(),
 		Runner: schedule.System{}, IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr},
 		TTY: remediate.IsTerminal(os.Stdin), Now: time.Now, Connectors: all(),
 	}, nil

@@ -396,7 +396,7 @@ func (r *replacement) note(written []string) string {
 }
 
 func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Time) int {
-	fs := newFlags("replace", c.Err)
+	fs := cliflag.New("rotations replace", c.Err)
 	fs.Usage = func() { fmt.Fprintln(c.Err, replaceUsage) }
 	apply := fs.Bool("apply", false, "apply the plan after confirmation (default: dry run)")
 	yes := fs.Bool("yes", false, "with --apply, do not ask for confirmation")

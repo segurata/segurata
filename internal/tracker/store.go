@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,42 +20,24 @@ import (
 	"github.com/segurata/segurata/internal/statefile"
 )
 
-// Paths says where the tracker lives and where the files it absorbs used to live.
+// Paths says where the tracker lives.
 type Paths struct {
-	Tracker        string // tracker.json
-	LegacyLedger   string // rotations.json to import once; "" means none
-	LegacyAccepted string // accepted.json to import once; "" means none
+	Tracker string // tracker.json
 }
 
 // Dir is $SEGURATA_HOME, or ~/.segurata: the tracker and its generated views.
 func Dir() (string, error) { return config.StateDir() }
 
-// DefaultPaths is the tracker in Dir and the legacy files it imports once: $SEGURATA_STATE/rotations.json
-// (or rotations.json in Dir, where the startup migration moves the old state directory's files) and
-// $SEGURATA_ACCEPTED (or ~/.config/segurata/accepted.json).
+// DefaultPaths is the tracker in Dir.
 func DefaultPaths() (Paths, error) {
 	dir, err := Dir()
 	if err != nil {
 		return Paths{}, err
 	}
-	state := os.Getenv("SEGURATA_STATE")
-	if state == "" {
-		state = dir
-	}
-	accepted := os.Getenv("SEGURATA_ACCEPTED")
-	if accepted == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return Paths{}, err
-		}
-		accepted = filepath.Join(home, ".config", "segurata", "accepted.json")
-	}
-	return Paths{Tracker: filepath.Join(dir, "tracker.json"), LegacyLedger: filepath.Join(state, "rotations.json"), LegacyAccepted: accepted}, nil
+	return Paths{Tracker: filepath.Join(dir, "tracker.json")}, nil
 }
 
-// Resolve returns p, or DefaultPaths when p names no tracker. Legacy files are only imported from
-// where p says: a tracker path given without them (tests, a second tracker) never touches the
-// owner's old files.
+// Resolve returns p, or DefaultPaths when p names no tracker.
 func (p Paths) Resolve() (Paths, error) {
 	if p.Tracker != "" {
 		return p, nil
@@ -71,62 +52,34 @@ func New(now time.Time) *Tracker {
 	return t
 }
 
-// LoadOrMigrate loads the tracker. When tracker.json does not exist yet but a legacy file does, it imports
-// them (see Migrate), saves the tracker, renames the old files to *.migrated-<date> and says so on
-// notify. Neither existing, it returns a new tracker (saved by the first command that changes it).
-func LoadOrMigrate(p Paths, now time.Time, notify io.Writer) (*Tracker, error) {
+// LoadOrNew loads the tracker, or returns a new one when tracker.json does not exist yet (saved by
+// the first command that changes it).
+func LoadOrNew(p Paths, now time.Time) (*Tracker, error) {
 	p, err := p.Resolve()
 	if err != nil {
 		return nil, err
 	}
 	t, err := Load(p.Tracker)
-	if err == nil || !errors.Is(err, fs.ErrNotExist) {
-		return t, err
-	}
-	var legacy []string
-	for _, f := range []string{p.LegacyLedger, p.LegacyAccepted} {
-		if f == "" {
-			continue
-		}
-		if _, err := os.Stat(f); err == nil {
-			legacy = append(legacy, f)
-		}
-	}
-	if len(legacy) == 0 {
+	if errors.Is(err, fs.ErrNotExist) {
 		return New(now), nil
 	}
-	t, rep, err := Migrate(p.LegacyLedger, p.LegacyAccepted, now)
-	if err != nil {
-		return nil, fmt.Errorf("importing the old state files: %w", err)
-	}
-	if err := t.Save(p.Tracker); err != nil {
-		return nil, err
-	}
-	var renamed []string
-	for _, f := range legacy {
-		to, err := retire(f, now)
-		if err != nil {
-			return nil, fmt.Errorf("imported into %s, but could not rename %s: %w", p.Tracker, f, err)
-		}
-		renamed = append(renamed, to)
-	}
-	if notify != nil {
-		fmt.Fprintf(notify, "Imported %d rotation items and %d accepted risks into %s; the old files are kept as %v.\n",
-			rep.Rotations, rep.Accepted, p.Tracker, renamed)
-	}
-	return t, nil
+	return t, err
 }
 
-// retire renames an imported file to <path>.migrated-<date>, never over an existing file.
-func retire(path string, now time.Time) (string, error) {
-	to := path + ".migrated-" + now.Format(time.DateOnly)
-	for n := 2; ; n++ {
-		if _, err := os.Lstat(to); errors.Is(err, fs.ErrNotExist) {
-			break
-		}
-		to = fmt.Sprintf("%s.migrated-%s-%d", path, now.Format(time.DateOnly), n)
+// LoadFor resolves p and loads the tracker (LoadOrNew). With lock it first takes the tracker lock,
+// held until unlock, for a command that saves what it loaded. unlock is never nil.
+func LoadFor(p Paths, now time.Time, lock bool) (t *Tracker, path string, unlock func(), err error) {
+	unlock = func() {}
+	if p, err = p.Resolve(); err != nil {
+		return nil, "", unlock, err
 	}
-	return to, os.Rename(path, to)
+	if lock {
+		if unlock, err = Lock(p.Tracker); err != nil {
+			return nil, "", func() {}, err
+		}
+	}
+	t, err = LoadOrNew(p, now)
+	return t, p.Tracker, unlock, err
 }
 
 // Load reads and validates tracker.json. A missing file is fs.ErrNotExist; a file that does not
@@ -164,10 +117,7 @@ func Update(path string, now time.Time, fn func(*Tracker) error) error {
 		return err
 	}
 	defer unlock()
-	t, err := Load(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		t, err = New(now), nil
-	}
+	t, err := LoadOrNew(Paths{Tracker: path}, now)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@
 package httpx
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,12 +29,36 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-// New returns a client with a sane timeout. Header values are sent on every request.
+// Base is the API base URL without a trailing slash: configured, or def when configured is empty.
+func Base(configured, def string) string { return strings.TrimRight(cmp.Or(configured, def), "/") }
+
+// New returns a client with a sane timeout. Header values are sent on every request, and they
+// are the credential: a redirect to another host gets none of them.
 func New(baseURL string, header http.Header) *Client {
 	h := header.Clone()
 	h.Set("Accept", "application/json")
 	h.Set("User-Agent", "segurata")
-	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Header: h, HTTP: &http.Client{Timeout: 60 * time.Second}}
+	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Header: h, HTTP: &http.Client{
+		Timeout:       60 * time.Second,
+		CheckRedirect: keepOnSameHost(header),
+	}}
+}
+
+// keepOnSameHost follows up to 10 redirects, as Go does, and drops the credential headers from any
+// hop to a host (or port) other than the first request's. Go strips only Authorization and
+// cookies, and keeps them on another port of the same host.
+func keepOnSameHost(credential http.Header) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if req.URL.Host != via[0].URL.Host {
+			for k := range credential {
+				req.Header.Del(k)
+			}
+		}
+		return nil
+	}
 }
 
 // StatusError is a non-2xx answer. Message is the provider's error message, never a header value.
@@ -51,6 +76,15 @@ func (e *StatusError) Error() string {
 func IsStatus(err error, code int) bool {
 	var se *StatusError
 	return errors.As(err, &se) && se.Code == code
+}
+
+// State is the status state of a failed call: reauth when the provider rejected the credential
+// (HTTP 401), error otherwise.
+func State(err error) finding.State {
+	if IsStatus(err, http.StatusUnauthorized) {
+		return finding.StateReauth
+	}
+	return finding.StateError
 }
 
 // Get fetches path (relative to BaseURL) with the query q and decodes the JSON body into out.
@@ -113,13 +147,10 @@ func ErrorMessage(body []byte) string {
 	return truncate(strings.TrimSpace(string(body)))
 }
 
-func truncate(s string) string {
-	const max = 300
-	if len(s) > max {
-		return s[:max] + "…"
-	}
-	return s
-}
+// maxMessage is how many characters of a provider's error message an error keeps.
+const maxMessage = 300
+
+func truncate(s string) string { return textfmt.Truncate(s, maxMessage+1) }
 
 // MatchesRedacted reports whether secret is the key a provider shows as redacted, a visible
 // prefix and suffix around a mask ("sk-proj-****dYwA", "sk-or-v1-27e...d4d") or a hint in

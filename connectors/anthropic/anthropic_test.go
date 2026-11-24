@@ -161,6 +161,18 @@ func TestMissingSecretReportsHowToConfigure(t *testing.T) {
 	}
 }
 
+func TestBadKeyIsAReauthStatus(t *testing.T) {
+	srv := httpxtest.NewServer(t, http.Header{"X-Api-Key": {testKey}}, nil)
+	rec := &httpxtest.Recorder{}
+	c := &Connector{BaseURL: srv.URL}
+	if err := c.Inventory(context.Background(), connector.Request{Secrets: map[string]string{secretName: "wrong"}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateReauth || len(rec.Findings) != 0 {
+		t.Fatalf("statuses=%+v findings=%d", rec.Statuses, len(rec.Findings))
+	}
+}
+
 func TestUnreadableUsersOrUsageNeverInventsRisk(t *testing.T) {
 	k := apiKey{ID: "k", Status: "active", CreatedBy: &struct {
 		Type string `json:"type"`

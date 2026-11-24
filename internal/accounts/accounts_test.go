@@ -45,7 +45,7 @@ func (x *fixture) run(t *testing.T, args ...string) (string, string, int) {
 
 func (x *fixture) sync(t *testing.T) *tracker.Tracker {
 	t.Helper()
-	tr, err := tracker.LoadOrMigrate(tracker.Paths{Tracker: x.trk}, t0, nil)
+	tr, err := tracker.LoadOrNew(tracker.Paths{Tracker: x.trk}, t0)
 	if err != nil {
 		t.Fatal(err)
 	}

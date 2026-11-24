@@ -84,8 +84,6 @@ func (a account) evidence() map[string]any {
 		"suspended": a.suspended, "archived": a.archived, "last_login": a.lastLoginText()}
 }
 
-func capitalize(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
-
 // userFindings covers 2SV, admins and stale accounts, in the order accounts come (admins first).
 func userFindings(domain string, accounts []account, inactiveDays int, now time.Time) []finding.Finding {
 	var twoSV, admins, stale []finding.Finding
@@ -116,7 +114,7 @@ func twoSVFinding(f finding.Finding, a account) (finding.Finding, bool) {
 	}
 	f.Resource = finding.Resource{Type: "user_2sv", ID: a.email, Name: a.email}
 	f.Kind = finding.KindSetting
-	who := capitalize(a.role()) + " " + a.email
+	who := textfmt.UpperFirst(a.role()) + " " + a.email
 	switch {
 	case !a.enrolled && a.admin():
 		f.Severity, f.Title = finding.SevCritical, who+" has no 2-Step Verification"
@@ -173,7 +171,7 @@ func staleFinding(f finding.Finding, a account, inactiveDays int) (finding.Findi
 			f.Title = fmt.Sprintf("%s has not signed in for %d days", a.email, a.idleDays)
 		}
 		if a.admin() {
-			f.Title = capitalize(a.role()) + " " + f.Title
+			f.Title = textfmt.UpperFirst(a.role()) + " " + f.Title
 		}
 		f.Remediation.Summary = "If nobody uses the account, suspend or delete it after transferring its Drive and Gmail data"
 	default:

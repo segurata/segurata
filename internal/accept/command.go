@@ -6,7 +6,6 @@
 package accept
 
 import (
-	"flag"
 	"fmt"
 	"github.com/segurata/segurata/internal/config"
 	"io"
@@ -34,27 +33,14 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// load loads the tracker; with lock it first takes the tracker lock, held until unlock, for a
-// command that saves it.
-func (c CLI) load(now time.Time, lock bool) (t *tracker.Tracker, path string, unlock func(), err error) {
-	unlock = func() {}
-	p, err := c.Paths.Resolve()
-	if err != nil {
-		return nil, "", unlock, err
-	}
-	if lock {
-		if unlock, err = tracker.Lock(p.Tracker); err != nil {
-			return nil, "", func() {}, err
-		}
-	}
-	t, err = tracker.LoadOrMigrate(p, now, c.Err)
-	return t, p.Tracker, unlock, err
+// load loads the tracker; with lock it holds the tracker lock until unlock (see tracker.LoadFor).
+func (c CLI) load(now time.Time, lock bool) (*tracker.Tracker, string, func(), error) {
+	return tracker.LoadFor(c.Paths, now, lock)
 }
 
 // Accept records a finding of the latest run as an accepted risk, or lists the accepted ones.
 func (c CLI) Accept(args []string) int {
-	fs := flag.NewFlagSet("accept", flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("accept", c.Err)
 	list := fs.Bool("list", false, "list accepted findings")
 	reason := fs.String("reason", "", "why the risk is kept on purpose")
 	until := fs.String("until", "", "last day the acceptance applies, YYYY-MM-DD (default: no end)")
@@ -99,8 +85,7 @@ func (c CLI) Accept(args []string) int {
 
 // Unaccept removes an acceptance, so the finding shows again.
 func (c CLI) Unaccept(args []string) int {
-	fs := flag.NewFlagSet("unaccept", flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("unaccept", c.Err)
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		fmt.Fprintln(c.Err, unacceptUsage)

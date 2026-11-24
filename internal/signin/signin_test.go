@@ -297,7 +297,7 @@ func newFixture(t *testing.T) *fixture {
 }
 
 func (x *fixture) sync(t testing.TB) int {
-	tr, err := tracker.LoadOrMigrate(tracker.Paths{Tracker: x.trk}, t0, nil)
+	tr, err := tracker.LoadOrNew(tracker.Paths{Tracker: x.trk}, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
