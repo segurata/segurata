@@ -252,3 +252,18 @@ func TestInventoryFailsToStartWithoutBrowser(t *testing.T) {
 		t.Fatal("expected an error when CDP is unreachable")
 	}
 }
+
+// A page that fails to load stops the walk before accounts whose address is unknown: the status
+// leaves every scope uninspected, so none of their findings look resolved.
+func TestUnreadableAccountPageLeavesEverythingUninspected(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{connectionsURL(0): conns("a@example.test", "Third-party apps")},
+		fail: map[string]error{connectionsURL(1): errors.New("target closed")}}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now); err != nil {
+		t.Fatal(err)
+	}
+	last := rec.statuses[len(rec.statuses)-1]
+	if last.Account != "authuser 1" || last.State != finding.StateError || last.Scope != finding.ScopeAll {
+		t.Fatalf("status %+v", last)
+	}
+}

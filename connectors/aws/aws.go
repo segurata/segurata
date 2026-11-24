@@ -171,8 +171,10 @@ type audit struct {
 	failedWith []string
 }
 
+// emit stamps a finding with the account and with the profile as its scope: a profile whose
+// identity cannot be read is reported by profile name, and then only its findings are unresolved.
 func (a *audit) emit(f finding.Finding) {
-	f.Account = a.account
+	f.Account, f.Scope = a.account, profileScope(a.profile)
 	if f.Evidence == nil {
 		f.Evidence = map[string]any{}
 	}
@@ -191,10 +193,12 @@ func (a *audit) check(name string, fn func() error) {
 	}
 }
 
+func profileScope(profile string) string { return "profile " + profile }
+
 func (c *Connector) inspectProfile(ctx context.Context, profile string, now time.Time, costExplorer bool, seen map[string]bool, emit connector.Emitter) {
 	var id struct{ Account, Arn string }
 	if err := c.call(ctx, profile, &id, "sts", "get-caller-identity"); err != nil {
-		emit.Status(finding.Status{Account: "profile " + profile, State: classify(err), Detail: err.Error()})
+		emit.Status(finding.Status{Account: profileScope(profile), State: classify(err), Detail: err.Error()})
 		return
 	}
 	if seen[id.Account] {

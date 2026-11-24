@@ -131,7 +131,8 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 	for u := 0; u < maxAccounts && ctx.Err() == nil; u++ {
 		raw, err := b.load(ctx, connectionsURL(u), connectionsJS, connectionsReady, 24)
 		if err != nil {
-			emit.Status(finding.Status{Account: fmt.Sprintf("authuser %d", u), State: finding.StateError, Detail: err.Error()})
+			// The accounts from here on were not read, and which they are is unknown.
+			emit.Status(finding.Status{Account: fmt.Sprintf("authuser %d", u), Scope: finding.ScopeAll, State: finding.StateError, Detail: err.Error()})
 			break
 		}
 		page, _ := decode[connectionsPage](raw)

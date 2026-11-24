@@ -74,8 +74,11 @@ func TestInventory(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
-	if k := rec.ByResource(t, "supabase_api_key", "abcdefghijklmnopqrst/k3"); k.CreatedAt == nil {
-		t.Fatal("inserted_at should become created_at")
+	if k := rec.ByResource(t, "supabase_api_key", "abcdefghijklmnopqrst/k3"); k.CreatedAt == nil || k.Scope != "project:abcdefghijklmnopqrst" {
+		t.Fatalf("inserted_at should become created_at, and the key is scoped to its project: %+v", k)
+	}
+	if len(rec.Scopes) != 0 {
+		t.Fatalf("the project list was read, yet scopes declared skipped: %+v", rec.Scopes)
 	}
 	rec.AssertNoSecret(t, fakeKey)
 	rec.AssertNoSecret(t, testToken)
