@@ -66,7 +66,6 @@ func secretFinding(a app, p passwordCredential, now time.Time) finding.Finding {
 		Resource:  finding.Resource{Type: "azure_app_secret", ID: a.AppID + "/" + p.KeyID, Name: name},
 		Kind:      finding.KindCredential,
 		Severity:  finding.SevInfo,
-		Title:     fmt.Sprintf("Client secret of app %q", a.DisplayName),
 		Evidence:  ev,
 		CreatedAt: p.StartDateTime,
 		Remediation: finding.Remediation{
@@ -75,17 +74,26 @@ func secretFinding(a app, p passwordCredential, now time.Time) finding.Finding {
 		},
 	}
 	switch end := p.EndDateTime; {
-	case end == nil || end.Sub(now) > neverExpiresAfter:
+	case end == nil:
 		f.Severity = finding.SevHigh
-		f.Title = fmt.Sprintf("Client secret of app %q never expires in practice", a.DisplayName)
+		f.Title = fmt.Sprintf("Client secret of app %q has no expiry date", a.DisplayName)
+	case end.Sub(now) > neverExpiresAfter:
+		f.Severity = finding.SevHigh
+		f.Title = fmt.Sprintf("Client secret of app %q never expires in practice (expires %s)", a.DisplayName, day(*end))
 	case end.Before(now):
 		f.Severity = finding.SevLow
-		f.Title = fmt.Sprintf("Expired client secret of app %q is still registered", a.DisplayName)
+		f.Title = fmt.Sprintf("Client secret of app %q expired on %s and is still registered", a.DisplayName, day(*end))
 		f.Remediation.Summary = "Delete the expired secret."
 	case end.Sub(now) <= expiringWithin:
 		f.Severity = finding.SevMedium
-		f.Title = fmt.Sprintf("Client secret of app %q expires in %d days", a.DisplayName, int(end.Sub(now).Hours()/24))
+		f.Title = fmt.Sprintf("Client secret of app %q expires %s, in %d days", a.DisplayName, day(*end), int(end.Sub(now).Hours()/24))
 		f.Remediation.Summary = "Add a new credential, move the app to it and delete this secret before it expires."
+	default:
+		f.Title = fmt.Sprintf("Client secret of app %q expires %s", a.DisplayName, day(*end))
 	}
 	return f
+}
+
+func day(t time.Time) string {
+	return t.UTC().Format(time.DateOnly)
 }

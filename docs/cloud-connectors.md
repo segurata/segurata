@@ -142,6 +142,9 @@ it keeps `keyId`, `hint` (the first three characters, as the portal shows), `dis
 | Expired client secret still registered | `credential` | low |
 | Other client secrets, budgets with alerts | `credential` / `spend` | info |
 
+Every client secret title carries its expiry date (`expires 2027-03-23`, `expired on 2025-03-23`),
+and one expiring within 30 days also says in how many days.
+
 Not covered: certificate credentials (`keyCredentials`), service principal secrets outside app
 registrations, and the spending limit of free or credit-based offers, which `az` does not expose.
 Some offer types return an error from the budgets API; that subscription gets an `error` status.
