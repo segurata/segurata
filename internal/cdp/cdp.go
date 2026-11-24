@@ -22,13 +22,17 @@ var pollInterval = 500 * time.Millisecond
 
 // Client is one browser-level CDP connection. Safe for concurrent use.
 type Client struct {
-	ws      *wsConn
-	mu      sync.Mutex
-	nextID  int64
-	pending map[int64]chan message
-	done    chan struct{}
-	err     error // why the read loop stopped; valid once done is closed
+	ws        *wsConn
+	mu        sync.Mutex
+	nextID    int64
+	pending   map[int64]chan message
+	listeners map[eventKey][]func(json.RawMessage)
+	done      chan struct{}
+	err       error // why the read loop stopped; valid once done is closed
 }
+
+// eventKey routes an event to the listeners of one page session.
+type eventKey struct{ sessionID, method string }
 
 type message struct {
 	ID        int64           `json:"id,omitempty"`
@@ -69,7 +73,7 @@ func Connect(ctx context.Context, cdpURL string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{ws: ws, pending: map[int64]chan message{}, done: make(chan struct{})}
+	c := &Client{ws: ws, pending: map[int64]chan message{}, listeners: map[eventKey][]func(json.RawMessage){}, done: make(chan struct{})}
 	go c.readLoop()
 	return c, nil
 }
@@ -82,8 +86,12 @@ func (c *Client) readLoop() {
 			break
 		}
 		var m message
-		if json.Unmarshal(raw, &m) != nil || m.ID == 0 {
-			continue // events are not used by this client
+		if json.Unmarshal(raw, &m) != nil {
+			continue
+		}
+		if m.ID == 0 {
+			c.dispatch(raw)
+			continue
 		}
 		c.mu.Lock()
 		ch := c.pending[m.ID]
@@ -95,6 +103,24 @@ func (c *Client) readLoop() {
 	}
 	c.err = err // published to readers by close(c.done)
 	close(c.done)
+}
+
+// dispatch hands an event to the listeners registered for its session and method.
+func (c *Client) dispatch(raw []byte) {
+	var ev struct {
+		Method    string          `json:"method"`
+		SessionID string          `json:"sessionId"`
+		Params    json.RawMessage `json:"params"`
+	}
+	if json.Unmarshal(raw, &ev) != nil || ev.Method == "" {
+		return
+	}
+	c.mu.Lock()
+	fns := c.listeners[eventKey{ev.SessionID, ev.Method}]
+	c.mu.Unlock()
+	for _, fn := range fns {
+		fn(ev.Params)
+	}
 }
 
 // Close shuts the connection; pending calls fail.
@@ -155,6 +181,26 @@ type Page struct {
 // Send issues a CDP command on this page's session.
 func (p *Page) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	return p.c.Send(ctx, method, params, p.sessionID)
+}
+
+// On registers fn for the events called method on this page, until the page closes. fn runs on
+// the connection's read loop, so it must return quickly and must not call Send.
+func (p *Page) On(method string, fn func(params json.RawMessage)) {
+	p.c.mu.Lock()
+	defer p.c.mu.Unlock()
+	k := eventKey{p.sessionID, method}
+	p.c.listeners[k] = append(p.c.listeners[k], fn)
+}
+
+// forgetListeners drops every listener of a session.
+func (c *Client) forgetListeners(sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.listeners {
+		if k.sessionID == sessionID {
+			delete(c.listeners, k)
+		}
+	}
 }
 
 // EvalError is a JavaScript exception thrown by an evaluated expression.
@@ -219,7 +265,13 @@ func (p *Page) WaitFor(ctx context.Context, expr string, ready func(json.RawMess
 
 // WithPage opens url in a new background target, hands fn the attached page and always closes
 // the target afterwards, even when ctx is already cancelled.
-func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error) (err error) {
+func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error) error {
+	return c.WithPageSetup(ctx, url, nil, fn)
+}
+
+// WithPageSetup is WithPage with a setup step that runs on the attached page before it navigates:
+// the place to enable a domain such as Network and subscribe to its events with On.
+func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*Page) error) (err error) {
 	raw, err := c.Send(ctx, "Target.createTarget", map[string]any{"url": "about:blank", "background": true}, "")
 	if err != nil {
 		return err
@@ -249,11 +301,17 @@ func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error)
 		return err
 	}
 	p := &Page{c: c, sessionID: a.SessionID}
+	defer c.forgetListeners(a.SessionID)
 	if _, err := p.Send(ctx, "Runtime.enable", nil); err != nil {
 		return err
 	}
 	if _, err := p.Send(ctx, "Emulation.setFocusEmulationEnabled", map[string]any{"enabled": true}); err != nil {
 		return err
+	}
+	if setup != nil {
+		if err := setup(p); err != nil {
+			return err
+		}
 	}
 	if _, err := p.Send(ctx, "Page.navigate", map[string]any{"url": url}); err != nil {
 		return err

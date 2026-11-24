@@ -289,7 +289,14 @@ func (b *fakeBrowser) answer(s *srvConn, id int64, method string, params map[str
 	}
 	var result any = map[string]any{}
 	var errObj any
+	var events []map[string]any
 	switch method {
+	case "Page.navigate":
+		// The page's own event, then the same event for another page: only the first may arrive.
+		events = []map[string]any{
+			{"method": "Network.responseReceived", "sessionId": "S1", "params": map[string]any{"requestId": "R1"}},
+			{"method": "Network.responseReceived", "sessionId": "S2", "params": map[string]any{"requestId": "R2"}},
+		}
 	case "Target.createTarget":
 		result = map[string]any{"targetId": "T1"}
 	case "Target.attachToTarget":
@@ -311,6 +318,10 @@ func (b *fakeBrowser) answer(s *srvConn, id int64, method string, params map[str
 	// An unrelated event first: the client must skip it.
 	ev, _ := json.Marshal(map[string]any{"method": "Target.targetInfoChanged", "params": map[string]any{}})
 	s.writeFrame(true, opText, ev)
+	for _, e := range events {
+		raw, _ := json.Marshal(e)
+		s.writeFrame(true, opText, raw)
+	}
 	reply := map[string]any{"id": id}
 	if session != "" {
 		reply["sessionId"] = session
@@ -358,6 +369,61 @@ func TestWithPageRunsTheSequenceAndWaitsUntilReady(t *testing.T) {
 	want := "Target.createTarget Target.attachToTarget Runtime.enable Emulation.setFocusEmulationEnabled Page.navigate Runtime.evaluate Runtime.evaluate Runtime.evaluate Target.closeTarget"
 	if s := strings.Join(b.methods, " "); s != want {
 		t.Fatalf("methods:\n got %s\nwant %s", s, want)
+	}
+}
+
+func TestWithPageSetupSubscribesBeforeNavigatingAndForgetsOnClose(t *testing.T) {
+	b := &fakeBrowser{}
+	c := connectT(t, b)
+	var mu sync.Mutex
+	var got []string
+	setup := func(p *Page) error {
+		if _, err := p.Send(context.Background(), "Network.enable", nil); err != nil {
+			return err
+		}
+		p.On("Network.responseReceived", func(params json.RawMessage) {
+			var e struct{ RequestID string }
+			json.Unmarshal(params, &e)
+			mu.Lock()
+			got = append(got, e.RequestID)
+			mu.Unlock()
+		})
+		return nil
+	}
+	err := c.WithPageSetup(context.Background(), "https://example.com", setup, func(p *Page) error {
+		// The events precede the navigate reply on the wire, so they have been dispatched.
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(got, ",") != "R1" {
+		t.Fatalf("events = %v, want only this page's R1", got)
+	}
+	want := "Target.createTarget Target.attachToTarget Runtime.enable Emulation.setFocusEmulationEnabled Network.enable Page.navigate Target.closeTarget"
+	if s := strings.Join(b.methods, " "); s != want {
+		t.Fatalf("methods:\n got %s\nwant %s", s, want)
+	}
+	c.mu.Lock()
+	n := len(c.listeners)
+	c.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d listeners left after the page closed", n)
+	}
+}
+
+func TestWithPageSetupErrorStillClosesTheTarget(t *testing.T) {
+	b := &fakeBrowser{}
+	c := connectT(t, b)
+	boom := errors.New("boom")
+	err := c.WithPageSetup(context.Background(), "https://example.com", func(*Page) error { return boom }, func(*Page) error {
+		t.Fatal("fn ran after a failed setup")
+		return nil
+	})
+	if !errors.Is(err, boom) || len(b.closed) != 1 {
+		t.Fatalf("err %v, closed %v", err, b.closed)
 	}
 }
 
