@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"math"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // pattern is one secret shape. src must work both in ripgrep (Rust regex) and in Go's RE2. group
@@ -165,7 +166,7 @@ type verdict struct {
 // judge decides whether a value matched by p is a plausible secret. It rejects placeholders,
 // low-entropy strings and, for the generic patterns, values that are clearly not secrets.
 func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
-	body := strings.TrimPrefix(secret, knownPrefix(p.prefix, secret))
+	body := strings.TrimPrefix(secret, secretrisk.KnownPrefix(p.prefix, secret))
 	minEntropy := 3.2
 	if p.typ == "assignment" {
 		minEntropy = 3.0
@@ -220,35 +221,4 @@ func jwtClaims(token string) (map[string]any, bool) {
 		return nil, false
 	}
 	return claims, true
-}
-
-// passwordLike types hold human-chosen secrets: their hint shows only the length.
-var passwordLike = map[string]bool{
-	"assignment": true, "url-credentials": true, "netrc-password": true, "docker-auth": true,
-	"url-token-param": true, "curl-auth-user": true,
-}
-
-// redact returns the hint a finding may show: the pattern's known prefix, the last four
-// characters of a long random key (what provider consoles show to tell keys apart) and the
-// length. Never more.
-func redact(typ, prefix, secret string) string {
-	if secret == "" {
-		return ""
-	}
-	shown := knownPrefix(prefix, secret)
-	tail := ""
-	if !passwordLike[typ] && len(secret) >= 24 && len(secret)-len(shown) >= 20 {
-		tail = secret[len(secret)-4:]
-	}
-	return shown + "…" + tail + "(" + strconv.Itoa(len(secret)) + ")"
-}
-
-// knownPrefix is the prefix from the "|"-separated list that secret starts with, or "".
-func knownPrefix(prefixes, secret string) string {
-	for _, p := range strings.Split(prefixes, "|") {
-		if p != "" && strings.HasPrefix(secret, p) {
-			return p
-		}
-	}
-	return ""
 }

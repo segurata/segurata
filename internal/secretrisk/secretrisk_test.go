@@ -112,3 +112,81 @@ func TestTemporaryAWSCredentialsAreLowImpact(t *testing.T) {
 		t.Fatal("the reason must say it is temporary")
 	}
 }
+
+// fakeValue is an obviously fake, high-entropy value generated at run time.
+func fakeValue(prefix string, n int) string {
+	const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+	b := []byte(prefix)
+	for i := 0; i < n; i++ {
+		b = append(b, alphabet[(i*7+len(prefix)*3+i*i)%len(alphabet)])
+	}
+	return string(b)
+}
+
+func TestRedactShowsOnlyPrefixTailAndLength(t *testing.T) {
+	key := fakeValue("sk_live_", 40)
+	got := Redact("stripe-live", "sk_live_|rk_live_", key)
+	if want := "sk_live_…" + key[len(key)-4:] + "(48)"; got != want {
+		t.Errorf("redact %q, want %q", got, want)
+	}
+	if got := Redact("url-credentials", "", fakeValue("", 30)); got != "…(30)" {
+		t.Errorf("password-like hint %q", got)
+	}
+	if got := Redact("telegram-bot", "", fakeValue("", 12)); got != "…(12)" {
+		t.Errorf("short value hint %q", got)
+	}
+}
+
+func TestParseHintReadsWhatRedactWrote(t *testing.T) {
+	key := fakeValue("sk_live_", 40)
+	h, ok := ParseHint(Redact("stripe-live", "sk_live_", key))
+	if !ok || h.Prefix != "sk_live_" || h.Tail != key[len(key)-4:] || h.Len != 48 {
+		t.Fatalf("hint %+v ok=%v", h, ok)
+	}
+	if !h.Fits(key) || h.Fits(key[:47]) || h.Fits("rk"+key[2:]) {
+		t.Error("Fits accepts the wrong values")
+	}
+	if h, ok := ParseHint("…(30)"); !ok || h.Prefix != "" || h.Tail != "" || h.Len != 30 {
+		t.Errorf("length-only hint %+v ok=%v", h, ok)
+	}
+	for _, bad := range []string{"", "PEM", "…", "sk_…(x)", "sk_live_…abcd(3)"} {
+		if _, ok := ParseHint(bad); ok {
+			t.Errorf("ParseHint(%q) accepted", bad)
+		}
+	}
+}
+
+func TestGuidesAreShortCitedAndInTheCatalog(t *testing.T) {
+	for typ, g := range guides {
+		if _, ok := Known(typ); !ok {
+			t.Errorf("guide for %q, which is not in the catalog", typ)
+		}
+		if !strings.HasPrefix(g.Doc, "https://") {
+			t.Errorf("%s: guide cites no documentation", typ)
+		}
+		if len(g.Steps) < 2 || len(g.Steps) > 4 {
+			t.Errorf("%s: %d steps, want 2 to 4", typ, len(g.Steps))
+		}
+		for _, s := range g.Steps {
+			if len(s) > 110 {
+				t.Errorf("%s: step too long: %q", typ, s)
+			}
+		}
+	}
+	for _, typ := range []string{"stripe-live", "aws-access-key-id", "gcp-service-account", "github-pat", "google-refresh-token",
+		"google-oauth-client-secret", "cloudflare-token", "anthropic", "openai-project", "xai", "openrouter", "notion",
+		"slack-token", "slack-webhook", "sendgrid", "npm-token", "telegram-bot", "sentry-token"} {
+		if _, ok := GuideFor(typ); !ok {
+			t.Errorf("no guide for %s", typ)
+		}
+	}
+}
+
+func TestIsShellRC(t *testing.T) {
+	for p, want := range map[string]bool{"~/.zshrc": true, "/Users/x/.bash_profile": true, ".profile": true,
+		"~/src/app/.env": false, "~/.zshrc.bak": false, "~/dotfiles/zshrc": false} {
+		if IsShellRC(p) != want {
+			t.Errorf("IsShellRC(%q) != %v", p, want)
+		}
+	}
+}

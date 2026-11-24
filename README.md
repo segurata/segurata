@@ -197,7 +197,10 @@ every secret as new.
 ```bash
 ./securizame rotations sync                    # from the latest out/<date>/local-secrets.jsonl
 ./securizame rotations list --priority P0,P1   # what to rotate first
+./securizame rotations next --priority P0      # the most urgent item and exactly what to do
 ./securizame rotations show <id>               # locations, where the new value goes, rotate URL
+./securizame rotations replace <id>            # after rotating: plan with the new value from the clipboard
+./securizame rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]
 ./securizame rotations done <id> --note "rolled in the dashboard"
 ./securizame rotations snooze <id> --until 2027-01-15
 ./securizame rotations ignore <id> --reason "test fixture"
@@ -212,6 +215,18 @@ and the provider page where it is rotated. State lives outside the repository, a
 directory), and holds no secret values. A secret marked done that the next sync still finds with
 the same fingerprint is reopened: the old value is still somewhere. Generic matches are left out
 unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture.md#rotation-ledger).
+
+The guided loop is `next`, rotate at the provider, `replace`, `next` again. `next` prints one item:
+what it is (redacted), why it is urgent, where it leaked, the provider page with a few checked
+steps for that service, the files that need the new value and the commands to run. `replace`
+reads the new value from the clipboard (or a pipe with `--stdin`; never an argument), checks by
+fingerprint that it is new and that the old value is still where the scan saw it, shows a plan
+with redacted values and, with `--apply` and a confirmation, rewrites each `used_in` file
+atomically, checks the result, marks the item rotated and clears the clipboard. With
+`--to-keychain <service>` the new value goes to the Keychain and rc lines become
+`export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`, as
+[docs/secrets.md](docs/secrets.md#shell-variables-from-the-keychain) recommends. No backup unless
+`--backup`: a backup is one more plaintext copy of the old value.
 
 ## macOS and Brave posture (`macos`)
 

@@ -8,7 +8,10 @@ the rest to an encrypted store, and only then delete the plaintext copies. Delet
 rotating does nothing: the value is still valid wherever it was copied. `securizame rotations
 sync` and `securizame rotations list --priority P0,P1` keep that order for you: one item per
 secret, its locations, the files where the new value goes and the provider page where it is
-rotated; `securizame rotations done <id>` once it is rotated.
+rotated; `securizame rotations done <id>` once it is rotated. `securizame rotations next` walks
+that list one item at a time with the provider's rotation steps, and `securizame rotations
+replace <id>` puts the new value in every file that held the old one, or in the Keychain
+([README](../README.md#rotation-ledger), [architecture](architecture.md#guided-rotation-next-and-replace)).
 
 Tools on this machine (2026-11-23): macOS Keychain (`security`), 1Password CLI (`op` 2.41, signed
 in), `age`, `gitleaks`, `git-credential-osxkeychain` already configured, `gh` with its token in the
@@ -102,6 +105,12 @@ and in `~/.zshrc`:
 kc() { security find-generic-password -a "$USER" -s "$1" -w 2>/dev/null; }
 export ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)"
 ```
+
+After rotating a key, `securizame rotations replace <id> --apply --to-keychain ANTHROPIC_API_KEY`
+does both steps for an rc line: it stores the new value (through `security -i` on stdin, so it
+never shows in a process listing) and rewrites the line to
+`export ANTHROPIC_API_KEY="$(security find-generic-password -a "$USER" -s ANTHROPIC_API_KEY -w)"`,
+the same lookup as `kc` written out, so the line works without the function.
 
 Better still, do not export it to every shell; fetch it where it is used:
 `ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)" command`. With 1Password, the same with

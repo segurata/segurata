@@ -373,7 +373,7 @@ func (e Env) printSystemd(o Options) error {
 }
 
 func (e Env) confirm(o Options) (bool, error) {
-	ok, err := confirmFunc(e.IO, e.TTY, o.Yes)
+	ok, err := confirmFunc(e.IO.In, e.IO.Out, o.Yes, e.TTY)
 	if err == nil && !ok {
 		fmt.Fprintln(e.IO.Out, "Not applied.")
 	}

@@ -27,6 +27,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `accepted.json` |
+| `rotations` | Keeps the ledger of secrets to rotate and guides each rotation | Only securizame's own `rotations.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
@@ -271,6 +272,41 @@ Priority is impact × exposure, both table-driven:
 - `done`, `snooze`, `ignore` and `reopen` also take `--path <prefix>` instead of an id: every item
   whose locations all lie under that path. A test log or a data file full of fixtures goes away in
   one command, while a secret that also appears elsewhere stays.
+
+### Guided rotation: `next` and `replace`
+
+- `next [--priority P0] [--service x]` prints the first active item in list order with its
+  reasons, locations (worst first, eight at most), `rotate_url`, the service's rotation guide,
+  `used_in` with the recorded line, and the commands to run next. Guides live in
+  `internal/secretrisk/guides.go`: two to four steps per type, each citing the provider page it
+  was checked against.
+- `replace <id>` never stores, prints or passes the new value as an argument. It reads it from
+  `pbpaste` or a pipe (`--stdin` refuses a terminal, which would echo it). A value must be one
+  line of `[A-Za-z0-9._~+/=:@%-]`, so it can go unquoted into a shell, `.env` or JSON line;
+  anything else is edited by hand.
+- Locating the old value without having it: the redacted hint gives its length, prefix and last
+  four characters (`secretrisk.ParseHint`), so every window of the line that fits is HMAC'd with
+  the fingerprint key (`internal/fingerprint`) and compared with the item's fingerprint. The
+  recorded line must still hold it, or the file changed since the scan and `replace` refuses.
+  Other lines of the same file that hold it are replaced too. Types that are not one value on
+  one line (PEM keys, service-account files, keystores) are refused.
+- The new value's fingerprint must differ from the item's: a clipboard still holding the old key
+  is refused.
+- `--apply` confirms like `remediate` (a terminal on stdin, or `--yes`), re-reads each file and
+  refuses one that changed since the plan, writes it with `statefile.Replace` (temporary file,
+  fsync, rename; mode kept; a symlink's target is written, the link stays), then re-reads every
+  file: the old fingerprint must be gone from all of it and each edited line must hold the new
+  value. Only then is the item marked `rotated` and the clipboard cleared (`pbcopy` with empty
+  stdin).
+- `--to-keychain <service>`: for shell rc files whose line is a plain `[export ]NAME=value`, the
+  value is stored with `security -i` reading `add-generic-password -U -a $USER -s <service> -w
+  <value>` from stdin (no argument list carries it), read back with `find-generic-password -w`
+  and compared by fingerprint before any file changes; the line becomes
+  `export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`.
+- `--backup` keeps a 0600 copy of each file as it was. It is off by default because the copy
+  holds the old value in plaintext.
+- History: `next` (once per run of consecutive calls), `replace-plan` (dry run),
+  `replace-failed` (with what was already written), `done` (with the files and Keychain service).
 
 ## Why Go, and why so few dependencies
 

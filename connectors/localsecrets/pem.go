@@ -2,76 +2,12 @@ package localsecrets
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
-
-// fingerprinter turns a raw secret into a stable identifier that is useless outside this machine:
-// HMAC-SHA256 under a random per-machine key, truncated to 16 hex characters. A plain hash of a
-// short or structured secret could be brute-forced from the output; an HMAC cannot without the key.
-type fingerprinter struct{ key []byte }
-
-const keyBytes = 32
-
-// loadKey reads the fingerprint key, creating it with mode 0600 on first use. Losing the key
-// changes every fingerprint, so the rotation ledger would see every secret as new.
-func loadKey(path string) (fingerprinter, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return createKey(path)
-	}
-	if err != nil {
-		return fingerprinter{}, err
-	}
-	key, err := hex.DecodeString(strings.TrimSpace(string(raw)))
-	if err != nil || len(key) < keyBytes {
-		return fingerprinter{}, fmt.Errorf("%s is not a %d-byte hex key", path, keyBytes)
-	}
-	return fingerprinter{key: key}, nil
-}
-
-func createKey(path string) (fingerprinter, error) {
-	key := make([]byte, keyBytes)
-	if _, err := rand.Read(key); err != nil {
-		return fingerprinter{}, err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fingerprinter{}, err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) { // another run created it first
-		return loadKey(path)
-	}
-	if err != nil {
-		return fingerprinter{}, err
-	}
-	if _, err := f.WriteString(hex.EncodeToString(key) + "\n"); err != nil {
-		f.Close()
-		return fingerprinter{}, err
-	}
-	return fingerprinter{key: key}, f.Close()
-}
-
-func (f fingerprinter) of(secret []byte) string {
-	if len(secret) == 0 {
-		return ""
-	}
-	m := hmac.New(sha256.New, f.key)
-	m.Write(secret)
-	return hex.EncodeToString(m.Sum(nil))[:16]
-}
-
-func (f fingerprinter) ofString(secret string) string { return f.of([]byte(secret)) }
 
 // escapedBreak is a newline as it appears inside JSON strings and transcripts: "\n", "\\n", "\r\n".
 var escapedBreak = regexp.MustCompile(`(?:\\+[nr])+`)

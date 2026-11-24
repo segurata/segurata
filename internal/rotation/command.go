@@ -15,18 +15,27 @@ import (
 // CLI is the `securizame rotations` command family.
 type CLI struct {
 	Out, Err  io.Writer
-	StatePath string // "" means DefaultPath
+	In        io.Reader // confirmations, and the new value with replace --stdin
+	TTY       bool      // In is a terminal
+	StatePath string    // "" means DefaultPath
+	KeyPath   string    // fingerprint key; "" means fingerprint.DefaultPath
+	Home      func() (string, error)
+	User      string // Keychain account for replace --to-keychain
+	Exec      Runner // pbpaste, pbcopy, security
 	Now       func() time.Time
 }
 
 const usage = `usage: securizame rotations <command>
-  sync   [--from out/<date>/local-secrets.jsonl] [--out out] [--include-noise]
-  list   [--all] [--priority P0,P1] [--service stripe,aws]
-  show   <id>
-  done   <id> [--note text]
-  snooze <id> --until YYYY-MM-DD [--note text]
-  ignore <id> --reason text
-  reopen <id> [--note text]
+  sync    [--from out/<date>/local-secrets.jsonl] [--out out] [--include-noise]
+  list    [--all] [--priority P0,P1] [--service stripe,aws]
+  next    [--priority P0] [--service stripe]   the most urgent item, with what to do
+  show    <id>
+  replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
+          put the new value in every used_in file (see: securizame rotations replace --help)
+  done    <id> [--note text]
+  snooze  <id> --until YYYY-MM-DD [--note text]
+  ignore  <id> --reason text
+  reopen  <id> [--note text]
   done, snooze, ignore and reopen take --path <prefix> instead of an id: every item (open, or
   closed for reopen) whose locations all lie under that path, e.g. a test log full of fixtures.`
 
@@ -55,8 +64,12 @@ func (c CLI) Run(args []string) int {
 		return c.sync(l, path, rest, now)
 	case "list":
 		return c.list(l, rest, now)
+	case "next":
+		return c.next(l, path, rest, now)
 	case "show":
 		return c.show(l, rest)
+	case "replace":
+		return c.replace(l, path, rest, now)
 	case "done", "snooze", "ignore", "reopen":
 		return c.change(l, path, cmd, rest, now)
 	}
@@ -128,18 +141,7 @@ func (c CLI) list(l *Ledger, args []string, now time.Time) int {
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
-	prios, services := splitList(*prio), splitList(*service)
-	var items []*Item
-	for _, it := range l.Items {
-		switch {
-		case !*all && !it.Active(now):
-		case len(prios) > 0 && !prios[strings.ToLower(string(it.Priority))]:
-		case len(services) > 0 && !services[strings.ToLower(it.Service)]:
-		default:
-			items = append(items, it)
-		}
-	}
-	Sort(items)
+	items := l.Select(now, *all, splitList(*prio), splitList(*service))
 	tw := tabwriter.NewWriter(c.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tPRI\tSTATUS\tSERVICE/TYPE\tREDACTED\tEXPOSURE\tLOCS\tFIRST SEEN\tREASON")
 	for _, it := range items {
@@ -202,11 +204,7 @@ func (c CLI) show(l *Ledger, args []string) int {
 	fmt.Fprintf(w, "\nlocations (%d):\n", len(it.Locations))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, loc := range it.Locations {
-		where := loc.Path
-		if loc.Line > 0 {
-			where = fmt.Sprintf("%s:%d", loc.Path, loc.Line)
-		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\tmode %s\tlast seen %s\n", where, loc.spot().Label, loc.Bucket, loc.Source,
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\tmode %s\tlast seen %s\n", where(loc), loc.spot().Label, loc.Bucket, loc.Source,
 			orDash(loc.Mode), loc.LastSeen.Format(time.DateOnly))
 	}
 	tw.Flush()
