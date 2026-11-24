@@ -27,6 +27,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `accepted.json` |
+| `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
 | `rotations` | Keeps the ledger of secrets to rotate and guides each rotation | Only securizame's own `rotations.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
@@ -153,6 +154,43 @@ On Linux `install` prints the equivalent systemd user service and timer
 to enable them; `--apply` is refused there, and new findings go to the journal instead of a
 notification.
 
+## Doctor
+
+```
+securizame doctor [--connector name|name:label] [--out out]
+```
+
+`internal/doctor`, read-only. Prints one line per check, `OK`, `WARN` or `FAIL`, each `WARN` and
+`FAIL` with the exact fix, then the counts; exits 1 when anything failed. `--connector` checks one
+connector or instance (the config and state are always checked).
+
+- Config: the file is found and valid; a key that names no connector is a warning.
+- Secret references: every reference of every selected instance is resolved through
+  `run.NewRequest`, the path an inventory takes, and reported by key and reference; the values are
+  only handed to the connector's own check, never printed. Whether a Keychain item's ACL would
+  prompt cannot be read without prompting, so it is not checked.
+- Browser: when a selected connector needs `cdp`, `cdp_url` must answer `/json/version`
+  (`cdp.ReadVersion`, the first half of `cdp.Connect`). The OK line restates the accepted-risk
+  tradeoff of an open debugging port.
+- Connectors: a built-in connector implementing the optional `connector.Doctor` checks its own
+  prerequisites through the same runners, allowlists and classifiers its inventory uses. For any
+  other connector (externals included) the core checks the `describe` needs: `cli:x` on `PATH`
+  (`(optional)` makes a miss a warning), `secret:X` configured (a warning when not: the connector
+  is skipped, not broken). `os:` needs are checked for every connector.
+
+| Connector | Checks |
+|---|---|
+| `gcp` | gcloud found as the inventory finds it (`gcloud_path`, `PATH`, SDK folders); `auth list`; per account `projects list --limit=1`, so an expired token fails with `gcloud auth login <account>` |
+| `workspace` | Per tenant: the token is obtained as the inventory does (secret, or gcloud with the tenant's `CLOUDSDK_CONFIG`) and checked with tokeninfo for scopes and domain; the token is discarded |
+| `aws` | `sts get-caller-identity` per profile; SSO, static-key and missing-credential failures get different fixes |
+| `azure` | `az account show` |
+| `connected-apps` | `gh auth status --json hosts` (JSON, never the token; the one gh command added to its allowlist); scopes the key lists need (`admin:public_key`, `admin:ssh_signing_key`, `admin:gpg_key`, from `ghKeyEndpoints`) |
+| `local-secrets` | rg, gitleaks (optional; not needed with `skip_git_history`), git and ssh-keygen on `PATH`; `rg --version` and `gitleaks version` (added to the gitleaks guard) |
+
+- State: the fingerprint key exists (a warning before the first `local-secrets` run), is a valid
+  key and has mode 0600; `rotations.json` and `accepted.json` load and have mode 0600 when present;
+  the output directory (`--out`) has mode 0700 (a warning otherwise, since its files are 0600).
+
 ## External connector protocol (v1, v2)
 
 An external connector is a `securizame-<name>` executable on `PATH`, in any language, discovered
@@ -258,10 +296,16 @@ Priority is impact × exposure, both table-driven:
   was pasted there was sent to the model provider.
 - Noise is left out by default: generic `NAME=value` matches, gitleaks `generic-api-key`, anon or
   expired JWTs, encrypted private keys. `sync --include-noise` tracks them without a priority.
-- `sync` merges locations (never drops one: git history and transcripts do not forget), refreshes
-  `last_seen` only for secrets it saw, and reopens a `rotated` item found again with the same
-  fingerprint, with the reason "still present after rotation (old value not removed)". Expired
-  snoozes go back to `open`.
+- `sync` merges locations (never drops one: git history and transcripts do not forget) and
+  refreshes `last_seen` only for secrets it saw. Expired snoozes go back to `open`.
+- After a real rotation the old value is revoked, so only a working file that still holds it
+  matters. `done` and `replace` record the locations known at that moment (`rotated_locations`).
+  A `rotated` item seen again is reopened, with the reason "still present after rotation (old
+  value still in a working file)", only when a sighting is in a working file (config, `.env`, rc
+  or repo working tree; the kinds that feed `used_in`), whether known at rotation time (the new
+  value never reached it) or new since; the history note says which. Copies only in git history,
+  transcripts, logs or shell history leave it `rotated` and add one `history-only` note per
+  rotation ([docs/secrets.md](secrets.md#after-a-rotation)).
 - `used_in` lists the working files (config, `.env`, rc files) that hold the secret: where the new
   value has to go once it is rotated.
 - `rotate_url` is the provider console page for that kind of secret, checked against each

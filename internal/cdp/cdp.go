@@ -46,28 +46,41 @@ type message struct {
 	} `json:"error,omitempty"`
 }
 
-// Connect reads <cdpURL>/json/version and opens its browser WebSocket.
-func Connect(ctx context.Context, cdpURL string) (*Client, error) {
+// Version is what <cdpURL>/json/version says about the browser.
+type Version struct {
+	Browser              string `json:"Browser"`
+	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+}
+
+// ReadVersion reads <cdpURL>/json/version without opening the WebSocket.
+func ReadVersion(ctx context.Context, cdpURL string) (Version, error) {
+	var v Version
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cdpURL, "/")+"/json/version", nil)
 	if err != nil {
-		return nil, err
+		return v, err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("cdp: browser not reachable at %s: %w", cdpURL, err)
+		return v, fmt.Errorf("cdp: browser not reachable at %s: %w", cdpURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("cdp: %s/json/version: %s", cdpURL, resp.Status)
-	}
-	var v struct {
-		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+		return v, fmt.Errorf("cdp: %s/json/version: %s", cdpURL, resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-		return nil, fmt.Errorf("cdp: /json/version: %w", err)
+		return v, fmt.Errorf("cdp: /json/version: %w", err)
 	}
 	if v.WebSocketDebuggerURL == "" {
-		return nil, errors.New("cdp: /json/version has no webSocketDebuggerUrl")
+		return v, errors.New("cdp: /json/version has no webSocketDebuggerUrl")
+	}
+	return v, nil
+}
+
+// Connect reads <cdpURL>/json/version and opens its browser WebSocket.
+func Connect(ctx context.Context, cdpURL string) (*Client, error) {
+	v, err := ReadVersion(ctx, cdpURL)
+	if err != nil {
+		return nil, err
 	}
 	ws, err := dialWS(ctx, v.WebSocketDebuggerURL)
 	if err != nil {

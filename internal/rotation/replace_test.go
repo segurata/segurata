@@ -267,6 +267,9 @@ func TestReplaceApply(t *testing.T) {
 	if it.Status != Rotated || !strings.Contains(it.History[len(it.History)-1].Note, "replaced in ~/.zshrc, ~/src/app/.env") {
 		t.Errorf("item %s %v", it.Status, it.History)
 	}
+	if len(it.RotatedLocations) != len(it.Locations) || len(it.RotatedLocations) == 0 {
+		t.Errorf("replace did not record the locations known at rotation: %v", it.RotatedLocations)
+	}
 	if !fx.cleared() || fx.os.clip != "" {
 		t.Error("clipboard not cleared")
 	}

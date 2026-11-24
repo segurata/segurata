@@ -21,6 +21,7 @@ Rules every connector follows, whatever its language:
 | Lives in | `connectors/<name>/`, registered from `init` and imported in `connectors/connectors.go` | A `securizame-<name>` executable anywhere on `PATH` |
 | Contract | The Go interface `connector.Connector` (`Describe`, `Inventory`) | The protocol below, over stdin and stdout |
 | Remediation | Optional `connector.Remediator` (`Plan`, `Apply`); the core runs its commands from a hand-written allowlist and may use sudo | Protocol 2 (`plan`, `apply`); the connector runs its own plan, never as root |
+| Prerequisite checks (`doctor`) | Optional `connector.Doctor`: checks its own CLIs, sign-ins and tokens with the inventory's read-only code paths | The core checks the `cli:`, `secret:` and `os:` needs of `describe` |
 | Ships with securizame | Yes | No: installed by the owner |
 
 Write a built-in connector when it belongs in the binary for everyone and can be written with the

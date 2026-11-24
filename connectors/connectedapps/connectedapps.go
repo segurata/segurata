@@ -108,10 +108,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		defer client.Close()
 		b = cdpBrowser{client}
 	}
-	gh := c.gh
-	if gh == nil {
-		gh = cli.Guard(ghAllowlist, cli.Exec{Path: "gh", Timeout: 60 * time.Second})
-	}
+	gh := c.ghRunner()
 	now := time.Now
 	if c.now != nil {
 		now = c.now
@@ -124,6 +121,14 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		s.run(ctx, e)
 	}
 	return nil
+}
+
+// ghRunner is the injected gh, or the real one behind the read-only allowlist.
+func (c *Connector) ghRunner() cli.Runner {
+	if c.gh != nil {
+		return c.gh
+	}
+	return cli.Guard(ghAllowlist, cli.Exec{Path: "gh", Timeout: 60 * time.Second})
 }
 
 // env is what a service reads with and reports to.

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
@@ -56,11 +57,15 @@ func LatestOutput(outDir string) (string, error) {
 // Report counts what a sync changed.
 type Report struct {
 	Secrets, Created, Updated, Reopened, Woken, Skipped int
+	// HistoryOnly counts rotated items seen again only in history, transcripts or logs, noted
+	// for the first time in this sync.
+	HistoryOnly int
 }
 
 // Sync merges sightings into the ledger. Secrets whose every sighting is noise (generic matches,
 // public or encrypted values) are skipped unless includeNoise. A rotated item found again with the
-// same fingerprint is reopened. Items not seen keep their history and last_seen.
+// same fingerprint is reopened only when a sighting is in a working file (see rotatedSeen). Items
+// not seen keep their history and last_seen.
 func (l *Ledger) Sync(sightings []Sighting, now time.Time, includeNoise bool) Report {
 	groups := map[string][]Sighting{}
 	var order []string
@@ -101,9 +106,7 @@ func (l *Ledger) Sync(sightings []Sighting, now time.Time, includeNoise bool) Re
 			it.merge(s.Evidence, seen)
 		}
 		if it.Status == Rotated {
-			it.Status = Open
-			it.log(now, actAutoReopen, stillPresent)
-			rep.Reopened++
+			it.rotatedSeen(g, now, &rep)
 		}
 	}
 	for _, it := range l.Items {
@@ -115,6 +118,45 @@ func (l *Ledger) Sync(sightings []Sighting, now time.Time, includeNoise bool) Re
 		it.refresh()
 	}
 	return rep
+}
+
+// rotatedSeen handles a rotated item seen again. After a real rotation the old value is revoked,
+// so only a working file that still holds it matters: one known at rotation time (the new value
+// never reached it) or one that appeared since. Copies only in git history, transcripts, logs or
+// shell history leave the item rotated, with a note logged once per rotation.
+func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *Report) {
+	known := map[string]bool{}
+	for _, r := range it.RotatedLocations {
+		known[r] = true
+	}
+	var still, fresh []string
+	for _, s := range g {
+		loc := locationOf(s.Evidence, now)
+		switch {
+		case !loc.working():
+		case known[loc.ref()]:
+			still = append(still, loc.Path)
+		default:
+			fresh = append(fresh, loc.Path)
+		}
+	}
+	if len(still)+len(fresh) == 0 {
+		if !it.notedHistoryOnly() {
+			it.log(now, actHistory, historyOnly)
+			rep.HistoryOnly++
+		}
+		return
+	}
+	var parts []string
+	if len(still) > 0 {
+		parts = append(parts, "still in "+strings.Join(still, ", "))
+	}
+	if len(fresh) > 0 {
+		parts = append(parts, "new working location "+strings.Join(fresh, ", "))
+	}
+	it.Status, it.RotatedLocations = Open, nil
+	it.log(now, actAutoReopen, stillPresent+": "+strings.Join(parts, "; "))
+	rep.Reopened++
 }
 
 // latest is when the group was last observed, or now when the findings carry no time.
@@ -161,10 +203,14 @@ func bestSighting(g []Sighting) Sighting {
 	return best
 }
 
+func locationOf(ev secretrisk.Evidence, seen time.Time) Location {
+	return Location{Path: ev.Path, Line: ev.Line, Bucket: ev.Bucket, Tracked: ev.Tracked, Mode: ev.Mode,
+		Source: ev.Source, Kind: ev.Kind, Remote: ev.Remote, LastSeen: seen.UTC()}
+}
+
 // merge adds or updates one location.
 func (it *Item) merge(ev secretrisk.Evidence, seen time.Time) {
-	loc := Location{Path: ev.Path, Line: ev.Line, Bucket: ev.Bucket, Tracked: ev.Tracked, Mode: ev.Mode,
-		Source: ev.Source, Kind: ev.Kind, Remote: ev.Remote, LastSeen: seen.UTC()}
+	loc := locationOf(ev, seen)
 	for i := range it.Locations {
 		if it.Locations[i].key() == loc.key() {
 			it.Locations[i] = loc
