@@ -387,6 +387,38 @@ func TestSystemInterruptsThenKills(t *testing.T) {
 	}
 }
 
+// A scheduled run that finished prunes run files past the retention; without one it keeps all.
+func TestRunPrunesOldRunsAfterAFinishedRun(t *testing.T) {
+	env, r, _ := testEnv(t, "darwin")
+	r.inventory = []finding.Finding{high("a", "Firewall is off")}
+	old := filepath.Join(env.Paths().Out, "2026-01-01", "macos.jsonl")
+	prev := filepath.Join(env.Paths().Out, "2026-01-02", "macos.jsonl") // kept: the run before today's
+	for _, p := range []string{old, prev} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(`{"type":"run_end","connector":"macos"}`+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := env.Run(context.Background(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Fatalf("pruned without a retention: %v", err)
+	}
+	env.Keep = 30 * 24 * time.Hour
+	if err := env.Run(context.Background(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("not pruned: %v", err)
+	}
+	if _, err := os.Stat(prev); err != nil {
+		t.Fatalf("pruned the previous run: %v", err)
+	}
+}
+
 func TestRunStopsWhenInventoryFailsAndReportsAReportFailure(t *testing.T) {
 	env, r, _ := testEnv(t, "darwin")
 	r.fail = map[string]error{"inventory": errors.New("exit 1")}

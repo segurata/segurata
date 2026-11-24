@@ -71,6 +71,9 @@ type Env struct {
 	Now    func() time.Time
 	// Connectors are the installed connectors, to choose the default selection.
 	Connectors []connector.Connector
+	// Keep is how old a run file may grow before a finished run prunes it (config keep_runs_days);
+	// 0 keeps everything.
+	Keep time.Duration
 }
 
 // Paths are the files the schedule uses, all under the owner's home.

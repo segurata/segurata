@@ -614,6 +614,12 @@ so an agent installed before that runs with the 24h bound until it is installed 
    is also written to the log.
 4. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
+5. Once the report is written, prunes `~/.segurata/out` (`remediate.Prune`): it removes the
+   `<date>/*.jsonl` files and leftover `*.partial` files of days older than `keep_runs_days` in
+   the config (default 30; a negative value keeps everything), except the latest finished run of
+   each instance, the one before it and a newer unfinished one, which the tracker, `report` and
+   `remediate` read. Nothing else under `out/` is touched, and empty days are removed.
+   `accounts list` reads every remaining run, so it shows accounts seen within that window.
 
 Scheduled inventories live apart from the interactive `out/`; `segurata remediate --out
 ~/.segurata/out --list` works from them.

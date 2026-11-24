@@ -43,6 +43,24 @@ type Config struct {
 	// connectors cannot discover (an old AWS account no profile reaches): attribution counts a
 	// secret naming one of them as the owner's. See internal/attribution.
 	Owned attribution.Owned `json:"owned,omitempty"`
+	// KeepRunsDays is how many days of run files a scheduled run keeps under out/ (0: the default,
+	// DefaultKeepRunsDays; negative: keep everything). See RunRetention.
+	KeepRunsDays int `json:"keep_runs_days,omitempty"`
+}
+
+// DefaultKeepRunsDays is the retention of run files when the config names none.
+const DefaultKeepRunsDays = 30
+
+// RunRetention is how old a run file may grow before a scheduled run prunes it, 0 for never.
+func (c Config) RunRetention() time.Duration {
+	days := c.KeepRunsDays
+	switch {
+	case days < 0:
+		return 0
+	case days == 0:
+		days = DefaultKeepRunsDays
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 // DefaultPath is ~/.config/segurata/config.json on every OS, like most CLIs, unless

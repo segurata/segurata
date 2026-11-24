@@ -52,3 +52,16 @@ func TestLoadRejectsATimeoutThatIsNotAPositiveDuration(t *testing.T) {
 		t.Fatalf("good timeout: %v %v", cfg.Instances("gcp"), err)
 	}
 }
+
+func TestRunRetention(t *testing.T) {
+	for body, want := range map[string]time.Duration{
+		`{}`:                     30 * 24 * time.Hour,
+		`{"keep_runs_days": 7}`:  7 * 24 * time.Hour,
+		`{"keep_runs_days": -1}`: 0,
+	} {
+		cfg, err := loadBody(t, body)
+		if err != nil || cfg.RunRetention() != want {
+			t.Errorf("%s: %s, %v", body, cfg.RunRetention(), err)
+		}
+	}
+}

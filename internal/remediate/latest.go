@@ -84,6 +84,50 @@ func History(outDir string) (map[string][]string, error) {
 	return history, nil
 }
 
+// Prune removes the run files of days before cutoff that no LatestRuns entry needs (its File, Prev
+// or Unfinished), and partial files a killed run left in those days, then the days left empty. It
+// touches nothing else under outDir, and nothing at all when the runs cannot be read. It returns
+// what it removed.
+func Prune(outDir string, cutoff time.Time) ([]string, error) {
+	runs, err := LatestRuns(outDir)
+	if err != nil {
+		return nil, err
+	}
+	keep := map[string]bool{}
+	for _, l := range runs {
+		keep[l.File], keep[l.Prev], keep[l.Unfinished] = true, true, true
+	}
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return nil, err
+	}
+	last := cutoff.Format(time.DateOnly)
+	var removed []string
+	for _, e := range entries {
+		if _, err := time.Parse(time.DateOnly, e.Name()); !e.IsDir() || err != nil || e.Name() >= last {
+			continue
+		}
+		dir := filepath.Join(outDir, e.Name())
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			return removed, err
+		}
+		for _, f := range files {
+			path := filepath.Join(dir, f.Name())
+			own := strings.HasSuffix(f.Name(), ".jsonl") || strings.Contains(f.Name(), ".jsonl.") && strings.HasSuffix(f.Name(), ".partial")
+			if !f.Type().IsRegular() || !own || keep[path] {
+				continue
+			}
+			if err := os.Remove(path); err != nil {
+				return removed, err
+			}
+			removed = append(removed, path)
+		}
+		_ = os.Remove(dir) // only when empty
+	}
+	return removed, nil
+}
+
 // pick applies the LatestRuns rule to one instance's files, oldest first.
 func pick(paths []string) (Latest, error) {
 	newest := func(paths []string) (string, error) { // newest finished, else newest

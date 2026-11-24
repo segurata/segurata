@@ -822,7 +822,9 @@ every day (or `--every`), writes `~/.segurata/last-report.md`, and posts a macOS
 notification when a high or critical finding appears that the previous run did not have. By default
 it runs every connector except those that need the browser's debugging port; `--connectors
 macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/segurata/`, inventories to
-`~/.segurata/out`. Install it from the binary you will keep: the agent runs that
+`~/.segurata/out`, pruned to the last 30 days after each run (`"keep_runs_days"` in the config; the
+latest run of each connector and the one before it always stay). Install it from the binary you
+will keep: the agent runs that
 exact path, with the PATH you had when installing. On Linux it prints a systemd user timer to
 install by hand. Details: [docs/architecture.md](docs/architecture.md#scheduled-runs).
 

@@ -97,7 +97,23 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	if err := e.Runner.Run(ctx, e.Exe, rep, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("report: %w", err)
 	}
+	e.prune(p.Out)
 	return nil
+}
+
+// prune removes run files older than Keep that no latest run needs (remediate.Prune). A failure is
+// logged: the scan itself succeeded.
+func (e Env) prune(outDir string) {
+	if e.Keep <= 0 {
+		return
+	}
+	removed, err := remediate.Prune(outDir, e.Now().Add(-e.Keep))
+	if len(removed) > 0 {
+		fmt.Fprintf(e.IO.Out, "%s pruned %d run files older than %s\n", e.Now().Format("2006-01-02 15:04:05"), len(removed), e.Keep)
+	}
+	if err != nil {
+		fmt.Fprintf(e.IO.Err, "pruning %s: %v\n", outDir, err)
+	}
 }
 
 // serious returns the high and critical findings of the latest run of each connector, leaving out

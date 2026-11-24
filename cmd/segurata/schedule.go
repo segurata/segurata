@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/schedule"
@@ -53,7 +54,11 @@ func scheduleCmd(args []string) int {
 	case "status":
 		err = env.Status(ctx)
 	case "run":
-		err = env.Run(ctx, opt)
+		var cfg config.Config
+		if cfg, err = config.Load(config.DefaultPath()); err == nil {
+			env.Keep = cfg.RunRetention()
+			err = env.Run(ctx, opt)
+		}
 	default:
 		fmt.Fprintln(os.Stderr, scheduleUsage)
 		return 2
