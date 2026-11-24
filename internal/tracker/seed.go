@@ -18,6 +18,7 @@ var themes = []Theme{
 	{"google", "Google", "Apps with access to your Google accounts, and Workspace tenants."},
 	{"cloud", "Cloud", "GCP, AWS, Azure, Cloudflare, Vercel and Supabase: keys, roles, budgets."},
 	{"ai-spend", "AI providers", "OpenAI, Anthropic and OpenRouter keys, limits and spend."},
+	{coverageTheme, "Not audited here", "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."},
 	{"setup", "Setup", "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."},
 	{"decisions", "Decisions", "Questions only you can answer before the related work can go ahead."},
 	{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."},

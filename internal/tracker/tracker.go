@@ -215,4 +215,19 @@ type Tracker struct {
 	// connector runs, kept across syncs (a sync that reads no aws run still knows the aws account).
 	// Config `owned` adds to them at every sync; see "Attribution" in docs/architecture.md.
 	Owned *attribution.Owned `json:"owned,omitempty"`
+	// Runs is, per connector instance, the newest run folded in and how complete it was: what the
+	// coverage line of status reports (see coverage.go).
+	Runs map[string]RunInfo `json:"runs,omitempty"`
+}
+
+// RunInfo is what a sync keeps of a connector instance's newest run.
+type RunInfo struct {
+	At       time.Time `json:"at"`
+	Finished bool      `json:"finished"` // it has run_end
+	Complete bool      `json:"complete"` // finished, nothing skipped, no connector error
+	Error    string    `json:"error,omitempty"`
+	Expected int       `json:"expected,omitempty"` // scopes left out by statuses the config expects
+	// Skipped are the first scopes it did not inspect, "scope: reason"; SkippedCount counts them all.
+	Skipped      []string `json:"skipped,omitempty"`
+	SkippedCount int      `json:"skipped_count,omitempty"`
 }

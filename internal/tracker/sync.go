@@ -42,6 +42,8 @@ type SyncReport struct {
 	Ruled int
 	// Merged counts connector items closed because a rotate item owns their secret.
 	Merged int
+	// Coverage counts coverage items opened (positive) and closed as covered.
+	Coverage CoverageReport
 	// Every item.
 	Woken, Lapsed int
 }
@@ -256,6 +258,8 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	for l, r := range folded {
 		t.Sources[l] = r.at
 	}
+	t.recordRuns(folded)
+	rep.Coverage = t.syncCoverage(folded, now)
 	at := now.UTC()
 	t.LastSyncAt = &at
 	return rep, nil

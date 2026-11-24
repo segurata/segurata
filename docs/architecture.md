@@ -396,9 +396,10 @@ segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html
 
 The briefing, built with the report's document model and renderers (`internal/doc`), so text,
 Markdown and HTML say the same thing: a headline (open items by priority and theme, done and
-verified in the last 7 days, accepted, ignored, snoozed), "Do next" (the ten entries worth most,
-see below), pending decisions, setup blockers, the changes since the last seen status (events
-counted, the latest listed) and the accepted risks. Long next steps show their first sentences
+verified in the last 7 days, accepted, ignored, merged, snoozed, and how many areas are not
+audited here), the coverage line (see "Coverage"), "Do next" (the ten entries worth most, see
+below), pending decisions, setup blockers, what is not audited on this machine, the changes since
+the last seen status (events counted, the latest listed) and the accepted risks. Long next steps show their first sentences
 and fold the rest (`doc.Fold`: a collapsed `<details>` in HTML and Markdown, `[…]` in text), never
 cut inside a `code span`.
 
@@ -429,6 +430,41 @@ sections of their own. Reading it changes
 nothing: an unfiltered `status --mark-seen` records the "since" mark, and `--write` (which implies
 `--mark-seen`) also writes `status.md` and `status.html` next to the tracker, mode 0600. `report`
 stays the per-run view. Likewise `rotations next` only logs a `next` history event with `--log`.
+
+### Coverage
+
+What segurata looked at, and what it cannot look at here (`internal/tracker/coverage.go`).
+
+**Runs.** Each sync keeps, per connector instance, its newest folded run in the tracker's `runs`:
+when it ended, whether it has `run_end`, whether it was complete, the connector's error, and the
+first five scopes it skipped with the count. A scope left out by a status the config expects (when
+the run was written or by a rule added since) is counted as expected and does not make the run
+partial. `status` prints one line for every configured instance (the targets an unfiltered
+`inventory` runs) and any other that ran:
+
+```
+Coverage: aws: 3 h ago (1 scope left out as expected); cloudflare: never run; gcp: 9 h ago, failed: …; github: 3 h ago, partial: user:owner not checked.
+```
+
+**Gaps.** Areas of the plan ([plan.md](plan.md)) that no connector audits on this machine are
+review items of theme `coverage` (key `coverage:<slug>`, no priority), each with the step that
+would cover it:
+
+| Item | Open while | Step |
+|---|---|---|
+| your own GitHub account's 2FA | the github run reports a `user:<login>` scope other than ok (gh lacks `read:user`) | `gh auth refresh -h github.com -s read:user && segurata inventory github` |
+| Google recovery options and passkeys | always (no connector) | Security Checkup and passkeys on every account |
+| Apple Account devices and Sign in with Apple | always | account.apple.com, see manual-review.md |
+| Stripe API keys | always | restricted keys, delete unused ones |
+| breaches of your addresses (HIBP) | no hibp instance has run | install examples/hibp and run it |
+| the password manager's password report | always | 1Password Watchtower or Bitwarden Reports |
+| Google Workspace administration | a workspace tenant ran and none reported ok | README, "Google Workspace administration" |
+
+A sync opens the item when the gap is there and closes it as done and verified ("covered: the
+github run read your account") when a run covers it; one segurata closed opens again when the gap
+comes back. An item the owner marks done (the manual areas) stays done. They stay out of the
+headline counts and "Do next", in a section of their own, "Not audited on this machine": they say
+what is unknown, not what is failing.
 
 ## Remediation
 

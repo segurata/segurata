@@ -51,6 +51,9 @@ var prios = []secretrisk.Priority{secretrisk.P0, secretrisk.P1, secretrisk.P2, s
 type View struct {
 	Filter
 	Explain bool
+	// Instances are the configured connector instances, for the coverage line (one that never ran
+	// shows as such); instances that ran are listed anyway.
+	Instances []string
 }
 
 // Status lays the briefing out: headline, what to do next, pending decisions, setup blockers,
@@ -71,9 +74,13 @@ func (t *Tracker) Status(path string, now time.Time, v View) *doc.Doc {
 	}
 	d.P(fmt.Sprintf("As of %s. Tracker %s, %s.", now.Format("2006-01-02 15:04"), path, sync))
 	t.headline(d, items, now)
+	if line := t.coverageLine(v.Instances, now); line != "" {
+		d.P(line)
+	}
 	t.doNext(d, items, now, v.Explain)
 	t.decisions(d, items, now)
 	blockers(d, items, now)
+	notAudited(d, items, now)
 	t.changes(d, items, now)
 	accepted(d, items, now)
 	return d
@@ -85,7 +92,7 @@ func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
 	open := map[secretrisk.Priority]int{}
 	byStatus := map[Status]int{}
 	weekAgo := now.AddDate(0, 0, -7)
-	doneWeek, verifiedWeek := 0, 0
+	doneWeek, verifiedWeek, gaps := 0, 0, 0
 	for _, it := range items {
 		byStatus[it.Status]++
 		if it.Status == Done && it.StatusAt.After(weekAgo) {
@@ -95,6 +102,10 @@ func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
 			verifiedWeek++
 		}
 		if !it.Active(now) {
+			continue
+		}
+		if it.Theme == coverageTheme {
+			gaps++
 			continue
 		}
 		p := it.EffectivePriority()
@@ -108,9 +119,9 @@ func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
 	for _, n := range open {
 		active += n
 	}
-	d.P(fmt.Sprintf("%d open: P0 %d, P1 %d, P2 %d, P3 %d. Done in the last 7 days: %d (%d verified by a later run). Accepted %d, ignored %d, reclassified as noise %d, expected %d, snoozed %d.",
+	d.P(fmt.Sprintf("%d open: P0 %d, P1 %d, P2 %d, P3 %d. Done in the last 7 days: %d (%d verified by a later run). Accepted %d, ignored %d, reclassified as noise %d, expected %d, merged %d, snoozed %d. Not audited here: %d.",
 		active, open[secretrisk.P0], open[secretrisk.P1], open[secretrisk.P2], open[secretrisk.P3], doneWeek, verifiedWeek,
-		byStatus[Accepted], byStatus[Ignored], byStatus[Reclassified], byStatus[Expected], byStatus[Snoozed]))
+		byStatus[Accepted], byStatus[Ignored], byStatus[Reclassified], byStatus[Expected], byStatus[Merged], byStatus[Snoozed], gaps))
 	if active == 0 {
 		return
 	}

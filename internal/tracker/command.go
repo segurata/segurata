@@ -51,6 +51,9 @@ type CLI struct {
 	Paths    Paths  // zero means DefaultPaths
 	Config   string // config file with the expected rules; "" means none (and no track expect)
 	Now      func() time.Time
+	// Instances lists the configured connector instances, for status's coverage line; nil lists
+	// only the ones that ran.
+	Instances func() []string
 }
 
 func (c CLI) fail(err error) int {
@@ -496,7 +499,11 @@ func (c CLI) Status(args []string) int {
 		return c.fail(err)
 	}
 	f := newFilter(*theme, *kind, *prio)
-	d := t.Status(path, now, View{Filter: f, Explain: *explain})
+	v := View{Filter: f, Explain: *explain}
+	if c.Instances != nil {
+		v.Instances = c.Instances()
+	}
+	d := t.Status(path, now, v)
 	if err := doc.Render(c.Out, d, doc.Format(*format)); err != nil {
 		return c.fail(err)
 	}
