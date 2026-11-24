@@ -53,7 +53,34 @@ func (GooglePersonal) Inventory(ctx context.Context, req connector.Request, emit
 		return err
 	}
 	defer c.Close()
-	return inventory(ctx, cdpBrowser{c}, emit, time.Now())
+	only, err := accountFilter(req.Config)
+	if err != nil {
+		return err
+	}
+	return inventory(ctx, cdpBrowser{c}, emit, time.Now(), only)
+}
+
+// accountFilter reads config `accounts`: when set, only these emails are inventoried, and other
+// accounts signed in to the browser (someone else's mailbox you were given access to) are skipped
+// without a status.
+func accountFilter(cfg map[string]any) (map[string]bool, error) {
+	raw, ok := cfg["accounts"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, errors.New(`google-personal config: "accounts" must be a list of emails`)
+	}
+	only := map[string]bool{}
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok {
+			return nil, errors.New(`google-personal config: "accounts" must be a list of emails`)
+		}
+		only[strings.ToLower(s)] = true
+	}
+	return only, nil
 }
 
 // browser loads a page, polls a JavaScript expression until ready accepts its value or tries
@@ -126,7 +153,9 @@ func connectionsURL(u int) string {
 	return fmt.Sprintf("https://myaccount.google.com/u/%d/connections", u)
 }
 
-func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.Time) error {
+// inventory walks the accounts signed in to the browser. only, when not nil, names the accounts
+// to inventory.
+func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.Time, only map[string]bool) error {
 	seen := map[string]bool{}
 	for u := 0; u < maxAccounts && ctx.Err() == nil; u++ {
 		raw, err := b.load(ctx, connectionsURL(u), connectionsJS, connectionsReady, 24)
@@ -146,6 +175,10 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 			break
 		}
 		seen[page.Mail] = true
+		if only != nil && !only[strings.ToLower(page.Mail)] {
+			emit.Log(fmt.Sprintf("u%d %s: not in connectors.google-personal.config.accounts, skipped", u, page.Mail))
+			continue
+		}
 		if isReauth(page.Text) {
 			emit.Status(finding.Status{Account: page.Mail, State: finding.StateReauth, Detail: "Google asks to verify it's you before showing linked apps: sign in again in the browser"})
 			continue
@@ -153,6 +186,7 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 		apps := inspectAll(ctx, b, page.Apps, now)
 		failed := 0
 		occurrences := map[string]int{}
+		var signIns, all []finding.Finding
 		for i, a := range apps {
 			if a.err != nil {
 				failed++
@@ -164,7 +198,18 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 			}
 			f := a.finding
 			f.Account = page.Mail
+			all = append(all, f)
+			if f.Resource.Type == "sign_in_with_google" {
+				signIns = append(signIns, f)
+				continue
+			}
 			f.ID = stableID(f, occurrences)
+			emit.Finding(f)
+		}
+		if f, ok := signInSummary(page.Mail, connectionsURL(u), signIns); ok {
+			emit.Finding(f)
+		}
+		if f, ok := loginDependency(page.Mail, all); ok {
 			emit.Finding(f)
 		}
 		emit.Status(finding.Status{Account: page.Mail, State: finding.StateOK, Detail: fmt.Sprintf("%d linked apps, %d unreadable", len(apps)-failed, failed)})

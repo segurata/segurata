@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -75,7 +76,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 		connectionsURL(3):            conns("never@example.test", "must not be reached"),
 	}}
 	rec := &recorder{}
-	if err := inventory(context.Background(), b, rec, now); err != nil {
+	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,11 +118,14 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 	}
 
 	ex := rec.findings[1]
-	if ex.Resource.Type != "sign_in_with_google" || ex.Severity != finding.SevInfo || ex.CreatedAt != nil {
-		t.Errorf("sign-in app: %+v", ex)
+	if ex.Resource.Type != "sign_in_with_google_summary" || ex.Severity != finding.SevInfo || ex.Account != "a@example.test" {
+		t.Errorf("sign-in summary: %+v", ex)
 	}
-	if ex.Title != "example.test can sign you in with your Google account" {
-		t.Errorf("sign-in title %q", ex.Title)
+	if ex.Title != "a@example.test is the Sign in with Google login for 1 apps" || fmt.Sprint(ex.Evidence["services"]) != "[example.test]" {
+		t.Errorf("sign-in summary %q %v", ex.Title, ex.Evidence)
+	}
+	if ex.Remediation.URL != connectionsURL(0) {
+		t.Errorf("summary points to %q", ex.Remediation.URL)
 	}
 	if len(rec.logs) != 1 || !strings.Contains(rec.logs[0], `unparsed access date "sometime"`) {
 		t.Errorf("logs %q", rec.logs)
@@ -143,7 +147,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 
 func TestInventoryReportsSignedOutBrowser(t *testing.T) {
 	rec := &recorder{}
-	if err := inventory(context.Background(), &fakeBrowser{}, rec, now); err != nil {
+	if err := inventory(context.Background(), &fakeBrowser{}, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateSignedOut || len(rec.findings) != 0 {
@@ -169,10 +173,10 @@ func TestInventoryReportsUnreadableAppsAndKeepsTheRest(t *testing.T) {
 		},
 	}
 	rec := &recorder{}
-	if err := inventory(context.Background(), b, rec, now); err != nil {
+	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.findings) != 1 || rec.findings[0].Resource.ID != "EXAMPLE" {
+	if len(rec.findings) != 1 || fmt.Sprint(rec.findings[0].Evidence["services"]) != "[example.test]" {
 		t.Fatalf("findings %+v", rec.findings)
 	}
 	var details []string
@@ -194,16 +198,16 @@ func TestFindingIDIgnoresGoogleTokensAndSeparatesRepeatedNames(t *testing.T) {
 	run := func(token string) []string {
 		b := &fakeBrowser{pages: map[string]any{
 			connectionsURL(0): conns("a@example.test", "",
-				appLink{Name: "example.test", Href: base + "overview/" + token + "1"},
-				appLink{Name: "example.test", Href: base + "overview/" + token + "2"},
-				appLink{Name: "Acme Sync", Href: base + "overview/" + token + "3"},
+				appLink{Name: "Acme Sync", Href: base + "overview/" + token + "1"},
+				appLink{Name: "Acme Sync", Href: base + "overview/" + token + "2"},
+				appLink{Name: "example.test", Href: base + "overview/" + token + "3"},
 			),
-			base + "overview/" + token + "1": page(overviewENSignIn),
-			base + "overview/" + token + "2": page(overviewENSignIn),
-			base + "overview/" + token + "3": page(overviewENAccess),
+			base + "overview/" + token + "1": page(overviewENAccess),
+			base + "overview/" + token + "2": page(overviewENAccess),
+			base + "overview/" + token + "3": page(overviewENSignIn),
 		}}
 		rec := &recorder{}
-		inventory(context.Background(), b, rec, now)
+		inventory(context.Background(), b, rec, now, nil)
 		var ids []string
 		for _, f := range rec.findings {
 			ids = append(ids, f.ID)
@@ -216,6 +220,62 @@ func TestFindingIDIgnoresGoogleTokensAndSeparatesRepeatedNames(t *testing.T) {
 	}
 	if len(first) != 3 || first[0] == first[1] || first[1] == first[2] {
 		t.Fatalf("ids must be distinct: %v", first)
+	}
+}
+
+func TestAccountsFilterSkipsOtherAccountsWithoutStatus(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{
+		connectionsURL(0):   conns("me@example.test", "", appLink{Name: "example.test", Href: base + "overview/E"}),
+		base + "overview/E": page(overviewENSignIn),
+		connectionsURL(1):   conns("shared@example.test", reauthEN),
+	}}
+	only, err := accountFilter(map[string]any{"accounts": []any{"Me@example.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now, only); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.statuses) != 1 || rec.statuses[0].Account != "me@example.test" {
+		t.Fatalf("statuses %+v", rec.statuses)
+	}
+	if _, err := accountFilter(map[string]any{"accounts": "me@example.test"}); err == nil {
+		t.Fatal("a non-list accounts setting must be rejected")
+	}
+}
+
+func TestLoginDependencyNamesFinancialAndCloudServices(t *testing.T) {
+	app := func(n string) finding.Finding { return finding.Finding{Resource: finding.Resource{Name: n}} }
+	cases := []struct {
+		apps     []string
+		want     []string
+		severity finding.Severity
+	}{
+		{[]string{"binance.com", "Bybit", "Spotify", "Wise", "Crowdcube", "Otherwise Ltd"}, []string{"binance.com", "Bybit", "Wise", "Crowdcube"}, finding.SevHigh},
+		{[]string{"Amazon Web Services", "Cloudflare Dashboard", "Wefunder"}, []string{"Amazon Web Services", "Cloudflare Dashboard", "Wefunder"}, finding.SevMedium},
+		{[]string{"Stripe", "Claude"}, []string{"Stripe"}, finding.SevHigh},
+		{[]string{"Spotify", "Chess.com"}, nil, ""},
+	}
+	for _, tc := range cases {
+		var apps []finding.Finding
+		for _, n := range tc.apps {
+			apps = append(apps, app(n))
+		}
+		f, ok := loginDependency("me@example.test", apps)
+		if !ok {
+			if tc.want != nil {
+				t.Errorf("%v: no finding", tc.apps)
+			}
+			continue
+		}
+		if fmt.Sprint(f.Evidence["services"]) != fmt.Sprint(tc.want) || f.Severity != tc.severity {
+			t.Errorf("%v: services %v severity %s", tc.apps, f.Evidence["services"], f.Severity)
+		}
+		want := fmt.Sprintf("Google account me@example.test is the login for %d financial/cloud services: use a passkey/security key and consider Advanced Protection", len(tc.want))
+		if f.Title != want || f.Remediation.URL != urlPasskeys || !strings.Contains(f.Remediation.Summary, urlAdvancedProtection) {
+			t.Errorf("finding %q %+v", f.Title, f.Remediation)
+		}
 	}
 }
 

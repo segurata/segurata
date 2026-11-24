@@ -96,8 +96,19 @@ imports both, history included, and renames them to `*.migrated-<date>`. Details
 
 Walks every Google account signed in to the browser and reports each linked app with its scopes,
 the date access was given and a severity: `high` for full Gmail, Drive, Sheets, Cloud data or Google
-Ads; `info` for Sign in with Google only. Accounts where Google asks for a fresh sign-in show up as
-`reauth` statuses.
+Ads. Apps linked for Sign in with Google only are one `info` finding per account listing them (with
+their dates in the evidence). Accounts where Google asks for a fresh sign-in show up as `reauth`
+statuses.
+
+- An account that is the login (Sign in with Google or a grant) for financial or cloud services
+  gets one more finding: "Google account X is the login for N financial/cloud services: use a
+  passkey/security key and consider Advanced Protection". It is `high` when one of them can move
+  money (crypto exchanges, Wise, Revolut, PayPal, Stripe, banks) and `medium` for investing
+  platforms (Crowdcube, Wefunder, AngelList…) and cloud consoles (AWS, Cloudflare, Vercel…) only.
+  The list of names is `loginServices` in `connectors/googlepersonal/accountview.go`.
+- `{"connectors": {"google-personal": {"config": {"accounts": ["me@example.com"]}}}}` inventories
+  only those accounts; other accounts signed in to the browser (a shared mailbox, a colleague's)
+  are skipped without a status.
 
 - Requires Brave or Chrome started with `--remote-debugging-port=9222` (another address via
   `cdp_url` in the config or `SEGURATA_CDP`). Pages open in the background and always close,
