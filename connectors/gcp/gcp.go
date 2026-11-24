@@ -118,8 +118,13 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 	// Service accounts are credentials, not identities to inventory: no finding is ever scoped to
 	// one, so declaring them skipped would only mark every run partial. They are left out silently
-	// (list one in connectors.gcp.config.accounts to inventory with it).
-	accounts, err := c.accounts(ctx, g, cfg, func(string) {})
+	// (list one in connectors.gcp.config.accounts to inventory with it). People's accounts the
+	// config leaves out are declared skipped, so findings an earlier run made for them are not
+	// taken as resolved.
+	accounts, unwatched, err := c.accounts(ctx, g, cfg)
+	for _, a := range unwatched {
+		emit.Scope(a, false, "not in connectors.gcp.config.accounts")
+	}
 	if err != nil {
 		_, why := classify(err)
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateError, Detail: "gcloud auth list: " + why})
@@ -172,26 +177,30 @@ func (c *Connector) gcloud(cfg settings) (*gcloud, error) {
 const serviceAccountSuffix = ".iam.gserviceaccount.com"
 
 // accounts are the configured accounts, or every credentialed account gcloud lists except
-// service accounts, each of which is passed to skipped.
-func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings, skipped func(string)) ([]string, error) {
-	if len(cfg.accounts) > 0 {
-		return cfg.accounts, nil
-	}
+// service accounts. With configured accounts, unwatched are the people's accounts gcloud lists
+// that the config leaves out (none when gcloud cannot list them: the configured ones still run).
+func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings) (accounts, unwatched []string, err error) {
 	var listed []struct {
 		Account string `json:"account"`
 	}
-	if err := g.json(ctx, &listed, "auth", "list"); err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, a := range listed {
-		if strings.HasSuffix(a.Account, serviceAccountSuffix) {
-			skipped(a.Account)
-			continue
+	err = g.json(ctx, &listed, "auth", "list")
+	if len(cfg.accounts) > 0 {
+		for _, a := range listed {
+			if !strings.HasSuffix(a.Account, serviceAccountSuffix) && !slices.ContainsFunc(cfg.accounts, func(w string) bool { return strings.EqualFold(w, a.Account) }) {
+				unwatched = append(unwatched, a.Account)
+			}
 		}
-		out = append(out, a.Account)
+		return cfg.accounts, unwatched, nil
 	}
-	return out, nil
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, a := range listed {
+		if !strings.HasSuffix(a.Account, serviceAccountSuffix) {
+			accounts = append(accounts, a.Account)
+		}
+	}
+	return accounts, nil, nil
 }
 
 // projectsFinding records, as an info finding, the id and number of every project an account

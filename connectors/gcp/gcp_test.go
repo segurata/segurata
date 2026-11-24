@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -336,16 +337,17 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 
 func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 	plays := map[string][]outcome{
-		"projects list " + owner:                                                                                 {{stdout: "projects_owner.json"}},
-		"billing accounts list " + owner:                                                                         {{}},
-		"projects get-iam-policy demo-blog " + owner:                                                             {{}},
-		"iam service-accounts list --project=demo-blog " + owner:                                                 {{}},
-		"services api-keys list --project=demo-blog " + owner:                                                    {{}},
-		"billing projects describe demo-blog " + owner:                                                           {{stdout: "billing_info_blog.json"}},
-		"projects get-iam-policy unlisted-project " + owner:                                                      {{}},
-		"iam service-accounts list --project=unlisted-project " + owner:                                          {{}},
-		"services api-keys list --project=unlisted-project " + owner:                                             {{}},
-		"billing projects describe unlisted-project " + owner:                                                    {{}},
+		"auth list":                                                     {{stdout: "auth_list.json"}},
+		"projects list " + owner:                                        {{stdout: "projects_owner.json"}},
+		"billing accounts list " + owner:                                {{}},
+		"projects get-iam-policy demo-blog " + owner:                    {{}},
+		"iam service-accounts list --project=demo-blog " + owner:        {{}},
+		"services api-keys list --project=demo-blog " + owner:           {{}},
+		"billing projects describe demo-blog " + owner:                  {{stdout: "billing_info_blog.json"}},
+		"projects get-iam-policy unlisted-project " + owner:             {{}},
+		"iam service-accounts list --project=unlisted-project " + owner: {{}},
+		"services api-keys list --project=unlisted-project " + owner:    {{}},
+		"billing projects describe unlisted-project " + owner:           {{}},
 		"billing budgets list --billing-account=000000-BBBBBB-222222 " + owner + " --billing-project=demo-quota": {{}},
 	}
 	c, _ := testConnector(t, t.TempDir(), plays, nil)
@@ -360,6 +362,10 @@ func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 	}
 	if got := f.Evidence["linked_projects"]; len(got.([]string)) != 1 || got.([]string)[0] != "demo-blog" {
 		t.Errorf("linked projects: %v", got)
+	}
+	// The person's account the config leaves out is declared skipped; the service account is not.
+	if !slices.Equal(rec.skipped, []string{"work@example.org"}) {
+		t.Errorf("skipped %v, want the unwatched work@example.org only", rec.skipped)
 	}
 }
 
@@ -411,6 +417,7 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 
 func TestServiceAccountListedInConfigIsUsed(t *testing.T) {
 	plays := map[string][]outcome{
+		"auth list":                                           {{stderr: "reauth.txt"}}, // the configured accounts run all the same
 		"projects list " + ci:                                 {{stdout: "projects_sa.json"}},
 		"billing accounts list " + ci:                         {{stderr: "disabled_billing.txt"}},
 		"projects get-iam-policy demo-shop " + ci:             {{}},

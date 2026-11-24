@@ -45,8 +45,13 @@ A service account that `gcloud auth activate-service-account` added shows in `gc
 next to people; it is a credential (its key on disk is a finding), not an identity to inventory
 with, so it is skipped unless `accounts` names it. Projects in `skip_projects` are declared as
 skipped scopes (docs/connectors.md, "Coverage"), so findings an earlier run made there are not
-taken as resolved. Skipped service accounts are not declared: no finding is scoped to one, and
-declaring them would mark every run partial.
+taken as resolved. So are the people's accounts `gcloud auth list` shows that `accounts` leaves
+out (`segurata accounts unwatch gcp <account>` writes that list). Skipped service accounts are not
+declared: no finding is scoped to one, and declaring them would mark every run partial.
+
+Each account that lists projects also gets one info finding (`gcp_projects`) with the id and number
+of every project it sees: attribution reads it to know the owner's projects, since an OAuth client
+id names only the number (architecture.md, "Attribution").
 
 Each project is inspected once, with the first account that lists it. A check that account is
 denied is retried with the next account that lists the project, so a project another account can
