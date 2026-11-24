@@ -54,7 +54,7 @@ func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 }
 
 func newTest(fr *fakeRunner, credFile string) *Connector {
-	return &Connector{Run: fr, Now: func() time.Time { return now }, CredentialsFile: func() string { return credFile }}
+	return &Connector{Run: fr, Now: func() time.Time { return now }, CredentialsFile: func() string { return credFile }, ConfigFile: func() string { return "" }}
 }
 
 func healthyAccount() *fakeRunner {
@@ -164,8 +164,116 @@ func TestAccessDeniedOnOneCheckKeepsTheOthers(t *testing.T) {
 	if len(byType(rec, "aws_root_mfa")) != 1 || len(byType(rec, "aws_budget")) != 0 {
 		t.Fatalf("findings: %+v", rec.Findings)
 	}
-	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateError || !strings.Contains(rec.Statuses[0].Detail, "budgets") {
+	want := "user alice may not call budgets:ViewBudget: attach the AWS managed policies AWSBudgetsReadOnlyAccess (budgets:ViewBudget)"
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateNoScope || rec.Statuses[0].Detail != want {
 		t.Fatalf("statuses: %+v", rec.Statuses)
+	}
+}
+
+func TestAccessDeniedNamesTheExactActionsAndPolicies(t *testing.T) {
+	denied := func(action string) error {
+		return fmt.Errorf("An error occurred (AccessDenied) when calling the X operation: User: arn:aws:iam::111122223333:user/alice is not authorized to perform: %s on resource: * because no identity-based policy allows the %s action", action, action)
+	}
+	fr := healthyAccount()
+	fr.replies["configure list-profiles"] = "dev\n"
+	fr.errs = map[string]error{
+		"iam get-account-summary": denied("iam:GetAccountSummary"),
+		"iam list-users":          denied("iam:ListUsers"),
+		"budgets describe-budgets --account-id 111122223333": denied("budgets:ViewBudget"),
+	}
+	rec := &httpxtest.Recorder{}
+	if err := newTest(fr, "").Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	want := "user alice may not call iam:GetAccountSummary, iam:ListUsers, budgets:ViewBudget: attach the AWS managed policies SecurityAudit (iam:GetAccountSummary, iam:ListUsers) and AWSBudgetsReadOnlyAccess (budgets:ViewBudget)"
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateNoScope || rec.Statuses[0].Detail != want {
+		t.Fatalf("statuses: %+v", rec.Statuses)
+	}
+}
+
+func TestOtherFailuresStayErrorsAndKeepTheDenialHint(t *testing.T) {
+	fr := healthyAccount()
+	fr.replies["configure list-profiles"] = "dev\n"
+	fr.errs = map[string]error{
+		"iam get-account-summary": errors.New("Could not connect to the endpoint URL"),
+		"budgets describe-budgets --account-id 111122223333": errors.New("AccessDeniedException"),
+	}
+	rec := &httpxtest.Recorder{}
+	_ = newTest(fr, "").Inventory(context.Background(), connector.Request{}, rec)
+	st := rec.Statuses[0]
+	if st.State != finding.StateError || !strings.Contains(st.Detail, "root user: Could not connect") || !strings.Contains(st.Detail, "AWSBudgetsReadOnlyAccess") {
+		t.Fatalf("status: %+v", st)
+	}
+}
+
+func TestPolicyHintAllowsCostExplorerByName(t *testing.T) {
+	got := policyHint("user bob", []string{"ce:GetCostAndUsage"})
+	if got != "user bob may not call ce:GetCostAndUsage: allow ce:GetCostAndUsage in an inline policy" {
+		t.Fatal(got)
+	}
+	got = policyHint("user bob", []string{"iam:ListUsers", "ce:GetAnomalyMonitors"})
+	if got != "user bob may not call iam:ListUsers, ce:GetAnomalyMonitors: attach the AWS managed policies SecurityAudit (iam:ListUsers), and allow ce:GetAnomalyMonitors in an inline policy" {
+		t.Fatal(got)
+	}
+}
+
+func TestProviderOf(t *testing.T) {
+	r2ID := "ab2665aaaabbbbccccddddeeeeffff00"
+	cases := []struct {
+		name string
+		key  string
+		cfg  profileConfig
+		want provider
+	}{
+		{"aws long-lived", "AKIAIOSFODNN7EXAMPLE", profileConfig{Region: "eu-west-1"}, providerAWS},
+		{"aws temporary", "ASIAIOSFODNN7EXAMPLE", profileConfig{}, providerAWS},
+		{"sso profile without key", "", profileConfig{}, providerAWS},
+		{"r2 by key id shape", r2ID, profileConfig{}, providerR2},
+		{"r2 by region auto", "SOMEKEY", profileConfig{Region: "auto"}, providerR2},
+		{"r2 by endpoint", "AKIAIOSFODNN7EXAMPLE", profileConfig{Endpoint: "https://0123.r2.cloudflarestorage.com"}, providerR2},
+		{"other s3-compatible", "0025a1b2c3d4e5f60000000001", profileConfig{Endpoint: "https://s3.eu-central-003.backblazeb2.com"}, providerS3Compatible},
+	}
+	for _, tc := range cases {
+		if got := providerOf(credentialProfile{Name: "p", KeyID: tc.key}, tc.cfg); got != tc.want {
+			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestR2ProfileIsReportedAsR2AndSkipsSTS(t *testing.T) {
+	dir := t.TempDir()
+	cred := filepath.Join(dir, "credentials")
+	conf := filepath.Join(dir, "config")
+	creds := "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = x\n[r2]\naws_access_key_id = ab2665aaaabbbbccccddddeeeeffff00\naws_secret_access_key = y\n"
+	if err := os.WriteFile(cred, []byte(creds), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conf, []byte("[default]\nregion = eu-west-1\n[profile r2]\nregion = auto\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fr := healthyAccount()
+	fr.replies["configure list-profiles"] = "default\nr2\n"
+	c := newTest(fr, cred)
+	c.ConfigFile = func() string { return conf }
+	rec := &httpxtest.Recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	r2 := byType(rec, "r2_local_credentials")
+	if len(r2) != 1 || r2[0].Resource.Name != "r2" || !strings.Contains(r2[0].Title, "Cloudflare R2 API token") || r2[0].Remediation.URL != urlR2Tokens {
+		t.Fatalf("r2 findings: %+v", rec.Findings)
+	}
+	if got := byType(rec, "aws_local_credentials"); len(got) != 1 || got[0].Resource.Name != "default" {
+		t.Fatalf("aws findings: %+v", got)
+	}
+	stsCalls := 0
+	for _, call := range fr.calls {
+		if call == "sts get-caller-identity" {
+			stsCalls++
+		}
+	}
+	if stsCalls != 1 || len(rec.Statuses) != 1 || strings.Contains(rec.Statuses[0].Account, "r2") {
+		t.Fatalf("the R2 profile must not reach STS or get a status: calls %v statuses %+v", fr.calls, rec.Statuses)
 	}
 }
 
