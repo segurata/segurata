@@ -35,6 +35,7 @@ type Evidence struct {
 	Date        string `json:"date,omitempty"`   // gitleaks: date of that commit
 	Public      bool   `json:"public,omitempty"` // not a secret on its own (anon or expired JWT)
 	Encrypted   bool   `json:"encrypted,omitempty"`
+	InDataDump  bool   `json:"in_data_dump,omitempty"` // gitleaks: inside a committed database dump
 }
 
 // Impact is how much damage the secret can do in the wrong hands.
@@ -272,7 +273,7 @@ func Known(typ string) (Type, bool) {
 
 // ImpactOf is the type's impact, lowered to noise for values that are not usable secrets.
 func ImpactOf(e Evidence) Impact {
-	if e.Public || e.Encrypted {
+	if e.Public || e.Encrypted || dumpNoise(e) {
 		return Noise
 	}
 	return TypeFor(e.Type, e.Redacted).Impact
