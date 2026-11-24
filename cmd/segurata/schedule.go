@@ -75,7 +75,7 @@ func scheduleEnv() (schedule.Env, error) {
 		return schedule.Env{}, err
 	}
 	return schedule.Env{
-		GOOS: runtime.GOOS, Home: home, UID: os.Getuid(), Exe: exe, Path: os.Getenv("PATH"), TmpDir: os.TempDir(),
+		GOOS: runtime.GOOS, Home: home, UID: os.Getuid(), Exe: exe, Path: schedule.CleanPath(os.Getenv("PATH")), TmpDir: os.TempDir(),
 		Runner: schedule.System{}, IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr},
 		TTY: remediate.IsTerminal(os.Stdin), Now: time.Now, Connectors: all(),
 	}, nil
