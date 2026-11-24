@@ -99,7 +99,9 @@ func (t *Tracker) Headline(d *doc.Doc, items []*Item, now time.Time) {
 	byStatus := map[Status]int{}
 	weekAgo := now.AddDate(0, 0, -7)
 	doneWeek, verifiedWeek, gaps := 0, 0, 0
-	for _, it := range items {
+	// Closed and done counts describe the whole tracker: a --priority filter must not report
+	// 0 reclassified items just because noise has no priority. Open counts follow the filter.
+	for _, it := range t.Items {
 		byStatus[it.Status]++
 		if it.Status == Done && it.StatusAt.After(weekAgo) {
 			doneWeek++
@@ -107,6 +109,8 @@ func (t *Tracker) Headline(d *doc.Doc, items []*Item, now time.Time) {
 		if it.VerifiedAt != nil && it.VerifiedAt.After(weekAgo) {
 			verifiedWeek++
 		}
+	}
+	for _, it := range items {
 		if !it.Active(now) {
 			continue
 		}
