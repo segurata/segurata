@@ -49,6 +49,13 @@ type run struct {
 	cov      finding.Coverage // which scopes it inspected
 }
 
+// wholeInstance reports whether the run has a status of that state for no account in particular.
+func (r *run) wholeInstance(state finding.State) bool {
+	return slices.ContainsFunc(r.statuses, func(st finding.Status) bool {
+		return st.Account == "" && st.Scope == "" && reported(st).State == state
+	})
+}
+
 // notChecked is the history note for a finding a run did not inspect, the same for every item and
 // sync that folds that run, so each item logs it once.
 func (r *run) notChecked(why string) string {
@@ -349,7 +356,9 @@ func (it *Item) upsert(refs []FindingRef, seen map[string]bool) int {
 
 // markGone flags the refs this sync did not see, when their connector instance's run inspected
 // their scope; it returns, by ref id, the "not checked" note of each ref it held back instead. A
-// status ref (setup items) is gone as soon as a run that inspected anything lacks that status.
+// status ref (setup items) is gone as soon as a run that inspected anything lacks that status, or
+// when the run reports the same state for the whole instance (no account), which covers it: the
+// core's one missing_credentials status replaces the one a connector used to emit per account.
 func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[string]string {
 	held := map[string]string{}
 	for i := range it.Findings {
@@ -364,6 +373,9 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[strin
 		why, unchecked := run.cov.Unchecked(r.Account, r.Scope)
 		if strings.HasPrefix(r.ID, "status:") {
 			why, unchecked = run.cov.NoneChecked()
+			if r.Account != "" && run.wholeInstance(finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])) {
+				unchecked = false
+			}
 		}
 		if unchecked {
 			held[r.ID] = run.notChecked(why)

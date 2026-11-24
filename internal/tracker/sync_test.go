@@ -398,3 +398,21 @@ func TestSetupStatusesSharingAKeyKeepEveryRef(t *testing.T) {
 		t.Errorf("after one project cleared: %d gone, %s, %q", gone, it.Status, it.Title)
 	}
 }
+
+// The core's one missing_credentials status for the instance replaces the per-account one the
+// connector used to emit: the old setup item is verified done even though the run inspected nothing.
+func TestAnInstanceWideStatusCoversThePerAccountOne(t *testing.T) {
+	out := t.TempDir()
+	missing := func(account, detail string) finding.Status {
+		return finding.Status{Type: "status", Connector: "anthropic", Instance: "personal", Account: account, State: finding.StateMissingCredentials, Detail: detail}
+	}
+	writeRun(t, out, t0, "anthropic-personal.jsonl", missing("", "ANTHROPIC_ADMIN_KEY: not set"), missing("organization", "set ANTHROPIC_ADMIN_KEY"))
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0.Add(time.Hour))
+	org := byTitle(t, tr, "anthropic:personal · organization")
+	writeRun(t, out, t0.Add(24*time.Hour), "anthropic-personal.jsonl", missing("", "ANTHROPIC_ADMIN_KEY: not set; set ANTHROPIC_ADMIN_KEY"))
+	syncOrDie(t, tr, out, t0.Add(25*time.Hour))
+	if org.Status != Done || byTitle(t, tr, "anthropic:personal: has no credentials").Status != Open {
+		t.Errorf("org item %s", org.Status)
+	}
+}
