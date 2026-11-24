@@ -29,6 +29,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `accepted.json` |
 | `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
 | `rotations` | Keeps the ledger of secrets to rotate and guides each rotation | Only securizame's own `rotations.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
+| `redact` | Replaces the secrets `local-secrets` finds in trail files (agent transcripts, shell histories, logs) with `[REDACTED:<type>:<fingerprint8>]` | With `--apply` and confirmation: those trail files, never a working file; a history note in `rotations.json` |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
@@ -352,6 +353,51 @@ Priority is impact × exposure, both table-driven:
   holds the old value in plaintext.
 - History: `next` (once per run of consecutive calls), `replace-plan` (dry run),
   `replace-failed` (with what was already written), `done` (with the files and Keychain service).
+
+## Redaction
+
+```
+securizame redact --trails                       dry run: files, matches per file and per type, bytes
+securizame redact --path ~/.claude/projects/-src-shop
+securizame redact --item 3f9a12c4                one rotation item's secret, in every trail
+securizame redact --trails --min-priority P1 --apply [--yes] [--backup]
+```
+
+A remediation that rewrites local trail files (`internal/redact`). Transcripts, shell histories
+and logs keep secrets in plaintext long after they were pasted. Those copies already went
+wherever they went (a transcript reached the model provider), so rotation is still required;
+redaction removes the copy that stays on disk, in backups and in sync tools.
+
+- Scope: `--trails` is every trail `local-secrets` scans (its history, log and transcript ripgrep
+  passes); `--path` narrows to trail files under a prefix; `--item` takes only that ledger item's
+  secret. `--min-priority` uses the item's priority when the ledger knows the secret, otherwise
+  that copy's. A working file (config, `.env`, rc, repo working tree) is never touched, whatever
+  the scope: a program still reads its value.
+- Matching is `local-secrets`' own (`localsecrets.Trails`): ripgrep with the same passes finds
+  the candidate lines, and the same patterns, classification and judgement, joined into one
+  leftmost-first alternation as ripgrep joins several `-e`, place each secret on its line. A
+  value is replaced only if an inventory would report it as non-noise (`--include-noise` adds
+  generic `assignment` matches, public, expired and encrypted values). Each becomes
+  `[REDACTED:<type>:<fingerprint8>]`, so the copy still points at its rotation item.
+- Plain lines (shell history, logs) change only in the secret's bytes, which keeps zsh's
+  `: <ts>:<d>;cmd` format. A line that is valid JSON is edited inside its strings: where the
+  secret stands byte for byte inside one string, and only when the bytes before, the secret and
+  the bytes after are each whole string content (no escape cut in two, no quote crossed); then,
+  for strings that hold escapes, in the decoded value, re-encoding that one string. Field order
+  and every other byte are kept, each rewritten line must parse, and a whole file that was valid
+  JSON must stay so. A match that cannot be replaced this way stays and is counted.
+- Safety: files modified within `--min-age` (default 2h) and any file a running `claude` or
+  `codex` process has open (`lsof -Fn -c claude -c codex`, read-only; if lsof fails the command
+  refuses) are left alone, as are symlinks and files of another account. `--apply` confirms like
+  `remediate`, then, per file, checks the guards again, refuses a file whose size or modification
+  time changed since the plan, writes with `statefile.Replace` (mode kept) and puts the
+  modification time back, so tools that sort sessions by date are not confused.
+- After applying, ripgrep scans the rewritten files again: no secret in scope may remain beyond
+  what the plan said would stay, and mode and modification time must be unchanged. Each rotation
+  item whose secret was replaced gets a history note, "redacted from N trail files". Its
+  locations stay: the copies were exposed before they were cleaned.
+- No backup by default: a backup is one more plaintext copy. `--backup` keeps a 0600 copy next to
+  each file and says so loudly.
 
 ## Why Go, and why so few dependencies
 
