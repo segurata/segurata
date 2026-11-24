@@ -59,8 +59,7 @@ func (c CLI) fail(err error) int {
 
 // Run executes `segurata signin` and returns the exit code.
 func (c CLI) Run(ctx context.Context, args []string) int {
-	fs := flag.NewFlagSet("signin", flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("signin", c.Err)
 	fs.Usage = func() { fmt.Fprintln(c.Err, usage) }
 	all := fs.Bool("all", false, "also list the commands of other open setup items")
 	list := fs.Bool("list", false, "only print what it would open")
@@ -87,7 +86,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 		return c.fail(err)
 	}
 	now := c.Now()
-	tr, err := tracker.LoadOrMigrate(paths, now, c.Err)
+	tr, err := tracker.LoadOrNew(paths, now)
 	if err != nil {
 		return c.fail(err)
 	}

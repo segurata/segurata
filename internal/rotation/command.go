@@ -5,7 +5,6 @@
 package rotation
 
 import (
-	"flag"
 	"fmt"
 	"github.com/segurata/segurata/internal/config"
 	"io"
@@ -67,7 +66,7 @@ func (c CLI) Run(args []string) int {
 		return c.fail(err)
 	}
 	now := c.Now()
-	t, err := tracker.LoadOrMigrate(paths, now, c.Err)
+	t, err := tracker.LoadOrNew(paths, now)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -93,18 +92,13 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-func newFlags(name string, errw io.Writer) *flag.FlagSet {
-	fs := flag.NewFlagSet("rotations "+name, flag.ContinueOnError)
-	fs.SetOutput(errw)
-	return fs
-}
-
 func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time) int {
-	fs := newFlags("sync", c.Err)
+	fs := cliflag.New("rotations sync", c.Err)
 	from := fs.String("from", "", "local-secrets JSONL to read (default: the latest under --out)")
 	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	noise := fs.Bool("include-noise", false, "also track generic matches, public, expired and encrypted values")
-	if _, err := cliflag.Parse(fs, args); err != nil {
+	if pos, err := cliflag.Parse(fs, args); err != nil || len(pos) > 0 {
+		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
 	opt, err := tracker.ConfiguredSync(c.Config, tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise})
@@ -151,12 +145,13 @@ func splitList(s string) map[string]bool {
 }
 
 func (c CLI) list(t *tracker.Tracker, args []string, now time.Time) int {
-	fs := newFlags("list", c.Err)
+	fs := cliflag.New("rotations list", c.Err)
 	all := fs.Bool("all", false, "include rotated, snoozed and ignored items")
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0,P1")
 	service := fs.String("service", "", "comma-separated services, e.g. stripe,aws")
 	owner := fs.String("owner", "", "comma-separated attributions: mine, not-mine, unknown")
-	if _, err := cliflag.Parse(fs, args); err != nil {
+	if pos, err := cliflag.Parse(fs, args); err != nil || len(pos) > 0 {
+		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
 	items := selectItems(t, now, *all, splitList(*prio), splitList(*service))
@@ -276,7 +271,7 @@ func itemsUnder(t *tracker.Tracker, prefix string, closed bool, now time.Time) [
 }
 
 func (c CLI) change(t *tracker.Tracker, path, cmd string, args []string, now time.Time) int {
-	fs := newFlags(cmd, c.Err)
+	fs := cliflag.New("rotations "+cmd, c.Err)
 	note := fs.String("note", "", "free text kept in the history")
 	var until, reason *string
 	switch cmd {

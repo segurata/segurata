@@ -10,13 +10,19 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 )
 
-// Script writes a POSIX shell script as segurata-<name> in a temp dir and returns its path. It
-// skips the test where shell scripts cannot run.
-func Script(t *testing.T, name, body string) string {
+// NeedShell skips the test where shell scripts cannot run.
+func NeedShell(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script connector")
 	}
+}
+
+// Script writes a POSIX shell script as segurata-<name> in a temp dir and returns its path. It
+// skips the test where shell scripts cannot run.
+func Script(t *testing.T, name, body string) string {
+	t.Helper()
+	NeedShell(t)
 	p := filepath.Join(t.TempDir(), "segurata-"+name)
 	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatal(err)

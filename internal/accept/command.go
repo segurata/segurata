@@ -6,7 +6,6 @@
 package accept
 
 import (
-	"flag"
 	"fmt"
 	"github.com/segurata/segurata/internal/config"
 	"io"
@@ -39,14 +38,13 @@ func (c CLI) load(now time.Time) (*tracker.Tracker, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	t, err := tracker.LoadOrMigrate(p, now, c.Err)
+	t, err := tracker.LoadOrNew(p, now)
 	return t, p.Tracker, err
 }
 
 // Accept records a finding of the latest run as an accepted risk, or lists the accepted ones.
 func (c CLI) Accept(args []string) int {
-	fs := flag.NewFlagSet("accept", flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("accept", c.Err)
 	list := fs.Bool("list", false, "list accepted findings")
 	reason := fs.String("reason", "", "why the risk is kept on purpose")
 	until := fs.String("until", "", "last day the acceptance applies, YYYY-MM-DD (default: no end)")
@@ -90,8 +88,7 @@ func (c CLI) Accept(args []string) int {
 
 // Unaccept removes an acceptance, so the finding shows again.
 func (c CLI) Unaccept(args []string) int {
-	fs := flag.NewFlagSet("unaccept", flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("unaccept", c.Err)
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		fmt.Fprintln(c.Err, unacceptUsage)

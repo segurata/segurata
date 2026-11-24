@@ -82,6 +82,24 @@ type SetupHinter interface {
 	SetupHint(secret string) string
 }
 
+// HintFor is the SetupHint of a connector that needs one secret: hint when asked is that secret,
+// "" otherwise.
+func HintFor(asked, secret, hint string) string {
+	if asked != secret {
+		return ""
+	}
+	return hint
+}
+
+// Now is the current time in UTC from clock, or from the real clock when clock is nil: built-in
+// connectors take an optional clock so tests can fix the time.
+func Now(clock func() time.Time) time.Time {
+	if clock == nil {
+		clock = time.Now
+	}
+	return clock().UTC()
+}
+
 var builtins = map[string]Connector{}
 
 // Register is called from each built-in connector's init.

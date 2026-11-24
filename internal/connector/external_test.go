@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/connector/connectortest"
@@ -23,6 +24,7 @@ func TestLoadExternalChecksTheDescription(t *testing.T) {
 		"empty remediation":        `{"name":"x","protocol":2,"remediates":[""]}`,
 		"no name":                  `{"protocol":2}`,
 		"not json":                 `nope`,
+		"another file's name":      `{"name":"openai","protocol":2}`,
 	}
 	for why, js := range refused {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err == nil {
@@ -33,6 +35,98 @@ func TestLoadExternalChecksTheDescription(t *testing.T) {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err != nil {
 			t.Errorf("%s: %v", js, err)
 		}
+	}
+}
+
+// The name in describe must be the file's suffix and a plain lowercase word, since it picks the
+// secrets the core hands over and names the run file.
+func TestLoadExternalRefusesABadName(t *testing.T) {
+	for _, name := range []string{"Upper", "under_score", "prowler.orig", "-lead"} {
+		js := `{"name":"` + name + `","protocol":2}`
+		if _, err := connector.LoadExternal(connectortest.Script(t, name, describing(js))); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
+
+type builtin struct{ name string }
+
+func (b builtin) Describe() connector.Description { return connector.Description{Name: b.name} }
+func (builtin) Inventory(context.Context, connector.Request, connector.Emitter) error {
+	return nil
+}
+
+// Discover keeps one connector per name: a built-in beats a plugin, an earlier PATH directory beats
+// a later one, and a file whose name is not a connector name never runs.
+func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
+	connector.Register(builtin{"discoverbuiltin"})
+	ran := filepath.Join(t.TempDir(), "ran")
+	first, second := t.TempDir(), t.TempDir()
+	plugin := func(dir, file, name string) {
+		t.Helper()
+		body := "echo " + file + " >> '" + ran + "'\n" + describing(`{"name":"`+name+`","protocol":2}`)
+		if err := os.WriteFile(filepath.Join(dir, "segurata-"+file), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connectortest.NeedShell(t)
+	plugin(first, "discoverbuiltin", "discoverbuiltin")
+	plugin(first, "zzz", "discoverbuiltin")
+	plugin(first, "dup", "dup")
+	plugin(second, "dup", "dup")
+	plugin(second, "dup.orig", "dup")
+	t.Setenv("PATH", first+string(os.PathListSeparator)+second)
+
+	got := connector.Discover()
+	if len(got) != 1 || got[0].Path != filepath.Join(first, "segurata-dup") || got[0].Describe().Name != "dup" {
+		t.Fatalf("discovered %+v", got)
+	}
+	raw, _ := os.ReadFile(ran)
+	if strings.Contains(string(raw), "discoverbuiltin") || strings.Contains(string(raw), "orig") {
+		t.Fatalf("ran a plugin it should have skipped unseen:\n%s", raw)
+	}
+}
+
+// A plugin that hangs or floods its output must not hang or exhaust the core. The sleep runs in a
+// child that keeps the pipes open after the plugin itself is killed.
+func TestPluginSubprocessesAreBounded(t *testing.T) {
+	connector.SetDescribeTimeout(t, 200*time.Millisecond)
+	start := time.Now()
+	if _, err := connector.LoadExternal(connectortest.Script(t, "slow", `sleep 30; `+describing(`{"name":"slow","protocol":2}`))); err == nil {
+		t.Error("a describe that hangs loaded")
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("a hung describe held LoadExternal for %v", took)
+	}
+	big := `{"name":"big","protocol":2,"summary":"` + strings.Repeat("x", 2<<20) + `"}`
+	if _, err := connector.LoadExternal(connectortest.Script(t, "big", describing(big))); err == nil {
+		t.Error("a 2 MiB describe loaded")
+	}
+	noisy := connectortest.Plugin(t, "noisy", `case "$1" in
+describe) echo '{"name":"noisy","protocol":2}';;
+inventory) cat >/dev/null; head -c 3000000 /dev/zero | tr '\0' x >&2;;
+esac
+`)
+	if err := noisy.Inventory(context.Background(), connector.Request{}, &recorder{}); err == nil {
+		t.Error("3 MB of stderr was accepted")
+	}
+}
+
+// A relative PATH entry would load plugins from whatever directory segurata runs in.
+func TestDiscoverSkipsRelativePathEntries(t *testing.T) {
+	dir := t.TempDir()
+	connectortest.NeedShell(t)
+	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" + describing(`{"name":"local","protocol":2}`)
+	if err := os.WriteFile(filepath.Join(dir, "bin", "segurata-local"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("PATH", "bin")
+	if got := connector.Discover(); len(got) != 0 {
+		t.Fatalf("discovered %s from a relative PATH entry", got[0].Path)
 	}
 }
 
@@ -54,12 +148,46 @@ esac
 	}
 }
 
-type recorder struct{ logs []string }
+type recorder struct {
+	logs     []string
+	findings []finding.Finding
+	statuses []finding.Status
+}
 
-func (r *recorder) Finding(finding.Finding)    {}
-func (r *recorder) Status(finding.Status)      {}
+func (r *recorder) Finding(f finding.Finding)  { r.findings = append(r.findings, f) }
+func (r *recorder) Status(s finding.Status)    { r.statuses = append(r.statuses, s) }
 func (r *recorder) Scope(string, bool, string) {}
 func (r *recorder) Log(m string)               { r.logs = append(r.logs, m) }
+
+// A record the core cannot use must fail the run: dropping it would close its item as verified.
+func TestInventoryFailsOnMalformedRecords(t *testing.T) {
+	good := `{"type":"finding","account":"a","resource":{"type":"t","id":"ok"},"kind":"grant","severity":"high","title":"ok"}`
+	malformed := map[string]string{
+		"not json":            `not json`,
+		"evidence shape":      `{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"severity":"high","evidence":"text"}`,
+		"capitalised":         `{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"severity":"High"}`,
+		"no severity":         `{"type":"finding","account":"a","resource":{"type":"t","id":"x"}}`,
+		"remediation level":   `{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"severity":"low","remediation":{"severity":"urgent"}}`,
+		"status shape":        `{"type":"status","account":["a"],"state":"ok"}`,
+		"scope shape":         `{"type":"scope","scope":"repo:a/b","inspected":"no"}`,
+		"unknown record type": `{"type":"Finding","account":"a"}`,
+	}
+	for why, line := range malformed {
+		e := connectortest.Plugin(t, "m", `case "$1" in
+describe) echo '{"name":"m","protocol":2}';;
+inventory) cat >/dev/null; echo '`+good+`'; echo '`+line+`';;
+esac
+`)
+		var rec recorder
+		err := e.Inventory(context.Background(), connector.Request{}, &rec)
+		if err == nil || !strings.Contains(err.Error(), "1 malformed record") {
+			t.Errorf("%s: err = %v", why, err)
+		}
+		if len(rec.findings) != 1 || rec.findings[0].Resource.ID != "ok" {
+			t.Errorf("%s: findings %+v; the well-formed one must still arrive", why, rec.findings)
+		}
+	}
+}
 
 func TestRequestPlanDecodesStrictly(t *testing.T) {
 	plugin := func(reply string) *connector.External {

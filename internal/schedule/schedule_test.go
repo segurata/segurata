@@ -426,10 +426,3 @@ func TestUnitFilesQuoteWhatTheyEmbed(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
-
-func TestCleanPathDropsDuplicatesAndUnexpandable(t *testing.T) {
-	got := CleanPath("/a/bin:~/src/bin::/b/:/a/bin:rel/bin:/b")
-	if got != "/a/bin:/b" {
-		t.Fatalf("got %q", got)
-	}
-}

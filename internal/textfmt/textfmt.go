@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // OrDash is s, or "-" when s is empty, for table cells.
@@ -26,6 +28,15 @@ func Plural(n int, one, many string) string {
 // Count is "1 thing" or "N things".
 func Count(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, Plural(n, one, many))
+}
+
+// UpperFirst is s with its first letter upper-cased; "" stays "".
+func UpperFirst(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if size == 0 {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 // JoinAnd lists items as prose: "a", "a and b", "a, b and c"; "" for none.

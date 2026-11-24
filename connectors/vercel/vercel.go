@@ -33,10 +33,7 @@ func init() { connector.Register(&Connector{}) }
 
 // SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
-	if secret != secretName {
-		return ""
-	}
-	return setupHint
+	return connector.HintFor(secret, secretName, setupHint)
 }
 
 func (c *Connector) Describe() connector.Description {
@@ -47,13 +44,6 @@ func (c *Connector) Describe() connector.Description {
 		Summary:  "Tokens (leaked, idle, never expiring), teams and plans; Spend Management is not exposed by the API",
 		Needs:    []string{"secret:" + secretName},
 	}
-}
-
-func stateFor(err error) finding.State {
-	if httpx.IsStatus(err, http.StatusUnauthorized) {
-		return finding.StateReauth
-	}
-	return finding.StateError
 }
 
 type token struct {
@@ -98,14 +88,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: "vercel", State: finding.StateMissingCredentials, Detail: secretName + " is not configured: " + setupHint})
 		return nil
 	}
-	base, now := c.BaseURL, time.Now
-	if base == "" {
-		base = DefaultBaseURL
-	}
-	if c.Now != nil {
-		now = c.Now
-	}
-	api := httpx.New(base, http.Header{"Authorization": {"Bearer " + tok}})
+	api := httpx.New(httpx.Base(c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + tok}})
 	var me struct {
 		User struct {
 			Username string `json:"username"`
@@ -113,14 +96,14 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		} `json:"user"`
 	}
 	if err := api.Get(ctx, "/v2/user", nil, &me); err != nil {
-		emit.Status(finding.Status{Account: "vercel", State: stateFor(err), Detail: err.Error()})
+		emit.Status(finding.Status{Account: "vercel", State: httpx.State(err), Detail: err.Error()})
 		return nil
 	}
 	account := me.User.Username
 	if account == "" {
 		account = me.User.Email
 	}
-	scanned := now().UTC()
+	scanned := connector.Now(c.Now)
 	var failed []string
 
 	var tokens struct {

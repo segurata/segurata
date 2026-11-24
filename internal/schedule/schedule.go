@@ -411,19 +411,3 @@ func orDefault(d time.Duration) time.Duration {
 	}
 	return d
 }
-
-// CleanPath keeps the first occurrence of each absolute directory in a PATH value, dropping
-// duplicates and entries a launchd or systemd environment cannot expand (relative, "~", empty).
-func CleanPath(path string) string {
-	seen := map[string]bool{}
-	var out []string
-	for _, d := range filepath.SplitList(path) {
-		d = filepath.Clean(d)
-		if !filepath.IsAbs(d) || seen[d] {
-			continue
-		}
-		seen[d] = true
-		out = append(out, d)
-	}
-	return strings.Join(out, string(os.PathListSeparator))
-}

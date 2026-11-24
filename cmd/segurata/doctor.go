@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,7 +21,7 @@ const doctorUsage = "usage: segurata doctor [--connector name|name:label] [--out
 
 // doctorCmd is `segurata doctor`: read-only prerequisite checks.
 func doctorCmd(args []string) int {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs := cliflag.New("doctor", os.Stderr)
 	only := fs.String("connector", "", "check one connector (or one instance, name:label)")
 	out := fs.String("out", config.DefaultOutDir(), "inventory output directory whose mode is checked")
 	pos, err := cliflag.Parse(fs, args)

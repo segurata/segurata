@@ -11,13 +11,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/proc"
+	"github.com/segurata/segurata/internal/searchpath"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const externalPrefix = "segurata-"
+
+// validName is what a connector name may look like: it selects the secrets the core hands over
+// and names the run file, so it must be a plain word that cannot climb out of a directory.
+var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // RemediationProtocol is the first protocol version with `plan` and `apply`.
 const RemediationProtocol = 2
@@ -28,18 +36,25 @@ type External struct {
 	desc Description
 }
 
-// Discover finds segurata-<name> executables on PATH. Built-in names win over external ones.
+// Discover finds segurata-<name> executables on PATH. A built-in name wins over an external one, an
+// earlier PATH directory over a later one, and a file whose suffix is not a valid name never runs.
+// Only absolute PATH entries count, so the plugin set never depends on the working directory and
+// matches what a scheduled run sees.
 func Discover() []*External {
 	seen := map[string]bool{}
 	for _, c := range Builtins() {
 		seen[c.Describe().Name] = true
 	}
 	var out []*External
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+	for _, dir := range filepath.SplitList(searchpath.Clean(os.Getenv("PATH"))) {
 		matches, _ := filepath.Glob(filepath.Join(dir, externalPrefix+"*"))
 		for _, p := range matches {
-			name := strings.TrimPrefix(filepath.Base(p), externalPrefix)
+			name := fileName(p)
 			if seen[name] || !isExecutable(p) {
+				continue
+			}
+			if !validName.MatchString(name) {
+				fmt.Fprintf(os.Stderr, "segurata: ignoring %s: %q is not a connector name\n", p, name)
 				continue
 			}
 			e, err := LoadExternal(p)
@@ -54,23 +69,52 @@ func Discover() []*External {
 	return out
 }
 
+// fileName is the connector name a segurata-<name> path stands for.
+func fileName(path string) string { return strings.TrimPrefix(filepath.Base(path), externalPrefix) }
+
 func isExecutable(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
 }
 
-// LoadExternal runs `<path> describe` and checks what it prints.
+// Bounds on a plugin's subprocesses, so one that hangs or floods its output cannot hang or exhaust
+// the core. describe runs on every command that lists connectors and prints a few hundred bytes.
+var describeTimeout = 10 * time.Second
+
+const (
+	maxDescribeBytes = 1 << 20
+	maxStderrBytes   = 1 << 20
+)
+
+// command prepares `<path> <sub>`, killed when ctx is done; proc.Command bounds the wait for pipes
+// a child it left behind may still hold open.
+func command(ctx context.Context, path, sub string) *exec.Cmd {
+	return proc.Command(ctx, path, sub)
+}
+
+// LoadExternal runs `<path> describe` and checks what it prints, including that the name it
+// declares is the one in its file name.
 func LoadExternal(path string) (*External, error) {
-	raw, err := exec.Command(path, "describe").Output()
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), describeTimeout)
+	defer cancel()
+	cmd := command(ctx, path, "describe")
+	var raw bytes.Buffer
+	cmd.Stdout = &limitedWriter{w: &raw, n: maxDescribeBytes}
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("no answer within %v", describeTimeout)
+		}
 		return nil, fmt.Errorf("describe: %w", err)
 	}
 	e := &External{Path: path}
-	if err := json.Unmarshal(raw, &e.desc); err != nil {
+	if err := json.Unmarshal(raw.Bytes(), &e.desc); err != nil {
 		return nil, fmt.Errorf("describe output is not JSON: %w", err)
 	}
 	if err := e.desc.validate(); err != nil {
 		return nil, err
+	}
+	if want := fileName(path); e.desc.Name != want {
+		return nil, fmt.Errorf("describe names %q, but the file is %s%s", e.desc.Name, externalPrefix, want)
 	}
 	return e, nil
 }
@@ -79,6 +123,9 @@ func LoadExternal(path string) (*External, error) {
 func (d Description) validate() error {
 	if d.Name == "" {
 		return errors.New("describe has no name")
+	}
+	if !validName.MatchString(d.Name) {
+		return fmt.Errorf("name %q is not lowercase letters, digits and dashes", d.Name)
 	}
 	if d.Protocol < MinProtocolVersion || d.Protocol > ProtocolVersion {
 		return fmt.Errorf("speaks protocol %d, core speaks %d to %d", d.Protocol, MinProtocolVersion, ProtocolVersion)
@@ -97,16 +144,30 @@ func (d Description) validate() error {
 func (e *External) Describe() Description { return e.desc }
 
 // Inventory runs `segurata-<name> inventory`. The request carries the protocol version the
-// connector declared, so a version 1 connector never sees a version it does not know.
+// connector declared, so a version 1 connector never sees a version it does not know. A record the
+// core cannot use fails the run once the rest has been read: dropping it silently would make what
+// it reported look resolved.
 func (e *External) Inventory(ctx context.Context, req Request, emit Emitter) error {
 	req.Protocol = e.desc.Protocol
 	var stderr bytes.Buffer
-	err := e.stream(ctx, "inventory", req, &stderr, func(line []byte) { decodeRecord(line, e.desc.Name, emit) })
+	var malformed int
+	var first error
+	err := e.stream(ctx, "inventory", req, &limitedWriter{w: &stderr, n: maxStderrBytes}, func(line []byte) {
+		if err := decodeRecord(line, e.desc.Name, emit); err != nil {
+			if malformed++; first == nil {
+				first = err
+			}
+		}
+	})
+	diag := strings.TrimSpace(stderr.String())
 	if err != nil {
-		return fmt.Errorf("%s: %w: %s", e.desc.Name, err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("%s: %w: %s", e.desc.Name, err, diag)
 	}
-	if s := strings.TrimSpace(stderr.String()); s != "" {
-		emit.Log(s)
+	if diag != "" {
+		emit.Log(diag)
+	}
+	if malformed > 0 {
+		return fmt.Errorf("%s: %s, first: %w", e.desc.Name, textfmt.Count(malformed, "malformed record", "malformed records"), first)
 	}
 	return nil
 }
@@ -140,10 +201,10 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	if err != nil {
 		return PlanReply{}, err
 	}
-	cmd := proc.Command(ctx, e.Path, "plan")
+	cmd := command(ctx, e.Path, "plan")
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &stderr
+	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &limitedWriter{w: &stderr, n: maxStderrBytes}
 	if err := cmd.Run(); err != nil {
 		return PlanReply{}, fmt.Errorf("%s plan: %w: %s", e.desc.Name, err, strings.TrimSpace(stderr.String()))
 	}
@@ -192,7 +253,7 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	cmd := proc.Command(ctx, e.Path, sub)
+	cmd := command(ctx, e.Path, sub)
 	cmd.Stdin = bytes.NewReader(raw)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
@@ -231,39 +292,49 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-// decodeRecord routes one JSON line to the emitter by its "type" field.
-func decodeRecord(line []byte, name string, emit Emitter) {
+// decodeRecord routes one JSON line to the emitter by its "type" field. It returns an error, and
+// emits nothing, for a line that is not a record of a known type with the fields that type needs.
+func decodeRecord(line []byte, name string, emit Emitter) error {
 	var head struct {
 		Type string `json:"type"`
 		Msg  string `json:"msg"`
 	}
-	if json.Unmarshal(line, &head) != nil {
-		emit.Log(fmt.Sprintf("%s: unparseable line ignored", name))
-		return
+	if err := json.Unmarshal(line, &head); err != nil {
+		return fmt.Errorf("unparseable line: %w", err)
 	}
 	switch head.Type {
 	case "finding":
 		var f finding.Finding
-		if json.Unmarshal(line, &f) == nil {
-			f.Connector = name
-			emit.Finding(f)
+		if err := json.Unmarshal(line, &f); err != nil {
+			return fmt.Errorf("finding: %w", err)
 		}
+		if !f.Severity.Valid() || f.Remediation.Severity != "" && !f.Remediation.Severity.Valid() {
+			return fmt.Errorf("finding %s/%s: severity %q (remediation %q) is not info, low, medium, high or critical",
+				f.Resource.Type, f.Resource.ID, f.Severity, f.Remediation.Severity)
+		}
+		f.Connector = name
+		emit.Finding(f)
 	case "status":
 		var s finding.Status
-		if json.Unmarshal(line, &s) == nil {
-			s.Connector = name
-			emit.Status(s)
+		if err := json.Unmarshal(line, &s); err != nil {
+			return fmt.Errorf("status: %w", err)
 		}
+		s.Connector = name
+		emit.Status(s)
 	case "scope":
 		var sc struct {
 			Scope     string `json:"scope"`
 			Inspected bool   `json:"inspected"`
 			Reason    string `json:"reason"`
 		}
-		if json.Unmarshal(line, &sc) == nil {
-			emit.Scope(sc.Scope, sc.Inspected, sc.Reason)
+		if err := json.Unmarshal(line, &sc); err != nil {
+			return fmt.Errorf("scope: %w", err)
 		}
+		emit.Scope(sc.Scope, sc.Inspected, sc.Reason)
 	case "log":
 		emit.Log(head.Msg)
+	default:
+		return fmt.Errorf("unknown record type %q", head.Type)
 	}
+	return nil
 }

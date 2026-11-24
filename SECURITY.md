@@ -61,8 +61,8 @@ These are the properties segurata promises. Breaking one is a vulnerability.
   `env:`, `op://`) resolved at run time and never printed.
 - **Changes are explicit.** `segurata remediate`, `redact`, `rotations replace` and `schedule`
   show the exact plan and change nothing without `--apply`, then ask for confirmation (refusing
-  without a terminal unless `--yes`). `remediate` handles one finding at a time and re-checks it
-  afterwards.
+  without a terminal unless `--yes`). `remediate` handles one plan at a time, which can cover several
+  findings, and re-checks them afterwards.
 - **Allowlisted commands.** Built-in remediations run only exact argument lists from a
   hand-written allowlist, never through a shell. Plugin plans run as the user; a plugin plan that
   needs sudo is refused.

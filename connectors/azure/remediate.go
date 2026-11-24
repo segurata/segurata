@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // ActionDeleteExpiredSecrets deletes client secrets of app registrations that have already
@@ -37,10 +37,6 @@ func (c *Connector) readSecrets(ctx context.Context, fs []finding.Finding) (secr
 	if len(fs) == 0 || fs[0].Remediation.Action != ActionDeleteExpiredSecrets {
 		return secretsState{}, fmt.Errorf("azure has no such remediation")
 	}
-	now := time.Now
-	if c.Now != nil {
-		now = c.Now
-	}
 	var current account
 	if err := c.call(ctx, &current, "account", "show"); err != nil {
 		return secretsState{}, fmt.Errorf("az account show: %w", err)
@@ -60,7 +56,7 @@ func (c *Connector) readSecrets(ctx context.Context, fs []finding.Finding) (secr
 			live[key{a.AppID, p.KeyID}] = expired{app: a, cred: p}
 		}
 	}
-	at := now()
+	at := connector.Now(c.Now)
 	for _, f := range fs {
 		appID, _ := f.Evidence["app_id"].(string)
 		keyID, _ := f.Evidence["key_id"].(string)
@@ -97,7 +93,7 @@ func (st secretsState) plan() (connector.Plan, error) {
 		deletes = append(deletes, fmt.Sprintf("Deletes secret %s… of app %q, expired %s.", e.cred.Hint, e.app.DisplayName, day(*e.cred.EndDateTime)))
 	}
 	p.Summary = fmt.Sprintf("Delete %d expired client %s from %d app %s in tenant %s.",
-		len(st.expired), plural(len(st.expired), "secret", "secrets"), len(apps), plural(len(apps), "registration", "registrations"), st.tenant)
+		len(st.expired), textfmt.Plural(len(st.expired), "secret", "secrets"), len(apps), textfmt.Plural(len(apps), "registration", "registrations"), st.tenant)
 	p.SideEffects = append([]string{
 		"No undo: a deleted client secret cannot be restored. Each one has already expired, so nothing can sign in with it any more; an app that still needs a secret needs a new one either way.",
 		"Only these password credentials go: the app registrations, their certificates and their other secrets stay.",
@@ -150,11 +146,4 @@ func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p conn
 		ex = remediate.System{}
 	}
 	return remediate.Run(ctx, p, st.allowlist(), ex, io)
-}
-
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
 }

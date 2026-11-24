@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpw"
@@ -58,20 +57,6 @@ type remediator struct {
 	cs connector.Credentials
 }
 
-func (r *remediator) base() string {
-	if r.c.BaseURL != "" {
-		return strings.TrimRight(r.c.BaseURL, "/")
-	}
-	return DefaultBaseURL
-}
-
-func (r *remediator) now() time.Time {
-	if r.c.Now != nil {
-		return r.c.Now().UTC()
-	}
-	return time.Now().UTC()
-}
-
 // liveKey is the key a finding names, as the API lists it now.
 type liveKey struct {
 	path     string // DELETE path under the base URL
@@ -88,7 +73,7 @@ func (r *remediator) read(ctx context.Context, f finding.Finding) (liveKey, erro
 	if read == "" {
 		return liveKey{}, fmt.Errorf("%s is not configured: the plan reads the key's current state with it; %s", secretName, setupHint)
 	}
-	s := &scan{ctx: ctx, api: httpx.New(r.base(), http.Header{"Authorization": {"Bearer " + read}})}
+	s := &scan{ctx: ctx, api: httpx.New(r.c.base(), http.Header{"Authorization": {"Bearer " + read}})}
 	listed, err := list[adminKey](s, "/organization/admin_api_keys", nil)
 	if err != nil {
 		return liveKey{}, err
@@ -165,7 +150,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	if err != nil {
 		return connector.Plan{}, err
 	}
-	now := r.now()
+	now := connector.Now(r.c.Now)
 	if unusedAction(k.lastUsed, k.expires, now) == "" {
 		return connector.Plan{}, fmt.Errorf("the %s is no longer unused (last used %s): not deleting it; run the inventory again", k.label, k.lastUsed.Format(time.DateOnly))
 	}
@@ -179,7 +164,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	p := connector.Plan{
 		Action:  ActionDeleteUnusedKey,
 		Summary: fmt.Sprintf("Delete the OpenAI %s (%s), %s.", k.label, keyHint(k.redacted), used),
-		Calls:   []connector.Call{{Method: http.MethodDelete, URL: r.base() + k.path, Secret: writeSecret}},
+		Calls:   []connector.Call{{Method: http.MethodDelete, URL: r.c.base() + k.path, Secret: writeSecret}},
 		SideEffects: []string{
 			"No undo: a deleted key cannot be restored. Anything still holding it gets HTTP 401 and needs a new key.",
 			"Nothing else changes: the project, its other keys and its service accounts stay.",
@@ -205,5 +190,5 @@ func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.P
 	if err != nil {
 		return err
 	}
-	return httpw.Send(ctx, r.base(), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
+	return httpw.Send(ctx, r.c.base(), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
 }
