@@ -107,7 +107,7 @@ In `~/.config/segurata/config.json`; every key is optional:
 | `providers` | `["gcp"]` | Prowler providers to run; only `gcp` is implemented |
 | `accounts` | every account in `gcloud auth list` except service accounts | Accounts to scan as. People left out are declared as skipped scopes |
 | `projects` | every active project the accounts list | Restrict to these projects |
-| `skip_projects` | none | Never scanned; declared as skipped scopes so earlier findings there are not taken as resolved |
+| `skip_projects` | none | Project ids or shell patterns (`sys-*` skips Apps Script's default projects). Never scanned; declared as skipped scopes so earlier findings there are not taken as resolved |
 | `checks` | all | Only these Prowler check ids (`prowler gcp --list-checks`) |
 | `excluded_checks` | none | Never run these |
 | `severity_min` | none | `info`, `low`, `medium`, `high` or `critical`: Prowler runs only checks at or above it |
