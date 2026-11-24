@@ -5,6 +5,8 @@ package statefile
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -56,16 +58,26 @@ func Replace(path string, data []byte, mode fs.FileMode) error {
 }
 
 // Backup writes data, the content of path before an edit, to a new 0600 file next to it named
-// <path>.segurata-bak-<UTC timestamp>, and returns that name. It never overwrites a file.
+// <path>.segurata-bak-<UTC timestamp>, adding -2, -3… when a backup from the same second exists,
+// and returns that name. It never overwrites a file.
 func Backup(path string, data []byte, now time.Time) (string, error) {
-	name := path + ".segurata-bak-" + now.UTC().Format("20060102T150405Z")
-	b, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return "", err
+	base := path + ".segurata-bak-" + now.UTC().Format("20060102T150405Z")
+	for i := 1; ; i++ {
+		name := base
+		if i > 1 {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		b, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, fs.ErrExist) && i < 100 {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if _, err := b.Write(data); err != nil {
+			b.Close()
+			return "", err
+		}
+		return name, b.Close()
 	}
-	if _, err := b.Write(data); err != nil {
-		b.Close()
-		return "", err
-	}
-	return name, b.Close()
 }

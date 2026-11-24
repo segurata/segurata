@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestReplaceKeepsTheGivenModeAndLeavesNoTemporaryFile(t *testing.T) {
@@ -42,5 +43,18 @@ func TestWriteJSONIsPrivate(t *testing.T) {
 	}
 	if dir, _ := os.Stat(filepath.Dir(path)); dir.Mode().Perm() != 0o700 {
 		t.Errorf("dir mode %v", dir.Mode().Perm())
+	}
+}
+
+func TestBackupsInTheSameSecondDoNotCollide(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	now := time.Date(2026, 11, 24, 15, 43, 0, 0, time.UTC)
+	a, err := Backup(p, []byte("one"), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Backup(p, []byte("two"), now)
+	if err != nil || a == b {
+		t.Fatalf("second backup in the same second: %q %q %v", a, b, err)
 	}
 }
