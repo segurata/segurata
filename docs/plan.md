@@ -62,7 +62,7 @@ Legend: **P0** today, **P1** this week, **P2** this month. **[S]** a script can 
 - **P1** Cloudflare: replace the Global API Key with least-privilege tokens with TTL and IP restrictions. [S] API `GET /user/tokens`.
 - **P1** Stripe: use restricted keys and remove unused secret keys. [S] CDP inventory of the dashboard.
 - **P1** AI service keys: one per project, with a spend limit; revoke unused ones. [S] Local scan plus each provider's console or admin API.
-- **P1** Enable secret scanning and push protection on GitHub organizations. [S] `gh api /repos/{o}/{r}` (`security_and_analysis`).
+- **P1** Enable secret scanning and push protection on GitHub organizations. [S] **github** connector: `security_and_analysis` per repository and the organization's default code security configurations.
 
 ## 7. Finance and crypto
 

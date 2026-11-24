@@ -80,6 +80,49 @@ confirm, run again); `noscope` (`gh` lacks a scope; the detail carries the exact
   stored. Opening each app's page would exhaust the limit. If X answers "Rate limit exceeded", wait
   15 minutes.
 
+## GitHub security settings (`github`)
+
+```bash
+./securizame inventory github
+```
+
+Reads, through the signed-in `gh` CLI, the security settings of the account, of every
+organization it owns and of every repository it administers. Apps, sessions and the account's own
+keys stay in `connected-apps`. Every request is `gh api --method GET` on a path from a fixed list
+(`connectors/github/allowlist.go`); anything else is refused before `gh` runs.
+
+| Finding | Severity |
+|---|---|
+| Account without two-factor authentication | `critical` when it owns organizations, `high` otherwise |
+| Organization that does not require 2FA; members or outside collaborators without 2FA (logins in the evidence) | `high` |
+| Organization base permission `write` or `admin`; workflows get a read and write `GITHUB_TOKEN` by default; new private repositories get no default code security configuration with secret scanning and push protection (Team and Enterprise plans; Free cannot buy it, and the status says so) | `medium` |
+| Members can create public repositories; any action from any author allowed; workflows can approve pull requests; new public repositories without secret scanning and push protection by default | `low` |
+| Repository: one finding listing everything wrong with it, at the severity of the worst: webhook over `http://` or with SSL verification off (`high`, `medium` when inactive; only scheme and host are kept, since a hook URL can carry a token), deploy key with write access, secret scanning or push protection off, public repository whose workflows get a write token while Actions are enabled (`medium`) | worst issue |
+| Rolled up, one finding per owner listing the repositories: Dependabot security updates off; secret scanning or push protection off in forks; public default branch without classic protection or an active ruleset (opt-in) | `low` |
+
+Config, optional, under `connectors.github.config`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_repos` | 500 | Repositories inspected, sorted by name; the status says how many were left out |
+| `branch_protection` | false | Also check the default branch of public repositories (one or two more requests each) |
+
+- Scopes: `read:user` (account 2FA), `read:org` (organizations and their code security
+  defaults), `admin:org` (owner-only settings, Actions permissions, members without 2FA), `repo`
+  (private repositories, webhooks, deploy keys). A missing one is a `noscope` status with the
+  command that adds it, such as `gh auth refresh -h github.com -s read:user`; the rest still runs.
+  gh's default login lacks `read:user` and `admin:org`.
+- Rate limit: it reads the quota first (free) and stops when fewer than 300 requests would remain,
+  leaving them for your other tools. Repositories cut off by the limit are counted in the status,
+  never half-reported. About 4 requests per repository, four at a time: 500 repositories take
+  around four minutes.
+- Archived repositories are skipped (GitHub makes them read-only); so are repositories you can
+  read but not administer, and settings of organizations you do not own.
+- Not checked: Actions secrets (a count says nothing about risk, costs a request per repository,
+  and the names are on each repository's settings page); the fine-grained token policy of an
+  organization (no REST endpoint for a user token). The organization's deprecated
+  `*_enabled_for_new_repositories` fields are not read: code security configurations replaced them.
+
 ## Google Workspace administration (`workspace`)
 
 ```bash
