@@ -5,7 +5,7 @@
 //	    --min-severity=low  --out=out  --verbose
 //	securizame remediate --list               automatable findings of the latest run
 //	securizame remediate <finding-id>         show the plan; --apply [--yes] to apply it
-//	securizame rotations sync|list|show|done|snooze|ignore|reopen   ledger of secrets to rotate
+//	securizame rotations sync|list|next|show|replace|done|snooze|ignore|reopen   ledger of secrets to rotate
 //	securizame accept <finding-id> --reason text [--until YYYY-MM-DD]   keep a risk on purpose
 //	securizame accept --list | securizame unaccept <finding-id>
 package main
@@ -59,7 +59,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|show|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id>")
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id>")
 }
 
 func all() []connector.Connector {

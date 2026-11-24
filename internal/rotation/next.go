@@ -1,0 +1,151 @@
+package rotation
+
+import (
+	"fmt"
+	"io"
+	"sort"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/secretrisk"
+)
+
+// maxLeaks is how many locations `next` lists; `show` lists them all.
+const maxLeaks = 8
+
+// next prints the single most urgent active item with everything needed to rotate it, and logs
+// that it was shown.
+func (c CLI) next(l *Ledger, path string, args []string, now time.Time) int {
+	fs := newFlags("next", c.Err)
+	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0 or P0,P1")
+	service := fs.String("service", "", "comma-separated services, e.g. stripe,aws")
+	if _, err := cliflag.Parse(fs, args); err != nil {
+		return 2
+	}
+	items := l.Select(now, false, splitList(*prio), splitList(*service))
+	if len(items) == 0 {
+		fmt.Fprintln(c.Out, "Nothing open matches. `securizame rotations list --all` shows rotated, snoozed and ignored items.")
+		return 0
+	}
+	it := items[0]
+	printNext(c.Out, it, items)
+	if n := len(it.History); n == 0 || it.History[n-1].Action != actNext {
+		it.log(now, actNext, "")
+		if err := l.Save(path); err != nil {
+			return c.fail(err)
+		}
+	}
+	return 0
+}
+
+// Select returns the items that match the priority and service filters (empty matches all), most
+// urgent first: active ones, or every item when all is true.
+func (l *Ledger) Select(now time.Time, all bool, prios, services map[string]bool) []*Item {
+	var out []*Item
+	for _, it := range l.Items {
+		switch {
+		case !all && !it.Active(now):
+		case len(prios) > 0 && !prios[strings.ToLower(string(it.Priority))]:
+		case len(services) > 0 && !services[strings.ToLower(it.Service)]:
+		default:
+			out = append(out, it)
+		}
+	}
+	Sort(out)
+	return out
+}
+
+func printNext(w io.Writer, it *Item, queue []*Item) {
+	counts := map[secretrisk.Priority]int{}
+	for _, q := range queue {
+		counts[q.Priority]++
+	}
+	var parts []string
+	for _, p := range []secretrisk.Priority{secretrisk.P0, secretrisk.P1, secretrisk.P2, secretrisk.P3} {
+		if counts[p] > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", p, counts[p]))
+		}
+	}
+	label := secretrisk.TypeFor(it.Type, it.Redacted).Label
+	fmt.Fprintf(w, "Next of %d open (%s)\n\n", len(queue), strings.Join(parts, ", "))
+	fmt.Fprintf(w, "%s  %s  %s  %s  (%s/%s)\n", it.ID, orDash(string(it.Priority)), label, orDash(it.Redacted), it.Service, it.Type)
+
+	fmt.Fprintln(w, "\nWhy")
+	for _, r := range it.Reasons {
+		fmt.Fprintf(w, "  %s\n", r)
+	}
+
+	fmt.Fprintf(w, "\nLeaked in (%d)\n", len(it.Locations))
+	locs := append([]Location(nil), it.Locations...)
+	sort.SliceStable(locs, func(i, j int) bool { return spotRank(locs[i].spot()) > spotRank(locs[j].spot()) })
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for i, loc := range locs {
+		if i == maxLeaks {
+			fmt.Fprintf(tw, "  … and %d more: securizame rotations show %s\n", len(locs)-maxLeaks, it.ID)
+			break
+		}
+		fmt.Fprintf(tw, "  %s\t%s\n", where(loc), loc.spot().Label)
+	}
+	tw.Flush()
+
+	fmt.Fprintln(w, "\nRotate it")
+	if it.RotateURL != "" {
+		fmt.Fprintf(w, "  at %s\n", it.RotateURL)
+	} else {
+		fmt.Fprintln(w, "  in the provider's console (no account-independent page is known for this type)")
+	}
+	if g, ok := secretrisk.GuideFor(it.Type); ok {
+		for i, s := range g.Steps {
+			fmt.Fprintf(w, "  %d. %s\n", i+1, s)
+		}
+		fmt.Fprintf(w, "  Source: %s\n", g.Doc)
+	}
+
+	fmt.Fprintln(w, "\nThe new value goes in (used_in)")
+	rc := false
+	if len(it.UsedIn) == 0 {
+		fmt.Fprintln(w, "  no working file: only history, transcripts or logs hold it")
+	}
+	for _, p := range it.UsedIn {
+		line := p
+		for _, loc := range it.Locations {
+			if loc.Path == p && loc.Line > 0 && loc.Source != "gitleaks" {
+				line = where(loc)
+				break
+			}
+		}
+		if secretrisk.IsShellRC(p) {
+			rc = true
+			line += "  (shell rc: --to-keychain keeps the new value out of it)"
+		}
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+
+	fmt.Fprintln(w, "\nNext commands")
+	fmt.Fprintln(w, "  1. Rotate it at the provider as above and copy the new value.")
+	_, single := secretrisk.ParseHint(it.Redacted)
+	switch {
+	case len(it.UsedIn) == 0:
+		fmt.Fprintf(w, "  2. securizame rotations done %s --note \"rotated at the provider\"\n", it.ID)
+	case !single:
+		fmt.Fprintf(w, "  2. Put the new value in the files above by hand (not a one-line value).\n")
+		fmt.Fprintf(w, "  3. securizame rotations done %s --note \"rotated at the provider\"\n", it.ID)
+	default:
+		fmt.Fprintf(w, "  2. securizame rotations replace %s            # dry run: plan from the clipboard\n", it.ID)
+		keychain := ""
+		if rc {
+			keychain = " [--to-keychain <VAR_NAME>]"
+		}
+		fmt.Fprintf(w, "  3. securizame rotations replace %s --apply%s\n", it.ID, keychain)
+	}
+	fmt.Fprintf(w, "  Then: securizame rotations next   (not now: snooze %s --until YYYY-MM-DD; false positive: ignore %s --reason …)\n", it.ID, it.ID)
+}
+
+func where(loc Location) string {
+	if loc.Line > 0 {
+		return fmt.Sprintf("%s:%d", loc.Path, loc.Line)
+	}
+	return loc.Path
+}
