@@ -218,7 +218,7 @@ func (p *proposal) add(f finding.Finding) {
 }
 
 func refOf(f finding.Finding) FindingRef {
-	return FindingRef{ID: f.ID, Connector: f.Connector, Instance: f.Instance, Account: f.Account, Title: f.Title,
+	return FindingRef{ID: f.ID, Connector: f.Connector, Instance: f.Instance, Account: f.Account, Scope: finding.ScopeOf(f), Title: f.Title,
 		Severity: f.Severity, LastSeen: f.ObservedAt.UTC()}
 }
 

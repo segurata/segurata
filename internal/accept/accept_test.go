@@ -3,7 +3,6 @@ package accept
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/runtest"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -112,18 +112,11 @@ func TestUnacceptByPrefix(t *testing.T) {
 
 func writeRun(t *testing.T, out string, fs ...finding.Finding) {
 	t.Helper()
-	dir := filepath.Join(out, now.Format(time.DateOnly))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
+	recs := make([]any, len(fs))
+	for i, f := range fs {
+		recs[i] = f
 	}
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	for _, f := range fs {
-		_ = enc.Encode(f)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "macos.jsonl"), b.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	runtest.Write(t, filepath.Join(out, now.Format(time.DateOnly), "macos.jsonl"), recs...)
 }
 
 func TestCommands(t *testing.T) {

@@ -81,14 +81,16 @@ type Event struct {
 // FindingRef links a finding (or, for setup items, a connector status) to an item. Gone means the
 // latest run of its connector instance no longer reports it.
 type FindingRef struct {
-	ID        string           `json:"id"`
-	Connector string           `json:"connector"`
-	Instance  string           `json:"instance,omitempty"`
-	Account   string           `json:"account,omitempty"`
-	Title     string           `json:"title"`
-	Severity  finding.Severity `json:"severity,omitempty"`
-	LastSeen  time.Time        `json:"last_seen"`
-	Gone      bool             `json:"gone,omitempty"`
+	ID        string `json:"id"`
+	Connector string `json:"connector"`
+	Instance  string `json:"instance,omitempty"`
+	Account   string `json:"account,omitempty"`
+	// Scope is finding.ScopeOf the finding; "" on refs recorded before scopes existed.
+	Scope    string           `json:"scope,omitempty"`
+	Title    string           `json:"title"`
+	Severity finding.Severity `json:"severity,omitempty"`
+	LastSeen time.Time        `json:"last_seen"`
+	Gone     bool             `json:"gone,omitempty"`
 }
 
 // Label is the connector instance as the command line names it: name or name:label.
