@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
@@ -351,13 +353,93 @@ func TestUserMFAFinding(t *testing.T) {
 	}
 }
 
-func TestBudgetFinding(t *testing.T) {
-	b := budget{BudgetName: "monthly", BudgetLimit: &struct{ Amount, Unit string }{"100.0", "USD"}}
-	if f := budgetFinding(b, 0); f.Severity != finding.SevMedium {
-		t.Fatalf("budget without alerts: %s", f.Severity)
+func TestBudgetMapping(t *testing.T) {
+	b := awsBudget{BudgetName: "monthly", BudgetType: "COST", TimeUnit: "MONTHLY",
+		BudgetLimit: &struct{ Amount, Unit string }{"200.0", "USD"},
+		CostFilters: map[string][]string{"Service": {"Amazon Simple Storage Service"}}}
+	got := b.neutral([]notification{
+		{NotificationType: "ACTUAL", ComparisonOperator: "GREATER_THAN", Threshold: 80, ThresholdType: "PERCENTAGE"},
+		{NotificationType: "FORECASTED", ComparisonOperator: "GREATER_THAN", Threshold: 200, ThresholdType: "ABSOLUTE_VALUE"},
+		{NotificationType: "ACTUAL", ComparisonOperator: "LESS_THAN", Threshold: 10, ThresholdType: "PERCENTAGE"},
+	})
+	want := budget.Budget{ID: "monthly", Name: "monthly", Amount: 200, Currency: "USD", Period: budget.PeriodMonth,
+		Thresholds: []budget.Threshold{{Percent: 80}, {Percent: 100, Forecast: true}},
+		Scope:      budget.Scope{Filters: []string{"Service: Amazon Simple Storage Service"}},
+		Notifies:   []string{budget.NotifySubscribers}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("\n got %+v\nwant %+v", got, want)
 	}
-	if f := budgetFinding(b, 2); f.Severity != finding.SevInfo || f.Evidence["limit"] != "100.0 USD" {
-		t.Fatalf("budget with alerts: %+v", f)
+	if quiet := (awsBudget{BudgetName: "q", TimeUnit: "CUSTOM"}).neutral(nil); quiet.Alerting() || quiet.Period != budget.PeriodCustom {
+		t.Errorf("a budget without notifications alerts nobody: %+v", quiet)
+	}
+}
+
+func budgetAccount() *fakeRunner {
+	fr := healthyAccount()
+	fr.replies["configure list-profiles"] = "dev\n"
+	fr.replies["budgets describe-budgets --account-id 111122223333"] = `{"Budgets":[
+		{"BudgetName":"Monthly cap","BudgetType":"COST","TimeUnit":"MONTHLY","BudgetLimit":{"Amount":"50.0","Unit":"USD"}},
+		{"BudgetName":"Monthly copy","BudgetType":"COST","TimeUnit":"MONTHLY","BudgetLimit":{"Amount":"50.0","Unit":"USD"}},
+		{"BudgetName":"RI use","BudgetType":"RI_UTILIZATION","TimeUnit":"MONTHLY"}]}`
+	fr.replies["budgets describe-notifications-for-budget --account-id 111122223333 --budget-name Monthly cap"] = `{"Notifications":[
+		{"NotificationType":"ACTUAL","ComparisonOperator":"GREATER_THAN","Threshold":50,"ThresholdType":"PERCENTAGE"}]}`
+	fr.replies["budgets describe-notifications-for-budget --account-id 111122223333 --budget-name Monthly copy"] = `{"Notifications":[]}`
+	fr.replies["budgets describe-budget-actions-for-account --account-id 111122223333"] = `{"Actions":[]}`
+	return fr
+}
+
+func TestBudgetsGoThroughTheSharedRules(t *testing.T) {
+	fr := budgetAccount()
+	rec := &httpxtest.Recorder{}
+	if err := newTest(fr, "").Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]finding.Severity{
+		"Account example-alias has 2 budgets: 'Monthly cap' 50 USD/month, whole account; 'Monthly copy' 50 USD/month, whole account":                                                 finding.SevInfo,
+		"Budget 'Monthly cap' (50 USD/month, whole account) alerts only at 50%: add 90%, 100% and a forecasted threshold":                                                            finding.SevMedium,
+		"Budgets 'Monthly cap' and 'Monthly copy' on account example-alias are the same (50 USD/month, whole account): delete one":                                                   finding.SevLow,
+		"Budgets on account example-alias only notify: none is wired to a budget action, so nothing stops spend; 1 active IAM user access key and 1 root access key in this account": finding.SevMedium,
+	}
+	got := map[string]finding.Finding{}
+	for _, f := range rec.Findings {
+		if f.Kind == finding.KindSpend {
+			got[f.Title] = f
+		}
+	}
+	for title, sev := range want {
+		if f, ok := got[title]; !ok || f.Severity != sev || f.Account != "example-alias" || f.Scope != "profile dev" {
+			t.Errorf("%q: %+v", title, f)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("spend findings: %v", got)
+	}
+
+	fr = budgetAccount()
+	fr.replies["budgets describe-budget-actions-for-account --account-id 111122223333"] = `{"Actions":[{"BudgetName":"Monthly cap","ActionType":"APPLY_IAM_POLICY"}]}`
+	rec = &httpxtest.Recorder{}
+	if err := newTest(fr, "").Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(byType(rec, "budget_enforcement")) != 0 {
+		t.Errorf("a budget action caps spend")
+	}
+}
+
+func TestDeniedBudgetActionsKeepTheOtherBudgetFindings(t *testing.T) {
+	fr := budgetAccount()
+	delete(fr.replies, "budgets describe-budget-actions-for-account --account-id 111122223333")
+	fr.errs = map[string]error{"budgets describe-budget-actions-for-account --account-id 111122223333": errors.New("AccessDeniedException")}
+	rec := &httpxtest.Recorder{}
+	if err := newTest(fr, "").Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(byType(rec, "budget_enforcement")) != 0 || len(byType(rec, "budget_thresholds")) != 1 {
+		t.Errorf("unknown actions are not reported missing; thresholds still are: %+v", rec.Findings)
+	}
+	st := rec.Statuses[0]
+	if st.State != finding.StateNoScope || !strings.Contains(st.Detail, "AWSBudgetsReadOnlyAccess (budgets:DescribeBudgetActionsForAccount)") {
+		t.Errorf("status %+v", st)
 	}
 }
 
