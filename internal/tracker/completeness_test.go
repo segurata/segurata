@@ -2,7 +2,9 @@ package tracker
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -228,5 +230,38 @@ func TestStaleSetupItemsCloseOnAFinishedRun(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A torn run file (two runs once wrote into it) is skipped with a warning: the other connectors
+// still fold, and the torn one counts as not run, so nothing it reported closes.
+func TestAnUnreadableRunIsSkippedAndClosesNothing(t *testing.T) {
+	tr, out, _, port := lifecycleFixture(t)
+	day1 := t0.AddDate(0, 0, 1)
+	torn := filepath.Join(out, day1.Format(time.DateOnly), "macos.jsonl")
+	runtest.Write(t, torn, at(port, day1), okStatus("macos", "Mac"))
+	raw, err := os.ReadFile(torn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(torn, append([]byte(`{"type":"finding","acc`+"\n"), raw...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeRun(t, out, day1, "github.jsonl", okStatus("github", "github:me"))
+	rep := syncOrDie(t, tr, out, day1)
+	if len(rep.Unreadable) != 1 || !strings.Contains(rep.Unreadable[0], "macos.jsonl") {
+		t.Fatalf("unreadable: %q", rep.Unreadable)
+	}
+	if !slices.Equal(rep.Runs, []string{"github"}) {
+		t.Errorf("runs folded: %v", rep.Runs)
+	}
+	if it := byTitle(t, tr, "The firewall is off"); it.Status != Open || it.Findings[0].Gone {
+		t.Errorf("an unreadable run closed an item: %+v", it)
+	}
+	if !tr.Sources["macos"].Equal(t0) {
+		t.Errorf("an unreadable run moved its source to %v", tr.Sources["macos"])
+	}
+	if line := SyncLine(rep); !strings.Contains(line, "macos.jsonl") {
+		t.Errorf("sync line does not name the unreadable run:\n%s", line)
 	}
 }

@@ -76,8 +76,14 @@ func (e Expected) validate() error {
 // (OPENAI_ADMIN_WRITE_KEY): such a name belongs under remediation_secrets.
 const WriteSecretSuffix = "_WRITE_KEY"
 
+// labelRe is what an instance label may hold: it becomes part of a file name under out/.
+var labelRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
 func (c Config) validate() error {
 	for key, cc := range c.Connectors {
+		if _, label, ok := strings.Cut(key, ":"); ok && !labelRe.MatchString(label) {
+			return fmt.Errorf("connectors.%s: an instance label is letters, digits, '_', '.' and '-' only (it names the run file)", key)
+		}
 		for name := range cc.Secrets {
 			if strings.HasSuffix(name, WriteSecretSuffix) {
 				return fmt.Errorf("connectors.%s: %s is a write credential: put it under remediation_secrets, which only remediate --apply resolves, not under secrets, which every inventory resolves", key, name)

@@ -714,9 +714,10 @@ Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 ### Several accounts of one provider
 
 A config key `name` is the connector's unnamed instance; `name:label` adds a labelled one, with
-its own config and secrets. Each instance runs separately, writes `out/<date>/<name>-<label>.jsonl`,
-and stamps `"instance": "<label>"` on its records (part of the finding id). On the command line,
-`name` selects every instance and `name:label` just one.
+its own config and secrets. A label is letters, digits, `_`, `.` and `-` only. Each instance runs
+separately, writes `out/<date>/<name>-<label>.jsonl`, and stamps `"instance": "<label>"` on its
+records (part of the finding id). On the command line, `name` selects every instance and
+`name:label` just one; an instance named twice runs once.
 
 ```json
 "openrouter:work":     {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:segurata-openrouter-work"}},

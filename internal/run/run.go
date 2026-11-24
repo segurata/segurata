@@ -40,7 +40,8 @@ func (t Target) Label() string {
 }
 
 // Targets expands connectors into their configured instances. A selector "name" picks every
-// instance of that connector, "name:label" just one; no selectors means everything.
+// instance of that connector, "name:label" just one; no selectors means everything. Each instance
+// appears once, however many selectors name it.
 func Targets(cfg config.Config, conns []connector.Connector, selectors []string) ([]Target, error) {
 	var all []Target
 	for _, c := range conns {
@@ -52,14 +53,20 @@ func Targets(cfg config.Config, conns []connector.Connector, selectors []string)
 		return all, nil
 	}
 	var out []Target
+	picked := map[string]bool{}
 	for _, sel := range selectors {
-		n := len(out)
+		matched := false
 		for _, t := range all {
-			if sel == t.Connector.Describe().Name || sel == t.Label() {
+			if sel != t.Connector.Describe().Name && sel != t.Label() {
+				continue
+			}
+			matched = true
+			if !picked[t.Label()] {
+				picked[t.Label()] = true
 				out = append(out, t)
 			}
 		}
-		if len(out) == n {
+		if !matched {
 			return nil, fmt.Errorf("unknown connector or instance %q (see: segurata connectors)", sel)
 		}
 	}
@@ -164,16 +171,17 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	name, label := t.Connector.Describe().Name, t.Label()
 	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
-	// The run writes to <file>.partial and renames it over <file> only once run_end is written, so
-	// a killed run never truncates an earlier finished run of the same day. The partial file does
-	// not match *.jsonl, so readers never pick it up. 0600: the output names accounts, apps and
-	// services.
-	partial := res.File + ".partial"
-	f, err := os.OpenFile(partial, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	// The run writes to a partial file of its own and renames it over <file> only once run_end is
+	// written, so a killed run never truncates an earlier finished run of the same day, and two runs
+	// of the same instance at once never write into one file. The partial file does not match
+	// *.jsonl, so readers never pick it up. CreateTemp makes it 0600: the output names accounts,
+	// apps and services.
+	f, err := os.CreateTemp(dir, filepath.Base(res.File)+".*.partial")
 	if err != nil {
 		res.Err = err
 		return res
 	}
+	partial := f.Name()
 	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
 
 	req, errs := NewRequest(cfg, t.Instance)
@@ -183,10 +191,12 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
 	if err := f.Close(); err != nil {
 		res.Err = errors.Join(res.Err, err)
+		_ = os.Remove(partial)
 		return res
 	}
 	if err := os.Rename(partial, res.File); err != nil {
 		res.Err = errors.Join(res.Err, err)
+		_ = os.Remove(partial)
 	}
 	return res
 }

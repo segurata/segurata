@@ -203,6 +203,56 @@ func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
 	}
 }
 
+// One instance named twice on the command line runs once.
+func TestTargetsRunEachInstanceOnce(t *testing.T) {
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"fake:work": {}, "fake:personal": {}}}
+	ts, err := Targets(cfg, []connector.Connector{&fake{}}, []string{"fake:work", "fake", "fake:work"})
+	if err != nil || len(ts) != 2 || ts[0].Label() != "fake:work" || ts[1].Label() != "fake:personal" {
+		t.Fatalf("targets %v, %v", ts, err)
+	}
+}
+
+// Two runs of one instance at once (a manual run alongside the scheduled one) each write their own
+// partial file, so the file left behind is one whole run and neither run fails.
+func TestConcurrentRunsOfOneInstanceNeverTearTheFile(t *testing.T) {
+	const n = 400
+	out, cfg := t.TempDir(), config.Config{}
+	var started sync.WaitGroup
+	started.Add(2)
+	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		started.Done()
+		started.Wait() // both runs have their partial file open
+		for i := range n {
+			e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: fmt.Sprint(i)},
+				Severity: finding.SevLow, Title: strings.Repeat("x", i%97)})
+		}
+		return nil
+	})
+	var wg sync.WaitGroup
+	var results [2][]*Result
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], _ = Inventory(context.Background(), cfg, mustTargets(t, cfg, inv), out, nil, nil)
+		}()
+	}
+	wg.Wait()
+	for _, res := range results {
+		if res[0].Err != nil {
+			t.Fatalf("run failed: %v", res[0].Err)
+		}
+	}
+	lines := readLines(t, results[0][0].File)
+	if len(lines) != n+2 || lines[len(lines)-1]["type"] != "run_end" {
+		t.Fatalf("got %d lines, want %d ending in run_end", len(lines), n+2)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(results[0][0].File), "*.partial")); len(left) > 0 {
+		t.Fatalf("partial files left behind: %v", left)
+	}
+}
+
 type recordingFake struct{ onReq func(connector.Request) }
 
 func (recordingFake) Describe() connector.Description {
@@ -332,8 +382,8 @@ func TestUnfinishedRunKeepsTheEarlierFile(t *testing.T) {
 	if bytes.Equal(before, after) || !bytes.Contains(after, []byte("run_end")) {
 		t.Fatal("the finished second run did not replace the file")
 	}
-	if _, err := os.Stat(first[0].File + ".partial"); err == nil {
-		t.Fatal("the partial file was left behind")
+	if left, _ := filepath.Glob(first[0].File + ".*.partial"); len(left) > 0 {
+		t.Fatalf("partial files left behind: %v", left)
 	}
 }
 
