@@ -1,0 +1,19 @@
+# Dependabot opens a pull request as soon as an action publishes a release. It does not apply the
+# project's 4-day quarantine on new versions.
+#
+# Reviewers: before merging, check the release date
+#   gh api repos/<owner>/<repo>/releases/tags/<tag> --jq .published_at
+# and leave the pull request open until that date is at least 4 days old. Keep the full commit SHA
+# pin and update the version comment next to it. Tool versions pinned inside the workflows
+# (cosign-release, syft-version, the goreleaser version) are not tracked by Dependabot: bump them
+# by hand under the same rule.
+#
+# Go modules are not listed: segurata uses the standard library only.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
