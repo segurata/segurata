@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -50,7 +51,10 @@ func (s *scan) repoRoot(abs string) string {
 	return s.rootOf(filepath.Dir(abs))
 }
 
-// trackedFile says whether git tracks the file, and whether that repository has a remote.
+// trackedFile says whether git tracks the file, and whether that repository has a remote. When
+// git cannot list a repository's files, whether they are tracked is unknown: the run reports the
+// files scope of that repository as failed, once, instead of taking it for a repository that
+// tracks nothing.
 func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	s.git.mu.Lock()
 	defer s.git.mu.Unlock()
@@ -60,22 +64,32 @@ func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	}
 	files, ok := s.git.files[root]
 	if !ok {
-		files = map[string]bool{}
-		out, err := guardGit(s.c.Git).Run(s.ctx, "--git-dir="+filepath.Join(root, ".git"), "--work-tree="+root, "ls-files", "-z")
-		if err != nil {
-			s.emit.Log("git ls-files " + s.tilde(root) + ": " + err.Error())
+		var err error
+		if files, err = s.lsFiles(root); err != nil {
+			s.emit.Status(finding.Status{Account: s.tilde(root), Scope: filesScope, State: finding.StateError,
+				Detail: "git ls-files: " + err.Error() + ": whether its files are tracked is unknown"})
 		}
-		for _, f := range strings.Split(string(out), "\x00") {
-			if f != "" {
-				files[filepath.Join(root, f)] = true
-			}
-		}
-		s.git.files[root] = files
+		s.git.files[root] = files // nil after a failure: asked once per run
 	}
 	if !files[abs] {
 		return false, false
 	}
 	return true, s.hasRemoteLocked(root)
+}
+
+// lsFiles is the set of absolute paths git tracks in the repository at root.
+func (s *scan) lsFiles(root string) (map[string]bool, error) {
+	out, err := guardGit(s.c.Git).Run(s.ctx, gitDirArg(root), "--work-tree="+root, "ls-files", "-z")
+	if err != nil {
+		return nil, err
+	}
+	files := map[string]bool{}
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			files[filepath.Join(root, f)] = true
+		}
+	}
+	return files, nil
 }
 
 func (s *scan) hasRemote(root string) bool {
@@ -248,17 +262,17 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 // runGitleaks scans one repository's history with the JSON report on stdout, so raw values only
 // travel through a pipe into this process (never a file, never the terminal): each is
 // fingerprinted and dropped. logOpts, when set, limits the scan to those commits (`git log`
-// arguments). It returns the prepared leaks and how many were omitted because the evidence would
-// have held the value.
+// arguments); else every commit is scanned, as gitleaks does by default. It returns the prepared
+// leaks and how many were omitted because the evidence would have held the value.
 func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
 	defer cancel()
 	secs := strconv.Itoa(int(s.cfg.timeout.Seconds()))
-	args := []string{"git", "--no-banner", "--log-level", "fatal", "--exit-code", "0",
-		"--timeout", secs, "--report-format", "json", "--report-path", "-"}
-	if logOpts != "" {
-		args = append(args, "--log-opts", logOpts)
+	if logOpts == "" {
+		logOpts = gitleaksDefaultLogOpts
 	}
+	args := []string{"git", "--no-banner", "--log-level", "error", "--no-color", "--exit-code", "0",
+		"--timeout", secs, "--report-format", "json", "--report-path", "-", "--log-opts", gitLogSafety + " " + logOpts}
 	out, err := guardGitleaks(s.c.Gitleaks).Run(ctx, append(args, repo)...)
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, 0, fmt.Errorf("timed out after %s (raise gitleaks_timeout)", s.cfg.timeout)
@@ -331,6 +345,25 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 	c.Evidence = ev
 	return c, true, false
 }
+
+// errGitUnderGitleaks is a git failure gitleaks logged and then reported as a clean scan.
+var errGitUnderGitleaks = errors.New("git failed under gitleaks")
+
+// gitleaksStderr judges the error log of a gitleaks run that exited 0. gitleaks reports the leaks
+// it got before the git it runs failed (a bad revision in --log-opts, a corrupt object) and only
+// logs git's error: such a scan is incomplete, and caching it would mark the commits scanned.
+// git's warnings and gitleaks' own errors about finding links leave the scan whole.
+func gitleaksStderr(stderr string) error {
+	for _, l := range strings.Split(stderr, "\n") {
+		if _, msg, ok := strings.Cut(l, " ERR [git] "); ok && (strings.HasPrefix(msg, "fatal:") || strings.HasPrefix(msg, "error:")) {
+			return errGitUnderGitleaks
+		}
+	}
+	return nil
+}
+
+// gitleaksDefaultLogOpts is what gitleaks scans without --log-opts: every commit.
+const gitleaksDefaultLogOpts = "--full-history --all"
 
 // leading is the first n bytes of s, for ASCII values such as commit hashes and dates.
 func leading(s string, n int) string {

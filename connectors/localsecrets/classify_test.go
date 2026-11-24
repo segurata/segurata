@@ -203,11 +203,17 @@ type ownersFixture struct {
 	upstreamKey string // a key only the third-party repository has
 	reusedKey   string // a key committed to the third-party repository and kept in ~/.zshrc
 	ghCalls     int
+	orgsPages   string // what `gh api --paginate --jq .[].login user/orgs` prints
+	orgsErr     error
 }
+
+// ghOrgsCall is the organizations read, every page.
+const ghOrgsCall = "api --paginate --jq .[].login user/orgs?per_page=100"
 
 func newOwnersFixture(t *testing.T) (*ownersFixture, *Connector) {
 	fx := &fixture{home: t.TempDir()}
-	o := &ownersFixture{home: fx.home, shared: fake("sk_live_", 40), upstreamKey: fake("sk_live_", 40), reusedKey: fake("sk_live_", 40)}
+	o := &ownersFixture{home: fx.home, shared: fake("sk_live_", 40), upstreamKey: fake("sk_live_", 40), reusedKey: fake("sk_live_", 40),
+		orgsPages: "other-org\nmy-org\n"}
 	repo := func(name, url string) string {
 		fx.write(t, "src/"+name+"/.git/config", "[remote \"origin\"]\n\turl = "+url+"\n", 0o600)
 		return filepath.Join(fx.home, "src", name)
@@ -248,8 +254,8 @@ func newOwnersFixture(t *testing.T) (*ownersFixture, *Connector) {
 			switch strings.Join(args, " ") {
 			case "api user":
 				return []byte(`{"login":"me"}`), nil
-			case "api user/orgs?per_page=100":
-				return []byte(`[{"login":"my-org"}]`), nil
+			case ghOrgsCall:
+				return []byte(o.orgsPages), o.orgsErr
 			}
 			return nil, errors.New("unexpected gh call")
 		}),
@@ -310,6 +316,39 @@ func TestThirdPartyRepositoriesAreNotTheOwners(t *testing.T) {
 	}
 	if st, err := os.Stat(filepath.Join(o.home, ".cache", "segurata", "github-owners.json")); err != nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("owners cache: %v", err)
+	}
+}
+
+// A gh answer without the organizations is not cached: the next run asks again, and meanwhile
+// the organizations' repositories are not taken for third-party ones.
+func TestPartialGitHubOwnersAreNotCached(t *testing.T) {
+	o, c := newOwnersFixture(t)
+	o.orgsPages, o.orgsErr = "other-org\n", errors.New("HTTP 502 on page 2")
+	cfg := map[string]any{"data_dumps": false, "emit_noise": true}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Config: cfg}, rec); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rec.findings {
+		if evidence(f, "path") == "~/src/app/config/live.env" && evidence(f, "origin") == secretrisk.OriginThirdParty {
+			t.Errorf("the organization's repository was taken for a third-party one")
+		}
+	}
+	cache := filepath.Join(o.home, ".cache", "segurata", "github-owners.json")
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("partial answer cached: %v", err)
+	}
+	o.orgsErr = nil
+	calls := o.ghCalls
+	if err := c.Inventory(context.Background(), connector.Request{Config: cfg}, &recorder{}); err != nil {
+		t.Fatal(err)
+	}
+	if o.ghCalls == calls {
+		t.Error("gh not asked again after a partial answer")
+	}
+	raw, err := os.ReadFile(cache)
+	if err != nil || !strings.Contains(string(raw), `"other-org"`) {
+		t.Errorf("complete answer not cached: %s %v", raw, err)
 	}
 }
 
@@ -453,10 +492,11 @@ func TestFixturePathsLowerImpact(t *testing.T) {
 
 func TestNewGuardShapes(t *testing.T) {
 	refused := func(c cli.Checker, args ...string) bool { return errors.Is(c.Check(args), cli.ErrRefused) }
-	if refused(ghCheck, "api", "user") || refused(ghCheck, "api", "user/orgs?per_page=100") {
+	if refused(ghCheck, "api", "user") || refused(ghCheck, strings.Fields(ghOrgsCall)...) {
 		t.Error("gh reads of the user refused")
 	}
-	if !refused(ghCheck, "api", "-X", "DELETE", "user") || !refused(ghCheck, "api", "user/repos") || !refused(ghCheck, "api", "graphql") {
+	if !refused(ghCheck, "api", "-X", "DELETE", "user") || !refused(ghCheck, "api", "user/repos") || !refused(ghCheck, "api", "graphql") ||
+		!refused(ghCheck, "api", "--paginate", "--jq", ".[].login", "user/repos") {
 		t.Error("gh api beyond the two reads allowed")
 	}
 	if refused(gitCheck, "--git-dir=/r/.git", "cat-file", "blob", "0123456789:nb/a b.ipynb") {

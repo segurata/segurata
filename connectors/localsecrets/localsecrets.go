@@ -56,10 +56,10 @@ type Connector struct {
 func New() *Connector {
 	return &Connector{
 		RG:        cli.Exec{Path: "rg", Timeout: time.Hour},
-		Gitleaks:  cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour}, // bounded per repo by the context
-		Git:       cli.Exec{Path: "git", Timeout: 2 * time.Minute},
+		Gitleaks:  cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour, Env: gitEnv, StderrCheck: gitleaksStderr}, // bounded per repo by the context
+		Git:       cli.Exec{Path: "git", Timeout: 2 * time.Minute, Env: gitEnv},
 		SSHKeygen: cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
-		GitHead:   headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second},
+		GitHead:   headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second, Env: gitEnv},
 		GH:        cli.Exec{Path: "gh", Timeout: 30 * time.Second, Env: []string{"GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1"}},
 		LookPath:  exec.LookPath,
 		Home:      os.UserHomeDir,
@@ -581,7 +581,8 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 
 // Scopes of local-secrets findings, so a run that leaves part of the machine unread says which
 // part: the files ripgrep and the name scan read, one repository's git history, one repository's
-// data dumps. A failed gitleaks or dump scan names its repository's scope in its status.
+// data dumps. A failed gitleaks or dump scan names its repository's scope in its status; a failed
+// ripgrep pass or `git ls-files` leaves the files scope uninspected.
 const filesScope = "files"
 
 func historyScope(repo string) string { return "history:" + repo }
