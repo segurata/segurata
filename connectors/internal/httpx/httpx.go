@@ -81,16 +81,32 @@ func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) er
 	return nil
 }
 
-// errorMessage pulls error.message out of the JSON error envelope OpenAI, Anthropic and
-// OpenRouter all use, falling back to a short prefix of the body.
+// errorMessage pulls the message out of the JSON error envelope OpenAI, Anthropic and
+// OpenRouter use (error.message) or Cloudflare's (errors[].message), falling back to a short
+// prefix of the body.
 func errorMessage(body []byte) string {
-	var env struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
+	type message struct {
+		Message string `json:"message"`
 	}
-	if json.Unmarshal(body, &env) == nil && env.Error.Message != "" {
-		return truncate(env.Error.Message)
+	var single struct {
+		Error message `json:"error"`
+	}
+	if json.Unmarshal(body, &single) == nil && single.Error.Message != "" {
+		return truncate(single.Error.Message)
+	}
+	var list struct {
+		Errors []message `json:"errors"`
+	}
+	if json.Unmarshal(body, &list) == nil {
+		var msgs []string
+		for _, e := range list.Errors {
+			if e.Message != "" {
+				msgs = append(msgs, e.Message)
+			}
+		}
+		if len(msgs) > 0 {
+			return truncate(strings.Join(msgs, "; "))
+		}
 	}
 	return truncate(strings.TrimSpace(string(body)))
 }
