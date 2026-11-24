@@ -31,6 +31,7 @@ func TestDoNextRanksByBlastRadius(t *testing.T) {
 	tr := New(t0)
 	low := []*Item{
 		scoredItem(tr, KindFix, "group:azure|azure_budget|account:sub|family:x", "cloud", "Subscription has no budget", finding.SevHigh, "azure_budget", "s/none", 1),
+		scoredItem(tr, KindFix, "group:gcp|budget_enforcement|account:me", "cloud", "Budgets on billing account B only notify", finding.SevHigh, "budget_enforcement", "B", 1),
 		scoredItem(tr, KindReview, "finding:chatgpt", "browser-extensions", "Brave extension ChatGPT: remove", finding.SevHigh, "browser_extension", "hehg", 1),
 		scoredItem(tr, KindReview, "group:connected-apps|github_oauth_app|account:github:me|family:can read your profile", "connected-apps", "5 GitHub OAuth apps can see your profile", finding.SevHigh, "github_oauth_app", "", 5),
 		scoredItem(tr, KindReview, "group:connected-apps|x_app|account:x:@me|family:can post", "connected-apps", "27 X apps can post and delete posts as you", finding.SevHigh, "x_app", "", 27),
