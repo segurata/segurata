@@ -33,7 +33,7 @@ func TestAWSAccountFromKeyID(t *testing.T) {
 		want    string
 	}{
 		{"AKIA", 123456789012, false, 0, "123456789012"},
-		{"ASIA", 71213992877, true, 0x55, "111122223333"}, // leading zero kept; masked top bit and low bits ignored
+		{"ASIA", 12345678901, true, 0x55, "012345678901"}, // leading zero kept; masked top bit and low bits ignored
 		{"AKIA", 1, false, 0x7f, "000000000001"},
 	} {
 		id := keyID(t, c.prefix, c.account, c.top, c.low)
@@ -80,8 +80,8 @@ func TestValueAndContextClaims(t *testing.T) {
 }
 
 func TestAttribute(t *testing.T) {
-	owned := Owned{AWSAccounts: []string{"111122223333"}, GCPProjects: []string{"example", "123"}, SlackTeams: []string{"T1"},
-		GitHub: []string{"owner", "example-org"}, Emails: []string{"me@x.com"}}
+	owned := Owned{AWSAccounts: []string{"012345678901"}, GCPProjects: []string{"demo-shop", "123"}, SlackTeams: []string{"T1"},
+		GitHub: []string{"octocat", "acme-labs"}, Emails: []string{"me@x.com"}}
 	cases := []struct {
 		name   string
 		facts  Facts
@@ -90,10 +90,10 @@ func TestAttribute(t *testing.T) {
 		conf   string
 		reason string
 	}{
-		{"owner's AWS account", Facts{AWSAccounts: []string{"111122223333"}}, owned, Mine, High, "AWS account 111122223333 is yours"},
+		{"owner's AWS account", Facts{AWSAccounts: []string{"012345678901"}}, owned, Mine, High, "AWS account 012345678901 is yours"},
 		{"someone else's AWS account", Facts{AWSAccounts: []string{"999999999999"}, AuthorEmails: []string{"me@x.com"}}, owned, NotMine, Medium, "is none of your 1 known"},
 		{"owner's project by number", Facts{GCPProjects: []string{"123"}}, owned, Mine, High, "GCP project 123 is yours"},
-		{"file naming the owner's and another account", Facts{AWSAccounts: []string{"111122223333"}, GCPProjects: []string{"other"}}, owned, Mine, Medium, "GCP project other is none"},
+		{"file naming the owner's and another account", Facts{AWSAccounts: []string{"012345678901"}, GCPProjects: []string{"other"}}, owned, Mine, Medium, "GCP project other is none"},
 		{"other workspace", Facts{SlackTeams: []string{"T9"}}, owned, NotMine, Medium, "Slack workspace T9"},
 		{"no AWS account known", Facts{AWSAccounts: []string{"999999999999"}}, Owned{}, Unknown, Low, "none of yours is known"},
 		{"foreign AWS but project kind unknown", Facts{AWSAccounts: []string{"999999999999"}, SlackTeams: []string{"T9"}}, Owned{AWSAccounts: owned.AWSAccounts}, Unknown, Low, "none of yours is known"},
@@ -162,22 +162,22 @@ func TestRepoOwner(t *testing.T) {
 func TestDiscover(t *testing.T) {
 	fs := []finding.Finding{
 		{Connector: "aws", Account: "acme-alias", Resource: finding.Resource{Type: AWSAccountType}, Evidence: map[string]any{"account_id": "111111111111"}},
-		{Connector: "gcp", Resource: finding.Resource{Type: GCPProjectsType}, Evidence: map[string]any{"projects": []any{map[string]any{"id": "example", "number": "42"}}}},
+		{Connector: "gcp", Resource: finding.Resource{Type: GCPProjectsType}, Evidence: map[string]any{"projects": []any{map[string]any{"id": "demo-shop", "number": "42"}}}},
 		{Connector: "connected-apps", Resource: finding.Resource{Type: SlackWorkspaceType}, Evidence: map[string]any{"team_id": "T0AAA"}},
 	}
 	sts := []finding.Status{
-		{Connector: "aws", Account: "111122223333", State: finding.StateNoScope},
+		{Connector: "aws", Account: "012345678901", State: finding.StateNoScope},
 		{Connector: "aws", Account: "profile r2", State: finding.StateReauth},
 		{Connector: "gcp", Account: "me@gmail.com", State: finding.StateOK},
 		{Connector: "gcp", Account: "bot@p.iam.gserviceaccount.com", State: finding.StateOK},
 		{Connector: "google-personal", Account: "colleague@work.com", State: finding.StateReauth},
 		{Connector: "google-personal", Account: "me@work.com", State: finding.StateOK},
-		{Connector: "github", Account: "github:example-org", State: finding.StateOK},
-		{Connector: "connected-apps", Account: "github:owner", State: finding.StateOK},
+		{Connector: "github", Account: "github:acme-labs", State: finding.StateOK},
+		{Connector: "connected-apps", Account: "github:octocat", State: finding.StateOK},
 	}
 	o := Discover(fs, sts)
-	want := Owned{AWSAccounts: []string{"111122223333", "111111111111"}, GCPProjects: []string{"42", "example"}, SlackTeams: []string{"T0AAA"},
-		GitHub: []string{"example-org", "owner"}, Emails: []string{"me@gmail.com", "me@work.com"}}
+	want := Owned{AWSAccounts: []string{"012345678901", "111111111111"}, GCPProjects: []string{"42", "demo-shop"}, SlackTeams: []string{"T0AAA"},
+		GitHub: []string{"acme-labs", "octocat"}, Emails: []string{"me@gmail.com", "me@work.com"}}
 	for _, p := range [][2][]string{{o.AWSAccounts, want.AWSAccounts}, {o.GCPProjects, want.GCPProjects}, {o.SlackTeams, want.SlackTeams}, {o.GitHub, want.GitHub}, {o.Emails, want.Emails}} {
 		if !slices.Equal(p[0], p[1]) {
 			t.Errorf("%v, want %v", p[0], p[1])

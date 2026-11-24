@@ -233,7 +233,7 @@ instance, under the key that runs it (`connectors.<name>` or `connectors.<name:l
  "google-personal": {"expected": [
    {"state": "reauth", "account": "*@example.com", "reason": "colleagues' accounts in my browser"}]},
  "gcp": {"expected": [
-   {"state": "error", "account": "a@x.com", "detail": "/^project (example|yukids)-play:/", "reason": "Play-only projects"}]}}}
+   {"state": "error", "account": "a@x.com", "detail": "/^project (app-one|app-two)-play:/", "reason": "Play-only projects"}]}}}
 ```
 
 Empty fields match anything. `account` is a glob (`*`, `?`, `\` escapes); `detail` is a
@@ -444,7 +444,7 @@ partial. `status` prints one line for every configured instance (the targets an 
 `inventory` runs) and any other that ran:
 
 ```
-Coverage: aws: 3 h ago (1 scope left out as expected); cloudflare: never run; gcp: 9 h ago, failed: …; github: 3 h ago, partial: user:owner not checked.
+Coverage: aws: 3 h ago (1 scope left out as expected); cloudflare: never run; gcp: 9 h ago, failed: …; github: 3 h ago, partial: user:octocat not checked.
 ```
 
 **Gaps.** Areas of the plan ([plan.md](plan.md)) that no connector audits on this machine are
@@ -1183,7 +1183,7 @@ On the rotate item, the refs still reported are evidence the secret is live:
 - a live secret whose worst copy left the machine (pushed history, a transcript) is P0, its first
   reason is "live key, leaked in <repo>:<file>", and it sorts first among secrets;
 - each ref adds a reason "live: <instance>: <title>" ("live: aws: Long-lived AWS access key for
-  profile "default" stored in plain text; aws sts says it works for account 111122223333",
+  profile "default" stored in plain text; aws sts says it works for account 123456789012",
   "live: openrouter:personal: API key "Claude Code": in use with a credit limit").
 
 ## Redaction
