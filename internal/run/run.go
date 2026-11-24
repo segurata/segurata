@@ -220,7 +220,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	partial := f.Name()
 	s := &sink{name: name, label: label, inst: t.Instance.Label, out: f, verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
 
-	req, errs := NewRequest(cfg, t.Instance)
+	req, errs := NewRequest(ctx, cfg, t.Instance)
 	if missing := unresolved(t.Connector, errs, s); !missing {
 		res.Err = t.Connector.Inventory(ctx, req, s)
 	}
@@ -313,20 +313,20 @@ func secretFingerprints(secrets map[string]string) map[string]string {
 	return out
 }
 
-// NewRequest builds the request for one connector instance, resolving its secret references.
-// A secret that cannot be resolved is left out of the request and returned as an error.
-func NewRequest(cfg config.Config, in config.Instance) (connector.Request, []error) {
-	resolved, errs := secrets.ResolveAll(in.Secrets)
+// NewRequest builds the request for one connector instance, resolving its secret references under
+// ctx. A secret that cannot be resolved is left out of the request and returned as an error.
+func NewRequest(ctx context.Context, cfg config.Config, in config.Instance) (connector.Request, []error) {
+	resolved, errs := secrets.ResolveAll(ctx, in.Secrets)
 	return connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: in.Config, Secrets: resolved}, errs
 }
 
 // InstanceCredentials are what a remediation of the instance a finding came from may use (label
 // "" is the unnamed one): NewRequest, and the unresolved references of its remediation_secrets,
 // which only Apply resolves.
-func InstanceCredentials(cfg config.Config, name, label string) (connector.Credentials, []error) {
+func InstanceCredentials(ctx context.Context, cfg config.Config, name, label string) (connector.Credentials, []error) {
 	for _, in := range cfg.Instances(name) {
 		if in.Label == label {
-			req, errs := NewRequest(cfg, in)
+			req, errs := NewRequest(ctx, cfg, in)
 			return connector.Credentials{Request: req, WriteRefs: in.RemediationSecrets, Resolve: secrets.Resolve}, errs
 		}
 	}

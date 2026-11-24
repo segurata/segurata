@@ -6,21 +6,24 @@
 package secrets
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
+
+	"github.com/segurata/segurata/internal/keychain"
 )
 
-// runner is swapped in tests.
-var runner = func(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).Output()
-	return strings.TrimRight(string(out), "\r\n"), err
-}
+// run runs `security` and `op` with a timeout and returns stdout, its error carrying stderr; tests
+// swap it.
+var run keychain.Runner = keychain.Exec
 
-func Resolve(ref string) (string, error) {
+// Resolve returns the value a reference points to. ctx bounds the program that reads it, which may
+// be waiting on a prompt nobody will answer in an unattended run.
+func Resolve(ctx context.Context, ref string) (string, error) {
 	switch {
 	case strings.HasPrefix(ref, "env:"):
 		name := strings.TrimPrefix(ref, "env:")
@@ -31,15 +34,19 @@ func Resolve(ref string) (string, error) {
 		return v, nil
 	case strings.HasPrefix(ref, "keychain:"):
 		svc := strings.TrimPrefix(ref, "keychain:")
-		v, err := runner("security", "find-generic-password", "-s", svc, "-w")
-		if err != nil || v == "" {
+		v, err := keychain.Keychain{Run: run}.Read(ctx, svc)
+		switch {
+		case errors.Is(err, keychain.ErrNotFound) || err == nil && v == "":
 			return "", fmt.Errorf("keychain item %q not found (add it with: security add-generic-password -s %s -a $USER -w)", svc, svc)
+		case err != nil:
+			return "", fmt.Errorf("keychain item %q could not be read: %w", svc, err)
 		}
 		return v, nil
 	case strings.HasPrefix(ref, "op://"):
-		v, err := runner("op", "read", ref)
+		out, err := run(ctx, nil, "op", "read", ref)
+		v := strings.TrimRight(string(out), "\r\n")
 		if err != nil || v == "" {
-			return "", fmt.Errorf("1Password reference %q could not be read", ref)
+			return "", errors.Join(fmt.Errorf("1Password reference %q could not be read", ref), err)
 		}
 		return v, nil
 	}
@@ -56,11 +63,11 @@ func (e *ResolveError) Error() string { return e.Key + ": " + e.Err.Error() }
 func (e *ResolveError) Unwrap() error { return e.Err }
 
 // ResolveAll resolves every reference. Each error is a *ResolveError, in key order.
-func ResolveAll(refs map[string]string) (map[string]string, []error) {
+func ResolveAll(ctx context.Context, refs map[string]string) (map[string]string, []error) {
 	out := map[string]string{}
 	var errs []error
 	for _, k := range slices.Sorted(maps.Keys(refs)) {
-		v, err := Resolve(refs[k])
+		v, err := Resolve(ctx, refs[k])
 		if err != nil {
 			errs = append(errs, &ResolveError{Key: k, Err: err})
 			continue

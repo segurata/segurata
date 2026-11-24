@@ -148,7 +148,7 @@ func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.P
 	if err := remediate.SamePlan(want, p); err != nil {
 		return err
 	}
-	write, err := r.cs.Write(writeSecret)
+	write, err := r.cs.Write(ctx, writeSecret)
 	if err != nil {
 		return err
 	}

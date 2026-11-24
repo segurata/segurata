@@ -345,7 +345,7 @@ func TestReplaceRefusals(t *testing.T) {
 		{"--stdin piped, --apply without --yes", func(_ *testing.T, fx *fixture) {}, "PIPED", false, []string{"--stdin", "--apply"}, "not a terminal"},
 		{"--to-keychain with a bad service", nil, "y\n", true, []string{"--apply", "--to-keychain", "a b"}, "--to-keychain"},
 		{"Keychain did not take the value", func(_ *testing.T, fx *fixture) { fx.os.keepStale = true }, "y\n", true,
-			[]string{"--apply", "--to-keychain", "ANTHROPIC_API_KEY"}, "could not be found"},
+			[]string{"--apply", "--to-keychain", "ANTHROPIC_API_KEY"}, "no such Keychain item: ANTHROPIC_API_KEY"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

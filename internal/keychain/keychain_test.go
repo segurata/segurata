@@ -67,3 +67,16 @@ func TestExecEndsAHungProgramWithItsContext(t *testing.T) {
 		t.Fatalf("took %s", took)
 	}
 }
+
+func TestReadTellsAMissingItemFromAnyOtherFailure(t *testing.T) {
+	fail := func(msg string) Keychain {
+		return Keychain{Run: func(context.Context, []byte, string, ...string) ([]byte, error) { return nil, errors.New(msg) }}
+	}
+	if _, err := fail("security: The specified item could not be found in the keychain.").Read(context.Background(), "svc"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing: %v", err)
+	}
+	_, err := fail("security: User interaction is not allowed.").Read(context.Background(), "svc")
+	if errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "User interaction is not allowed") {
+		t.Errorf("denied: %v", err)
+	}
+}

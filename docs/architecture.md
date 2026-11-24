@@ -709,8 +709,13 @@ the request, without writing it to disk. A literal value in the config is reject
 | Reference | Resolved with |
 |---|---|
 | `env:NAME` | Environment variable |
-| `keychain:service` | `security find-generic-password -s service -w` (macOS Keychain) |
+| `keychain:service` | `/usr/bin/security find-generic-password -s service -w` (macOS Keychain) |
 | `op://vault/item/field` | `op read` (1Password CLI) |
+
+Both programs run through `internal/keychain` with a 30 s timeout inside the run's deadline, so a
+prompt nobody answers in a scheduled run fails the reference instead of hanging. A missing
+Keychain item and a denied read (`User interaction is not allowed`) are reported apart, with
+security's reason for the latter.
 
 Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 
