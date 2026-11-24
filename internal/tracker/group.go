@@ -182,6 +182,7 @@ type proposal struct {
 	maxSeverity                               finding.Severity // "" for no cap
 	title                                     string           // set for proposals not made of findings by a rule
 	next                                      *Next
+	statuses                                  []finding.Status // setup proposals: one per ref
 }
 
 // groupKey is the item key of a finding under its rule.

@@ -74,6 +74,7 @@ type Report struct {
 	Runs      []*Run
 	Accepted  []Accepted
 	Rotations Rotations
+	tr        *tracker.Tracker // names the setup item of each status
 }
 
 // Inputs are the files and options a report reads.
@@ -97,7 +98,7 @@ func Build(in Inputs) (*Report, error) {
 		return nil, err
 	}
 	annotate := in.Tracker.Annotator(func() time.Time { return in.Now })
-	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top}
+	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top, tr: in.Tracker}
 	reported := map[string]bool{} // finding ids in a latest run
 	byLabel := map[string]*Run{}
 	for _, l := range latest {

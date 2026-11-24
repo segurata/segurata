@@ -135,7 +135,7 @@ func (r *Report) attention(d *doc.Doc) {
 	var items []doc.Item
 	for _, run := range r.Runs {
 		for _, st := range needsAttention(run.Statuses) {
-			action, cmd := tracker.StatusAction(st, run.Label)
+			action, cmd := tracker.StatusAction(st, run.Label, r.setupItem(run.Label, st))
 			text := run.Label
 			if st.Account != "" {
 				text += " · " + st.Account
@@ -150,6 +150,17 @@ func (r *Report) attention(d *doc.Doc) {
 		return
 	}
 	d.List(items)
+}
+
+// setupItem is the id of the tracker's setup item for a status, or "".
+func (r *Report) setupItem(lbl string, st finding.Status) string {
+	if r.tr == nil {
+		return ""
+	}
+	if it := r.tr.ByKey(tracker.SetupKey(lbl, st)); it != nil {
+		return it.ID
+	}
+	return ""
 }
 
 func (r *Report) changes(d *doc.Doc) {

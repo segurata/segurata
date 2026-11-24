@@ -181,6 +181,19 @@ connector and resource type, first match wins:
 | anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked) | fix |
 | a connector status other than `ok` | instance, account and state | setup |
 
+A setup item keeps one ref per distinct status detail (`status:<key>#<hash of the detail>`), so
+gcp's six "project X: permission denied …" statuses for one account are six refs of one item,
+titled "gcp: permission denied on 6 projects for <account>" (or "… failed on 6 projects" when
+the problems differ, "(N problems)" when the details name no common kind of scope). Its next step
+puts the command the detail names into `next.command` (`gcloud auth login <account>` for "run
+gcloud auth login for this account", `gh auth refresh -h github.com -s read:user`, a backquoted
+`security add-generic-password …`), with the rerun at the end of the action; without one, the
+command is the rerun. Actions are state-specific and name the real config key:
+`connectors."<label>".secrets` for missing credentials, `connectors."connected-apps".config.services`
+for a signed-out service, and `segurata track expect <id>` (see "Expected statuses") for a
+limitation kept on purpose. An `unsupported` check that needs administrator rights asks for no
+install.
+
 A finding that has an item of its own (key `finding:<id>`) always goes there before any rule: one
 accepted apart from its group, or one grouped per finding anyway. The title and next step come
 from the rule and the worst finding's remediation (`segurata remediate <id>` and `who:

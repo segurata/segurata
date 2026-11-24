@@ -146,6 +146,9 @@ const (
 	StateMissingCredentials State = "missing_credentials"
 	StateUnsupported        State = "unsupported"
 	StateError              State = "error"
+	// StateExpected is a status other than ok that the owner's config says to expect (see
+	// Status.Expected): it opens no setup item, and its scope still counts as not inspected.
+	StateExpected State = "expected"
 )
 
 // Status says whether an account could be inspected, and why not. Scope, when set, narrows it to

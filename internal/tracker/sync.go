@@ -122,9 +122,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		for _, st := range r.statuses {
 			if st.State != finding.StateOK {
 				key, p := setupProposal(r.label, st)
-				if pp := propose(key, p); len(pp.refs) == 0 {
-					pp.refs = p.refs
-				}
+				propose(key, p).addStatus(st, r.at)
 			}
 		}
 	}
@@ -143,8 +141,11 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		if added := it.upsert(p.refs, seen[it]); added > 0 && existed {
 			it.Log(now, EvSeen, actSeen, count(added, "new finding", "new findings"))
 		}
-		if strings.HasPrefix(key, "transcripts:") {
+		switch {
+		case strings.HasPrefix(key, "transcripts:"):
 			p.finishTranscripts()
+		case p.kind == KindSetup:
+			p.finishSetup(it.ID)
 		}
 		p.finish(it.ID)
 		if p.title != "" {
@@ -231,73 +232,6 @@ func (p *proposal) finishTranscripts() {
 		}
 	}
 	p.title = fmt.Sprintf("Redact secrets from %s (agent transcripts, shell histories, logs)", count(len(files), "trail file", "trail files"))
-}
-
-// setupProposal is the setup item for a connector status other than ok.
-func setupProposal(lbl string, st finding.Status) (string, proposal) {
-	key := "setup:" + lbl + "|" + st.Account + "|" + string(st.State)
-	sev := finding.SevMedium
-	if st.State == finding.StateUnsupported || st.State == finding.StateUnverified {
-		sev = finding.SevLow
-	}
-	who := lbl
-	if st.Account != "" {
-		who += " · " + st.Account
-	}
-	action, cmd := StatusAction(st, lbl)
-	detail := st.Detail
-	if detail == "" {
-		detail = string(st.State)
-	}
-	p := proposal{theme: "setup", kind: KindSetup, connector: st.Connector, instance: st.Instance, account: st.Account,
-		title: who + ": " + statePhrase[st.State], next: &Next{Who: You, Action: action, Command: cmd},
-		refs: []FindingRef{{ID: "status:" + key, Connector: st.Connector, Instance: st.Instance, Account: st.Account,
-			Title: detail, Severity: sev}}}
-	return key, p
-}
-
-var statePhrase = map[finding.State]string{
-	finding.StateReauth:             "needs a fresh sign-in",
-	finding.StateSignedOut:          "is signed out",
-	finding.StateNoScope:            "lacks a permission",
-	finding.StateUnverified:         "reader never checked against a real page",
-	finding.StateMissingCredentials: "has no credentials configured",
-	finding.StateUnsupported:        "is not supported here",
-	finding.StateError:              "failed",
-}
-
-// StatusAction is what to do about a status, and the command that checks it afterwards.
-// Connectors usually put the exact fix in the detail (a command to run, a page to open); then the
-// action points there instead of guessing from the state alone.
-func StatusAction(st finding.Status, label string) (string, string) {
-	rerun := "segurata inventory " + label
-	if detailHasFix(st.Detail) {
-		return "Do what the status detail says.", rerun
-	}
-	switch st.State {
-	case finding.StateReauth:
-		return "Sign in to this account again (in the browser for browser connectors, with the provider's CLI otherwise).", rerun
-	case finding.StateSignedOut:
-		return "Sign in to this account in the browser segurata drives, or drop it from the config if it is gone.", rerun
-	case finding.StateMissingCredentials:
-		return "Check the secret reference for " + label + " in ~/.config/segurata/config.json (Keychain item, 1Password field or environment variable).", rerun
-	case finding.StateNoScope:
-		return "Grant the permission the detail names to the credential this connector uses.", rerun
-	case finding.StateUnsupported:
-		return "Install what the detail names (respecting the 4-day quarantine), or remove " + label + " from the config.", rerun
-	}
-	return "Run it again with connector logs to see what failed.", rerun + " --verbose"
-}
-
-// detailHasFix reports whether a status detail already carries a concrete step.
-func detailHasFix(detail string) bool {
-	d := strings.ToLower(detail)
-	for _, cue := range []string{"run:", "run gcloud", "run gh", "run aws", "run az", "; run ", "open http", "store it with", "raise ", "create an "} {
-		if strings.Contains(d, cue) {
-			return true
-		}
-	}
-	return false
 }
 
 // RunLabel names a connector instance from its records, which carry the exact connector name and
