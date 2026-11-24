@@ -167,8 +167,11 @@ type leak struct {
 	File      string
 	StartLine int
 	Secret    string
+	Match     string
+	Line      string // the whole line, in gitleaks versions that report it
 	Commit    string
 	Date      string
+	Email     string // the commit's author
 }
 
 // gitleaksRules maps gitleaks rule ids onto this connector's types, for secrets its own patterns
@@ -307,6 +310,7 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 		}
 		ev.Redacted = secretrisk.Redact(ev.Type, "", value)
 	}
+	ev.Claims = leakClaims(l, ev)
 	ev, ok = s.prepare(filepath.Join(repo, l.File), ev, value)
 	if !ok {
 		return c, false, true

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -23,6 +24,9 @@ type SyncOptions struct {
 	// Expect applies the config's expected rules to each status read (config.Config.Expect); nil
 	// for none. Statuses are matched at every sync, so a rule added or removed since the run counts.
 	Expect func(*finding.Status)
+	// Owned are the owner's accounts the runs do not show (config `owned`, the git email): added to
+	// the ones discovered, for attribution.
+	Owned attribution.Owned
 }
 
 // SyncReport counts what a sync changed.
@@ -47,6 +51,21 @@ type run struct {
 	findings []finding.Finding
 	statuses []finding.Status
 	cov      finding.Coverage // which scopes it inspected
+	failed   string           // the connector's own error, from run_end
+}
+
+// statusesUnproven reports, with the reason, a run whose statuses do not prove an earlier status
+// gone: one without run_end (killed, still running, or older), or one whose connector failed and
+// may have stopped before reporting. A finished run reports every status it has, whatever it
+// inspected: completeness protects findings, not statuses.
+func (r *run) statusesUnproven() (string, bool) {
+	if !r.cov.Known {
+		return r.cov.NoneChecked()
+	}
+	if r.failed != "" {
+		return "the connector failed: " + r.failed, true
+	}
+	return "", false
 }
 
 // wholeInstance reports whether the run has a status of that state for no account in particular.
@@ -192,6 +211,9 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		it.noteHeld(held, now)
 	}
 	t.expireAll(now, &rep)
+	t.discover(runs)
+	t.collectClaims(folded)
+	t.Attribute(t.OwnedAll(opt.Owned))
 	rep.Ruled = t.applyRules(now)
 	t.seed(now)
 	if t.Sources == nil {
@@ -313,7 +335,7 @@ func readRunFile(file string) (*run, error) {
 	}
 	r := &run{label: RunLabel(file, rf), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
 	if rf.End != nil {
-		r.at = rf.End.EndedAt
+		r.at, r.failed = rf.End.EndedAt, rf.End.Error
 	}
 	for _, f := range rf.Findings {
 		if f.ObservedAt.After(r.at) {
@@ -356,11 +378,12 @@ func (it *Item) upsert(refs []FindingRef, seen map[string]bool) int {
 
 // markGone flags the refs this sync did not see, when their connector instance's run inspected
 // their scope; it returns, by ref id, the "not checked" note of each ref it held back instead. A
-// status ref (setup items) is gone as soon as a run that inspected anything lacks that status; when
-// the run reports the item's key with other details (the details changed, or the ref predates one
-// ref per detail); or when the run reports the same state for the whole instance (no account),
-// which covers it: the core's one missing_credentials status replaces the one a connector used to
-// emit per account.
+// status ref (setup items) is gone as soon as a finished run (run_end, no connector error) lacks
+// that status, whatever that run inspected (an aws error replaced by noscope, a reauth no longer
+// emitted); even in an unfinished run when it reports the item's key with other details (the
+// details changed, or the ref predates one ref per detail), or the same state for the whole
+// instance (no account), which covers it: the core's one missing_credentials status replaces the
+// one a connector used to emit per account.
 func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[string]string {
 	held := map[string]string{}
 	for i := range it.Findings {
@@ -374,7 +397,7 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[strin
 		}
 		why, unchecked := run.cov.Unchecked(r.Account, r.Scope)
 		if strings.HasPrefix(r.ID, "status:") {
-			why, unchecked = run.cov.NoneChecked()
+			why, unchecked = run.statusesUnproven()
 			if len(seen) > 0 || r.Account != "" && run.wholeInstance(finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])) {
 				unchecked = false
 			}
@@ -430,7 +453,11 @@ func (t *Tracker) lifecycle(it *Item, folded map[string]*run, now time.Time, rep
 	switch it.Status {
 	case Open, InProgress, Snoozed, Expected:
 		if !present {
-			it.setStatus(now, Done, EvVerified, actAutoDone, "verified (no longer reported)")
+			detail := "verified (no longer reported)"
+			if it.Kind == KindSetup {
+				detail = "verified (status no longer reported)"
+			}
+			it.setStatus(now, Done, EvVerified, actAutoDone, detail)
 			at := now.UTC()
 			it.VerifiedAt = &at
 			rep.Verified++

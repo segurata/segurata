@@ -105,18 +105,19 @@ func TestXRateLimitedAndSignedOut(t *testing.T) {
 }
 
 func TestSlackReadsEachSignedInWorkspace(t *testing.T) {
-	const prof = "https://app.slack.com/apps-manage/T000/integrations/profile/"
+	const prof = "https://app.slack.com/apps-manage/T0ACME123/integrations/profile/"
+	acme := page("https://acme-team.slack.com/apps/manage", "Apps", rows(
+		row{Name: "Big Bot", Href: prof + "A1/permissions", Lines: []string{"Big Bot", "31 scopes", "Approved"}},
+		row{Name: "Small Bot", Href: prof + "A2/permissions", Lines: []string{"Small Bot", "2 ámbitos"}},
+		row{Name: "Middle Bot", Href: prof + "A3/permissions", Lines: []string{"Middle Bot", "6 scopes"}},
+		row{Name: "Wanted Bot", Href: prof + "A4/permissions", Lines: []string{"Wanted Bot", "20 scopes", "Approval required"}},
+	))
 	b := &fakeBrowser{pages: map[string]any{
 		slackSignin: page(slackSignin, "Your workspaces", rows(
 			row{Href: "https://zeta-team.slack.com/"}, row{Href: "https://acme-team.slack.com/ssb"},
 			row{Href: "https://app.slack.com/client"}, row{Href: "https://zeta-team.slack.com/messages"},
 		)),
-		"https://acme-team.slack.com/apps/manage": page("https://acme-team.slack.com/apps/manage", "Apps", rows(
-			row{Name: "Big Bot", Href: prof + "A1/permissions", Lines: []string{"Big Bot", "31 scopes", "Approved"}},
-			row{Name: "Small Bot", Href: prof + "A2/permissions", Lines: []string{"Small Bot", "2 ámbitos"}},
-			row{Name: "Middle Bot", Href: prof + "A3/permissions", Lines: []string{"Middle Bot", "6 scopes"}},
-			row{Name: "Wanted Bot", Href: prof + "A4/permissions", Lines: []string{"Wanted Bot", "20 scopes", "Approval required"}},
-		)),
+		"https://acme-team.slack.com/apps/manage": acme,
 		"https://zeta-team.slack.com/apps/manage": page("https://zeta-team.slack.com/workspace-signin", "Sign in", nil),
 	}}
 	rec := run(t, b, nil, "slack")
@@ -132,6 +133,15 @@ func TestSlackReadsEachSignedInWorkspace(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rec.state("slack:zeta-team.slack.com"), []finding.State{finding.StateSignedOut}) {
 		t.Errorf("zeta statuses %+v", rec.statuses)
+	}
+	// The workspace id the apps' links name, for attribution; none for a signed-out workspace.
+	if ws := rec.byName(t, "acme-team.slack.com"); ws.Resource.Type != "slack_workspace" || ws.Evidence["team_id"] != "T0ACME123" || ws.Severity != finding.SevInfo {
+		t.Errorf("workspace record: %+v", ws)
+	}
+	for _, f := range rec.findings {
+		if f.Resource.Type == "slack_workspace" && f.Resource.Name != "acme-team.slack.com" {
+			t.Errorf("workspace record for a workspace not read: %+v", f)
+		}
 	}
 
 	rec = run(t, &fakeBrowser{pages: map[string]any{slackSignin: page(slackSignin, "Sign in to Slack", nil)}}, nil, "slack")

@@ -84,6 +84,7 @@ func TestInventoryGradesAnAccountAndSkipsDuplicateProfiles(t *testing.T) {
 		"aws_access_key":       finding.SevHigh, // never used, older than 90 days
 		"aws_user_mfa":         finding.SevHigh,
 		"aws_budget":           finding.SevHigh,
+		"aws_account":          finding.SevInfo, // the id behind the alias, for attribution
 	}
 	if len(rec.Findings) != len(want) {
 		t.Fatalf("got %d findings: %+v", len(rec.Findings), rec.Findings)
@@ -91,6 +92,11 @@ func TestInventoryGradesAnAccountAndSkipsDuplicateProfiles(t *testing.T) {
 	for _, f := range rec.Findings {
 		if want[f.Resource.Type] != f.Severity || f.Account != "example-alias" || f.Evidence["profile"] != "dev" || f.Scope != "profile dev" {
 			t.Errorf("unexpected finding %s %s %s %v", f.Resource.Type, f.Severity, f.Account, f.Evidence)
+		}
+	}
+	for _, f := range rec.Findings {
+		if f.Resource.Type == "aws_account" && (f.Resource.ID != "111122223333" || f.Evidence["account_id"] != "111122223333") {
+			t.Errorf("account id record: %+v", f)
 		}
 	}
 	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateOK {

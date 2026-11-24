@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -210,6 +211,8 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		// billing
 		"Billing account 000000-AAAAAA-111111 has 1 budget(s) with alerts":                        finding.SevInfo,
 		"Project demo-shop is billed to 000000-AAAAAA-111111 but no budget with alerts covers it": finding.SevHigh,
+		// the projects each account sees, for attribution
+		"owner@example.com sees 3 projects": finding.SevInfo,
 	}
 	if len(rec.findings) != len(want) {
 		t.Fatalf("got %d findings, want %d:\n%s", len(rec.findings), len(want), rec.titles())
@@ -220,6 +223,10 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		}
 	}
 
+	seen := rec.byTitle(t, "owner@example.com sees")
+	if ps, _ := seen.Evidence["projects"].([]any); len(ps) != 3 || ps[0].(map[string]any)["number"] != "100000000001" || ps[0].(map[string]any)["id"] != "demo-shop" {
+		t.Errorf("projects record: %+v", seen.Evidence)
+	}
 	key := rec.byTitle(t, "Maps (browser)")
 	if key.Resource.ID != finding.Redact("11111111-2222-3333-4444-555555555555") || key.Resource.Name != "Maps (browser)" {
 		t.Errorf("API key must show display name and redacted uid: %+v", key.Resource)
@@ -330,16 +337,17 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 
 func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 	plays := map[string][]outcome{
-		"projects list " + owner:                                                                                 {{stdout: "projects_owner.json"}},
-		"billing accounts list " + owner:                                                                         {{}},
-		"projects get-iam-policy demo-blog " + owner:                                                             {{}},
-		"iam service-accounts list --project=demo-blog " + owner:                                                 {{}},
-		"services api-keys list --project=demo-blog " + owner:                                                    {{}},
-		"billing projects describe demo-blog " + owner:                                                           {{stdout: "billing_info_blog.json"}},
-		"projects get-iam-policy unlisted-project " + owner:                                                      {{}},
-		"iam service-accounts list --project=unlisted-project " + owner:                                          {{}},
-		"services api-keys list --project=unlisted-project " + owner:                                             {{}},
-		"billing projects describe unlisted-project " + owner:                                                    {{}},
+		"auth list":                                                     {{stdout: "auth_list.json"}},
+		"projects list " + owner:                                        {{stdout: "projects_owner.json"}},
+		"billing accounts list " + owner:                                {{}},
+		"projects get-iam-policy demo-blog " + owner:                    {{}},
+		"iam service-accounts list --project=demo-blog " + owner:        {{}},
+		"services api-keys list --project=demo-blog " + owner:           {{}},
+		"billing projects describe demo-blog " + owner:                  {{stdout: "billing_info_blog.json"}},
+		"projects get-iam-policy unlisted-project " + owner:             {{}},
+		"iam service-accounts list --project=unlisted-project " + owner: {{}},
+		"services api-keys list --project=unlisted-project " + owner:    {{}},
+		"billing projects describe unlisted-project " + owner:           {{}},
 		"billing budgets list --billing-account=000000-BBBBBB-222222 " + owner + " --billing-project=demo-quota": {{}},
 	}
 	c, _ := testConnector(t, t.TempDir(), plays, nil)
@@ -354,6 +362,10 @@ func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 	}
 	if got := f.Evidence["linked_projects"]; len(got.([]string)) != 1 || got.([]string)[0] != "demo-blog" {
 		t.Errorf("linked projects: %v", got)
+	}
+	// The person's account the config leaves out is declared skipped; the service account is not.
+	if !slices.Equal(rec.skipped, []string{"work@example.org"}) {
+		t.Errorf("skipped %v, want the unwatched work@example.org only", rec.skipped)
 	}
 }
 
@@ -405,6 +417,7 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 
 func TestServiceAccountListedInConfigIsUsed(t *testing.T) {
 	plays := map[string][]outcome{
+		"auth list":                                           {{stderr: "reauth.txt"}}, // the configured accounts run all the same
 		"projects list " + ci:                                 {{stdout: "projects_sa.json"}},
 		"billing accounts list " + ci:                         {{stderr: "disabled_billing.txt"}},
 		"projects get-iam-policy demo-shop " + ci:             {{}},

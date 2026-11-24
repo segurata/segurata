@@ -156,6 +156,9 @@ var upgrades = map[int]func(map[string]any) error{
 	// version 1 file holds none of them, so its data carries over as it is; the bump keeps an older
 	// binary from loading a file with values it does not know.
 	1: func(map[string]any) error { return nil },
+	// 3 adds the top-level owned, a rotate item's secret.attribution and a rule's owners; a version 2
+	// file has none, so it carries over as it is.
+	2: func(map[string]any) error { return nil },
 }
 
 func parse(raw []byte) (*Tracker, error) {

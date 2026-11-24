@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -281,6 +282,11 @@ func (c *Connector) inspectProfile(ctx context.Context, profile string, now time
 	var aliases struct{ AccountAliases []string }
 	if err := c.call(ctx, profile, &aliases, "iam", "list-account-aliases"); err == nil && len(aliases.AccountAliases) > 0 {
 		a.account = aliases.AccountAliases[0]
+		// Findings and statuses name the alias: one info record keeps the id, so attribution knows
+		// which account a leaked key id belongs to.
+		a.emit(finding.Finding{Resource: finding.Resource{Type: attribution.AWSAccountType, ID: id.Account, Name: a.account},
+			Kind: finding.KindSetting, Severity: finding.SevInfo, Title: fmt.Sprintf("AWS account %s is %s", a.account, id.Account),
+			Evidence: map[string]any{"account_id": id.Account}})
 	}
 	if strings.HasSuffix(id.Arn, ":root") {
 		a.emit(rootProfileFinding(profile))

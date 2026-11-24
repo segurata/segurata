@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/segurata/segurata/internal/attribution"
 )
 
 type ConnectorConfig struct {
@@ -29,6 +31,10 @@ type Instance struct {
 type Config struct {
 	CDPURL     string                     `json:"cdp_url"`
 	Connectors map[string]ConnectorConfig `json:"connectors"`
+	// Owned are the owner's accounts, projects, workspaces, GitHub owners and emails that the
+	// connectors cannot discover (an old AWS account no profile reaches): attribution counts a
+	// secret naming one of them as the owner's. See internal/attribution.
+	Owned attribution.Owned `json:"owned,omitempty"`
 }
 
 // DefaultPath is ~/.config/segurata/config.json on every OS, like most CLIs, unless

@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/doc"
@@ -27,14 +28,18 @@ const trackUsage = `usage: segurata track <command>
   start      <id> [--note text]
   done       <id> [--note text]       a later sync verifies it, or reopens it if a run still reports it
   note       <id> <text>
-  decide     <id> --answer text [--ignore-scope s]... [--accept-scope s]...   s: path:~/src/old, repo:owner/name, account:<glob>, gcp-project:<id>
+  decide     <id> --answer text [--ignore-scope s]... [--accept-scope s]... [--owner not-mine] [--dry-run]
+             s: path:~/src/old, repo:owner/name, account:<glob>, gcp-project:<id>; --owner narrows the
+             scopes' rules to secrets attributed to those owners (mine, not-mine, unknown); --dry-run
+             prints what answering would close and keep open, and changes nothing
   snooze     <id> --until YYYY-MM-DD [--note text]
   ignore     <id> --reason text
   expect     <setup-id> --reason text [--detail text] [--dry-run]   write a config rule that expects its status, close it
   reopen     <id> [--note text]
   prioritize <id> P0|P1|P2|P3|auto [--reason text]
   add        --title text [--kind fix|decide|setup|review] [--theme t] [--priority P2] [--note text]
-             --kind decide --question text --option a --option "b=ignore:path:~/src/old"   (an option's effect applies when it is the answer)
+             --kind decide --question text --option a --option "b=ignore:path:~/src/old"   (an option's effect applies when it is the answer;
+             "b=ignore@not-mine:path:~/src/old" closes only secrets attributed not-mine)
   sync       [--out out] [--from out/<date>/local-secrets.jsonl] [--include-noise]
 <id> is T-0012 (or T-12), or a secret's short id.`
 
@@ -130,11 +135,11 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, trackUsage)
 		return 2
 	}
-	expect, err := Expectations(c.Config)
+	opt, err := ConfiguredSync(c.Config, SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise})
 	if err != nil {
 		return c.fail(err)
 	}
-	rep, err := t.Sync(SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise, Expect: expect}, now)
+	rep, err := t.Sync(opt, now)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -278,7 +283,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 		}
 		for _, r := range t.Rules {
 			if r.Decision == it.ID {
-				fmt.Fprintf(w, "rule:      %s %s at every sync (since %s)\n", r.Effect, r.Scope, r.At.Format(time.DateOnly))
+				fmt.Fprintf(w, "rule:      %s at every sync (since %s)\n", r.Spec(), r.At.Format(time.DateOnly))
 			}
 		}
 	}
@@ -292,8 +297,8 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 		}
 	}
 	if s := it.Secret; s != nil {
-		fmt.Fprintf(w, "\nsecret %s %s/%s %s, %s; details: segurata rotations show %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted),
-			count(len(s.Locations), "location", "locations"), s.ID)
+		fmt.Fprintf(w, "\nsecret %s %s/%s %s, %s, owner %s; details: segurata rotations show %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted),
+			count(len(s.Locations), "location", "locations"), textfmt.OrDash(string(it.Owner())), s.ID)
 	}
 	if len(it.Findings) > 0 {
 		fmt.Fprintf(w, "\nfindings (%d):\n", len(it.Findings))
@@ -323,6 +328,8 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	var ignoreScopes, acceptScopes multi
 	fs.Var(&ignoreScopes, "ignore-scope", "decide: ignore every item in this scope, now and at every sync (repeat for each)")
 	fs.Var(&acceptScopes, "accept-scope", "decide: accept every item in this scope, now and at every sync (repeat for each)")
+	owner := fs.String("owner", "", "decide: the scopes' rules close only secrets attributed to these owners: mine, not-mine, unknown (comma-separated)")
+	dry := fs.Bool("dry-run", false, "decide: print what answering would close and keep open, change nothing")
 	pos, err := cliflag.Parse(fs, args)
 	want := 1 // note takes the id and any number of words
 	if cmd == "prioritize" {
@@ -344,11 +351,31 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	case "note":
 		err = it.Note(now, strings.Join(pos[1:], " "))
 	case "decide":
+		var owners []attribution.Owner
+		if *owner != "" {
+			if owners, err = attribution.ParseOwners(*owner); err != nil {
+				return c.fail(err)
+			}
+		}
+		if *dry {
+			lines, err := t.PreviewDecision(it, now, *answer, ignoreScopes, acceptScopes, owners)
+			if err != nil {
+				return c.fail(err)
+			}
+			for _, l := range lines {
+				fmt.Fprintf(c.Out, "Answering %s\n", l)
+			}
+			if len(lines) == 0 {
+				fmt.Fprintln(c.Out, "This answer adds no rule.")
+			}
+			fmt.Fprintln(c.Out, "Nothing written (--dry-run).")
+			return 0
+		}
 		var added []Rule
 		var closed int
-		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes); err == nil && len(added) > 0 {
+		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes, owners); err == nil && len(added) > 0 {
 			for _, r := range added {
-				fmt.Fprintf(c.Out, "Rule: %s %s, at every sync.\n", r.Effect, r.Scope)
+				fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
 			}
 			fmt.Fprintf(c.Out, "%s closed now by this decision.\n", count(closed, "item", "items"))
 		}

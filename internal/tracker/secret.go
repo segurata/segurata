@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -81,6 +82,8 @@ type Secret struct {
 	RotateURL string     `json:"rotate_url,omitempty"`
 	// RotatedLocations are the locations (source:path) known when the item was marked done.
 	RotatedLocations []string `json:"rotated_locations,omitempty"`
+	// Attribution says whose the secret is, from the claims its sightings made (see attribution.go).
+	Attribution *attribution.Result `json:"attribution,omitempty"`
 }
 
 // Sighting is one finding of a secret, reduced to what a rotate item needs.

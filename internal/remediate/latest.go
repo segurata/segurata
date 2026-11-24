@@ -33,6 +33,25 @@ type Latest struct {
 // records) gets its newest file. Runs are per connector, so the newest day alone is not enough:
 // after midnight it may hold only the connectors run since.
 func LatestRuns(outDir string) ([]Latest, error) {
+	history, err := History(outDir)
+	if err != nil {
+		return nil, err
+	}
+	var out []Latest
+	for _, paths := range history {
+		l, err := pick(paths)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
+	return out, nil
+}
+
+// History lists every run file under out/<YYYY-MM-DD>/, by file name (one connector instance),
+// oldest first.
+func History(outDir string) (map[string][]string, error) {
 	entries, err := os.ReadDir(outDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
@@ -47,7 +66,7 @@ func LatestRuns(outDir string) ([]Latest, error) {
 		}
 	}
 	sort.Strings(dates)
-	history := map[string][]string{} // file name -> its paths, oldest first
+	history := map[string][]string{}
 	for _, d := range dates {
 		files, err := filepath.Glob(filepath.Join(outDir, d, "*.jsonl"))
 		if err != nil {
@@ -60,16 +79,7 @@ func LatestRuns(outDir string) ([]Latest, error) {
 	if len(history) == 0 {
 		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
 	}
-	var out []Latest
-	for _, paths := range history {
-		l, err := pick(paths)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
-	return out, nil
+	return history, nil
 }
 
 // pick applies the LatestRuns rule to one instance's files, oldest first.

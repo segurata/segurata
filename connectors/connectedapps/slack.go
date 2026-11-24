@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -110,6 +111,30 @@ func slack(ctx context.Context, e *env) {
 			e.report(grant{who: host, scope: host, resType: "slack_app", name: a.name, count: a.count, note: a.note,
 				url: a.href, revoke: slackRevoke, extra: map[string]any{"pending_approval": a.pending}})
 		}
+		if team := slackTeam(p.Rows); team != "" {
+			e.emit.Finding(slackWorkspaceFinding(e.account(host), host, team))
+		}
 		e.status(host, finding.StateOK, "%d apps", len(p.Rows))
 	}
+}
+
+// slackTeamRE reads the workspace id from an app's link: app.slack.com/apps-manage/<team>/integrations/….
+var slackTeamRE = regexp.MustCompile(`/apps-manage/(T[A-Z0-9]{6,})/`)
+
+// slackTeam is the workspace id the apps' links name, or "" for a workspace with no app listed.
+func slackTeam(rows []row) string {
+	for _, r := range rows {
+		if m := slackTeamRE.FindStringSubmatch(r.Href); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// slackWorkspaceFinding records, as an info finding, the id of a workspace signed in to, so
+// attribution knows which workspace a leaked webhook belongs to.
+func slackWorkspaceFinding(account, host, team string) finding.Finding {
+	return finding.Finding{Account: account, Scope: host, Resource: finding.Resource{Type: attribution.SlackWorkspaceType, ID: team, Name: host},
+		Kind: finding.KindSetting, Severity: finding.SevInfo, Title: "Slack workspace " + host + " is " + team,
+		Evidence: map[string]any{"team_id": team, "host": host}}
 }

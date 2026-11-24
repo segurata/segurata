@@ -9,6 +9,7 @@
 //	segurata remediate --list               automatable findings of the latest run
 //	segurata remediate <finding-id>         show the plan; --apply [--yes] to apply it
 //	segurata rotations sync|list|next|show|replace|done|snooze|ignore|reopen   ledger of secrets to rotate
+//	segurata accounts list|watch|unwatch|owned   accounts each connector saw and watches; the owner's accounts
 //	segurata redact --trails|--path p|--item id   replace secrets in trail files; --apply [--yes] to rewrite
 //	segurata accept <finding-id> --reason text [--until YYYY-MM-DD]   keep a risk on purpose
 //	segurata accept --list | segurata unaccept <finding-id>
@@ -75,6 +76,8 @@ func main() {
 		os.Exit(remediateCmd(os.Args[2:]))
 	case "rotations":
 		os.Exit(rotationsCmd(os.Args[2:]))
+	case "accounts":
+		os.Exit(accountsCmd(os.Args[2:]))
 	case "redact":
 		os.Exit(redactCmd(os.Args[2:]))
 	case "accept":
@@ -94,7 +97,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: segurata connectors | segurata inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] | segurata track <list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync> | segurata report [--format text|md|html] [--out file] | segurata remediate --list | <finding-id> [--apply] [--yes] | segurata rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | segurata accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | segurata unaccept <finding-id> | segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | segurata redact [--trails] [--path prefix] [--item id] [--apply] | segurata doctor [--connector name] | segurata keychain-migrate [--apply [--yes]] | segurata version")
+	fmt.Fprintln(os.Stderr, "usage: segurata connectors | segurata inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] | segurata track <list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync> | segurata report [--format text|md|html] [--out file] | segurata remediate --list | <finding-id> [--apply] [--yes] | segurata rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | segurata accounts <list|watch|unwatch|owned> | segurata accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | segurata unaccept <finding-id> | segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | segurata redact [--trails] [--path prefix] [--item id] [--apply] | segurata doctor [--connector name] | segurata keychain-migrate [--apply [--yes]] | segurata version")
 }
 
 func all() []connector.Connector {

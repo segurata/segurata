@@ -22,6 +22,11 @@ func ev(fp, typ, path, source, kind, mode string, tracked, remote bool) secretri
 		Tracked: tracked, Remote: remote, Redacted: "hint-" + typ, Bucket: "b", Count: 1}
 }
 
+func withClaims(e secretrisk.Evidence, awsAccount string) secretrisk.Evidence {
+	e.AWSAccount = awsAccount
+	return e
+}
+
 func writeFindings(t *testing.T, path string, evs ...secretrisk.Evidence) {
 	t.Helper()
 	var recs []any
@@ -44,7 +49,8 @@ func TestCommands(t *testing.T) {
 	writeFindings(t, filepath.Join(out, "2026-11-23", "local-secrets.jsonl"),
 		ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/src/shop/.env", "scan", "repo", "600", false, false),
 		ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/src/shop/x.env", "gitleaks", "repo", "", true, true),
-		ev("bbbbbbbbbbbbbbbb", "sentry-dsn", "~/src/blog/.env", "scan", "repo", "600", false, false))
+		ev("bbbbbbbbbbbbbbbb", "sentry-dsn", "~/src/blog/.env", "scan", "repo", "600", false, false),
+		withClaims(ev("cccccccccccccccc", "aws-access-key-id", "~/src/legacy/.env", "scan", "repo", "600", false, false), "123456789012"))
 	state := filepath.Join(dir, "state", "tracker.json")
 	run := func(args ...string) (string, string, int) {
 		var o, e bytes.Buffer
@@ -53,7 +59,7 @@ func TestCommands(t *testing.T) {
 	}
 
 	o, e, code := run("sync", "--out", out)
-	if code != 0 || !strings.Contains(o, "2 secrets (2 new") || !strings.Contains(o, "P0 1") {
+	if code != 0 || !strings.Contains(o, "3 secrets (3 new") || !strings.Contains(o, "P0 1") || !strings.Contains(o, "Open by owner: mine 0, not-mine 0, unknown 3") {
 		t.Fatalf("sync: %d %q %q", code, o, e)
 	}
 	if st, err := os.Stat(state); err != nil || st.Mode().Perm() != 0o600 {
@@ -72,6 +78,26 @@ func TestCommands(t *testing.T) {
 		if code != 0 || !strings.Contains(o, want) {
 			t.Errorf("show lacks %q:\n%s", want, o)
 		}
+	}
+	// Attribution: the AWS key names an account, but none of the owner's is known.
+	o, _, _ = run("list", "--owner", "unknown")
+	if !strings.Contains(o, "cccccccc") || !strings.Contains(o, "OWNER") || !strings.Contains(o, "3 items") {
+		t.Errorf("list --owner unknown:\n%s", o)
+	}
+	if o, _, _ = run("list", "--owner", "mine,not-mine"); !strings.Contains(o, "0 items") {
+		t.Errorf("list --owner mine,not-mine:\n%s", o)
+	}
+	if _, e, code := run("list", "--owner", "theirs"); code == 0 || !strings.Contains(e, "use mine, not-mine or unknown") {
+		t.Errorf("bad owner: %d %q", code, e)
+	}
+	o, _, _ = run("show", "cccc")
+	for _, want := range []string{"owner:       unknown (low confidence)", "AWS account 123456789012: none of yours is known", "AWS accounts: 123456789012"} {
+		if !strings.Contains(o, want) {
+			t.Errorf("show lacks %q:\n%s", want, o)
+		}
+	}
+	if _, _, code := run("ignore", "cccc", "--reason", "an old account"); code != 0 {
+		t.Fatal("ignore failed")
 	}
 	if _, _, code := run("done", "aaaa", "--note", "rolled in the dashboard"); code != 0 {
 		t.Fatal("done failed")
