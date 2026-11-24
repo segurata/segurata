@@ -73,7 +73,7 @@ func (r *remediator) read(ctx context.Context, f finding.Finding) (liveKey, erro
 	if read == "" {
 		return liveKey{}, fmt.Errorf("%s is not configured: the plan reads the key's current state with it; %s", secretName, setupHint)
 	}
-	s := &scan{ctx: ctx, api: httpx.New(httpx.Base(r.c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + read}})}
+	s := &scan{ctx: ctx, api: httpx.New(r.c.base(), http.Header{"Authorization": {"Bearer " + read}})}
 	listed, err := list[adminKey](s, "/organization/admin_api_keys", nil)
 	if err != nil {
 		return liveKey{}, err
@@ -164,7 +164,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	p := connector.Plan{
 		Action:  ActionDeleteUnusedKey,
 		Summary: fmt.Sprintf("Delete the OpenAI %s (%s), %s.", k.label, keyHint(k.redacted), used),
-		Calls:   []connector.Call{{Method: http.MethodDelete, URL: httpx.Base(r.c.BaseURL, DefaultBaseURL) + k.path, Secret: writeSecret}},
+		Calls:   []connector.Call{{Method: http.MethodDelete, URL: r.c.base() + k.path, Secret: writeSecret}},
 		SideEffects: []string{
 			"No undo: a deleted key cannot be restored. Anything still holding it gets HTTP 401 and needs a new key.",
 			"Nothing else changes: the project, its other keys and its service accounts stay.",
@@ -190,5 +190,5 @@ func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.P
 	if err != nil {
 		return err
 	}
-	return httpw.Send(ctx, httpx.Base(r.c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
+	return httpw.Send(ctx, r.c.base(), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
 }

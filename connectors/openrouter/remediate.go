@@ -65,7 +65,7 @@ func (r *remediator) read(ctx context.Context, f finding.Finding) (apiKey, error
 	if read == "" {
 		return apiKey{}, fmt.Errorf("%s is not configured: the plan reads the key's current state with it; %s", secretName, setupHint)
 	}
-	s := &scan{ctx: ctx, api: httpx.New(httpx.Base(r.c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + read}})}
+	s := &scan{ctx: ctx, api: httpx.New(r.c.base(), http.Header{"Authorization": {"Bearer " + read}})}
 	q := url.Values{}
 	if ws, _ := f.Evidence["workspace_id"].(string); ws != "" {
 		q.Set("workspace_id", ws)
@@ -111,7 +111,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	p := connector.Plan{
 		Action:  ActionDeleteUnusedKey,
 		Summary: fmt.Sprintf("Delete the OpenRouter API key %q (%s) in %s, %s.", n, k.Label, f.Account, used),
-		Calls:   []connector.Call{{Method: http.MethodDelete, URL: httpx.Base(r.c.BaseURL, DefaultBaseURL) + "/keys/" + url.PathEscape(k.Hash), Secret: writeSecret}},
+		Calls:   []connector.Call{{Method: http.MethodDelete, URL: r.c.base() + "/keys/" + url.PathEscape(k.Hash), Secret: writeSecret}},
 		SideEffects: []string{
 			"No undo: a deleted key cannot be restored. Anything still holding it gets HTTP 401 and needs a new key.",
 			"Its usage history stays in the account's activity; the credit balance and other keys do not change.",
@@ -137,5 +137,5 @@ func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.P
 	if err != nil {
 		return err
 	}
-	return httpw.Send(ctx, httpx.Base(r.c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
+	return httpw.Send(ctx, r.c.base(), http.Header{"Authorization": {"Bearer " + write}}, p.Calls, writeRoutes...)
 }

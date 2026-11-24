@@ -47,6 +47,9 @@ func (c *Connector) SetupHint(secret string) string {
 	return connector.HintFor(secret, secretName, setupHint)
 }
 
+// base is the API base URL: BaseURL, or the real API.
+func (c *Connector) base() string { return httpx.Base(c.BaseURL, DefaultBaseURL) }
+
 func (c *Connector) Describe() connector.Description {
 	return connector.Description{
 		Name:     name,
@@ -65,7 +68,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 	s := &scan{
 		ctx:  ctx,
-		api:  httpx.New(httpx.Base(c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + key}}),
+		api:  httpx.New(c.base(), http.Header{"Authorization": {"Bearer " + key}}),
 		emit: emit,
 		now:  connector.Now(c.Now),
 	}

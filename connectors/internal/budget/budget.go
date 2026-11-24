@@ -196,7 +196,7 @@ func (j judge) summary(budgets []Budget) finding.Finding {
 		}
 		list = append(list, evidence(b))
 	}
-	title := fmt.Sprintf("%s has %s: %s", textfmt.UpperFirst(j.c.Label), textfmt.Count(len(budgets), "budget", "budget"+"s"), strings.Join(parts, "; "))
+	title := fmt.Sprintf("%s has %s: %s", textfmt.UpperFirst(j.c.Label), textfmt.Count(len(budgets), "budget", "budgets"), strings.Join(parts, "; "))
 	if n := len(budgets) - shown; n > 0 {
 		title += fmt.Sprintf("; and %d more", n)
 	}
