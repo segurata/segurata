@@ -2,13 +2,16 @@ package azure
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
@@ -42,11 +45,16 @@ func fixture() *fakeRunner {
 	return &fakeRunner{replies: map[string]string{
 		"account show": `{"id":"00000000-0000-0000-0000-000000000001","name":"Example","state":"Enabled","tenantId":"00000000-0000-0000-0000-0000000000aa","tenantDefaultDomain":"example.onmicrosoft.com"}`,
 		"account list": `[
-			{"id":"00000000-0000-0000-0000-000000000001","name":"Example","state":"Enabled"},
-			{"id":"00000000-0000-0000-0000-000000000002","name":"Old","state":"Disabled"},
-			{"id":"00000000-0000-0000-0000-000000000003","name":"Watched","state":"Enabled"}]`,
+			{"id":"00000000-0000-0000-0000-000000000001","name":"Example","state":"Enabled","tenantId":"00000000-0000-0000-0000-0000000000aa"},
+			{"id":"00000000-0000-0000-0000-000000000002","name":"Old","state":"Disabled","tenantId":"00000000-0000-0000-0000-0000000000aa"},
+			{"id":"00000000-0000-0000-0000-000000000003","name":"Watched","state":"Enabled","tenantId":"00000000-0000-0000-0000-0000000000aa"},
+			{"id":"00000000-0000-0000-0000-000000000004","name":"Guest","state":"Enabled","tenantId":"00000000-0000-0000-0000-0000000000bb"}]`,
 		"consumption budget list --subscription 00000000-0000-0000-0000-000000000001": `[]`,
-		"consumption budget list --subscription 00000000-0000-0000-0000-000000000003": `[{"name":"monthly","amount":50,"timeGrain":"Monthly","notifications":{"a":{"enabled":true},"b":{"enabled":false}}}]`,
+		"consumption budget list --subscription 00000000-0000-0000-0000-000000000003": `[{"name":"monthly","amount":50,"category":"Cost","timeGrain":"Monthly",
+			"currentSpend":{"amount":12,"unit":"EUR"},"notifications":{
+			"Actual_GreaterThan_80_Percent":{"enabled":true,"operator":"GreaterThan","threshold":80,"contactEmails":["owner@example.com"]},
+			"Forecasted_GreaterThan_100_Percent":{"enabled":false,"operator":"GreaterThan","threshold":100,"thresholdType":"Forecasted","contactEmails":["owner@example.com"]}}}]`,
+		"consumption budget list --subscription 00000000-0000-0000-0000-000000000004": `[]`,
 		appQuery: `[{"appId":"11111111-1111-1111-1111-111111111111","displayName":"ci","passwordCredentials":[
 			{"keyId":"k1","hint":"abc","endDateTime":"2299-12-31T00:00:00Z","startDateTime":"2024-01-01T00:00:00Z"},
 			{"keyId":"k2","hint":"def","endDateTime":"2026-12-01T00:00:00.123Z"}]}]`,
@@ -61,18 +69,21 @@ func TestInventory(t *testing.T) {
 	}
 	got := map[string]finding.Severity{}
 	for _, f := range rec.Findings {
-		got[f.Resource.ID] = f.Severity
+		got[f.Title] = f.Severity
 	}
 	want := map[string]finding.Severity{
-		"00000000-0000-0000-0000-000000000001/none":    finding.SevHigh,
-		"00000000-0000-0000-0000-000000000003/monthly": finding.SevInfo,
-		"11111111-1111-1111-1111-111111111111/k1":      finding.SevHigh,
-		"11111111-1111-1111-1111-111111111111/k2":      finding.SevMedium,
+		"Subscription Example (00000000-0000-0000-0000-000000000001) has no budget with alerts: nothing warns you when spend runs away":                                                            finding.SevHigh,
+		"Subscription Watched (00000000-0000-0000-0000-000000000003) has 1 budget: 'monthly' 50 EUR/month, whole subscription":                                                                     finding.SevInfo,
+		"Budget 'monthly' (50 EUR/month, whole subscription) alerts only at 80%: add 90%, 100% and a forecasted threshold":                                                                         finding.SevMedium,
+		"Budgets on subscription Watched (00000000-0000-0000-0000-000000000003) only notify: none is wired to an action group, so nothing stops spend; 1 non-expiring client secret in the tenant": finding.SevMedium,
+		"Subscription Guest (00000000-0000-0000-0000-000000000004) has no budget with alerts: nothing warns you when spend runs away":                                                              finding.SevHigh,
+		`Client secret of app "ci" never expires in practice (expires 2299-12-31)`:                                                                                                                 finding.SevHigh,
+		`Client secret of app "ci" expires 2026-12-01, in 7 days`:                                                                                                                                  finding.SevMedium,
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("got %v\nwant %v", got, want)
 	}
-	if len(rec.Statuses) != 3 { // two enabled subscriptions and the tenant
+	if len(rec.Statuses) != 4 { // three enabled subscriptions and the tenant
 		t.Fatalf("statuses: %+v", rec.Statuses)
 	}
 	for _, f := range rec.Findings {
@@ -113,10 +124,16 @@ func TestBudgetErrorIsPerSubscription(t *testing.T) {
 	if err := (&Connector{Run: fr, Now: func() time.Time { return now }}).Inventory(context.Background(), connector.Request{}, rec); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Statuses[0].State != finding.StateError || !strings.HasPrefix(rec.Statuses[0].Detail, "budgets:") {
+	failed := 0
+	for _, st := range rec.Statuses {
+		if st.State == finding.StateError && strings.HasPrefix(st.Detail, "budgets:") && strings.HasPrefix(st.Account, "Example ") {
+			failed++
+		}
+	}
+	if failed != 1 {
 		t.Fatalf("statuses: %+v", rec.Statuses)
 	}
-	if len(rec.Findings) != 3 {
+	if len(rec.Findings) != 6 {
 		t.Fatalf("the other subscription and the apps should still be inspected: %+v", rec.Findings)
 	}
 }
@@ -147,12 +164,29 @@ func TestSecretFinding(t *testing.T) {
 	}
 }
 
-func TestBudgetWithoutEnabledAlerts(t *testing.T) {
-	b := budget{Name: "quiet", Notifications: map[string]struct {
-		Enabled bool `json:"enabled"`
-	}{"x": {Enabled: false}}}
-	if f := budgetFindings("s", []budget{b}); f[0].Severity != finding.SevMedium {
-		t.Fatalf("got %+v", f)
+func TestBudgetMapping(t *testing.T) {
+	var bs []azBudget
+	raw := `[
+		{"name":"rest shape","properties":{"amount":100.5,"category":"Cost","timeGrain":"Quarterly",
+			"filter":{"and":[{"dimensions":{"name":"ResourceGroupName","operator":"In","values":["rg1","rg2"]}},{"tags":{"name":"env","operator":"In","values":["prod"]}}]},
+			"notifications":{
+				"Actual_GreaterThanOrEqualTo_90_Percent":{"enabled":true,"threshold":90,"thresholdType":"Actual","contactRoles":["Owner"]},
+				"Forecasted_GreaterThan_100_Percent":{"enabled":true,"threshold":100,"contactGroups":["/subscriptions/s/resourceGroups/r/providers/microsoft.insights/actionGroups/stop"]},
+				"Actual_GreaterThan_50_Percent":{"enabled":false,"threshold":50,"contactEmails":["a@example.com"]}}}},
+		{"name":"usage","category":"Usage","amount":5}
+	]`
+	if err := json.Unmarshal([]byte(raw), &bs); err != nil {
+		t.Fatal(err)
+	}
+	want := budget.Budget{ID: "rest shape", Name: "rest shape", Amount: 100.5, Period: budget.PeriodQuarter,
+		Thresholds: []budget.Threshold{{Percent: 90}, {Percent: 100, Forecast: true}},
+		Scope:      budget.Scope{Filters: []string{"ResourceGroupName: rg1, rg2", "tag env: prod"}},
+		Notifies:   []string{budget.NotifyRoles, budget.NotifyActionGroup}, Actions: []string{budget.ActionActionGroup}}
+	if got := bs[0].neutral(); !reflect.DeepEqual(got, want) {
+		t.Errorf("\n got %+v\nwant %+v", got, want)
+	}
+	if got := bs[1].neutral(); got.ID != "" {
+		t.Errorf("a usage budget is not a spend budget: %+v", got)
 	}
 }
 
@@ -161,7 +195,7 @@ func TestEveryCommandRunIsReadOnly(t *testing.T) {
 	if err := (&Connector{Run: fr, Now: func() time.Time { return now }}).Inventory(context.Background(), connector.Request{}, &httpxtest.Recorder{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(fr.calls) != 5 { // account show, account list, two enabled subscriptions, app list
+	if len(fr.calls) != 6 { // account show, account list, app list, three enabled subscriptions
 		t.Fatalf("calls: %v", fr.calls)
 	}
 	for _, call := range fr.calls {

@@ -2,14 +2,19 @@ package azure
 
 import (
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/internal/finding"
 )
 
 const (
-	urlBudgets = "https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-create-budgets"
-	urlSecrets = "https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials"
+	urlBudgets       = "https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-create-budgets"
+	urlBudgetActions = "https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/cost-management-budget-scenario"
+	urlSecrets       = "https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials"
 
 	// expiringWithin is when a secret about to lapse needs a rotation plan.
 	expiringWithin = 30 * 24 * time.Hour
@@ -18,35 +23,96 @@ const (
 	neverExpiresAfter = 2 * 365 * 24 * time.Hour
 )
 
-func budgetFindings(subscriptionID string, budgets []budget) []finding.Finding {
-	if len(budgets) == 0 {
-		return []finding.Finding{{
-			Resource: finding.Resource{Type: "azure_budget", ID: subscriptionID + "/none", Name: "budgets"},
-			Kind:     finding.KindSpend,
-			Severity: finding.SevHigh,
-			Title:    "Subscription has no budget: nothing warns you when spend runs away",
-			Remediation: finding.Remediation{
-				Summary: "Create a monthly cost budget with alerts at 50%, 80% and 100% of actual and forecasted cost.",
-				URL:     urlBudgets,
-			},
-		}}
-	}
-	var out []finding.Finding
+// subscriptionWording is how the shared budget rules speak about an Azure subscription.
+var subscriptionWording = budget.Wording{
+	AllScope:   "whole subscription",
+	DocsURL:    urlBudgets,
+	ActionNoun: "an action group",
+	CapHowTo: "Budgets only notify. Add an action group to the budget's 100% alert that calls a Logic App or " +
+		"Automation runbook to stop or deallocate resources when the threshold is crossed.",
+	CapURL:     urlBudgetActions,
+	RisksWhere: "in the tenant",
+}
+
+var timeGrains = map[string]string{
+	"Monthly": budget.PeriodMonth, "BillingMonth": budget.PeriodMonth,
+	"Quarterly": budget.PeriodQuarter, "BillingQuarter": budget.PeriodQuarter,
+	"Annually": budget.PeriodYear, "BillingAnnual": budget.PeriodYear,
+}
+
+// budgetFindings judges a subscription's cost budgets with the shared rules. Usage budgets do
+// not measure spend and are left out.
+func budgetFindings(subscriptionID, label string, budgets []azBudget, risks []budget.Risk) []finding.Finding {
+	var nb []budget.Budget
 	for _, b := range budgets {
-		alerts := b.enabledAlerts()
-		f := finding.Finding{
-			Resource:    finding.Resource{Type: "azure_budget", ID: subscriptionID + "/" + b.Name, Name: b.Name},
-			Kind:        finding.KindSpend,
-			Severity:    finding.SevInfo,
-			Title:       fmt.Sprintf("Budget %q with %d alerts", b.Name, alerts),
-			Evidence:    map[string]any{"amount": b.Amount, "time_grain": b.TimeGrain, "enabled_alerts": alerts},
-			Remediation: finding.Remediation{Summary: "Keep at least one enabled alert with a contact on the budget.", URL: urlBudgets},
+		if n := b.neutral(); n.ID != "" {
+			nb = append(nb, n)
 		}
-		if alerts == 0 {
-			f.Severity = finding.SevMedium
-			f.Title = fmt.Sprintf("Budget %q has no enabled alerts", b.Name)
+	}
+	c := budget.Container{
+		ID:       subscriptionID,
+		Label:    "subscription " + label,
+		Risks:    risks,
+		NoBudget: finding.Resource{Type: "azure_budget", ID: subscriptionID + "/none", Name: "budgets"},
+	}
+	return budget.Evaluate(c, nb, subscriptionWording)
+}
+
+// neutral maps a cost budget to the shared model; a usage budget maps to the zero Budget. Only
+// enabled notifications count. thresholdType is missing from older API versions, whose
+// notification keys start with the type ("Forecasted_GreaterThan_100_Percent").
+func (b azBudget) neutral() budget.Budget {
+	p := b.budgetProps
+	if b.Properties != nil {
+		p = *b.Properties
+	}
+	if p.Category != "" && p.Category != "Cost" {
+		return budget.Budget{}
+	}
+	nb := budget.Budget{ID: b.Name, Name: b.Name, Amount: p.Amount, Period: budget.PeriodCustom}
+	if g, ok := timeGrains[p.TimeGrain]; ok {
+		nb.Period = g
+	}
+	if p.CurrentSpend != nil {
+		nb.Currency = p.CurrentSpend.Unit
+	}
+	if p.Filter != nil {
+		nb.Scope.Filters = p.Filter.describe()
+	}
+	notifies := map[string]bool{}
+	for _, key := range slices.Sorted(maps.Keys(p.Notifications)) {
+		n := p.Notifications[key]
+		if !n.Enabled {
+			continue
 		}
-		out = append(out, f)
+		forecast := n.ThresholdType == "Forecasted" || (n.ThresholdType == "" && strings.HasPrefix(strings.ToLower(key), "forecasted"))
+		nb.Thresholds = append(nb.Thresholds, budget.Threshold{Percent: n.Threshold, Forecast: forecast})
+		notifies[budget.NotifyEmails] = notifies[budget.NotifyEmails] || len(n.ContactEmails) > 0
+		notifies[budget.NotifyRoles] = notifies[budget.NotifyRoles] || len(n.ContactRoles) > 0
+		notifies[budget.NotifyActionGroup] = notifies[budget.NotifyActionGroup] || len(n.ContactGroups) > 0
+	}
+	for _, k := range []string{budget.NotifyEmails, budget.NotifyRoles, budget.NotifyActionGroup} {
+		if notifies[k] {
+			nb.Notifies = append(nb.Notifies, k)
+		}
+	}
+	if notifies[budget.NotifyActionGroup] {
+		nb.Actions = []string{budget.ActionActionGroup}
+	}
+	return nb
+}
+
+// describe words a budget filter as "ResourceGroupName: rg1, rg2" and "tag env: prod".
+func (f budgetFilter) describe() []string {
+	var out []string
+	if d := f.Dimensions; d != nil {
+		out = append(out, d.Name+": "+strings.Join(d.Values, ", "))
+	}
+	if t := f.Tags; t != nil {
+		out = append(out, "tag "+t.Name+": "+strings.Join(t.Values, ", "))
+	}
+	for _, sub := range f.And {
+		out = append(out, sub.describe()...)
 	}
 	return out
 }
