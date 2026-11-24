@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"slices"
+
+	"github.com/segurata/segurata/internal/proc"
 )
 
 // ErrRefused is returned for a command that is not on the action's allowlist, before anything runs.
@@ -51,7 +52,7 @@ func (System) Run(ctx context.Context, s Step, io IO) error {
 	if s.Sudo {
 		name, args = sudoPath, s.Argv
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := proc.Command(ctx, name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = io.In, io.Out, io.Err
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s: %w", s, err)
