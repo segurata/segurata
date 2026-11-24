@@ -74,7 +74,7 @@ func TestTrackCommands(t *testing.T) {
 	}
 	o, _, _ = x.run(t, "list")
 	for _, want := range []string{"Two-factor authentication not required in 2 GitHub orgs", "No Time Machine backup", "github · github:me: lacks a permission",
-		"Is oldproject dead?", "Plus 1 secret to rotate"} {
+		"Install the daily scheduled inventory?", "Plus 1 secret to rotate"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("list lacks %q:\n%s", want, o)
 		}
@@ -128,11 +128,11 @@ func TestTrackCommands(t *testing.T) {
 		t.Error("ignore")
 	}
 
-	dec := x.item(t, "Which password manager is primary?")
+	dec := x.item(t, "Install the daily scheduled inventory?")
 	if _, e, code := x.run(t, "decide", dec.ID); code != 1 || !strings.Contains(e, "--answer") {
 		t.Errorf("decide without an answer: %d %q", code, e)
 	}
-	if _, _, code := x.run(t, "decide", dec.ID, "--answer", "1Password"); code != 0 || x.item(t, "Which password manager").Decision.Answer != "1Password" {
+	if _, _, code := x.run(t, "decide", dec.ID, "--answer", "not now"); code != 0 || x.item(t, "Install the daily").Decision.Answer != "not now" {
 		t.Error("decide")
 	}
 	o, _, code = x.run(t, "add", "--kind", "decide", "--question", "Keep the old VPS?", "--option", "yes", "--option", "no")
@@ -188,7 +188,7 @@ func TestStatusBriefing(t *testing.T) {
 			t.Fatalf("%s: %d %s", f, code, e)
 		}
 		for _, want := range []string{"Headline", "Do next", "Rotate 1 P0 secret", "segurata rotations next --priority P0",
-			"Two-factor authentication not required in 2 GitHub orgs", "Pending decisions", "Which password manager is primary?",
+			"Two-factor authentication not required in 2 GitHub orgs", "Pending decisions", "Install the daily scheduled inventory?",
 			"Setup blockers", "github · github:me: lacks a permission", "gh lacks read:org", "Accepted risks"} {
 			if !strings.Contains(o, want) {
 				t.Errorf("%s status lacks %q:\n%s", f, want, o)

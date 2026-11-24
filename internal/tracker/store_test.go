@@ -77,6 +77,7 @@ func TestSaveRefusesToOverwriteAFileThatDoesNotParse(t *testing.T) {
 
 func TestLoadValidates(t *testing.T) {
 	good := New(t0)
+	good.AddDecision("decide:second", "A second question?", []string{"yes", "no"}, t0) // the cases need two items
 	raw, _ := json.Marshal(good)
 	cases := map[string]func(m map[string]any){
 		"newer schema":  func(m map[string]any) { m["schema_version"] = 99 },

@@ -51,19 +51,10 @@ type seedDecision struct {
 	priority       secretrisk.Priority
 }
 
-// decisions are created once each, when absent; answering or ignoring one keeps it from coming
-// back.
+// seedDecisions are generic questions every installation faces, created once each when absent;
+// answering or ignoring one keeps it from coming back. Questions about one owner's own projects
+// are added with `segurata track add --kind decide` and live only in that owner's tracker.
 var seedDecisions = []seedDecision{
-	{"purge-data-dumps", "Purge the data dumps from git history (git filter-repo + force push)?",
-		[]string{"yes, repository by repository", "no, keep history and treat the data as exposed"}, secretrisk.P1},
-	{"legacyco-dead", "Are the legacyco repositories and AWS account dead?",
-		[]string{"yes: archive the repositories, close the account", "no: keep them and fix their findings"}, secretrisk.P2},
-	{"oldproject-dead", "Is oldproject dead?",
-		[]string{"yes: archive it and revoke its keys", "no: keep it and fix its findings"}, secretrisk.P2},
-	{"testssl-fixtures", "testssl.sh fixtures: ignore the secrets found in them?",
-		[]string{"ignore them (test fixtures)", "review them one by one"}, secretrisk.P3},
-	{"primary-password-manager", "Which password manager is primary?",
-		[]string{"1Password", "Bitwarden"}, secretrisk.P2},
 	{"daily-schedule", "Install the daily scheduled inventory?",
 		[]string{"yes: segurata schedule install --apply", "not now"}, secretrisk.P3},
 }

@@ -369,7 +369,7 @@ func TestSeedDecisionsAreCreatedOnce(t *testing.T) {
 	if n != len(seedDecisions) {
 		t.Fatalf("%d decisions", n)
 	}
-	d := byTitle(t, tr, "Is oldproject dead?")
+	d := byTitle(t, tr, "Install the daily scheduled inventory?")
 	if err := d.Decide(t0, "yes"); err != nil || d.Status != Done || d.Decision.Answer != "yes" {
 		t.Fatalf("decide: %v %+v", err, d)
 	}

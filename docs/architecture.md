@@ -120,9 +120,9 @@ connector and resource type, first match wins:
 A finding that has an item of its own (key `finding:<id>`) always goes there before any rule: one
 accepted apart from its group, or one grouped per finding anyway. The title and next step come
 from the rule and the worst finding's remediation (`segurata remediate <id>` and `who:
-segurata` when the only finding is automatable). Decisions the owner already faces are seeded
-once each (purging data dumps from git history, whether the two old projects are dead,
-the testssl.sh fixtures, the primary password manager, the daily schedule); `track add` adds more.
+segurata` when the only finding is automatable). Only generic decisions are seeded, once each
+(whether to install the daily schedule). Questions about an owner's own projects are added with
+`segurata track add --kind decide` and live only in that owner's tracker, never in the code.
 
 ### Lifecycle: `segurata track sync`
 
