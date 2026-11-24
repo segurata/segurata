@@ -27,6 +27,7 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 | `assess` | Assigns severity and remediation to each finding | Never |
 | `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only securizame's own `accepted.json` |
+| `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
 | `rotations` | Keeps the ledger of secrets to rotate and guides each rotation | Only securizame's own `rotations.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
 
 In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
@@ -152,6 +153,43 @@ On Linux `install` prints the equivalent systemd user service and timer
 (`~/.config/systemd/user/securizame-inventory.{service,timer}`) and the `systemctl --user` commands
 to enable them; `--apply` is refused there, and new findings go to the journal instead of a
 notification.
+
+## Doctor
+
+```
+securizame doctor [--connector name|name:label] [--out out]
+```
+
+`internal/doctor`, read-only. Prints one line per check, `OK`, `WARN` or `FAIL`, each `WARN` and
+`FAIL` with the exact fix, then the counts; exits 1 when anything failed. `--connector` checks one
+connector or instance (the config and state are always checked).
+
+- Config: the file is found and valid; a key that names no connector is a warning.
+- Secret references: every reference of every selected instance is resolved through
+  `run.NewRequest`, the path an inventory takes, and reported by key and reference; the values are
+  only handed to the connector's own check, never printed. Whether a Keychain item's ACL would
+  prompt cannot be read without prompting, so it is not checked.
+- Browser: when a selected connector needs `cdp`, `cdp_url` must answer `/json/version`
+  (`cdp.ReadVersion`, the first half of `cdp.Connect`). The OK line restates the accepted-risk
+  tradeoff of an open debugging port.
+- Connectors: a built-in connector implementing the optional `connector.Doctor` checks its own
+  prerequisites through the same runners, allowlists and classifiers its inventory uses. For any
+  other connector (externals included) the core checks the `describe` needs: `cli:x` on `PATH`
+  (`(optional)` makes a miss a warning), `secret:X` configured (a warning when not: the connector
+  is skipped, not broken). `os:` needs are checked for every connector.
+
+| Connector | Checks |
+|---|---|
+| `gcp` | gcloud found as the inventory finds it (`gcloud_path`, `PATH`, SDK folders); `auth list`; per account `projects list --limit=1`, so an expired token fails with `gcloud auth login <account>` |
+| `workspace` | Per tenant: the token is obtained as the inventory does (secret, or gcloud with the tenant's `CLOUDSDK_CONFIG`) and checked with tokeninfo for scopes and domain; the token is discarded |
+| `aws` | `sts get-caller-identity` per profile; SSO, static-key and missing-credential failures get different fixes |
+| `azure` | `az account show` |
+| `connected-apps` | `gh auth status --json hosts` (JSON, never the token; the one gh command added to its allowlist); scopes the key lists need (`admin:public_key`, `admin:ssh_signing_key`, `admin:gpg_key`, from `ghKeyEndpoints`) |
+| `local-secrets` | rg, gitleaks (optional; not needed with `skip_git_history`), git and ssh-keygen on `PATH`; `rg --version` and `gitleaks version` (added to the gitleaks guard) |
+
+- State: the fingerprint key exists (a warning before the first `local-secrets` run), is a valid
+  key and has mode 0600; `rotations.json` and `accepted.json` load and have mode 0600 when present;
+  the output directory (`--out`) has mode 0700 (a warning otherwise, since its files are 0600).
 
 ## External connector protocol (v1, v2)
 

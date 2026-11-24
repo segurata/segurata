@@ -9,6 +9,7 @@
 //	securizame accept <finding-id> --reason text [--until YYYY-MM-DD]   keep a risk on purpose
 //	securizame accept --list | securizame unaccept <finding-id>
 //	securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply]   scheduled runs
+//	securizame doctor [--connector name]      check prerequisites, read-only
 package main
 
 import (
@@ -59,6 +60,8 @@ func main() {
 		os.Exit(acceptCLI().Unaccept(os.Args[2:]))
 	case "schedule":
 		os.Exit(scheduleCmd(os.Args[2:]))
+	case "doctor":
+		os.Exit(doctorCmd(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -66,7 +69,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id> | securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply]")
+	fmt.Fprintln(os.Stderr, "usage: securizame connectors | securizame inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | securizame remediate --list | <finding-id> [--apply] [--yes] | securizame rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | securizame accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | securizame unaccept <finding-id> | securizame schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | securizame doctor [--connector name]")
 }
 
 func all() []connector.Connector {
