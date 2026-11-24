@@ -21,20 +21,25 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 
 ### Verbs
 
+Every verb in the `commands` table of `cmd/segurata/main.go` has a row here, and a test checks that.
+
 | Verb | What it does | Changes anything outside |
 |---|---|---|
-| `inventory` | Lists what exists: grants, keys, settings, spend | Never |
-| `assess` | Assigns severity and remediation to each finding | Never |
-| `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
+| `connectors` | Lists the built-in and external connectors | Never |
+| `inventory` | Lists what exists: grants, keys, settings, spend; each connector assigns severity and remediation to its findings | Never |
+| `remediate` | Applies one remediation plan, for one finding or a named group of findings | Yes, one plan at a time, dry run unless `--apply`, explicit confirmation |
 | `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Nothing by default; with `--mark-seen` segurata's own `tracker.json` (the "since" mark); with `--write` that mark plus `status.md` and `status.html` |
 | `track` | Lists, shows and changes tracker items; `track sync` folds the latest runs in | Only segurata's own `tracker.json` |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only segurata's own `tracker.json` |
+| `accounts` | Lists the accounts each connector saw and the owner's accounts; `watch` and `unwatch` change which accounts a connector inspects | `watch` and `unwatch`: the config (atomically, previous file kept) and segurata's own `tracker.json` |
+| `signin` | Opens the pages where a browser connector needs a fresh sign-in, waits until they are through, then runs those connectors again | New browser tabs; segurata's own run files and `tracker.json` |
 | `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
 | `rotations` | Keeps the ledger of secrets to rotate (the tracker's rotate items) and guides each rotation | Only segurata's own `tracker.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
 | `report` | Summarises the latest runs, what changed, the secrets to rotate and the accepted risks | Never (writes only the `--out` file) |
 | `redact` | Replaces the secrets `local-secrets` finds in trail files (agent transcripts, shell histories, logs) with `[REDACTED:<type>:<fingerprint8>]` | With `--apply` and confirmation: those trail files, never a working file; a history note in `tracker.json` |
+| `schedule` | Installs, removes or shows the scheduled inventory (a launchd user agent on macOS) | With `--apply` and confirmation: the agent's plist, loaded with `launchctl` |
+| `version` | Prints the version, commit and build date | Never |
 
-In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
 "Remove all access" on an app's permissions page also removes that app's Sign in with Google
 link; that has to be said up front, not discovered afterwards.
