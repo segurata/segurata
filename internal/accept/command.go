@@ -33,11 +33,6 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// load loads the tracker; with lock it holds the tracker lock until unlock (see tracker.LoadFor).
-func (c CLI) load(now time.Time, lock bool) (*tracker.Tracker, string, func(), error) {
-	return tracker.LoadFor(c.Paths, now, lock)
-}
-
 // Accept records a finding of the latest run as an accepted risk, or lists the accepted ones.
 func (c CLI) Accept(args []string) int {
 	fs := cliflag.New("accept", c.Err)
@@ -51,7 +46,7 @@ func (c CLI) Accept(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, unlock, err := c.load(now, !*list)
+	t, path, unlock, err := tracker.LoadFor(c.Paths, now, !*list)
 	defer unlock()
 	if err != nil {
 		return c.fail(err)
@@ -92,7 +87,7 @@ func (c CLI) Unaccept(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, unlock, err := c.load(now, true)
+	t, path, unlock, err := tracker.LoadFor(c.Paths, now, true)
 	defer unlock()
 	if err != nil {
 		return c.fail(err)

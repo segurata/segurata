@@ -517,9 +517,8 @@ func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p 
 		// The ledger loaded at the start is stale after the confirmation and the rewrites: the notes
 		// go into the tracker as it is now.
 		err := tracker.Update(statePath, now, func(fresh *tracker.Tracker) error {
-			noted = 0
 			for _, it := range fresh.Items {
-				if n := files[it.Fingerprint]; n > 0 && it.Kind == tracker.KindRotate {
+				if n := files[it.Fingerprint]; n > 0 {
 					it.NoteRedaction(now, n)
 					noted++
 				}

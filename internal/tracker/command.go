@@ -64,11 +64,6 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// open loads the tracker; with lock it holds the tracker lock until unlock (see LoadFor).
-func (c CLI) open(now time.Time, lock bool) (*Tracker, string, func(), error) {
-	return LoadFor(c.Paths, now, lock)
-}
-
 // multi is a flag given several times.
 type multi []string
 
@@ -103,7 +98,7 @@ func (c CLI) Track(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, unlock, err := c.open(now, cmd != "list" && cmd != "show")
+	t, path, unlock, err := LoadFor(c.Paths, now, cmd != "list" && cmd != "show")
 	defer unlock()
 	if err != nil {
 		return c.fail(err)
@@ -507,7 +502,7 @@ func (c CLI) Status(args []string) int {
 		return 2
 	}
 	now := c.Now()
-	t, path, _, err := c.open(now, false)
+	t, path, _, err := LoadFor(c.Paths, now, false)
 	if err != nil {
 		return c.fail(err)
 	}
