@@ -12,6 +12,7 @@ import (
 	"github.com/segurata/segurata/internal/doc"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/runtest"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -34,20 +35,7 @@ func mk(connector, instance, resID string, sev finding.Severity, title string) f
 	return f
 }
 
-func writeRun(t *testing.T, path string, recs ...any) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	for _, r := range recs {
-		_ = enc.Encode(r)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
+var writeRun = runtest.Write
 
 func status(connector, instance, account string, st finding.State, detail string) finding.Status {
 	return finding.Status{Type: "status", Connector: connector, Instance: instance, Account: account, State: st, Detail: detail}

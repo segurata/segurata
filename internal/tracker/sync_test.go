@@ -1,15 +1,14 @@
 package tracker
 
 import (
-	"bytes"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/runtest"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -24,21 +23,10 @@ func okStatus(connector, account string) finding.Status {
 	return finding.Status{Type: "status", Connector: connector, Account: account, State: finding.StateOK}
 }
 
-// writeRun writes one connector instance's output under out/<date>/<file>.
+// writeRun writes one connector instance's finished output under out/<date>/<file>.
 func writeRun(t *testing.T, out string, at time.Time, file string, recs ...any) {
 	t.Helper()
-	dir := filepath.Join(out, at.Format(time.DateOnly))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	for _, r := range recs {
-		_ = enc.Encode(r)
-	}
-	if err := os.WriteFile(filepath.Join(dir, file), b.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	runtest.Write(t, filepath.Join(out, at.Format(time.DateOnly), file), recs...)
 }
 
 func syncOrDie(t *testing.T, tr *Tracker, out string, now time.Time) SyncReport {

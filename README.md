@@ -108,7 +108,7 @@ statuses.
   The list of names is `loginServices` in `connectors/googlepersonal/accountview.go`.
 - `{"connectors": {"google-personal": {"config": {"accounts": ["me@example.com"]}}}}` inventories
   only those accounts; other accounts signed in to the browser (a shared mailbox, a colleague's)
-  are skipped without a status.
+  get no status and are declared skipped scopes, so their earlier findings are not taken as resolved.
 
 - Requires Brave or Chrome started with `--remote-debugging-port=9222` (another address via
   `cdp_url` in the config or `SEGURATA_CDP`). Pages open in the background and always close,

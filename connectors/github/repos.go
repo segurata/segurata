@@ -72,12 +72,12 @@ type repoResult struct {
 func (r *run) repos(ctx context.Context, login string) {
 	acct := account(login)
 	if !r.scopes.has("repo") {
-		r.status(acct, finding.StateNoScope, "repositories not inspected: gh's token lacks repo; run: %s", refresh("repo"))
+		r.scopedStatus(acct, allRepos, finding.StateNoScope, "repositories not inspected: gh's token lacks repo; run: %s", refresh("repo"))
 		return
 	}
 	all, err := list[repo](ctx, r, "/user/repos?affiliation=owner,organization_member&per_page=100")
 	if err != nil {
-		r.status(acct, stateOrNoScope(err), "%s", describe(err, "repositories not listed"))
+		r.scopedStatus(acct, allRepos, stateOrNoScope(err), "%s", describe(err, "repositories not listed"))
 		return
 	}
 	var admin []repo
@@ -95,6 +95,7 @@ func (r *run) repos(ctx context.Context, login string) {
 	over := 0
 	if len(admin) > r.cfg.maxRepos {
 		over = len(admin) - r.cfg.maxRepos
+		r.skipRepos(admin[r.cfg.maxRepos:], "beyond max_repos in the github config")
 		admin = admin[:r.cfg.maxRepos]
 	}
 
@@ -124,11 +125,50 @@ func (r *run) repos(ctx context.Context, login string) {
 	close(jobs)
 	wg.Wait()
 
+	var limited, unreadable []repo
+	for i, res := range results {
+		switch {
+		case res.skipped:
+			limited = append(limited, admin[i])
+		case res.err != nil:
+			unreadable = append(unreadable, admin[i])
+		}
+	}
+	r.skipRepos(limited, "the GitHub API rate limit ran low")
+	r.skipRepos(unreadable, "partly unreadable")
 	r.reportRepos(admin, results)
-	r.reposStatus(acct, len(admin), archived, over, results)
+	r.reposStatus(acct, login, len(admin), archived, over, results)
 }
 
-func (r *run) reposStatus(acct string, inspected, archived, over int, results []repoResult) {
+// Repository findings carry these scopes, so a run that leaves repositories unread says which:
+// "repo:<owner>/<name>" for one repository's own finding, "repo:<owner>" for an owner's rolled-up
+// findings, which depend on every repository of that owner.
+const allRepos = "repo:*"
+
+func repoScope(fullName string) string { return "repo:" + fullName }
+func ownerScope(owner string) string   { return "repo:" + owner }
+
+// maxSkippedRepos is how many repositories are declared one by one; past it every repository
+// scope is declared skipped at once, which keeps run_end small.
+const maxSkippedRepos = 50
+
+// skipRepos declares repositories the run did not fully read, and their owners' rolled-up
+// findings with them.
+func (r *run) skipRepos(repos []repo, reason string) {
+	if len(repos) > maxSkippedRepos {
+		r.emit.Scope(allRepos, false, fmt.Sprintf("%d repositories: %s", len(repos), reason))
+		return
+	}
+	for _, rp := range repos {
+		r.emit.Scope(repoScope(rp.FullName), false, reason)
+		r.emit.Scope(ownerScope(rp.Owner.Login), false, reason+" for "+rp.FullName)
+	}
+}
+
+// reposStatus sums up the repositories of the signed-in user. It is scoped to the user's
+// repositories: the account itself was inspected, and each repository left unread is declared on
+// its own by skipRepos.
+func (r *run) reposStatus(acct, login string, inspected, archived, over int, results []repoResult) {
 	withIssues, skipped, unreadable := 0, 0, 0
 	var firstErr error
 	for _, res := range results {
@@ -161,7 +201,7 @@ func (r *run) reposStatus(acct string, inspected, archived, over int, results []
 		state = finding.StateError
 		parts = append(parts, fmt.Sprintf("%d partly unreadable, first: %v", unreadable, firstErr))
 	}
-	r.status(acct, state, "%s", strings.Join(parts, "; "))
+	r.scopedStatus(acct, ownerScope(login), state, "%s", strings.Join(parts, "; "))
 }
 
 // inspect reads one repository: its code security features, webhooks, deploy keys and, when
@@ -390,6 +430,7 @@ func (r *run) reportRepos(repos []repo, results []repoResult) {
 		ru := rolledUp[k.check]
 		r.emit.Finding(finding.Finding{
 			Account:     account(k.owner),
+			Scope:       ownerScope(k.owner),
 			Resource:    finding.Resource{Type: "github_repo_setting", ID: string(k.check), Name: k.owner},
 			Kind:        finding.KindSetting,
 			Severity:    severities[k.check],
@@ -410,6 +451,7 @@ func (r *run) emitRepo(rp repo, issues []issue) {
 	}
 	r.emit.Finding(finding.Finding{
 		Account:  account(rp.Owner.Login),
+		Scope:    repoScope(rp.FullName),
 		Resource: finding.Resource{Type: "github_repo", ID: strconv.FormatInt(rp.ID, 10), Name: rp.FullName},
 		Kind:     finding.KindSetting,
 		Severity: issues[0].Severity,

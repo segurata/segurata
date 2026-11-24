@@ -253,6 +253,15 @@ func decodeRecord(line []byte, name string, emit Emitter) {
 			s.Connector = name
 			emit.Status(s)
 		}
+	case "scope":
+		var sc struct {
+			Scope     string `json:"scope"`
+			Inspected bool   `json:"inspected"`
+			Reason    string `json:"reason"`
+		}
+		if json.Unmarshal(line, &sc) == nil {
+			emit.Scope(sc.Scope, sc.Inspected, sc.Reason)
+		}
 	case "log":
 		emit.Log(head.Msg)
 	}

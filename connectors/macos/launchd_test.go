@@ -95,8 +95,14 @@ func TestSfltoolTimeoutIsAnErrorAndFallsBackToDedupedLaunchItems(t *testing.T) {
 			btm = append(btm, s)
 		}
 	}
-	if len(btm) != 1 || btm[0].State != finding.StateError || !strings.Contains(btm[0].Detail, "timed out after 2m0s") {
+	if len(btm) != 1 || btm[0].State != finding.StateError || btm[0].Scope != "check:btm" || !strings.Contains(btm[0].Detail, "timed out after 2m0s") {
 		t.Fatalf("btm status: %+v", btm)
+	}
+	if f := rec.ByResource(t, "background_item", "launch-item:com.example.agent"); f.Scope != "check:btm" {
+		t.Errorf("fallback items share the btm scope the failed status leaves uninspected: %q", f.Scope)
+	}
+	if f := rec.ByResource(t, "background_item", "leftover:com.ghost.Helper"); f.Scope != "check:leftover:com.ghost.Helper" {
+		t.Errorf("leftovers are read from the plists, not sfltool, and keep their own scope: %q", f.Scope)
 	}
 	ids := map[string]int{}
 	for _, f := range rec.Findings {

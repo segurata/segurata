@@ -115,7 +115,9 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
 		return nil
 	}
-	accounts, err := c.accounts(ctx, g, cfg, emit.Log)
+	accounts, err := c.accounts(ctx, g, cfg, func(sa string) {
+		emit.Scope(sa, false, "service account: not used as an inventory account (list it in connectors.gcp.config.accounts to use it)")
+	})
 	if err != nil {
 		_, why := classify(err)
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateError, Detail: "gcloud auth list: " + why})
@@ -168,8 +170,8 @@ func (c *Connector) gcloud(cfg settings) (*gcloud, error) {
 const serviceAccountSuffix = ".iam.gserviceaccount.com"
 
 // accounts are the configured accounts, or every credentialed account gcloud lists except
-// service accounts.
-func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings, log func(string)) ([]string, error) {
+// service accounts, each of which is passed to skipped.
+func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings, skipped func(string)) ([]string, error) {
 	if len(cfg.accounts) > 0 {
 		return cfg.accounts, nil
 	}
@@ -182,7 +184,7 @@ func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings, log f
 	var out []string
 	for _, a := range listed {
 		if strings.HasSuffix(a.Account, serviceAccountSuffix) {
-			log(fmt.Sprintf("%s is a service account: not used as an inventory account (list it in connectors.gcp.config.accounts to use it)", a.Account))
+			skipped(a.Account)
 			continue
 		}
 		out = append(out, a.Account)
@@ -201,7 +203,7 @@ func (c *Connector) plan(ctx context.Context, g *gcloud, accounts []string, cfg 
 	for _, p := range cfg.projects {
 		want[p] = true
 	}
-	skip := map[string]bool{}
+	skip, declared := map[string]bool{}, map[string]bool{}
 	for _, p := range cfg.skipProjects {
 		skip[p] = true
 	}
@@ -219,6 +221,10 @@ func (c *Connector) plan(ctx context.Context, g *gcloud, accounts []string, cfg 
 		usable = append(usable, a)
 		emit.Status(finding.Status{Account: a, State: finding.StateOK, Detail: fmt.Sprintf("%d project(s) visible", len(projects))})
 		for _, p := range projects {
+			if skip[p.ProjectID] && !declared[p.ProjectID] {
+				declared[p.ProjectID] = true
+				emit.Scope(p.ProjectID, false, "in connectors.gcp.config.skip_projects")
+			}
 			if skip[p.ProjectID] || (len(want) > 0 && !want[p.ProjectID]) ||
 				(p.LifecycleState != "" && p.LifecycleState != "ACTIVE") {
 				continue
@@ -259,6 +265,8 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		failed = append(failed, check+": "+why)
 	}
 	// run calls fn with each account in turn until one is not denied, and returns that account.
+	// Findings stay on the project's first account whichever account read them, so their ids and
+	// the coverage of that account's project scope do not depend on who answered.
 	run := func(check string, fn func(acct string) error) (string, bool) {
 		var err error
 		for _, a := range t.accounts {
@@ -274,15 +282,16 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	}
 	emitAll := func(fs []finding.Finding) {
 		for _, f := range fs {
+			f.Scope = t.project
 			emit.Finding(f)
 		}
 	}
 
 	var policy iamPolicy
-	if a, ok := run("iam policy", func(a string) error {
+	if _, ok := run("iam policy", func(a string) error {
 		return g.json(ctx, &policy, "projects", "get-iam-policy", t.project, "--account="+a)
 	}); ok {
-		emitAll(iamFindings(a, t.project, policy))
+		emitAll(iamFindings(t.accounts[0], t.project, policy))
 	}
 
 	var sas []serviceAccount
@@ -291,18 +300,18 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	})
 	for _, sa := range sas {
 		var keys []saKey
-		if a, ok := run("keys of "+sa.Email, func(a string) error {
+		if _, ok := run("keys of "+sa.Email, func(a string) error {
 			return g.json(ctx, &keys, "iam", "service-accounts", "keys", "list", "--iam-account="+sa.Email, "--managed-by=user", proj, "--account="+a)
 		}); ok {
-			emitAll(saKeyFindings(a, t.project, sa, keys, c.now()))
+			emitAll(saKeyFindings(t.accounts[0], t.project, sa, keys, c.now()))
 		}
 	}
 
 	var keys []apiKey
-	if a, ok := run("api keys", func(a string) error {
+	if _, ok := run("api keys", func(a string) error {
 		return g.json(ctx, &keys, "services", "api-keys", "list", proj, "--account="+a)
 	}); ok {
-		emitAll(apiKeyFindings(a, t.project, keys))
+		emitAll(apiKeyFindings(t.accounts[0], t.project, keys))
 	}
 
 	var info billingInfo
@@ -320,7 +329,9 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		failed = append([]string{msg}, failed...)
 	}
 	if len(failed) > 0 {
-		emit.Status(finding.Status{Account: t.accounts[0], State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
+		// Scoped to the project: the account's other projects were read. Only checks denied to
+		// every account that lists the project get here.
+		emit.Status(finding.Status{Account: t.accounts[0], Scope: t.project, State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
 	}
 }
 
@@ -351,7 +362,8 @@ func (b *billing) discover(ctx context.Context, account string, emit connector.E
 	var list []billingAccount
 	if err := b.g.json(ctx, &list, "billing", "accounts", "list", "--account="+account); err != nil {
 		state, why := classify(err)
-		emit.Status(finding.Status{Account: account, State: state, Detail: "billing accounts list: " + why})
+		// Budgets are judged per billing account; without the list any of them may be missed.
+		emit.Status(finding.Status{Account: account, Scope: billingScope("*"), State: state, Detail: "billing accounts list: " + why})
 		return
 	}
 	b.mu.Lock()
@@ -383,15 +395,21 @@ func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 		var budgets []budget
 		if err := b.g.json(ctx, &budgets, args...); err != nil {
 			state, why := classify(err)
-			emit.Status(finding.Status{Account: st.account, State: state,
+			emit.Status(finding.Status{Account: st.account, Scope: billingScope(id), State: state,
 				Detail: fmt.Sprintf("billing account %s: cannot read budgets, so spend alerts are unknown for %s: %s", id, projectList(st.linked), why)})
 			continue
 		}
 		for _, f := range billingFindings(st.account, id, budgets, st.linked) {
+			f.Scope = billingScope(id)
 			emit.Finding(f)
 		}
 	}
 }
+
+// Findings and failures carry a scope narrower than the gcloud account, so one project the account
+// cannot read leaves only that project's findings unresolved: the project id for project checks,
+// "billing:<id>" for a billing account's budgets.
+func billingScope(id string) string { return "billing:" + id }
 
 func projectList(ps []linkedProject) string {
 	if len(ps) == 0 {

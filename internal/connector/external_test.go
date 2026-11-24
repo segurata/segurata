@@ -56,9 +56,10 @@ esac
 
 type recorder struct{ logs []string }
 
-func (r *recorder) Finding(finding.Finding) {}
-func (r *recorder) Status(finding.Status)   {}
-func (r *recorder) Log(m string)            { r.logs = append(r.logs, m) }
+func (r *recorder) Finding(finding.Finding)    {}
+func (r *recorder) Status(finding.Status)      {}
+func (r *recorder) Scope(string, bool, string) {}
+func (r *recorder) Log(m string)               { r.logs = append(r.logs, m) }
 
 func TestRequestPlanDecodesStrictly(t *testing.T) {
 	plugin := func(reply string) *connector.External {

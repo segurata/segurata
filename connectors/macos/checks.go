@@ -307,7 +307,7 @@ func (c *Connector) listeningPorts(ctx context.Context, r *reporter, items *bgIt
 func (c *Connector) smbChecks(ctx context.Context, r *reporter, port *check) {
 	shares, err := c.sharePoints(ctx)
 	if err != nil {
-		r.report(check{id: "smb-shares", skip: err.Error()})
+		r.report(check{id: "smb-shares", area: "smb-shares", skip: err.Error()})
 		return
 	}
 	if len(shares) == 0 {
@@ -317,9 +317,7 @@ func (c *Connector) smbChecks(ctx context.Context, r *reporter, port *check) {
 		return
 	}
 	port.evidence["share_points"] = slices.Sorted(maps.Keys(shares))
-	for _, ch := range shareChecks(shares) {
-		r.report(ch)
-	}
+	r.reportAll(inArea("smb-shares", shareChecks(shares)))
 }
 
 func listenerCheck(l listener) check {
@@ -463,7 +461,7 @@ func (c *Connector) backgroundItems(ctx context.Context, r *reporter) *bgItems {
 	out, err := guard(c.Run).Run(ctx, sfltoolBin, "dumpbtm")
 	btm := parseBTM(string(out))
 	if err != nil || len(btm) == 0 {
-		skip := check{id: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); listed launchd plists and launchctl jobs instead"}
+		skip := check{id: "btm", area: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); listed launchd plists and launchctl jobs instead"}
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			skip.skip, skip.skipState = fmt.Sprintf("sfltool dumpbtm timed out after %s; listed launchd plists and launchctl jobs instead", slowTimeout), finding.StateError
@@ -478,7 +476,7 @@ func (c *Connector) backgroundItems(ctx context.Context, r *reporter) *bgItems {
 		if leftover[it.label()] {
 			continue
 		}
-		ch := check{id: "btm:" + it.ident, resource: "background_item", name: it.name,
+		ch := check{id: "btm:" + it.ident, area: "btm", resource: "background_item", name: it.name,
 			detail:   fmt.Sprintf("%s [%s] %s %s (Team %s)", it.name, it.typ, it.ident, it.exe, it.team),
 			evidence: map[string]any{"type": it.typ, "identifier": it.ident, "executable": it.exe, "team_id": it.team},
 			rem:      manual("Check you recognise it. Turn it off in System Settings > General > Login Items & Extensions, or uninstall the app that installed it."),
@@ -555,7 +553,7 @@ func (c *Connector) launchItems(ctx context.Context, items *bgItems, jobs []laun
 		if j.program != "" {
 			detail += " starts " + j.program
 		}
-		items.add(check{id: "launch-item:" + j.label, resource: "background_item", name: j.label, sev: finding.SevInfo,
+		items.add(check{id: "launch-item:" + j.label, area: "btm", resource: "background_item", name: j.label, sev: finding.SevInfo,
 			detail: detail, evidence: map[string]any{"label": j.label, "plist": j.plist, "program": j.program},
 			title: "Launch item " + j.label, rem: manual("Check you recognise it.")}, j.program)
 	}
@@ -570,7 +568,7 @@ func (c *Connector) launchItems(ctx context.Context, items *bgItems, jobs []laun
 			continue
 		}
 		seen[label] = true
-		items.add(check{id: "launchctl:" + label, resource: "background_item", name: label, sev: finding.SevInfo, detail: label,
+		items.add(check{id: "launchctl:" + label, area: "btm", resource: "background_item", name: label, sev: finding.SevInfo, detail: label,
 			title: "launchd job " + label, rem: manual("Check you recognise it.")})
 	}
 }

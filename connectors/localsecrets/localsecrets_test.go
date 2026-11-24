@@ -259,6 +259,7 @@ type recorder struct {
 	mu       sync.Mutex
 	findings []finding.Finding
 	statuses []finding.Status
+	skipped  []string // "scope: reason"
 }
 
 func (r *recorder) Finding(f finding.Finding) {
@@ -272,6 +273,13 @@ func (r *recorder) Status(s finding.Status) {
 	r.mu.Lock()
 	r.statuses = append(r.statuses, s)
 	r.mu.Unlock()
+}
+func (r *recorder) Scope(id string, inspected bool, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !inspected {
+		r.skipped = append(r.skipped, id+": "+reason)
+	}
 }
 func (r *recorder) Log(string) {}
 
@@ -402,6 +410,10 @@ func TestInventoryEndToEnd(t *testing.T) {
 		evidence(hist, "fingerprint") != evidence(env, "fingerprint") || evidence(hist, "commit") != "0123456789" {
 		t.Errorf("stripe key in pushed history: %s %v", hist.Severity, hist.Evidence)
 	}
+	// A history finding belongs to its repository, as a failed gitleaks scan's status names it.
+	if hist.Scope != "history:~/src/shop" || env.Scope != "files" {
+		t.Errorf("scopes: history %q, working file %q", hist.Scope, env.Scope)
+	}
 
 	// One private key, three places, one fingerprint.
 	pemFile := one("private-key ~/src/shop/deploy.pem scan")
@@ -490,10 +502,34 @@ func TestGitleaksFailureIsAStatus(t *testing.T) {
 	}
 	var failed bool
 	for _, s := range rec.statuses {
-		failed = failed || (s.State == finding.StateError && s.Account == "~/src/shop")
+		failed = failed || (s.State == finding.StateError && s.Account == "~/src/shop" && s.Scope == "history:~/src/shop")
 	}
 	if !failed {
-		t.Errorf("no error status for the failed repository: %+v", rec.statuses)
+		t.Errorf("no error status, scoped to the repository's history, for the failed repository: %+v", rec.statuses)
+	}
+}
+
+// Parts of the machine a configuration leaves unread are declared, so their earlier findings are
+// not taken as resolved.
+func TestUnreadPartsAreDeclared(t *testing.T) {
+	fx := newFixture(t)
+	c := fx.connector(t, fx.gitleaksReport())
+	for _, tc := range []struct {
+		cfg  map[string]any
+		want string
+	}{
+		{map[string]any{}, ""},
+		{map[string]any{"skip_git_history": true}, "history:*: skip_git_history is set"},
+		{map[string]any{"data_dumps": false}, "dumps:*: data_dumps is false"},
+		{map[string]any{"data_dumps": "only"}, `files: data_dumps is "only" | history:*: data_dumps is "only"`},
+	} {
+		rec := &recorder{}
+		if err := c.Inventory(context.Background(), connector.Request{Config: tc.cfg}, rec); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(rec.skipped, " | "); got != tc.want {
+			t.Errorf("%v: skipped %q, want %q", tc.cfg, got, tc.want)
+		}
 	}
 }
 

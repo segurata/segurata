@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +114,11 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if c.now != nil {
 		now = c.now
 	}
+	for _, s := range services {
+		if !slices.ContainsFunc(selected, func(x service) bool { return x.name == s.name }) {
+			emit.Scope(s.name, false, `not in the "services" config`)
+		}
+	}
 	for _, s := range selected {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -142,7 +148,8 @@ type env struct {
 }
 
 // account labels a service account: "github:octocat", or just "github" when the page did not
-// say who is signed in.
+// say who is signed in. Findings are scoped to the service, so a status for the bare service name
+// (signed out, nobody known) leaves every finding of that service uninspected.
 func (e *env) account(who string) string {
 	if who == "" {
 		return e.service
@@ -247,6 +254,7 @@ func (e *env) report(g grant) {
 	e.emit.Finding(finding.Finding{
 		ID:          finding.StableID(name, g.resType, id),
 		Account:     e.account(g.who),
+		Scope:       e.service,
 		Resource:    finding.Resource{Type: g.resType, ID: id, Name: g.name},
 		Kind:        kind,
 		Severity:    sev,

@@ -4,6 +4,7 @@ package run
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secrets"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Target is one connector instance to run.
@@ -67,6 +69,7 @@ type Result struct {
 	File     string
 	Findings []finding.Finding
 	Statuses []finding.Status
+	End      finding.RunEnd // the run_end record written last
 	Err      error
 }
 
@@ -80,6 +83,7 @@ type sink struct {
 	verbose  io.Writer
 	annotate func(*finding.Finding)
 	res      *Result
+	tally    finding.Tally
 }
 
 func (s *sink) Finding(f finding.Finding) {
@@ -99,7 +103,27 @@ func (s *sink) Status(st finding.Status) {
 	defer s.mu.Unlock()
 	st.Type, st.Connector, st.Instance = "status", s.name, s.inst
 	s.res.Statuses = append(s.res.Statuses, st)
+	s.tally.Status(st)
 	_ = s.enc.Encode(st)
+}
+
+// Scope records coverage in the run_end record only; it writes no line of its own.
+func (s *sink) Scope(id string, inspected bool, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tally.Declare(id, inspected, reason)
+}
+
+// end writes the run_end record. err is the connector's own error; a cancelled context counts as
+// one, since the connector may have stopped early without saying so.
+func (s *sink) end(ctx context.Context, started time.Time, err error) {
+	if err == nil && ctx.Err() != nil {
+		err = fmt.Errorf("interrupted: %w", ctx.Err())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.res.End = s.tally.End(s.name, s.inst, started, time.Now(), err)
+	_ = s.enc.Encode(s.res.End)
 }
 
 func (s *sink) Log(msg string) {
@@ -130,14 +154,18 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 
 func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, annotate func(*finding.Finding)) *Result {
 	name, label := t.Connector.Describe().Name, t.Label()
+	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
-	// 0600: the output names accounts, apps and services.
-	f, err := os.OpenFile(res.File, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	// The run writes to <file>.partial and renames it over <file> only once run_end is written, so
+	// a killed run never truncates an earlier finished run of the same day. The partial file does
+	// not match *.jsonl, so readers never pick it up. 0600: the output names accounts, apps and
+	// services.
+	partial := res.File + ".partial"
+	f, err := os.OpenFile(partial, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		res.Err = err
 		return res
 	}
-	defer f.Close()
 	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, res: res}
 
 	req, errs := NewRequest(cfg, t.Instance)
@@ -145,6 +173,14 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		s.Status(finding.Status{State: finding.StateMissingCredentials, Detail: e.Error()})
 	}
 	res.Err = t.Connector.Inventory(ctx, req, s)
+	s.end(ctx, started, res.Err)
+	if err := f.Close(); err != nil {
+		res.Err = errors.Join(res.Err, err)
+		return res
+	}
+	if err := os.Rename(partial, res.File); err != nil {
+		res.Err = errors.Join(res.Err, err)
+	}
 	return res
 }
 
@@ -176,6 +212,10 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 			if st.State != finding.StateOK {
 				fmt.Fprintf(w, "~ %s %s: %s %s\n", r.Name, st.Account, st.State, st.Detail)
 			}
+		}
+		if sk := r.End.Scopes.Skipped; r.Err == nil && len(sk) > 0 {
+			fmt.Fprintf(w, "~ %s: incomplete run, %d %s not inspected (first %s: %s); missing findings there are not resolved\n",
+				r.Name, r.End.Scopes.SkippedCount, textfmt.Plural(r.End.Scopes.SkippedCount, "scope", "scopes"), sk[0].Scope, sk[0].Reason)
 		}
 		all = append(all, r.Findings...)
 	}

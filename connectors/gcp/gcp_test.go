@@ -67,6 +67,7 @@ type recorder struct {
 	mu       sync.Mutex
 	findings []finding.Finding
 	statuses []finding.Status
+	skipped  []string
 }
 
 func (r *recorder) Finding(f finding.Finding) {
@@ -83,6 +84,13 @@ func (r *recorder) Status(s finding.Status) {
 	r.statuses = append(r.statuses, s)
 }
 
+func (r *recorder) Scope(id string, inspected bool, _ string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !inspected {
+		r.skipped = append(r.skipped, id)
+	}
+}
 func (r *recorder) Log(string) {}
 
 func (r *recorder) byTitle(t *testing.T, sub string) finding.Finding {
@@ -276,6 +284,35 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		}
 	}
 
+	// Permission denied on demo-blog leaves only demo-blog's findings unresolved.
+	var tally finding.Tally
+	for _, s := range rec.statuses {
+		tally.Status(s)
+	}
+	end := tally.End(connectorName, "", time.Now(), time.Now(), nil)
+	cov := finding.CoverageOf(&end)
+	if key.Scope != "demo-shop" || adc.Scope != "" {
+		t.Errorf("scopes: project finding %q, local finding %q", key.Scope, adc.Scope)
+	}
+	if b := rec.byTitle(t, "no budget with alerts covers it"); b.Scope != "billing:000000-AAAAAA-111111" {
+		t.Errorf("billing finding scope %q", b.Scope)
+	}
+	for _, c := range []struct {
+		f         finding.Finding
+		unchecked bool
+	}{
+		{key, false},
+		{adc, false},
+		{finding.Finding{Account: "owner@example.com", Scope: "demo-blog"}, true},
+		{finding.Finding{Account: "owner@example.com", Scope: "billing:000000-BBBBBB-222222"}, true},
+		{finding.Finding{Account: "work@example.org", Scope: "any-project"}, true}, // reauth: the whole account
+		{rec.byTitle(t, "has 1 budget(s) with alerts"), false},                     // ci@ is a service account: not used, so no billing:* failure
+	} {
+		if _, got := cov.UncheckedFinding(c.f); got != c.unchecked {
+			t.Errorf("%s %s: unchecked %v, want %v", c.f.Account, finding.ScopeOf(c.f), got, c.unchecked)
+		}
+	}
+
 	for _, call := range runner.calls {
 		if readOnly.Check(strings.Fields(call)) != nil {
 			t.Errorf("non read-only call reached gcloud: %s", call)
@@ -357,6 +394,10 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 		if strings.Contains(call, "demo-blog") || strings.Contains(call, "iam.gserviceaccount.com") {
 			t.Errorf("skipped project or service account used: %s", call)
 		}
+	}
+	// Both are declared skipped, so findings earlier runs made there are not taken as resolved.
+	if got := strings.Join(rec.skipped, ","); got != "ci@demo-shop.iam.gserviceaccount.com,demo-blog" {
+		t.Errorf("skipped scopes %q", got)
 	}
 }
 

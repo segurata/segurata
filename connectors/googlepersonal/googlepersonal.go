@@ -75,9 +75,9 @@ func (GooglePersonal) Inventory(ctx context.Context, req connector.Request, emit
 	return inventory(ctx, cdpBrowser{c}, emit, time.Now(), only)
 }
 
-// accountFilter reads config `accounts`: when set, only these emails are inventoried, and other
-// accounts signed in to the browser (someone else's mailbox you were given access to) are skipped
-// without a status.
+// accountFilter reads config `accounts`: when set, only these emails are inventoried. Other
+// accounts signed in to the browser (someone else's mailbox you were given access to) get no
+// status; each is declared as a skipped scope.
 func accountFilter(cfg map[string]any) (map[string]bool, error) {
 	raw, ok := cfg["accounts"]
 	if !ok || raw == nil {
@@ -175,7 +175,8 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 	for u := 0; u < maxAccounts && ctx.Err() == nil; u++ {
 		raw, err := b.load(ctx, connectionsURL(u), connectionsJS, connectionsReady, 24)
 		if err != nil {
-			emit.Status(finding.Status{Account: fmt.Sprintf("authuser %d", u), State: finding.StateError, Detail: err.Error()})
+			// The accounts from here on were not read, and which they are is unknown.
+			emit.Status(finding.Status{Account: fmt.Sprintf("authuser %d", u), Scope: finding.ScopeAll, State: finding.StateError, Detail: err.Error()})
 			break
 		}
 		page, _ := decode[connectionsPage](raw)
@@ -191,7 +192,9 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 		}
 		seen[page.Mail] = true
 		if only != nil && !only[strings.ToLower(page.Mail)] {
-			emit.Log(fmt.Sprintf("u%d %s: not in connectors.google-personal.config.accounts, skipped", u, page.Mail))
+			// Turned off by config: declared skipped, so findings an earlier run made for this
+			// account are not taken as resolved.
+			emit.Scope(page.Mail, false, "not in connectors.google-personal.config.accounts")
 			continue
 		}
 		if isReauth(page.Text) {

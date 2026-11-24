@@ -39,7 +39,13 @@ type run struct {
 	at       time.Time
 	findings []finding.Finding
 	statuses []finding.Status
-	blocked  map[string]bool // accounts (or "" for all) with a status other than ok
+	cov      finding.Coverage // which scopes it inspected
+}
+
+// notChecked is the history note for a finding a run did not inspect, the same for every item and
+// sync that folds that run, so each item logs it once.
+func (r *run) notChecked(why string) string {
+	return fmt.Sprintf("not checked in run %s of %s (%s)", r.label, r.at.Format(time.RFC3339), why)
 }
 
 // Sync folds the latest run of every connector instance into the items:
@@ -53,7 +59,9 @@ type run struct {
 // longer reported)"; a done item is verified once a run after it was marked done no longer reports
 // its findings, and reopened if a run after that reports one again; expired snoozes and
 // acceptances open their items again. Accepted and ignored items only get their findings updated.
-// A finding counts as gone only when its connector instance ran and could inspect its account.
+// A finding counts as gone only when its connector instance's run finished (ends with run_end) and
+// inspected the finding's scope; otherwise the item keeps it and logs "not checked in run …" once
+// per run instead of closing. See docs/architecture.md, "Run completeness".
 func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	var rep SyncReport
 	runs, err := readRuns(opt)
@@ -153,8 +161,9 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		if it.Kind == KindRotate || len(it.Findings) == 0 {
 			continue
 		}
-		it.markGone(seen[it], folded)
+		held := it.markGone(seen[it], folded)
 		t.lifecycle(it, folded, now, &rep)
+		it.noteHeld(held, now)
 	}
 	t.expireAll(now, &rep)
 	t.seed(now)
@@ -292,13 +301,15 @@ func detailHasFix(detail string) bool {
 }
 
 // RunLabel names a connector instance from its records, which carry the exact connector name and
-// instance label; an empty run falls back to the file name.
-func RunLabel(file string, findings []finding.Finding, statuses []finding.Status) string {
+// instance label; a run with none falls back to the file name.
+func RunLabel(file string, rf remediate.RunFile) string {
 	switch {
-	case len(findings) > 0:
-		return label(findings[0].Connector, findings[0].Instance)
-	case len(statuses) > 0:
-		return label(statuses[0].Connector, statuses[0].Instance)
+	case rf.End != nil:
+		return label(rf.End.Connector, rf.End.Instance)
+	case len(rf.Findings) > 0:
+		return label(rf.Findings[0].Connector, rf.Findings[0].Instance)
+	case len(rf.Statuses) > 0:
+		return label(rf.Statuses[0].Connector, rf.Statuses[0].Instance)
 	}
 	base := filepath.Base(file)
 	return base[:len(base)-len(filepath.Ext(base))]
@@ -335,12 +346,15 @@ func readRuns(opt SyncOptions) ([]*run, error) {
 }
 
 func readRunFile(file string) (*run, error) {
-	findings, statuses, err := remediate.ReadRun(file)
+	rf, err := remediate.ReadRun(file)
 	if err != nil {
 		return nil, err
 	}
-	r := &run{label: RunLabel(file, findings, statuses), findings: findings, statuses: statuses, blocked: map[string]bool{}}
-	for _, f := range findings {
+	r := &run{label: RunLabel(file, rf), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
+	if rf.End != nil {
+		r.at = rf.End.EndedAt
+	}
+	for _, f := range rf.Findings {
 		if f.ObservedAt.After(r.at) {
 			r.at = f.ObservedAt
 		}
@@ -353,11 +367,6 @@ func readRunFile(file string) (*run, error) {
 		r.at = st.ModTime()
 	}
 	r.at = r.at.UTC()
-	for _, st := range statuses {
-		if st.State != finding.StateOK {
-			r.blocked[st.Account] = true
-		}
-	}
 	return r, nil
 }
 
@@ -384,9 +393,11 @@ func (it *Item) upsert(refs []FindingRef, seen map[string]bool) int {
 	return added
 }
 
-// markGone flags the refs this sync did not see, when their connector instance ran and could
-// inspect their account. A status ref (setup items) is gone as soon as the run lacks that status.
-func (it *Item) markGone(seen map[string]bool, folded map[string]*run) {
+// markGone flags the refs this sync did not see, when their connector instance's run inspected
+// their scope; it returns, by ref id, the "not checked" note of each ref it held back instead. A
+// status ref (setup items) is gone as soon as a run that inspected anything lacks that status.
+func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[string]string {
+	held := map[string]string{}
 	for i := range it.Findings {
 		r := &it.Findings[i]
 		if seen[r.ID] {
@@ -396,10 +407,42 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) {
 		if !ok {
 			continue
 		}
-		if !strings.HasPrefix(r.ID, "status:") && (run.blocked[r.Account] || run.blocked[""]) {
+		why, unchecked := run.cov.Unchecked(r.Account, r.Scope)
+		if strings.HasPrefix(r.ID, "status:") {
+			why, unchecked = run.cov.NoneChecked()
+		}
+		if unchecked {
+			held[r.ID] = run.notChecked(why)
 			continue
 		}
 		r.Gone = true
+	}
+	return held
+}
+
+// noteHeld logs, once per run, why an item that would have closed or been verified did not: every
+// finding still counted as reported belongs to a scope its latest run did not inspect.
+func (it *Item) noteHeld(held map[string]string, now time.Time) {
+	if len(held) == 0 || it.Status == Accepted || it.Status == Ignored || (it.Status == Done && it.VerifiedAt != nil) {
+		return
+	}
+	var notes []string
+	for _, r := range it.Findings {
+		if r.Gone {
+			continue
+		}
+		note, ok := held[r.ID]
+		if !ok {
+			return // something inspected still reports it: nothing was held back
+		}
+		if !slices.Contains(notes, note) {
+			notes = append(notes, note)
+		}
+	}
+	for _, note := range notes {
+		if !slices.ContainsFunc(it.History, func(e Event) bool { return e.Action == actNotChecked && e.Detail == note }) {
+			it.Log(now, EvNote, actNotChecked, note)
+		}
 	}
 }
 

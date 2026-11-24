@@ -21,6 +21,10 @@ var ErrNotTTY = errors.New("stdin is not a terminal, so nobody can confirm: refu
 // ErrStillPresent means the remediation ran but the connector still reports the finding.
 var ErrStillPresent = errors.New("the finding is still reported after applying the remediation")
 
+// ErrUnverified means the remediation ran but the check run did not inspect the finding's scope
+// (it stopped early, or skipped that account or repository), so its absence proves nothing.
+var ErrUnverified = errors.New("could not verify the fix")
+
 // Selector is the connector instance that produced f, spelled as on the command line.
 func Selector(f finding.Finding) string {
 	if f.Instance == "" {
@@ -129,7 +133,10 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 		if err != nil {
 			return fmt.Errorf("applied, but the check could not run: %w", err)
 		}
-		present, err := StillPresent(results, f.ID)
+		present, err := StillPresent(results, f)
+		if errors.Is(err, ErrUnverified) {
+			return fmt.Errorf("applied, but %w", err)
+		}
 		if err != nil {
 			return fmt.Errorf("applied, but the check failed: %w", err)
 		}
@@ -168,8 +175,8 @@ func Confirm(in io.Reader, out io.Writer, yes, tty bool) (bool, error) {
 }
 
 // StillPresent reports whether a fresh run still emits the finding. A run that could not start is
-// an error, not a pass.
-func StillPresent(results []*run.Result, id string) (bool, error) {
+// an error, not a pass; one that did not inspect the finding's scope is ErrUnverified.
+func StillPresent(results []*run.Result, target finding.Finding) (bool, error) {
 	if len(results) == 0 {
 		return false, errors.New("no connector ran")
 	}
@@ -178,9 +185,15 @@ func StillPresent(results []*run.Result, id string) (bool, error) {
 			return false, fmt.Errorf("%s: %w", r.Name, r.Err)
 		}
 		for _, f := range r.Findings {
-			if f.ID == id {
+			if f.ID == target.ID {
 				return true, nil
 			}
+		}
+	}
+	for _, r := range results {
+		end := r.End
+		if why, unchecked := finding.CoverageOf(&end).UncheckedFinding(target); unchecked {
+			return false, fmt.Errorf("%w: %s", ErrUnverified, why)
 		}
 	}
 	return false, nil

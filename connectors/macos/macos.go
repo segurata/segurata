@@ -225,9 +225,9 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	if users, err := c.localUsers(ctx); err != nil {
 		r.report(check{id: "local-accounts", skip: "dscl could not list local users: " + err.Error()})
 	} else {
-		r.reportAll(c.accountChecks(ctx, users))
-		r.reportAll(c.orphanedFiles(users))
-		r.reportAll(c.endpointAgents(ctx, users))
+		r.reportAll(inArea("local-accounts", c.accountChecks(ctx, users)))
+		r.reportAll(inArea("local-accounts", c.orphanedFiles(users)))
+		r.reportAll(inArea("local-accounts", c.endpointAgents(ctx, users)))
 	}
 	r.reportAll(c.backupChecks(ctx))
 	items := c.backgroundItems(ctx, r)
@@ -236,15 +236,14 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	r.report(c.braveDebugging(ctx))
 	r.report(<-pending)
 
-	if len(r.skipped) == 0 {
-		emit.Status(finding.Status{Account: host, State: finding.StateOK})
-	}
+	// A check that could not run leaves only its own area uninspected: the machine was.
+	emit.Status(finding.Status{Account: host, State: finding.StateOK})
 	for _, ch := range r.skipped {
 		state := ch.skipState
 		if state == "" {
 			state = finding.StateUnsupported
 		}
-		emit.Status(finding.Status{Account: host, State: state, Detail: ch.id + ": " + ch.skip})
+		emit.Status(finding.Status{Account: host, Scope: ch.scope(), State: state, Detail: ch.id + ": " + ch.skip})
 	}
 	return nil
 }
@@ -253,6 +252,7 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 // something to act on, and its disappearance is how remediate confirms a fix.
 type check struct {
 	id       string
+	area     string // the checks a skip of this id stands for, when several; defaults to id
 	resource string // resource type; "macos_setting" when empty
 	name     string
 	ok       bool
@@ -271,6 +271,23 @@ type reporter struct {
 	host    string
 	emit    connector.Emitter
 	skipped []check
+}
+
+// scope is a check's coverage scope: findings carry it, and a check that cannot run leaves it
+// uninspected. Checks that one failure skips together (every share point, every background item,
+// everything read from the local users) share an area.
+func (ch check) scope() string {
+	if ch.area != "" {
+		return "check:" + ch.area
+	}
+	return "check:" + ch.id
+}
+
+func inArea(area string, chs []check) []check {
+	for i := range chs {
+		chs[i].area = area
+	}
+	return chs
 }
 
 func (r *reporter) reportAll(chs []check) {
@@ -299,6 +316,7 @@ func (r *reporter) report(ch check) {
 	}
 	r.emit.Finding(finding.Finding{
 		Account:     r.host,
+		Scope:       ch.scope(),
 		Resource:    finding.Resource{Type: typ, ID: ch.id, Name: name},
 		Kind:        finding.KindSetting,
 		Severity:    ch.sev,

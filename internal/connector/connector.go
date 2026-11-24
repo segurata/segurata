@@ -41,9 +41,16 @@ type Request struct {
 }
 
 // Emitter receives records as the connector produces them.
+//
+// Statuses already say which accounts (or, with Status.Scope, which parts of one) were inspected.
+// Scope declares coverage no status carries: a repository the rate limit left unread, a project
+// beyond a cap. Every scope a connector meant to inspect and did not must be either a status other
+// than ok or a Scope(id, false, reason); otherwise its findings look resolved. See
+// docs/connectors.md, "Coverage".
 type Emitter interface {
 	Finding(finding.Finding)
 	Status(finding.Status)
+	Scope(id string, inspected bool, reason string)
 	Log(msg string)
 }
 
