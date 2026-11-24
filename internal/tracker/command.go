@@ -43,7 +43,7 @@ const trackUsage = `usage: segurata track <command>
   sync       [--out out] [--from out/<date>/local-secrets.jsonl] [--include-noise]
 <id> is T-0012 (or T-12), or a secret's short id.`
 
-const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] [--mark-seen]"
+const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--explain] [--write] [--mark-seen]"
 
 // CLI is `segurata track` and `segurata status`.
 type CLI struct {
@@ -484,6 +484,7 @@ func (c CLI) Status(args []string) int {
 	format := fs.String("format", string(doc.Text), "text, md or html")
 	write := fs.Bool("write", false, "also write status.md and status.html next to the tracker (mode 0600); implies --mark-seen")
 	markSeen := fs.Bool("mark-seen", false, "remember this status as the start of the next \"Since the last status\" (unfiltered only)")
+	explain := fs.Bool("explain", false, "show the score of each \"Do next\" entry and the factors it is made of")
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil || len(pos) > 0 || !doc.Format(*format).Valid() {
 		fmt.Fprintln(c.Err, statusUsage)
@@ -495,7 +496,7 @@ func (c CLI) Status(args []string) int {
 		return c.fail(err)
 	}
 	f := newFilter(*theme, *kind, *prio)
-	d := t.Status(path, now, f)
+	d := t.Status(path, now, View{Filter: f, Explain: *explain})
 	if err := doc.Render(c.Out, d, doc.Format(*format)); err != nil {
 		return c.fail(err)
 	}

@@ -364,9 +364,10 @@ func (t *Tracker) find(ref string, keep func(*Item) bool, hint string) (*Item, e
 	return nil, fmt.Errorf("%q matches %d items, use more characters", ref, len(hits))
 }
 
-// Sort orders items most urgent first: priority, then (secrets) live and leaked, worst exposure, a copy in one of
-// the owner's repositories, the most recent commit, service and id; other items by severity,
-// title and id.
+// Sort orders items most urgent first: priority, then for secrets: live and leaked (a connector
+// shows it works and a copy left the machine), how far it went, held by a working file (used_in:
+// something reads it now), a copy in one of the owner's repositories, the most recent commit, more
+// locations, the exact kind of spot, service and id; other items by severity, title and id.
 func Sort(items []*Item) {
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i], items[j]
@@ -377,14 +378,23 @@ func Sort(items []*Item) {
 			if la, lb := a.LiveAndLeaked(), b.LiveAndLeaked(); la != lb {
 				return la
 			}
-			if ra, rb := spotRank(a.worst()), spotRank(b.worst()); ra != rb {
-				return ra > rb
+			if ea, eb := a.worst().Level, b.worst().Level; ea != eb {
+				return ea > eb
+			}
+			if ua, ub := len(a.Secret.UsedIn) > 0, len(b.Secret.UsedIn) > 0; ua != ub {
+				return ua
 			}
 			if oa, ob := a.owned(), b.owned(); oa != ob {
 				return oa
 			}
 			if da, db := a.lastCommitted(), b.lastCommitted(); da != db {
 				return da > db
+			}
+			if na, nb := len(a.Secret.Locations), len(b.Secret.Locations); na != nb {
+				return na > nb
+			}
+			if ra, rb := spotRank(a.worst()), spotRank(b.worst()); ra != rb {
+				return ra > rb
 			}
 			if a.Secret.Service != b.Secret.Service {
 				return a.Secret.Service < b.Secret.Service

@@ -63,7 +63,7 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 		t.Fatalf("leverage %q", lev)
 	}
 	var b strings.Builder
-	_ = doc.Render(&b, tr.Status("tracker.json", now, Filter{}), doc.Text)
+	_ = doc.Render(&b, tr.Status("tracker.json", now, View{}), doc.Text)
 	if !strings.Contains(b.String(), `answering "yes" closes 3 open items`) {
 		t.Errorf("status lacks the leverage:\n%s", b.String())
 	}

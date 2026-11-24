@@ -350,7 +350,7 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 		t.Errorf("ignore reason lost: %q", d)
 	}
 	var b strings.Builder
-	if err := doc.Render(&b, l.Status("tracker.json", t0.Add(time.Hour), Filter{}), doc.Text); err != nil {
+	if err := doc.Render(&b, l.Status("tracker.json", t0.Add(time.Hour), View{}), doc.Text); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "ignored 0, reclassified as noise 2") {

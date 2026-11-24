@@ -391,15 +391,41 @@ replace --to-keychain`.
 ### `segurata status`
 
 ```
-segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] [--mark-seen]
+segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--explain] [--write] [--mark-seen]
 ```
 
 The briefing, built with the report's document model and renderers (`internal/doc`), so text,
 Markdown and HTML say the same thing: a headline (open items by priority and theme, done and
-verified in the last 7 days, accepted, ignored, snoozed), "Do next" (the ten most urgent entries
-with their next step, command and page; secrets count as one entry per priority pointing to
-`segurata rotations next`), pending decisions, setup blockers, the changes since the last
-seen status (events counted, the latest listed) and the accepted risks. Reading it changes
+verified in the last 7 days, accepted, ignored, snoozed), "Do next" (the ten entries worth most,
+see below), pending decisions, setup blockers, the changes since the last seen status (events
+counted, the latest listed) and the accepted risks. Long next steps show their first sentences
+and fold the rest (`doc.Fold`: a collapsed `<details>` in HTML and Markdown, `[…]` in text), never
+cut inside a `code span`.
+
+#### Do next
+
+Entries are ranked by a score (`internal/tracker/score.go`), every factor from a table, and
+`--explain` prints each entry's formula ("27.0 = impact 6 (P1) × blast 3 (one stolen password
+opens every repository of those orgs) ÷ effort 1 (one change) × quick win 1.5 (one fix closes 5
+findings)"):
+
+    score = impact × blast × exposure × liveness × confidence ÷ effort × quick win
+
+| Factor | Values |
+|---|---|
+| impact | the priority: P0 10, P1 6, P2 3, P3 1, none 0.5 |
+| blast | what is at stake beyond one finding's severity, first match: a Google account that is the login for other services 3, 2FA not required (or members without it) in GitHub orgs 3, no Time Machine backup 2.5, high-risk Google OAuth grants 2.5, a browser with a remote debugging port 2, data dumps 2, apps that can delete or write every repository 1.5, every org member can write every repository 1.5, spend limits and budgets 0.7, X apps 0.6, endpoint-agent leftovers 0.5; else 1 |
+| exposure (secrets) | worst copy remote 1.5, shared 1, local 0.7 |
+| liveness (secrets) | live and leaked 2 (see "Correlation"), live 1.5, attributed mine 1.3, attributed not-mine 0.3 |
+| confidence | a secret nothing shows still valid 0.8, a review list 0.8, a "possible" dump 0.7 |
+| effort | rotate with `rotations replace` 1, rotate by hand 1.5, a history rewrite (dumps) 3, a review list 1 + entries/20 (3 at most), else 1; doubled when a pending decision blocks the item |
+| quick win | 1.5 when segurata does it after confirmation, or one fix closes 3 findings or more |
+
+A pending decision that blocks items (see "Grouping") is an entry worth half of what it unblocks,
+as a quick win, with "Unblocks: 9 items (P1 9)". Secrets are one entry per priority, scored as the
+next secret: it names that secret, its first two reasons, its next step and command, and `segurata
+rotations next --priority P0` to go on. Coverage items (see "Coverage") and setup items have
+sections of their own. Reading it changes
 nothing: an unfiltered `status --mark-seen` records the "since" mark, and `--write` (which implies
 `--mark-seen`) also writes `status.md` and `status.html` next to the tracker, mode 0600. `report`
 stays the per-run view. Likewise `rotations next` only logs a `next` history event with `--log`.
@@ -902,8 +928,10 @@ last four characters when the value is long and random, and the length, `sk_live
 
 Titles. A rotate item is named `<label> <hint> in <repo>:<file> (+N places), committed YYYY-MM`:
 the location that exposed it most (among equals the owner's repository, then the latest commit),
-the number of other locations, and the earliest commit date. Within a priority and exposure, items
-with a copy in an owned repository and with more recent commits come first.
+the number of other locations, and the earliest commit date. Within a priority, secrets that are
+live and leaked come first (see "Correlation"), then by exposure, then those a working file holds
+(`used_in`), with a copy in an owned repository, with the most recent commit, and found in more
+places. `rotations next` and the "Rotate N P0 secrets" entry of `status` follow that order.
 
 ### Guided rotation: `next` and `replace`
 

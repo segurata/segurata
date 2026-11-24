@@ -46,13 +46,20 @@ const (
 
 var prios = []secretrisk.Priority{secretrisk.P0, secretrisk.P1, secretrisk.P2, secretrisk.P3}
 
+// View says what a status shows: the items a filter keeps, and with Explain the score of each
+// entry of "Do next".
+type View struct {
+	Filter
+	Explain bool
+}
+
 // Status lays the briefing out: headline, what to do next, pending decisions, setup blockers,
 // what changed since the last status, and the accepted risks. It never shows a secret value:
 // rotate items are named by their redacted hint.
-func (t *Tracker) Status(path string, now time.Time, f Filter) *doc.Doc {
+func (t *Tracker) Status(path string, now time.Time, v View) *doc.Doc {
 	var items []*Item
 	for _, it := range t.Items {
-		if f.keep(it) {
+		if v.keep(it) {
 			items = append(items, it)
 		}
 	}
@@ -64,7 +71,7 @@ func (t *Tracker) Status(path string, now time.Time, f Filter) *doc.Doc {
 	}
 	d.P(fmt.Sprintf("As of %s. Tracker %s, %s.", now.Format("2006-01-02 15:04"), path, sync))
 	t.headline(d, items, now)
-	t.doNext(d, items, now)
+	t.doNext(d, items, now, v.Explain)
 	t.decisions(d, items, now)
 	blockers(d, items, now)
 	t.changes(d, items, now)
@@ -125,42 +132,53 @@ func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
 	d.Table(head, rows)
 }
 
-// doNext lists the most urgent things to do. Secrets are one entry per priority (there can be
-// hundreds), pointing to `segurata rotations next`; every other item is listed on its own.
-func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time) {
+// doNext lists the entries most worth doing now, by score (see score.go): items, pending
+// decisions that unblock others, and one entry per priority for secrets (there can be hundreds),
+// which names the next secret to rotate and why. With explain each entry shows its score.
+func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool) {
 	d.H(2, "Do next")
 	type entry struct {
-		prio secretrisk.Priority
-		rank int // severity, for ties
-		item doc.Item
+		score Score
+		prio  secretrisk.Priority
+		item  doc.Item
 	}
 	var entries []entry
-	secrets := map[secretrisk.Priority]int{}
+	add := func(s Score, p secretrisk.Priority, di doc.Item) {
+		if quick := s.factor("quick win"); quick.Value > 1 {
+			di.Meta += " · quick win: " + quick.Why
+		}
+		if explain {
+			di.Details = append(di.Details, doc.Detail{Label: "Score", Text: s.Explain()})
+		}
+		entries = append(entries, entry{s, p, di})
+	}
+	secrets := map[secretrisk.Priority][]*Item{}
 	for _, it := range items {
-		if !it.Active(now) || it.Kind == KindDecide || it.Kind == KindSetup {
-			continue
-		}
-		if it.Kind == KindRotate {
+		switch {
+		case !it.Active(now) || it.Kind == KindSetup || it.Theme == coverageTheme:
+		case it.Kind == KindRotate:
 			if p := it.EffectivePriority(); p != "" {
-				secrets[p]++
+				secrets[p] = append(secrets[p], it)
 			}
-			continue
+		case it.Kind == KindDecide:
+			if n := len(t.Unblocks(it, now)); n > 0 {
+				add(t.Score(it, now), it.EffectivePriority(), t.decisionDoc(it, now))
+			}
+		default:
+			add(t.Score(it, now), it.EffectivePriority(), itemDoc(it, t))
 		}
-		entries = append(entries, entry{it.EffectivePriority(), it.Severity.Rank(), itemDoc(it, t)})
 	}
 	for _, p := range prios {
-		if n := secrets[p]; n > 0 {
-			entries = append(entries, entry{p, 5, doc.Item{Badge: string(p), Text: fmt.Sprintf("Rotate %s", count(n, string(p)+" secret", string(p)+" secrets")),
-				Meta: "Secrets to rotate · one at a time, most exposed first",
-				Details: []doc.Detail{{Label: "Next", Text: "Rotate it at the provider, then let segurata put the new value where it is used."},
-					{Label: "Command", Text: "segurata rotations next --priority " + string(p), Kind: doc.DCode}}}})
+		if q := secrets[p]; len(q) > 0 {
+			Sort(q)
+			add(t.Score(q[0], now), p, secretsDoc(p, q))
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
-		if a, b := entries[i].prio.Rank(), entries[j].prio.Rank(); a != b {
-			return a < b
+		if a, b := entries[i].score.Total, entries[j].score.Total; a != b {
+			return a > b
 		}
-		return entries[i].rank > entries[j].rank
+		return entries[i].prio.Rank() < entries[j].prio.Rank()
 	})
 	if len(entries) == 0 {
 		d.P("Nothing open.")
@@ -174,6 +192,75 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time) {
 	if len(entries) > statusTop {
 		d.P(fmt.Sprintf("… and %d more: ", len(entries)-statusTop), doc.Code("segurata track list"), ".")
 	}
+	if !explain {
+		d.P("Ranked by blast radius × confidence ÷ effort; ", doc.Code("segurata status --explain"), " shows each score.")
+	}
+}
+
+// factor is the score's factor of that name, or a neutral one.
+func (s Score) factor(name string) Factor {
+	for _, f := range s.Factors {
+		if f.Name == name {
+			return f
+		}
+	}
+	return Factor{Name: name, Value: 1}
+}
+
+// secretsDoc is the entry standing for the secrets of one priority: how many, and the next one to
+// rotate with why and the command that does it.
+func secretsDoc(p secretrisk.Priority, queue []*Item) doc.Item {
+	next := queue[0]
+	out := doc.Item{Badge: string(p), Text: "Rotate " + count(len(queue), string(p)+" secret", string(p)+" secrets"),
+		Meta:    "Secrets to rotate · one at a time, most urgent first",
+		Details: []doc.Detail{{Label: "Next secret", Text: next.Title + " (" + next.ID + ")"}}}
+	if r := next.Secret.Reasons; len(r) > 0 {
+		out.Details = append(out.Details, doc.Fold("Why", strings.Join(r[:min(len(r), 2)], "; "), actionLen))
+	}
+	if n := next.Next; n != nil {
+		out.Details = append(out.Details, doc.Fold("Next ("+string(n.Who)+")", n.Action, actionLen), doc.Detail{Label: "Command", Text: n.Command, Kind: doc.DCode})
+	}
+	out.Details = append(out.Details, doc.Detail{Label: "Then", Text: "segurata rotations next --priority " + string(p), Kind: doc.DCode})
+	return out
+}
+
+// decisionDoc is a pending decision as a "Do next" entry: the question, what answering unblocks
+// or closes, and the command.
+func (t *Tracker) decisionDoc(it *Item, now time.Time) doc.Item {
+	out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: "Decide: " + it.Decision.Question,
+		Meta: it.ID + " · " + t.ThemeTitle(it.Theme) + " · decide"}
+	out.Details = append(out.Details, t.decisionDetails(it, now)...)
+	return out
+}
+
+// decisionDetails are a pending decision's options, leverage and answer command.
+func (t *Tracker) decisionDetails(it *Item, now time.Time) []doc.Detail {
+	var out []doc.Detail
+	if len(it.Decision.Options) > 0 {
+		out = append(out, doc.Detail{Label: "Options", Text: strings.Join(it.Decision.Options, " | ")})
+	}
+	if u := t.Unblocks(it, now); len(u) > 0 {
+		out = append(out, doc.Detail{Label: "Unblocks", Text: count(len(u), "item", "items") + " " + byPriority(u)})
+	}
+	for _, l := range t.Leverage(it, now) {
+		out = append(out, doc.Detail{Label: "Leverage", Text: l})
+	}
+	return append(out, doc.Detail{Label: "Answer", Text: "segurata track decide " + it.ID + ` --answer "…"`, Kind: doc.DCode})
+}
+
+// byPriority counts items by priority: "(P0 2, P1 7)".
+func byPriority(items []*Item) string {
+	n := map[secretrisk.Priority]int{}
+	for _, it := range items {
+		n[it.EffectivePriority()]++
+	}
+	var parts []string
+	for _, p := range append(prios, "") {
+		if n[p] > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", textfmt.OrDash(string(p)), n[p]))
+		}
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
 }
 
 // itemDoc is one item in a list: priority, title, what it is, and its next step.
@@ -202,14 +289,7 @@ func (t *Tracker) decisions(d *doc.Doc, items []*Item, now time.Time) {
 	d.H(2, "Pending decisions")
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Kind == KindDecide && it.Active(now) }) {
-		out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: it.Decision.Question, Meta: it.ID}
-		if len(it.Decision.Options) > 0 {
-			out.Details = append(out.Details, doc.Detail{Label: "Options", Text: strings.Join(it.Decision.Options, " | ")})
-		}
-		for _, l := range t.Leverage(it, now) {
-			out.Details = append(out.Details, doc.Detail{Label: "Leverage", Text: l})
-		}
-		out.Details = append(out.Details, doc.Detail{Label: "Answer", Text: "segurata track decide " + it.ID + ` --answer "…"`, Kind: doc.DCode})
+		out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: it.Decision.Question, Meta: it.ID, Details: t.decisionDetails(it, now)}
 		list = append(list, out)
 	}
 	if len(list) == 0 {

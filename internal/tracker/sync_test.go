@@ -116,7 +116,9 @@ func TestGroupingRules(t *testing.T) {
 		fnd("macos", "", "Mac", "background_item", "bg1", "bg1", finding.SevInfo, "Background item bg1", t0),
 		okStatus("macos", "Mac"))
 
-	dump := func(path string, sev finding.Severity) finding.Finding { return dumpFinding("~/src/api", path, sev, 365<<10, t0) }
+	dump := func(path string, sev finding.Severity) finding.Finding {
+		return dumpFinding("~/src/api", path, sev, 365<<10, t0)
+	}
 	secret := func(fp, kind, path string) finding.Finding {
 		f := fnd(SecretsConnector, "", "local", "secret", "scan:"+path+"#"+fp, "Stripe live key", finding.SevCritical, "Stripe live secret key in "+path, t0)
 		raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: fp, Type: "stripe-live", Redacted: "sk_live_…" + fp[:4] + "(107)", Path: path,

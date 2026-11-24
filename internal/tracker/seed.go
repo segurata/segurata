@@ -23,6 +23,10 @@ var themes = []Theme{
 	{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."},
 }
 
+// coverageTheme holds the review items for what no connector audits on this machine (coverage.go);
+// status lists them apart from what is failing.
+const coverageTheme = "coverage"
+
 // connectorThemes maps a connector to its theme; local-secrets depends on the resource type.
 var connectorThemes = map[string]string{
 	"macos": "mac", "browser-extensions": "browser-extensions", "github": "github-orgs",

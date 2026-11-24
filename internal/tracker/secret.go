@@ -534,6 +534,9 @@ func (it *Item) refreshSecret() {
 	if it.reopenedStillPresent() {
 		reasons = append(reasons, StillPresent)
 	}
+	for _, r := range live {
+		reasons = append(reasons, "live: "+r.Label()+": "+r.Title)
+	}
 	if ok {
 		reasons = append(reasons, secretrisk.Reason(t, worst))
 		counts := map[string]int{}
@@ -557,9 +560,6 @@ func (it *Item) refreshSecret() {
 				reasons = append(reasons, fmt.Sprintf("also %s (%d %s)", phrase[lb], n, textfmt.Plural(n, "place", "places")))
 			}
 		}
-	}
-	for _, r := range live {
-		reasons = append(reasons, "live: "+r.Label()+": "+r.Title)
 	}
 	if it.Owner() == attribution.Mine && it.upstreamCopy() {
 		reasons = append(reasons, "yours by attribution ("+it.Secret.Attribution.Reasons[0]+"), so its copies in other people's repositories count in full")

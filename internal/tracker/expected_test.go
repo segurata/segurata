@@ -50,7 +50,7 @@ func TestExpectedStatusesCloseTheirSetupItems(t *testing.T) {
 		t.Error("a status no rule covers was closed")
 	}
 	var b strings.Builder
-	if err := doc.Render(&b, tr.Status("tracker.json", t0.Add(25*time.Hour), Filter{}), doc.Text); err != nil {
+	if err := doc.Render(&b, tr.Status("tracker.json", t0.Add(25*time.Hour), View{}), doc.Text); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "2 expected (by your config): someone else's account (2).") || !strings.Contains(b.String(), "expected 2") {
