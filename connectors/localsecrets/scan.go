@@ -123,19 +123,29 @@ func rgArgs() []string {
 		"--color", "never"}, skipGlobs()...)
 }
 
-// rgOutput runs ripgrep and keeps its stdout when it exits 1 (no match) or 2 (some file could
-// not be read), which are not failures for a scan.
+// rgOutput runs ripgrep and keeps its stdout when it exits 1 (no match) or 2 with nothing on
+// stderr (some file could not be read, which --no-messages silences). Anything else (a pattern
+// error, a timeout, a kill) leaves the files scope uninspected, so the findings this pass would
+// have reported are not taken as resolved; the output printed before the failure is still used.
 func (s *scan) rgOutput(args []string) []byte {
 	out, err := guardRG(s.c.RG).Run(s.ctx, args...)
-	var ce *cli.Error
-	var exit *exec.ExitError
-	if errors.As(err, &ce) && errors.As(err, &exit) && exit.ExitCode() <= 2 {
-		return out
-	}
-	if err != nil {
-		s.emit.Log("rg: " + err.Error())
+	if err = rgFailure(err); err != nil {
+		s.emit.Scope(filesScope, false, "rg: "+err.Error())
 	}
 	return out
+}
+
+// rgFailure is err unless it is one of ripgrep's exits that still mean a complete search.
+func rgFailure(err error) error {
+	var ce *cli.Error
+	var exit *exec.ExitError
+	if errors.As(err, &ce) && errors.As(err, &exit) {
+		switch code := exit.ExitCode(); {
+		case code == 1, code == 2 && strings.TrimSpace(ce.Stderr) == "":
+			return nil
+		}
+	}
+	return err
 }
 
 // rgArgsFor is the ripgrep command line of one pass, or nil when none of its paths exist.

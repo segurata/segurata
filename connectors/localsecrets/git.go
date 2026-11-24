@@ -50,7 +50,10 @@ func (s *scan) repoRoot(abs string) string {
 	return s.rootOf(filepath.Dir(abs))
 }
 
-// trackedFile says whether git tracks the file, and whether that repository has a remote.
+// trackedFile says whether git tracks the file, and whether that repository has a remote. When
+// git cannot list a repository's files, whether they are tracked is unknown: the run reports the
+// files scope of that repository as failed, once, instead of taking it for a repository that
+// tracks nothing.
 func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	s.git.mu.Lock()
 	defer s.git.mu.Unlock()
@@ -60,22 +63,32 @@ func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	}
 	files, ok := s.git.files[root]
 	if !ok {
-		files = map[string]bool{}
-		out, err := guardGit(s.c.Git).Run(s.ctx, "--git-dir="+filepath.Join(root, ".git"), "--work-tree="+root, "ls-files", "-z")
-		if err != nil {
-			s.emit.Log("git ls-files " + s.tilde(root) + ": " + err.Error())
+		var err error
+		if files, err = s.lsFiles(root); err != nil {
+			s.emit.Status(finding.Status{Account: s.tilde(root), Scope: filesScope, State: finding.StateError,
+				Detail: "git ls-files: " + err.Error() + ": whether its files are tracked is unknown"})
 		}
-		for _, f := range strings.Split(string(out), "\x00") {
-			if f != "" {
-				files[filepath.Join(root, f)] = true
-			}
-		}
-		s.git.files[root] = files
+		s.git.files[root] = files // nil after a failure: asked once per run
 	}
 	if !files[abs] {
 		return false, false
 	}
 	return true, s.hasRemoteLocked(root)
+}
+
+// lsFiles is the set of absolute paths git tracks in the repository at root.
+func (s *scan) lsFiles(root string) (map[string]bool, error) {
+	out, err := guardGit(s.c.Git).Run(s.ctx, gitDirArg(root), "--work-tree="+root, "ls-files", "-z")
+	if err != nil {
+		return nil, err
+	}
+	files := map[string]bool{}
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			files[filepath.Join(root, f)] = true
+		}
+	}
+	return files, nil
 }
 
 func (s *scan) hasRemote(root string) bool {

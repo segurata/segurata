@@ -581,7 +581,8 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 
 // Scopes of local-secrets findings, so a run that leaves part of the machine unread says which
 // part: the files ripgrep and the name scan read, one repository's git history, one repository's
-// data dumps. A failed gitleaks or dump scan names its repository's scope in its status.
+// data dumps. A failed gitleaks or dump scan names its repository's scope in its status; a failed
+// ripgrep pass or `git ls-files` leaves the files scope uninspected.
 const filesScope = "files"
 
 func historyScope(repo string) string { return "history:" + repo }
