@@ -4,7 +4,8 @@
 // repositories it administers (secret scanning, push protection, Dependabot security updates,
 // webhooks, deploy keys, Actions defaults, optionally branch protection). Read-only: every request
 // is a GET on an allowlisted path. OAuth apps, GitHub Apps, sessions and the account's own keys are
-// covered by the connected-apps connector.
+// covered by the connected-apps connector. Remediations (remediate.go) write through `gh api`
+// only after a confirmed plan, with their own allowlist.
 package github
 
 import (
@@ -26,6 +27,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/remediate"
 )
 
 const (
@@ -40,6 +42,9 @@ const (
 type Connector struct {
 	// Run executes gh commands after the read-only guard. Tests replace it with canned output.
 	Run cli.Runner
+	// Exec runs a confirmed remediation's allowlisted commands; nil is remediate.System. Tests
+	// replace it with a recorder.
+	Exec remediate.Executor
 }
 
 func New() *Connector {
