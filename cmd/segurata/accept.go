@@ -47,7 +47,7 @@ func browserConnector(name string) bool {
 
 // acceptedAnnotator loads the tracker's acceptances for an inventory or remediate run.
 func acceptedAnnotator() (func(*finding.Finding), error) {
-	t, err := tracker.LoadOrMigrate(tracker.Paths{}, time.Now(), os.Stderr)
+	t, err := tracker.LoadOrNew(tracker.Paths{}, time.Now())
 	if err != nil {
 		return nil, err
 	}

@@ -7,7 +7,6 @@ package keychain
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -44,9 +43,6 @@ func Scrub(msg, value, placeholder string) string {
 	return strings.ReplaceAll(msg, value, placeholder)
 }
 
-// ErrNotFound is returned by Find when no item has the service.
-var ErrNotFound = errors.New("no such Keychain item")
-
 // Keychain is the login Keychain, for one account ("" matches any account on reads).
 type Keychain struct {
 	Run     Runner
@@ -77,30 +73,6 @@ func (k Keychain) Read(ctx context.Context, service string) (string, error) {
 		return "", fmt.Errorf("reading %s from the Keychain: %w", service, err)
 	}
 	return strings.TrimRight(string(out), "\r\n"), nil
-}
-
-// acct is the account line of `security find-generic-password` without -w.
-var acct = regexp.MustCompile(`(?m)^\s*"acct"<blob>="(.*)"\s*$`)
-
-// Find checks that an item exists from its attributes alone (no -w: the value is not read) and
-// returns its account.
-func (k Keychain) Find(ctx context.Context, service string) (string, error) {
-	out, err := k.Run(ctx, nil, Security, k.args("find-generic-password", service)...)
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", ErrNotFound, service)
-	}
-	if m := acct.FindSubmatch(out); m != nil {
-		return string(m[1]), nil
-	}
-	return "", nil
-}
-
-// Delete removes the item.
-func (k Keychain) Delete(ctx context.Context, service string) error {
-	if _, err := k.Run(ctx, nil, Security, k.args("delete-generic-password", service)...); err != nil {
-		return fmt.Errorf("deleting %s from the Keychain: %w", service, err)
-	}
-	return nil
 }
 
 func (k Keychain) args(cmd, service string, extra ...string) []string {

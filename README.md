@@ -111,11 +111,6 @@ written atomically and the previous version kept as `tracker.json.bak`. A tracke
 parse is never overwritten: fix it or restore the backup. It holds redacted hints and fingerprints,
 never a secret value, so the backup holds none either.
 
-The tracker absorbed the rotation ledger (`rotations.json` in `~/.segurata`, or `$SEGURATA_STATE`) and the
-accepted risks (`~/.config/segurata/accepted.json`). The first command run without a tracker
-imports both, history included, and renames them to `*.migrated-<date>`. Details:
-[docs/architecture.md](docs/architecture.md#tracker).
-
 ## Accounts
 
 ```bash
@@ -825,21 +820,6 @@ macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/segurata/`, inv
 `~/.segurata/out`. Install it from the binary you will keep: the agent runs that
 exact path, with the PATH you had when installing. On Linux it prints a systemd user timer to
 install by hand. Details: [docs/architecture.md](docs/architecture.md#scheduled-runs).
-
-## Upgrading from securizame
-
-This tool was called securizame. The first `segurata` command on a machine set up under that name
-moves `~/.securizame`, `~/.config/securizame`, `~/.cache/securizame` and `~/Library/Logs/securizame`
-to their `segurata` names and the files of `~/.local/state/securizame` into `~/.segurata`, printing
-one line per move. It never overwrites: when both names exist it warns and uses the new one. The
-fingerprint key moves byte for byte, so every fingerprint stays the same. The tracker's suggested
-commands are renamed; config references to Keychain items keep working, and
-`segurata keychain-migrate` (a dry run; `--apply` to do it) copies each `securizame-*` item to
-`segurata-*`, checks the copy, updates the reference and deletes the old item. Environment variables
-are renamed with no aliases (`SECURIZAME_CONFIG` is now `SEGURATA_CONFIG`, and so on for `CDP`,
-`HOME`, `STATE` and `ACCEPTED`), external connectors are found as `segurata-<name>`, and a scheduled
-agent installed as `com.securizame.inventory` is not migrated: the first run prints how to remove
-it, then `segurata schedule install --apply`.
 
 ## Plan
 

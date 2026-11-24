@@ -289,7 +289,7 @@ func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 // have held the value.
 func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool) {
 	ev := secretrisk.Evidence{Source: "gitleaks", Kind: "repo", Line: l.StartLine, Tracked: true,
-		Repo: s.tilde(repo), Commit: truncate(l.Commit, 10), Date: truncate(l.Date, 10)}
+		Repo: s.tilde(repo), Commit: leading(l.Commit, 10), Date: leading(l.Date, 10)}
 	value := l.Secret
 	if value == "" || value == "REDACTED" {
 		return c, false, false
@@ -332,7 +332,8 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 	return c, true, false
 }
 
-func truncate(s string, n int) string {
+// leading is the first n bytes of s, for ASCII values such as commit hashes and dates.
+func leading(s string, n int) string {
 	if len(s) > n {
 		return s[:n]
 	}

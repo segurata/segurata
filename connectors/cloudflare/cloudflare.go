@@ -65,10 +65,7 @@ func init() { connector.Register(&Connector{}) }
 
 // SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
-	if secret != secretName {
-		return ""
-	}
-	return setupHint
+	return connector.HintFor(secret, secretName, setupHint)
 }
 
 func (c *Connector) Describe() connector.Description {
@@ -134,14 +131,11 @@ type client struct {
 }
 
 func (c *Connector) client(tok string) *client {
-	base, every := c.BaseURL, c.Interval
-	if base == "" {
-		base = DefaultBaseURL
-	}
+	every := c.Interval
 	if every == 0 {
 		every = DefaultInterval
 	}
-	return &client{api: httpx.New(base, http.Header{"Authorization": {"Bearer " + tok}}), pace: &pacer{every: every}}
+	return &client{api: httpx.New(httpx.Base(c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + tok}}), pace: &pacer{every: every}}
 }
 
 // get decodes the "result" of Cloudflare's envelope into out. After a 429 it stops calling.
@@ -228,11 +222,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: name, State: finding.StateError, Detail: err.Error()})
 		return nil
 	}
-	now := time.Now
-	if c.Now != nil {
-		now = c.Now
-	}
-	s := &scan{ctx: ctx, cl: c.client(tok), emit: emit, now: now().UTC(), cfg: cfg, failures: map[string]*failure{}}
+	s := &scan{ctx: ctx, cl: c.client(tok), emit: emit, now: connector.Now(c.Now), cfg: cfg, failures: map[string]*failure{}}
 	s.run()
 	return nil
 }

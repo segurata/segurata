@@ -21,20 +21,25 @@ wraps it in that same interface. The rest of the program cannot tell them apart.
 
 ### Verbs
 
+Every verb in the `commands` table of `cmd/segurata/main.go` has a row here, and a test checks that.
+
 | Verb | What it does | Changes anything outside |
 |---|---|---|
-| `inventory` | Lists what exists: grants, keys, settings, spend | Never |
-| `assess` | Assigns severity and remediation to each finding | Never |
-| `remediate` | Applies one remediation to one finding | Yes, one item at a time, dry run unless `--apply`, explicit confirmation |
+| `connectors` | Lists the built-in and external connectors | Never |
+| `inventory` | Lists what exists: grants, keys, settings, spend; each connector assigns severity and remediation to its findings | Never |
+| `remediate` | Applies one remediation plan, for one finding or a named group of findings | Yes, one plan at a time, dry run unless `--apply`, explicit confirmation |
 | `status` | The briefing from the tracker: what to do next, decisions, setup blockers, changes since the last status, accepted risks | Nothing by default; with `--mark-seen` segurata's own `tracker.json` (the "since" mark); with `--write` that mark plus `status.md` and `status.html` |
 | `track` | Lists, shows and changes tracker items; `track sync` folds the latest runs in | Only segurata's own `tracker.json` |
 | `accept` / `unaccept` | Marks a finding as a risk kept on purpose, or stops doing so | Only segurata's own `tracker.json` |
+| `accounts` | Lists the accounts each connector saw and the owner's accounts; `watch` and `unwatch` change which accounts a connector inspects | `watch` and `unwatch`: the config (atomically, previous file kept) and segurata's own `tracker.json` |
+| `signin` | Opens the pages where a browser connector needs a fresh sign-in, waits until they are through, then runs those connectors again | New browser tabs; segurata's own run files and `tracker.json` |
 | `doctor` | Checks prerequisites: config, secret references, browser port, CLIs and sign-ins, state file modes | Never |
 | `rotations` | Keeps the ledger of secrets to rotate (the tracker's rotate items) and guides each rotation | Only segurata's own `tracker.json`, except `replace --apply`: the `used_in` files and the Keychain, after confirmation |
 | `report` | Summarises the latest runs, what changed, the secrets to rotate and the accepted risks | Never (writes only the `--out` file) |
 | `redact` | Replaces the secrets `local-secrets` finds in trail files (agent transcripts, shell histories, logs) with `[REDACTED:<type>:<fingerprint8>]` | With `--apply` and confirmation: those trail files, never a working file; a history note in `tracker.json` |
+| `schedule` | Installs, removes or shows the scheduled inventory (a launchd user agent on macOS) | With `--apply` and confirmation: the agent's plist, loaded with `launchctl` |
+| `version` | Prints the version, commit and build date | Never |
 
-In v0 each connector sets severity while inventorying (`assess` lives inside `inventory`).
 `remediate` always states the exact scope of what it will remove before acting. On Google,
 "Remove all access" on an app's permissions page also removes that app's Sign in with Google
 link; that has to be said up front, not discovered afterwards.
@@ -354,41 +359,6 @@ reached the model provider).
   the top-level `runs` (see "Coverage"). An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
-### Migration from the former state files
-
-The first command that opens the tracker when `tracker.json` does not exist but
-`rotations.json` in `~/.segurata` (`SEGURATA_STATE` names another folder) or
-`~/.config/segurata/accepted.json` (`SEGURATA_ACCEPTED`) does imports them:
-
-- every ledger item becomes a rotate item, ids in order of first sighting, with its locations,
-  `used_in`, reasons, priority, `rotated_locations`, snooze and full history (each event's time,
-  action and note kept; `rotated` becomes `done`, `ignored`, `snoozed` and `open` stay);
-- every accepted risk becomes an accepted item of its own linking that finding, with its reason,
-  end date and acceptance time.
-
-Stored values are imported as they are, not recomputed. The tracker is saved, then the old files
-are renamed to `<file>.migrated-<date>` (never deleted, never overwritten). A file that does not
-parse, or has an unknown version or status, stops the import and nothing is written or moved.
-
-### Directories of the former name
-
-`internal/legacy`, run by every command before config or state is read (what moves where: README,
-"Upgrading"). Each old directory is renamed only when the new one does not exist; when both exist
-it warns on stderr and the new one is used. A rename keeps modes and bytes, so the fingerprint key
-and every fingerprint survive. After moving the tracker it rewrites the binary's own words in it
-(who takes the next step, its action and command, decision questions and options, theme
-descriptions), never the owner's notes or a path. After moving the config it renames a Keychain
-reference only when the new item exists, checked from its attributes (`security
-find-generic-password -s <service>`, no `-w`).
-
-`segurata keychain-migrate [--apply [--yes]]` handles the rest, one item at a time: read the old
-value (`-w`, captured in memory), store it under the new name with `security -i` and the add command
-on stdin, read it back and compare, rewrite the reference in the config, and only then delete the
-old item. A failure before the rewrite leaves the config and the old item as they were; a new item
-that already holds a different value is left for the owner to resolve. Values never reach an
-argument list or the output. `internal/keychain` holds the Keychain calls it shares with `rotations
-replace --to-keychain`.
-
 ### `segurata status`
 
 ```
@@ -544,8 +514,7 @@ enough) and records it in the tracker (`internal/accept` on `internal/tracker`):
 links the finding gets status `accepted` with `{"reason", "until", "accepted_at"}`. When that item
 groups other findings too (one of five orgs), the finding first moves to an item of its own, so
 the others stay open. `unaccept` takes the finding id (or a unique prefix) or the item id and
-opens the item again. Acceptances recorded in the former `~/.config/segurata/accepted.json` are
-imported once (see "Tracker").
+opens the item again.
 
 - The core stamps every finding of an inventory with `"accepted": {"reason", "accepted_at",
   "until", "expired"}` when an item holding its id carries an acceptance. The finding stays in the JSONL; the summary
@@ -673,8 +642,7 @@ connector or instance (the config and state are always checked).
 | `local-secrets` | rg, gitleaks (optional; not needed with `skip_git_history`), git and ssh-keygen on `PATH`; `rg --version` and `gitleaks version` (added to the gitleaks guard) |
 
 - State: the fingerprint key exists (a warning before the first `local-secrets` run), is a valid
-  key and has mode 0600; `tracker.json` loads and has mode 0600 when present; a former
-  `rotations.json` or `accepted.json` still in place is a warning (not imported yet); the tracker
+  key and has mode 0600; `tracker.json` loads and has mode 0600 when present; the tracker
   folder and the output directory (`--out`) have mode 0700 (a warning otherwise, since their files
   are 0600).
 
@@ -895,8 +863,7 @@ priority, reopen rules); `internal/rotation` is the command family on top (list,
 replace, done, snooze, ignore, reopen). The risk model it shares with the connector lives in
 `internal/secretrisk`, so a finding's severity and an item's priority never disagree.
 
-State: in the tracker (see "Tracker"); the former `~/.segurata/rotations.json` is
-imported once. A rotate item holds redacted hints and fingerprints, never values. Its status is the
+State: in the tracker (see "Tracker"). A rotate item holds redacted hints and fingerprints, never values. Its status is the
 tracker's (`done` reads "rotated" in these commands):
 
 ```json

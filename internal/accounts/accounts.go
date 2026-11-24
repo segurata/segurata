@@ -6,7 +6,6 @@ package accounts
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -58,8 +57,7 @@ func (c CLI) Run(args []string) int {
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
-	fs := flag.NewFlagSet("accounts "+cmd, flag.ContinueOnError)
-	fs.SetOutput(c.Err)
+	fs := cliflag.New("accounts "+cmd, c.Err)
 	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	pos, err := cliflag.Parse(fs, rest)
 	if err != nil {
@@ -291,7 +289,7 @@ func (c CLI) moveSetup(lbl, account string, on bool) int {
 		return c.fail(err)
 	}
 	now := c.Now()
-	t, err := tracker.LoadOrMigrate(p, now, c.Err)
+	t, err := tracker.LoadOrNew(p, now)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -327,7 +325,7 @@ func (c CLI) owned(out string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	t, err := tracker.LoadOrMigrate(p, c.Now(), c.Err)
+	t, err := tracker.LoadOrNew(p, c.Now())
 	if err != nil {
 		return c.fail(err)
 	}

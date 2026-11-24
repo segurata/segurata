@@ -33,7 +33,7 @@ type Env struct {
 	Out        io.Writer
 	ConfigPath string
 	KeyPath    string        // fingerprint key
-	Tracker    tracker.Paths // tracker.json and the legacy files it imports once
+	Tracker    tracker.Paths // tracker.json
 	OutDir     string        // inventory output directory
 	GOOS       string
 	Connectors []connector.Connector
@@ -252,15 +252,6 @@ func (e Env) state() []connector.Check {
 	}
 	_, err := tracker.Load(e.Tracker.Tracker)
 	checks = append(checks, optionalFile("tracker", e.Tracker.Tracker, err, 0o600, "segurata track sync creates it"))
-	for _, legacy := range []string{e.Tracker.LegacyLedger, e.Tracker.LegacyAccepted} {
-		if legacy == "" {
-			continue
-		}
-		if _, err := os.Stat(legacy); err == nil {
-			checks = append(checks, connector.Check{Level: connector.Warn, What: "old state file " + legacy,
-				Detail: "not imported into the tracker yet", Fix: "segurata status imports it (the old file is kept as " + legacy + ".migrated-<date>)"})
-		}
-	}
 	checks = append(checks, dirCheck("tracker dir", filepath.Dir(e.Tracker.Tracker), "the first command that saves the tracker creates it"))
 	checks = append(checks, dirCheck("output dir", e.OutDir, "segurata inventory creates it"))
 	return checks

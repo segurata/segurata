@@ -2,7 +2,7 @@ package report
 
 import (
 	"bytes"
-	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,11 +21,10 @@ import (
 var now = time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
 
 // fx is a synthetic out/ tree with two runs of macos, a first run of aws and a labelled
-// openrouter instance, plus a tracker imported from an accepted-risks file and a rotation ledger
-// in their former formats.
+// openrouter instance, plus a tracker holding three accepted risks and five rotate items.
 type fx struct {
-	dir, out, tracker string
-	a, b, c, d, e, f  finding.Finding
+	dir, out, tracker   string
+	a, b, c, d, e, f, g finding.Finding
 }
 
 func mk(connector, instance, resID string, sev finding.Severity, title string) finding.Finding {
@@ -53,6 +52,7 @@ func newFx(t *testing.T) *fx {
 	x.f = mk("openrouter", "work", "f", finding.SevHigh, "Key file readable by others")
 	x.f.Remediation.Action = "file.chmod600"
 	x.f.Fill(now)
+	x.g = mk("macos", "", "g", finding.SevLow, "Something fixed since")
 
 	writeRun(t, filepath.Join(x.out, "2026-11-20", "macos.jsonl"), x.a, x.b, x.c, x.d)
 	b2 := x.b
@@ -65,38 +65,51 @@ func newFx(t *testing.T) *fx {
 		t.Fatal(err)
 	}
 
-	accepted := filepath.Join(x.dir, "accepted.json")
-	writeJSON(t, accepted, map[string]any{"version": 1, "entries": []map[string]any{
-		{"id": x.a.ID, "connector": "macos", "title": x.a.Title, "reason": "agents need it", "accepted_at": now.AddDate(0, -1, 0)},
-		{"id": x.c.ID, "connector": "macos", "title": x.c.Title, "reason": "kids", "accepted_at": now.AddDate(0, -2, 0), "until": "2026-11-01"},
-		{"id": "ffffffffffffffff", "connector": "macos", "title": "Something fixed since", "reason": "old", "accepted_at": now.AddDate(0, -3, 0)},
-	}})
-	loc := []map[string]any{{"path": "~/src/shop/.env", "source": "gitleaks", "kind": "repo", "tracked": true, "remote": true, "last_seen": now}}
-	item := func(id string, p secretrisk.Priority, st, until string) map[string]any {
-		return map[string]any{"id": id, "fingerprint": id + "00000000", "service": "stripe", "type": "stripe-live", "redacted": "sk_live_…" + id[:4] + "(40)",
-			"impact": "high", "priority": p, "reasons": []string{"Stripe live secret key; pushed to a remote"}, "status": st, "snoozed_until": until,
-			"first_seen": now.AddDate(0, 0, -3), "last_seen": now, "locations": loc, "rotate_url": "https://dashboard.stripe.com/apikeys"}
+	tr := tracker.New(now)
+	for _, acc := range []struct {
+		f             finding.Finding
+		reason, until string
+		at            time.Time
+	}{
+		{x.a, "agents need it", "", now.AddDate(0, -1, 0)},
+		{x.c, "kids", "2026-11-01", now.AddDate(0, -2, 0)},
+		{x.g, "old", "", now.AddDate(0, -3, 0)},
+	} {
+		if _, err := tr.AcceptFinding(acc.f, acc.reason, acc.until, acc.at); err != nil {
+			t.Fatal(err)
+		}
 	}
-	ledger := filepath.Join(x.dir, "state", "rotations.json")
-	writeJSON(t, ledger, map[string]any{"version": 1, "items": []map[string]any{item("aaaa1111", secretrisk.P0, "open", ""),
-		item("bbbb2222", secretrisk.P1, "open", ""), item("cccc3333", secretrisk.P2, "snoozed", "2026-11-01"),
-		item("dddd4444", secretrisk.P0, "snoozed", "2027-01-01"), item("eeee5555", secretrisk.P0, "rotated", "")}})
+	for _, r := range []struct {
+		id    string
+		p     secretrisk.Priority
+		st    tracker.Status
+		until string
+	}{
+		{"aaaa1111", secretrisk.P0, tracker.Open, ""}, {"bbbb2222", secretrisk.P1, tracker.Open, ""},
+		{"cccc3333", secretrisk.P2, tracker.Snoozed, "2026-11-01"}, {"dddd4444", secretrisk.P0, tracker.Snoozed, "2027-01-01"},
+		{"eeee5555", secretrisk.P0, tracker.Done, ""},
+	} {
+		addRotate(tr, r.id, r.p, r.st, r.until)
+	}
 	x.tracker = filepath.Join(x.dir, "home", "tracker.json")
-	if _, err := tracker.LoadOrMigrate(tracker.Paths{Tracker: x.tracker, LegacyLedger: ledger, LegacyAccepted: accepted}, now, nil); err != nil {
+	if err := tr.Save(x.tracker); err != nil {
 		t.Fatal(err)
 	}
 	return x
 }
 
-func writeJSON(t *testing.T, path string, v any) {
-	t.Helper()
-	raw, _ := json.Marshal(v)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
+// addRotate adds a rotate item for a Stripe live key pushed to a remote, as a sync leaves it.
+func addRotate(tr *tracker.Tracker, id string, p secretrisk.Priority, st tracker.Status, until string) {
+	fp := id + "00000000"
+	seen := now.AddDate(0, 0, -3)
+	tr.Items = append(tr.Items, &tracker.Item{ID: fmt.Sprintf("T-%04d", tr.NextID), Key: "rotate:" + fp, Kind: tracker.KindRotate,
+		Theme: "rotations", Title: "Stripe live key " + id, Status: st, SnoozedUntil: until, Priority: p, Severity: secretrisk.SeverityOf(p),
+		Fingerprint: fp, StatusAt: seen, CreatedAt: seen, UpdatedAt: now,
+		Secret: &tracker.Secret{ID: id, Service: "stripe", Type: "stripe-live", Redacted: "sk_live_…" + id[:4] + "(40)", Impact: "high",
+			Reasons: []string{"Stripe live secret key; pushed to a remote"}, FirstSeen: seen, LastSeen: now, UsedIn: []string{},
+			Locations: []tracker.Location{{Path: "~/src/shop/.env", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, LastSeen: now}},
+			RotateURL: "https://dashboard.stripe.com/apikeys"}})
+	tr.NextID++
 }
 
 func (x *fx) build(t *testing.T) *Report {
@@ -172,7 +185,7 @@ func TestBuildAcceptedAndLedger(t *testing.T) {
 			state[a.ID] += ", gone"
 		}
 	}
-	if state[x.a.ID] != "in force" || state[x.c.ID] != "expired" || state["ffffffffffffffff"] != "in force, gone" {
+	if state[x.a.ID] != "in force" || state[x.c.ID] != "expired" || state[x.g.ID] != "in force, gone" {
 		t.Errorf("accepted %v", state)
 	}
 	s := r.Rotations

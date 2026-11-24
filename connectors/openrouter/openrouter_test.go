@@ -155,14 +155,14 @@ func TestMissingSecretReportsHowToConfigure(t *testing.T) {
 	}
 }
 
-func TestBadKeyStopsWithAnErrorStatus(t *testing.T) {
+func TestBadKeyStopsWithAReauthStatus(t *testing.T) {
 	srv := httpxtest.NewServer(t, http.Header{"Authorization": {"Bearer right"}}, nil)
 	rec := &httpxtest.Recorder{}
 	c := &Connector{BaseURL: srv.URL}
 	if err := c.Inventory(context.Background(), connector.Request{Secrets: map[string]string{secretName: "wrong"}}, rec); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateError || len(rec.Findings) != 0 {
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateReauth || len(rec.Findings) != 0 {
 		t.Fatalf("statuses=%+v findings=%d", rec.Statuses, len(rec.Findings))
 	}
 }

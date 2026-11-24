@@ -33,10 +33,7 @@ func init() { connector.Register(&Connector{}) }
 
 // SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
-	if secret != secretName {
-		return ""
-	}
-	return setupHint
+	return connector.HintFor(secret, secretName, setupHint)
 }
 
 func (c *Connector) Describe() connector.Description {
@@ -47,13 +44,6 @@ func (c *Connector) Describe() connector.Description {
 		Summary:  "Organizations and plans, projects, API keys by name and type; the spend cap is not exposed by the API",
 		Needs:    []string{"secret:" + secretName},
 	}
-}
-
-func stateFor(err error) finding.State {
-	if httpx.IsStatus(err, http.StatusUnauthorized) {
-		return finding.StateReauth
-	}
-	return finding.StateError
 }
 
 type organization struct {
@@ -84,14 +74,10 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: "supabase", State: finding.StateMissingCredentials, Detail: secretName + " is not configured: " + setupHint})
 		return nil
 	}
-	base := c.BaseURL
-	if base == "" {
-		base = DefaultBaseURL
-	}
-	api := httpx.New(base, http.Header{"Authorization": {"Bearer " + tok}})
+	api := httpx.New(httpx.Base(c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + tok}})
 	var orgs []organization
 	if err := api.Get(ctx, "/v1/organizations", nil, &orgs); err != nil {
-		emit.Status(finding.Status{Account: "supabase", State: stateFor(err), Detail: err.Error()})
+		emit.Status(finding.Status{Account: "supabase", State: httpx.State(err), Detail: err.Error()})
 		return nil
 	}
 	failed := map[string][]string{}

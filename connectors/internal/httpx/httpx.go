@@ -3,6 +3,7 @@
 package httpx
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,9 @@ type Client struct {
 	Header  http.Header
 	HTTP    *http.Client
 }
+
+// Base is the API base URL without a trailing slash: configured, or def when configured is empty.
+func Base(configured, def string) string { return strings.TrimRight(cmp.Or(configured, def), "/") }
 
 // New returns a client with a sane timeout. Header values are sent on every request, and they
 // are the credential: a redirect to another host gets none of them.
@@ -72,6 +76,15 @@ func (e *StatusError) Error() string {
 func IsStatus(err error, code int) bool {
 	var se *StatusError
 	return errors.As(err, &se) && se.Code == code
+}
+
+// State is the status state of a failed call: reauth when the provider rejected the credential
+// (HTTP 401), error otherwise.
+func State(err error) finding.State {
+	if IsStatus(err, http.StatusUnauthorized) {
+		return finding.StateReauth
+	}
+	return finding.StateError
 }
 
 // Get fetches path (relative to BaseURL) with the query q and decodes the JSON body into out.
@@ -134,13 +147,10 @@ func ErrorMessage(body []byte) string {
 	return truncate(strings.TrimSpace(string(body)))
 }
 
-func truncate(s string) string {
-	const max = 300
-	if len(s) > max {
-		return s[:max] + "…"
-	}
-	return s
-}
+// maxMessage is how many characters of a provider's error message an error keeps.
+const maxMessage = 300
+
+func truncate(s string) string { return textfmt.Truncate(s, maxMessage+1) }
 
 // MatchesRedacted reports whether secret is the key a provider shows as redacted, a visible
 // prefix and suffix around a mask ("sk-proj-****dYwA", "sk-or-v1-27e...d4d") or a hint in

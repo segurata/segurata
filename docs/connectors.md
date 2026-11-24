@@ -8,7 +8,7 @@ Rules every connector follows, whatever its language:
 
 - **Inventory is read-only.** It lists, reads and computes. It never revokes, deletes, clicks a
   button that changes something, or writes outside its own process. Changes happen only through a
-  remediation, one finding at a time, after the owner saw the plan and said yes.
+  remediation, one plan at a time (a plan can cover several findings), after the owner saw the plan and said yes.
 - **No secret values anywhere**: not in findings, statuses, logs, stderr, test fixtures or commit
   messages. At most a redacted prefix and the length (`finding.Redact` in Go).
 - **English** for code, finding text and docs.
@@ -110,7 +110,7 @@ inspected:
 | `state` | Meaning |
 |---|---|
 | `ok` | Inspected |
-| `reauth` | The service wants a fresh sign-in or identity check |
+| `reauth` | The service wants a fresh sign-in or identity check, or rejected the credential (HTTP 401) |
 | `signedout` | No session |
 | `noscope` | Signed in, but the credential lacks a permission; `detail` says which and how to grant it |
 | `unverified` | Signed in, but the reader was never checked against a real page |

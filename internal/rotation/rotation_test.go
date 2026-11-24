@@ -136,6 +136,11 @@ func TestCommands(t *testing.T) {
 	if _, _, code := run("bogus"); code != 2 {
 		t.Error("unknown subcommand accepted")
 	}
+	for _, cmd := range []string{"sync", "list", "next"} {
+		if _, e, code := run(cmd, "stray"); code != 2 || !strings.Contains(e, "usage: segurata rotations") {
+			t.Errorf("%s with a stray argument: %d %q", cmd, code, e)
+		}
+	}
 	if _, e, code := run("sync", "--out", filepath.Join(dir, "none")); code != 1 || !strings.Contains(e, "segurata inventory") {
 		t.Errorf("sync without runs: %d %q", code, e)
 	}

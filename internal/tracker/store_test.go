@@ -111,44 +111,22 @@ func TestLoadValidates(t *testing.T) {
 
 func TestPaths(t *testing.T) {
 	t.Setenv("SEGURATA_HOME", "/h")
-	t.Setenv("SEGURATA_STATE", "/s")
-	t.Setenv("SEGURATA_ACCEPTED", "/a.json")
-	p, err := Paths{}.Resolve()
-	if err != nil || p.Tracker != "/h/tracker.json" || p.LegacyLedger != "/s/rotations.json" || p.LegacyAccepted != "/a.json" {
+	if p, err := (Paths{}).Resolve(); err != nil || p.Tracker != "/h/tracker.json" {
 		t.Errorf("default paths %+v %v", p, err)
 	}
-	t.Setenv("SEGURATA_STATE", "")
-	if p, err := (Paths{}).Resolve(); err != nil || p.LegacyLedger != "/h/rotations.json" {
-		t.Errorf("without SEGURATA_STATE the old ledger is read from the tracker directory: %+v %v", p, err)
-	}
-	if p, _ := (Paths{Tracker: "/x/tracker.json"}).Resolve(); p.LegacyLedger != "" || p.LegacyAccepted != "" {
-		t.Errorf("a tracker path alone must never reach the owner's old files: %+v", p)
+	if p, _ := (Paths{Tracker: "/x/tracker.json"}).Resolve(); p.Tracker != "/x/tracker.json" {
+		t.Errorf("a tracker path given is kept: %+v", p)
 	}
 }
 
-func TestLoadOrMigrateWithNothingIsANewTrackerNotYetWritten(t *testing.T) {
+func TestLoadOrNewWithNothingIsANewTrackerNotYetWritten(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tracker.json")
-	tr, err := LoadOrMigrate(Paths{Tracker: path}, t0, nil)
+	tr, err := LoadOrNew(Paths{Tracker: path}, t0)
 	if err != nil || len(tr.Items) != len(seedDecisions) {
 		t.Fatalf("%v %d items", err, len(tr.Items))
 	}
 	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("opening wrote the tracker")
-	}
-}
-
-func TestRetireNeverOverwrites(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "rotations.json")
-	for i := 0; i < 2; i++ {
-		_ = os.WriteFile(p, []byte("x"), 0o600)
-		if _, err := retire(p, t0); err != nil {
-			t.Fatal(err)
-		}
-	}
-	names, _ := filepath.Glob(filepath.Join(dir, "rotations.json.migrated-*"))
-	if len(names) != 2 || !strings.HasSuffix(names[0], "2026-11-23") && !strings.HasSuffix(names[1], "2026-11-23") {
-		t.Errorf("retired files %v", names)
 	}
 }
 

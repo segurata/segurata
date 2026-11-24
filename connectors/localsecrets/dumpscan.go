@@ -424,7 +424,7 @@ func parseDumpLog(out string, byPath map[string]*dumpHistory, firstAt map[string
 			if meta[4] == "A" {
 				if old, ok := firstAt[p]; !ok || at <= old {
 					firstAt[p] = at
-					h.FirstCommit = truncate(commit, 10)
+					h.FirstCommit = leading(commit, 10)
 					h.FirstDate = time.Unix(at, 0).UTC().Format("2006-01-02")
 				}
 			}
