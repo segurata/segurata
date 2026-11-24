@@ -179,11 +179,11 @@ func TestApplyRunsExactlyThePlanThroughALiveAllowlist(t *testing.T) {
 		ghStep("--method", "DELETE", "/repos/octo-tester/site"),
 		{Argv: scanningStep("octo-tester/site", "enabled", []string{featurePush}).Argv, Sudo: true},
 	} {
-		if err := allow.Check(ActionSecretScanning, s); !errors.Is(err, remediate.ErrRefused) {
+		if err := allow.Check(ActionSecretScanning, s); !errors.Is(err, connector.ErrRefused) {
 			t.Errorf("%s: want refusal, got %v", s, err)
 		}
 	}
-	if err := allow.Check(ActionWorkflowRead, p.Commands[0]); !errors.Is(err, remediate.ErrRefused) {
+	if err := allow.Check(ActionWorkflowRead, p.Commands[0]); !errors.Is(err, connector.ErrRefused) {
 		t.Error("a step allowed for one action must not run for another")
 	}
 }

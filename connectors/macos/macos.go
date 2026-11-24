@@ -23,7 +23,6 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/proc"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 // Absolute paths, so nothing earlier in PATH can stand in for a system tool.
@@ -115,7 +114,7 @@ type Connector struct {
 	// Run executes read-only commands after the guard. Tests replace it with canned output.
 	Run cli.Runner
 	// Exec runs remediation commands after the per-action allowlist. Tests replace it.
-	Exec remediate.Executor
+	Exec connector.Executor
 	// Home is the user's home directory, where Brave keeps its profiles.
 	Home func() (string, error)
 	OS   string
@@ -128,7 +127,7 @@ type Connector struct {
 }
 
 func New() *Connector {
-	return &Connector{Run: system{}, Exec: remediate.System{}, Home: os.UserHomeDir, OS: runtime.GOOS, UID: os.Getuid, Now: time.Now}
+	return &Connector{Run: system{}, Exec: connector.System{}, Home: os.UserHomeDir, OS: runtime.GOOS, UID: os.Getuid, Now: time.Now}
 }
 
 // path is a system path under Root; shown is its inverse, for evidence and titles.

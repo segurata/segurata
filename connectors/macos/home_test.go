@@ -12,7 +12,6 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 const everyoneDenyDelete = " 0: group:everyone deny delete"
@@ -85,7 +84,7 @@ func TestHomePrivatePlanAndApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := connector.Plan{Action: ActionHomePrivate, Commands: []connector.Step{{Argv: []string{chmodBin, "700", "/Users/someone-else"}}}}
-	if err := remediate.Run(context.Background(), other, allow, ex, termIO()); !errors.Is(err, remediate.ErrRefused) {
+	if err := allow.Run(context.Background(), other, ex, termIO()); !errors.Is(err, connector.ErrRefused) {
 		t.Fatalf("chmod of another folder allowed: %v", err)
 	}
 	if err := os.Chmod(home, 0o711); err != nil {
@@ -111,7 +110,8 @@ func TestHomePrivateKeepsACLsOnARealFolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := remediate.Run(context.Background(), p, remediate.Allowlist{ActionHomePrivate: p.Commands}, remediate.System{}, termIO()); err != nil {
+	allow := connector.Allowlist{ActionHomePrivate: p.Commands}
+	if err := allow.Run(context.Background(), p, connector.System{}, termIO()); err != nil {
 		t.Fatal(err)
 	}
 	out, _ := exec.Command(lsBin, "-led", home).Output()

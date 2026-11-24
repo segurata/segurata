@@ -1,6 +1,6 @@
 //go:build darwin || freebsd || netbsd || openbsd || dragonfly || linux
 
-package remediate
+package prompt
 
 import (
 	"os"

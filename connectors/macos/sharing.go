@@ -12,7 +12,6 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 const sharingBin = "/usr/sbin/sharing"
@@ -192,13 +191,13 @@ func (c *Connector) sharePlan(ctx context.Context, f finding.Finding) (connector
 
 // shareAllowlist adds, for every share point that exists now, the exact command lines the share
 // actions may run against it. It is derived from its own fresh read, never from the finding, so a
-// plan naming any other share is refused by remediate.Run.
-func (c *Connector) shareAllowlist(ctx context.Context) (remediate.Allowlist, error) {
+// plan naming any other share is refused by Allowlist.Run.
+func (c *Connector) shareAllowlist(ctx context.Context) (connector.Allowlist, error) {
 	shares, err := c.sharePoints(ctx)
 	if err != nil {
 		return nil, err
 	}
-	allow := remediate.Allowlist{}
+	allow := connector.Allowlist{}
 	for _, name := range slices.Sorted(maps.Keys(shares)) {
 		allow[ActionShareRemove] = append(allow[ActionShareRemove], sharingStep("-r", name))
 		allow[ActionShareGuestOff] = append(allow[ActionShareGuestOff], sharingStep("-e", name, "-g", "000"))

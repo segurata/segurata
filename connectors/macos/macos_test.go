@@ -15,7 +15,6 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 // fakeRunner answers by exact command line; an unknown command fails like a missing key would.
@@ -360,11 +359,11 @@ func TestApplyRunsThePlanAndRefusesAnythingElse(t *testing.T) {
 		t.Fatalf("applied a tampered plan: err=%v ran=%v", err, ex.ran)
 	}
 	// The allowlist refuses it whatever calls Run.
-	if err := remediate.Run(context.Background(), tampered, allowed, ex, termIO()); !errors.Is(err, remediate.ErrRefused) || len(ex.ran) != 0 {
+	if err := allowed.Run(context.Background(), tampered, ex, termIO()); !errors.Is(err, connector.ErrRefused) || len(ex.ran) != 0 {
 		t.Fatalf("allowlist let %v through: %v", ex.ran, err)
 	}
 	crossed := connector.Plan{Action: ActionFirewallStealth, Commands: []connector.Step{firewallStep("--setglobalstate", "off")}}
-	if err := remediate.Run(context.Background(), crossed, allowed, ex, termIO()); !errors.Is(err, remediate.ErrRefused) {
+	if err := allowed.Run(context.Background(), crossed, ex, termIO()); !errors.Is(err, connector.ErrRefused) {
 		t.Fatalf("undo command allowed as a forward step: %v", err)
 	}
 }

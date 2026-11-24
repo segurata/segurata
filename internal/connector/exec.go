@@ -1,17 +1,11 @@
-// Package remediate is the core of `segurata remediate`: it finds a finding in the latest run,
-// shows the exact plan, asks for confirmation, runs only allowlisted commands and checks afterwards
-// that the finding is gone. See docs/architecture.md, "Remediation".
-package remediate
+package connector
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"os/exec"
-	"reflect"
 	"slices"
-
-	"github.com/segurata/segurata/internal/connector"
 )
 
 // ErrRefused is returned for a command that is not on the action's allowlist, before anything runs.
@@ -19,19 +13,26 @@ var ErrRefused = errors.New("refused command outside the remediation allowlist")
 
 // Allowlist maps each action to the exact command lines it may run, sudo flag included. There is no
 // pattern matching: a step runs only when an entry equals it argument for argument.
-type Allowlist map[string][]connector.Step
+type Allowlist map[string][]Step
 
 // Check refuses s unless it is one of the action's allowed steps.
-func (a Allowlist) Check(action string, s connector.Step) error {
+func (a Allowlist) Check(action string, s Step) error {
 	if slices.ContainsFunc(a[action], s.Equal) {
 		return nil
 	}
 	return fmt.Errorf("%w: %s: %s", ErrRefused, action, s)
 }
 
+// ActionChmod600 makes one file readable and writable by its owner only (700 when the owner could
+// execute it, so a script keeps running). It is a generic action the core applies (remediate.Files):
+// any connector can attach it to a finding by setting Remediation.Action and putting the file's
+// path in evidence.path (absolute, or starting with ~/). With Remediation.Group, one plan closes
+// every file of the group.
+const ActionChmod600 = "file.chmod600"
+
 // Executor runs one step on the terminal. Tests inject a fake; System is the real one.
 type Executor interface {
-	Run(ctx context.Context, s connector.Step, io connector.IO) error
+	Run(ctx context.Context, s Step, io IO) error
 }
 
 // sudoPath is absolute so a sudo earlier in PATH cannot intercept the password prompt.
@@ -42,7 +43,7 @@ const sudoPath = "/usr/bin/sudo"
 // stores or pipes it.
 type System struct{}
 
-func (System) Run(ctx context.Context, s connector.Step, io connector.IO) error {
+func (System) Run(ctx context.Context, s Step, io IO) error {
 	if len(s.Argv) == 0 {
 		return errors.New("empty command")
 	}
@@ -61,12 +62,12 @@ func (System) Run(ctx context.Context, s connector.Step, io connector.IO) error 
 // Run checks every command of p against the allowlist, and only when all pass runs them in order
 // with ex (nil is System), stopping at the first failure. File changes are not commands; the
 // remediator applies them.
-func Run(ctx context.Context, p connector.Plan, allow Allowlist, ex Executor, io connector.IO) error {
+func (a Allowlist) Run(ctx context.Context, p Plan, ex Executor, io IO) error {
 	if ex == nil {
 		ex = System{}
 	}
 	for _, s := range p.Commands {
-		if err := allow.Check(p.Action, s); err != nil {
+		if err := a.Check(p.Action, s); err != nil {
 			return err
 		}
 	}
@@ -75,14 +76,6 @@ func Run(ctx context.Context, p connector.Plan, allow Allowlist, ex Executor, io
 		if err := ex.Run(ctx, s, io); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// samePlan refuses to apply a plan that differs from the one the remediator states now.
-func samePlan(want, got connector.Plan) error {
-	if !reflect.DeepEqual(want, got) {
-		return errors.New("the plan changed since it was shown: run remediate again to see the current one")
 	}
 	return nil
 }

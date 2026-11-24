@@ -1,4 +1,4 @@
-package remediate
+package run
 
 import (
 	"bufio"
@@ -201,7 +201,7 @@ func Finished(name string) (bool, error) {
 func Load(files []string) ([]finding.Finding, error) {
 	var out []finding.Finding
 	for _, name := range files {
-		got, err := ReadRun(name)
+		got, err := Read(name)
 		if err != nil {
 			return nil, err
 		}
@@ -210,20 +210,20 @@ func Load(files []string) ([]finding.Finding, error) {
 	return out, nil
 }
 
-// RunFile is one connector instance's output.
-type RunFile struct {
+// Output is one connector instance's output, as read back from its run file.
+type Output struct {
 	Findings []finding.Finding
 	Statuses []finding.Status
 	End      *finding.RunEnd // nil: no run_end, so the run's completeness is unknown
 }
 
 // Coverage is what the run proves about each scope; see finding.Coverage.
-func (r RunFile) Coverage() finding.Coverage { return finding.CoverageOf(r.End) }
+func (r Output) Coverage() finding.Coverage { return finding.CoverageOf(r.End) }
 
 // ReadRun reads one connector instance's output, skipping log records. A file without run_end
 // may end in a half-written line (the run was killed mid-record): that line is dropped.
-func ReadRun(name string) (RunFile, error) {
-	var r RunFile
+func Read(name string) (Output, error) {
+	var r Output
 	f, err := os.Open(name)
 	if err != nil {
 		return r, err
@@ -234,22 +234,22 @@ func ReadRun(name string) (RunFile, error) {
 	var torn error // an unparseable line, fatal unless it turns out to be the last one
 	for sc.Scan() {
 		if torn != nil {
-			return RunFile{}, torn
+			return Output{}, torn
 		}
 		if err := r.decode(sc.Bytes()); err != nil {
 			torn = fmt.Errorf("%s: %w", name, err)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return RunFile{}, err
+		return Output{}, err
 	}
 	if torn != nil && r.End != nil {
-		return RunFile{}, torn
+		return Output{}, torn
 	}
 	return r, nil
 }
 
-func (r *RunFile) decode(line []byte) error {
+func (r *Output) decode(line []byte) error {
 	var head struct{ Type string }
 	if err := json.Unmarshal(line, &head); err != nil {
 		return err
@@ -298,16 +298,4 @@ func Find(all []finding.Finding, id string) (finding.Finding, error) {
 		return matches[0], nil
 	}
 	return finding.Finding{}, fmt.Errorf("%q matches %d findings: give more of the id", id, len(matches))
-}
-
-// Automatable returns the findings with a remediation action, worst first.
-func Automatable(all []finding.Finding) []finding.Finding {
-	var out []finding.Finding
-	for _, f := range all {
-		if f.Remediation.Action != "" {
-			out = append(out, f)
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Severity.Rank() > out[j].Severity.Rank() })
-	return out
 }

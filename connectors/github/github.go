@@ -27,7 +27,6 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 const (
@@ -42,9 +41,9 @@ const (
 type Connector struct {
 	// Run executes gh commands after the read-only guard. Tests replace it with canned output.
 	Run cli.Runner
-	// Exec runs a confirmed remediation's allowlisted commands; nil is remediate.System. Tests
+	// Exec runs a confirmed remediation's allowlisted commands; nil is connector.System. Tests
 	// replace it with a recorder.
-	Exec remediate.Executor
+	Exec connector.Executor
 }
 
 func New() *Connector {

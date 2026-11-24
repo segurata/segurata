@@ -107,9 +107,9 @@ when a skipped scope matches its scope or its account (`finding.Coverage`).
 
 **Consumers.**
 
-- `remediate.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
+- `run.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
   and the newest such run before it as the previous one; a newer file without `run_end` is passed
-  over and named. `remediate.ReadRun` drops a half-written last line of such a file.
+  over and named. `run.Read` drops a half-written last line of such a file.
 - `report` lists a finding missing from the latest run as "not checked this run" with the reason,
   never as resolved, when the run did not inspect its scope. Its "Run completeness" section names
   partial runs and their skipped scopes, runs without `run_end`, and newer runs that did not
@@ -329,7 +329,7 @@ owner's after all. Ignoring it by hand afterwards sticks.
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
-finished run of every connector instance (`remediate.LatestFiles`) and:
+finished run of every connector instance (`run.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
    syncing two output folders (interactive and scheduled) never makes items flap. A run's time is
@@ -503,12 +503,17 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   the remediator for the plan again, from the state as it is then, and refuses to call `Apply` when
   it differs in any field from the one shown. A remediator carries no check of its own for this.
 - Every command an action may run is on a per-action allowlist of exact argument lists, written by
-  hand (`remediate.Allowlist`). There is no pattern matching; anything else is refused before the
+  hand (`connector.Allowlist`). There is no pattern matching; anything else is refused before the
   first command runs. An action whose argument names a live object (an SMB share point, the home
   folder, a GitHub repository, gh's token scopes, an Azure client secret) gets its entries at apply
   time from a fresh read of what exists, never from the finding: the finding only says which
   object, and a name that matches nothing exactly is refused. The plan is built from the same
   read, so what changed since the inventory is left out and named in the plan.
+- Packages: `internal/remediate` is the verb's core (the session, the plan check, the generic file
+  actions and protocol 2), and only `cmd/segurata` imports it; a test enforces that. Connectors
+  build on the contract in `internal/connector` (`Plan`, `Allowlist`, `Executor`,
+  `ActionChmod600`), other commands confirm through `internal/prompt`, and the latest-run reader
+  is `internal/run`.
 - HTTP writes (`plan.calls`: method, URL and the name of the credential) go through
   `connectors/internal/httpw`, a client separate from the GET-only `httpx` (which follows
   redirects but drops the credential headers on a hop to another host or port): it sends bodiless
@@ -569,7 +574,7 @@ opens the item again.
 changes:
 
 - the latest finished run of every connector instance and the finished run before it, through
-  `remediate.LatestRuns` and `remediate.ReadRun` (findings, statuses and `run_end`);
+  `run.LatestRuns` and `run.Read` (findings, statuses and `run_end`);
 - the tracker's acceptances, which annotate every finding as `inventory` does, so an acceptance
   made after the run counts and an expired one shows again;
 - the tracker's rotate items.
@@ -637,7 +642,7 @@ so an agent installed before that runs with the 24h bound until it is installed 
    is also written to the log.
 4. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
-5. Once the report is written, prunes `~/.segurata/out` (`remediate.Prune`): it removes the
+5. Once the report is written, prunes `~/.segurata/out` (`run.Prune`): it removes the
    `<date>/*.jsonl` files and leftover `*.partial` files of days older than `keep_runs_days` in
    the config (default 30; a negative value keeps everything), except the latest finished run of
    each instance, the one before it and a newer unfinished one, which the tracker, `report` and

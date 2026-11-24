@@ -7,7 +7,6 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
@@ -103,8 +102,8 @@ func (st secretsState) plan() (connector.Plan, error) {
 }
 
 // allowlist is a delete for every secret of these apps that is expired in the read, nothing else.
-func (st secretsState) allowlist() remediate.Allowlist {
-	allow := remediate.Allowlist{}
+func (st secretsState) allowlist() connector.Allowlist {
+	allow := connector.Allowlist{}
 	for _, e := range st.expired {
 		allow[ActionDeleteExpiredSecrets] = append(allow[ActionDeleteExpiredSecrets], deleteStep(e.app.AppID, e.cred.KeyID))
 	}
@@ -134,5 +133,5 @@ func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p conn
 	if err != nil {
 		return err
 	}
-	return remediate.Run(ctx, p, st.allowlist(), c.Exec, io)
+	return st.allowlist().Run(ctx, p, c.Exec, io)
 }

@@ -23,7 +23,6 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
-	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -611,9 +610,9 @@ func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
 	}
 	switch {
 	case othersCanRead(ev.Mode):
-		r.Action = remediate.ActionChmod600
+		r.Action = connector.ActionChmod600
 	case othersCanRead(ev.FileMode):
-		r.Action, r.Severity, r.Group = remediate.ActionChmod600, finding.SevLow, hardeningGroup(ev.Path)
+		r.Action, r.Severity, r.Group = connector.ActionChmod600, finding.SevLow, hardeningGroup(ev.Path)
 		r.Summary += fmt.Sprintf(" The file itself is mode %s: only a closed parent folder keeps other users out, so `segurata remediate` can also close the file (chmod 600) in case that folder is opened later.", ev.FileMode)
 	}
 	return r

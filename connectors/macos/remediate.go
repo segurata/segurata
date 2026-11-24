@@ -6,7 +6,6 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 // Remediation actions this connector can apply.
@@ -22,7 +21,7 @@ const (
 // out by hand rather than derived from the plans, so a wrong plan is refused instead of run. The
 // share point and home folder actions take a path or a name, so their allowlists are built at
 // apply time from what exists then (shareAllowlist, homeAllowlist), never from the finding.
-var allowed = remediate.Allowlist{
+var allowed = connector.Allowlist{
 	ActionFirewallEnable: {
 		{Argv: []string{socketfilterfw, "--setglobalstate", "on"}, Sudo: true},
 	},
@@ -72,12 +71,12 @@ func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Pl
 	if err != nil {
 		return err
 	}
-	return remediate.Run(ctx, p, allow, c.Exec, io)
+	return allow.Run(ctx, p, c.Exec, io)
 }
 
 // allowlistFor is the allowlist an action is checked against: the fixed one, or for actions that
 // name a live object, one built now from what exists.
-func (c *Connector) allowlistFor(ctx context.Context, action string) (remediate.Allowlist, error) {
+func (c *Connector) allowlistFor(ctx context.Context, action string) (connector.Allowlist, error) {
 	switch action {
 	case ActionShareRemove, ActionShareGuestOff:
 		return c.shareAllowlist(ctx)

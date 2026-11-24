@@ -12,7 +12,7 @@ import (
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
-	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/schedule"
 	"github.com/segurata/segurata/internal/searchpath"
 )
@@ -82,6 +82,6 @@ func scheduleEnv() (schedule.Env, error) {
 	return schedule.Env{
 		GOOS: runtime.GOOS, Home: home, UID: os.Getuid(), Exe: exe, Path: searchpath.Clean(os.Getenv("PATH")), TmpDir: os.TempDir(),
 		Runner: schedule.System{}, IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr},
-		TTY: remediate.IsTerminal(os.Stdin), Now: time.Now, Connectors: all(),
+		TTY: prompt.IsTerminal(os.Stdin), Now: time.Now, Connectors: all(),
 	}, nil
 }

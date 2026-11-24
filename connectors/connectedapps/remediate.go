@@ -9,7 +9,6 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 )
 
 // ActionGHDropScopes removes from gh's token the scopes segurata does not need (ghRemovable).
@@ -108,8 +107,8 @@ func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Pl
 		return err
 	}
 	// The one command line allowed: removing exactly the scopes the token holds now.
-	allow := remediate.Allowlist{ActionGHDropScopes: {refreshStep("-r", remove)}}
-	return remediate.Run(ctx, p, allow, c.exec, io)
+	allow := connector.Allowlist{ActionGHDropScopes: {refreshStep("-r", remove)}}
+	return allow.Run(ctx, p, c.exec, io)
 }
 
 func scopeNames() []string {

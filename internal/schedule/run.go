@@ -8,10 +8,11 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/prompt"
+	"github.com/segurata/segurata/internal/run"
 )
 
-var confirmFunc = remediate.Confirm
+var confirmFunc = prompt.Confirm
 
 // DefaultConnectors are the connectors a scheduled run selects when none are named: all of them
 // except those that drive the browser over CDP, since the browser is rarely running with its
@@ -83,7 +84,7 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	if len(fresh) > 0 {
 		e.stamp(fmt.Sprintf("%d new high or critical findings", len(fresh)))
 		for _, f := range fresh {
-			fmt.Fprintf(e.IO.Out, "  [%s] %s %s\n", f.Severity, remediate.Selector(f), f.Title)
+			fmt.Fprintf(e.IO.Out, "  [%s] %s %s\n", f.Severity, f.Selector(), f.Title)
 		}
 		if e.GOOS == "darwin" {
 			if err := e.Runner.Run(ctx, osascript, []string{"-e", notification(fresh)}, e.IO.Out, e.IO.Err); err != nil {
@@ -105,13 +106,13 @@ func (e Env) stamp(msg string) {
 	fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg)
 }
 
-// prune removes run files older than Keep that no latest run needs (remediate.Prune). A failure is
+// prune removes run files older than Keep that no latest run needs (run.Prune). A failure is
 // logged: the scan itself succeeded.
 func (e Env) prune(outDir string) {
 	if e.Keep <= 0 {
 		return
 	}
-	removed, err := remediate.Prune(outDir, e.Now(), e.Now().Add(-e.Keep))
+	removed, err := run.Prune(outDir, e.Now(), e.Now().Add(-e.Keep))
 	if len(removed) > 0 {
 		e.stamp(fmt.Sprintf("pruned %d run files older than %s", len(removed), e.Keep))
 	}
@@ -123,11 +124,11 @@ func (e Env) prune(outDir string) {
 // serious returns the high and critical findings of the latest run of each connector, leaving out
 // accepted ones. No run yet means none.
 func (e Env) serious(outDir string) (map[string]finding.Finding, error) {
-	files, err := remediate.LatestFiles(outDir, e.Now())
+	files, err := run.LatestFiles(outDir, e.Now())
 	if err != nil {
 		return map[string]finding.Finding{}, nil // nothing inventoried yet
 	}
-	all, err := remediate.Load(files)
+	all, err := run.Load(files)
 	if err != nil {
 		return nil, err
 	}

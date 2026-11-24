@@ -152,7 +152,7 @@ func TestListShowsAGroupAsOneLineRankedByItsActionSeverity(t *testing.T) {
 		grouped("b1", "acme", finding.SevMedium),
 		// A hardening chmod on a high finding ranks as low.
 		{ID: "harden01", Connector: "local-secrets", Severity: finding.SevHigh, Title: "key in ~/x",
-			Remediation: finding.Remediation{Action: ActionChmod600, Severity: finding.SevLow, Group: "hardening:~/src"}},
+			Remediation: finding.Remediation{Action: connector.ActionChmod600, Severity: finding.SevLow, Group: "hardening:~/src"}},
 	}
 	var b bytes.Buffer
 	List(&b, all, finding.SevMedium)
@@ -183,7 +183,7 @@ func TestChmodGroupClosesEachFileOnceAndKeepsScriptsRunnable(t *testing.T) {
 	env, script, done := write(".env", 0o644), write("deploy.sh", 0o755), write("closed", 0o600)
 	member := func(id, path string) finding.Finding {
 		return finding.Finding{ID: id, Connector: "local-secrets", Evidence: map[string]any{"path": path},
-			Remediation: finding.Remediation{Action: ActionChmod600, Group: "files in " + dir, Severity: finding.SevLow}}
+			Remediation: finding.Remediation{Action: connector.ActionChmod600, Group: "files in " + dir, Severity: finding.SevLow}}
 	}
 	// Two secrets in .env are two findings naming one file.
 	group := []finding.Finding{member("a", env), member("b", env), member("c", script), member("d", done)}

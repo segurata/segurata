@@ -10,7 +10,6 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
@@ -323,8 +322,8 @@ func (st state) plan() (connector.Plan, error) {
 
 // allowlist is every command line the action may run on what was read: the fixed shapes, for the
 // repositories and organizations GitHub says are eligible now, never names taken from a finding.
-func (st state) allowlist() remediate.Allowlist {
-	allow := remediate.Allowlist{}
+func (st state) allowlist() connector.Allowlist {
+	allow := connector.Allowlist{}
 	for _, t := range st.targets {
 		if !t.eligible {
 			continue
@@ -367,5 +366,5 @@ func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p conn
 	if err != nil {
 		return err
 	}
-	return remediate.Run(ctx, p, st.allowlist(), c.Exec, io)
+	return st.allowlist().Run(ctx, p, c.Exec, io)
 }

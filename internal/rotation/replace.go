@@ -17,7 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/keychain"
-	"github.com/segurata/segurata/internal/remediate"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -473,7 +473,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		return 0
 	}
 	// Confirmation needs a terminal on stdin; a value piped in with --stdin leaves --yes as the only way.
-	ok, err := remediate.Confirm(c.In, c.Out, *yes, c.TTY && !*fromStdin)
+	ok, err := prompt.Confirm(c.In, c.Out, *yes, c.TTY && !*fromStdin)
 	if err != nil {
 		return c.fail(err)
 	}
