@@ -11,12 +11,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
 )
 
 const externalPrefix = "segurata-"
+
+// validName is what a connector name may look like: it selects the secrets the core hands over
+// and names the run file, so it must be a plain word that cannot climb out of a directory.
+var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // RemediationProtocol is the first protocol version with `plan` and `apply`.
 const RemediationProtocol = 2
@@ -27,7 +32,8 @@ type External struct {
 	desc Description
 }
 
-// Discover finds segurata-<name> executables on PATH. Built-in names win over external ones.
+// Discover finds segurata-<name> executables on PATH. A built-in name wins over an external one, an
+// earlier PATH directory over a later one, and a file whose suffix is not a valid name never runs.
 func Discover() []*External {
 	seen := map[string]bool{}
 	for _, c := range Builtins() {
@@ -37,8 +43,12 @@ func Discover() []*External {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		matches, _ := filepath.Glob(filepath.Join(dir, externalPrefix+"*"))
 		for _, p := range matches {
-			name := strings.TrimPrefix(filepath.Base(p), externalPrefix)
+			name := fileName(p)
 			if seen[name] || !isExecutable(p) {
+				continue
+			}
+			if !validName.MatchString(name) {
+				fmt.Fprintf(os.Stderr, "segurata: ignoring %s: %q is not a connector name\n", p, name)
 				continue
 			}
 			e, err := LoadExternal(p)
@@ -53,12 +63,16 @@ func Discover() []*External {
 	return out
 }
 
+// fileName is the connector name a segurata-<name> path stands for.
+func fileName(path string) string { return strings.TrimPrefix(filepath.Base(path), externalPrefix) }
+
 func isExecutable(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
 }
 
-// LoadExternal runs `<path> describe` and checks what it prints.
+// LoadExternal runs `<path> describe` and checks what it prints, including that the name it
+// declares is the one in its file name.
 func LoadExternal(path string) (*External, error) {
 	raw, err := exec.Command(path, "describe").Output()
 	if err != nil {
@@ -71,6 +85,9 @@ func LoadExternal(path string) (*External, error) {
 	if err := e.desc.validate(); err != nil {
 		return nil, err
 	}
+	if want := fileName(path); e.desc.Name != want {
+		return nil, fmt.Errorf("describe names %q, but the file is %s%s", e.desc.Name, externalPrefix, want)
+	}
 	return e, nil
 }
 
@@ -78,6 +95,9 @@ func LoadExternal(path string) (*External, error) {
 func (d Description) validate() error {
 	if d.Name == "" {
 		return errors.New("describe has no name")
+	}
+	if !validName.MatchString(d.Name) {
+		return fmt.Errorf("name %q is not lowercase letters, digits and dashes", d.Name)
 	}
 	if d.Protocol < MinProtocolVersion || d.Protocol > ProtocolVersion {
 		return fmt.Errorf("speaks protocol %d, core speaks %d to %d", d.Protocol, MinProtocolVersion, ProtocolVersion)

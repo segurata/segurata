@@ -28,7 +28,9 @@ Write a built-in connector when it belongs in the binary for everyone and can be
 Go standard library. Write an external one for anything else: another language, a heavy
 dependency, a private integration, an experiment. The core wraps an external connector in the same
 Go interface, so the rest of the program (inventory, summary, accepted risks, remediation, the
-rotation ledger) treats both alike. A built-in name wins over an external one with the same name.
+rotation ledger) treats both alike. An external connector must name itself after its file
+(`segurata-example` declares `example`); a built-in name wins over an external one, and the first
+`PATH` directory over a later one.
 
 A minimal built-in connector:
 
@@ -276,8 +278,11 @@ Prints one JSON object:
 - `remediates` (protocol 2 only): the remediation actions this connector plans and applies. A
   finding whose `remediation.action` is not in this list cannot be remediated through it. An action
   the core owns (`file.chmod600`) is always handled by the core.
-- A description that speaks another protocol, or declares `remediates` on protocol 1, is ignored
-  with a message on stderr.
+- `name`: lowercase letters, digits and dashes, starting with a letter or digit, and equal to the
+  file name without `segurata-`. The core never runs a `segurata-*` file whose suffix is not such a
+  name (a stray `segurata-example.orig`), nor one whose name a built-in connector already has.
+- A description whose name is not its file's, that speaks another protocol, or declares
+  `remediates` on protocol 1, is ignored with a message on stderr.
 
 ### `inventory` (v1, v2)
 

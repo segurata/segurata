@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ func TestLoadExternalChecksTheDescription(t *testing.T) {
 		"empty remediation":        `{"name":"x","protocol":2,"remediates":[""]}`,
 		"no name":                  `{"protocol":2}`,
 		"not json":                 `nope`,
+		"another file's name":      `{"name":"openai","protocol":2}`,
 	}
 	for why, js := range refused {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err == nil {
@@ -33,6 +35,57 @@ func TestLoadExternalChecksTheDescription(t *testing.T) {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err != nil {
 			t.Errorf("%s: %v", js, err)
 		}
+	}
+}
+
+// The name in describe must be the file's suffix and a plain lowercase word, since it picks the
+// secrets the core hands over and names the run file.
+func TestLoadExternalRefusesABadName(t *testing.T) {
+	for _, name := range []string{"Upper", "under_score", "prowler.orig", "-lead"} {
+		js := `{"name":"` + name + `","protocol":2}`
+		if _, err := connector.LoadExternal(connectortest.Script(t, name, describing(js))); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
+
+type builtin struct{ name string }
+
+func (b builtin) Describe() connector.Description { return connector.Description{Name: b.name} }
+func (builtin) Inventory(context.Context, connector.Request, connector.Emitter) error {
+	return nil
+}
+
+// Discover keeps one connector per name: a built-in beats a plugin, an earlier PATH directory beats
+// a later one, and a file whose name is not a connector name never runs.
+func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
+	connector.Register(builtin{"discoverbuiltin"})
+	ran := filepath.Join(t.TempDir(), "ran")
+	first, second := t.TempDir(), t.TempDir()
+	plugin := func(dir, file, name string) {
+		t.Helper()
+		body := "echo " + file + " >> '" + ran + "'\n" + describing(`{"name":"`+name+`","protocol":2}`)
+		if err := os.WriteFile(filepath.Join(dir, "segurata-"+file), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script connector")
+	}
+	plugin(first, "discoverbuiltin", "discoverbuiltin")
+	plugin(first, "zzz", "discoverbuiltin")
+	plugin(first, "dup", "dup")
+	plugin(second, "dup", "dup")
+	plugin(second, "dup.orig", "dup")
+	t.Setenv("PATH", first+string(os.PathListSeparator)+second)
+
+	got := connector.Discover()
+	if len(got) != 1 || got[0].Path != filepath.Join(first, "segurata-dup") || got[0].Describe().Name != "dup" {
+		t.Fatalf("discovered %+v", got)
+	}
+	raw, _ := os.ReadFile(ran)
+	if strings.Contains(string(raw), "discoverbuiltin") || strings.Contains(string(raw), "orig") {
+		t.Fatalf("ran a plugin it should have skipped unseen:\n%s", raw)
 	}
 }
 
