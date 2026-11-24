@@ -125,6 +125,12 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   at a time, each with a 10-minute timeout. Without gitleaks it scans the whole working tree under
   `repos_root` with its own patterns instead, but not history; install gitleaks respecting the
   4-day quarantine (`~/.claude/scripts/safe-update.sh`).
+- Incremental history: after the first full scan of a repository, later runs scan only the commits
+  added since, and replay the earlier leaks from `~/.cache/securizame/gitleaks/<repo-hash>.json`
+  (mode 0600; fingerprints, redacted hints, paths and commits, never values). A rewritten or
+  deleted ref, a new gitleaks version or config, or a new fingerprint key means a full scan again.
+  The status line says how many repositories were unchanged, incremental or full. Details:
+  [docs/architecture.md](docs/architecture.md#incremental-git-history-scan).
 - SSH keys in `~/.ssh`: type, permissions and whether they have a passphrase
   (`ssh-keygen -y -P ""`). A key without one is an `exposure` finding; a key with one, an `info`
   `setting`.
@@ -136,8 +142,9 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
 - Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history. The disk scan takes
   about a minute; the history scan of ~330 repositories takes most of the run.
 - Config (`connectors.local-secrets.config`): `repos_root`, `skip_git_history` (true skips
-  gitleaks and keeps the fast scan), `gitleaks_workers` (default 6), `gitleaks_timeout` (per
-  repository, default `"10m"`).
+  gitleaks and keeps the fast scan), `git_cache` (default true; false scans every repository's
+  whole history and leaves the cache alone), `gitleaks_workers` (default 6), `gitleaks_timeout`
+  (per repository, default `"10m"`).
 - What to do with each finding: [docs/secrets.md](docs/secrets.md); each finding's `evidence.fix`
   links the section.
 

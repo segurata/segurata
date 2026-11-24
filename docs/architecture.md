@@ -221,6 +221,42 @@ of a browser at once (duplicates, one finding per extension).
 The Node scripts in `connected-apps/` and `workspace/` are the
 prototypes. They keep working until their Go connector replaces them, and then they are deleted.
 
+## Incremental git history scan
+
+gitleaks over every repository under `repos_root` is most of a `local-secrets` run (about 30
+minutes for ~330 repositories). History only grows, so each repository is scanned in full once and
+then only for the commits added since (`connectors/localsecrets/historycache.go`).
+
+Cache: `~/.cache/securizame/gitleaks/<sha256(repo path)[:16]>.json`, mode 0600, one per
+repository. It holds the repository path, the cache format version, a hash of the gitleaks
+version and configuration (`GITLEAKS_CONFIG`, `GITLEAKS_CONFIG_TOML`, the repository's
+`.gitleaks.toml` and `.gitleaksignore`), a probe fingerprint of the machine key, the tips (every
+commit a ref or HEAD pointed to, from `git rev-list --no-walk --all`) and the leaks found, as
+prepared evidence: fingerprint, redacted hint, path, line, commit. The evidence is cached after
+the check that it does not contain the value, so the cache never holds one.
+
+Each run:
+
+1. Lists the current tips.
+2. Loads the cache. A different format, repository, gitleaks version or configuration, or
+   fingerprint key (the probe differs) discards it.
+3. Checks that every old tip is still reachable from a current one: `git rev-list -n 1 <old tips>
+   --not <current tips>` must print nothing. A rewritten or deleted ref fails the check (its
+   commits, and their leaks, may be gone), and so does an old tip whose object no longer exists:
+   gitleaks itself would scan nothing and exit 0 on a bad object.
+4. Passing the check, it scans `gitleaks git --log-opts "--full-history <new tips> --not <old
+   tips>"`, exactly the commits no earlier run saw, or nothing when no tip is new. Failing it, it
+   scans `--full-history <current tips>` in full. Tips are passed explicitly rather than with
+   gitleaks' default `--all`, so the cache records exactly what was scanned. A tip list longer
+   than 256 KiB falls back to gitleaks' default.
+5. Replays the cached leaks plus the new ones, recomputing what can change without a new commit:
+   whether the repository has a remote, and whether a cached JWT has expired since.
+
+`git_cache: false` in the connector config turns it off: every repository is scanned in full and
+the cache is neither read nor written. A cache that cannot be written is logged and costs the next
+run a full scan, nothing more. The connector runs only `git rev-list` and `git ls-files`, and
+`gitleaks git` and `gitleaks version`, each on an allowlist (`guards.go`).
+
 ## Rotation ledger
 
 `securizame rotations` turns `local-secrets` findings into a list of secrets to rotate, one item per

@@ -27,9 +27,9 @@ var rgCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// gitleaksCheck allows only `gitleaks git` with the report on stdout.
+// gitleaksCheck allows only `gitleaks version` and `gitleaks git` with the report on stdout.
 var gitleaksCheck = cli.CheckFunc(func(args []string) error {
-	if err := (cli.Allowlist{"git"}).Check(args); err != nil {
+	if err := (cli.Allowlist{"git", "version"}).Check(args); err != nil {
 		return err
 	}
 	for i, a := range args {
@@ -40,8 +40,8 @@ var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// gitList allows only `git ls-files`.
-var gitList = cli.Allowlist{"ls-files"}
+// gitList allows only `git ls-files` and `git rev-list`, both read-only.
+var gitList = cli.Allowlist{"ls-files", "rev-list"}
 
 // sshKeygenCheck allows exactly two shapes: print the public key of a key opened with an empty
 // passphrase (-y -P "" -f key), and print a key's fingerprint (-l -f key).
