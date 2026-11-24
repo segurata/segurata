@@ -213,7 +213,7 @@ func (c *Connector) listeningPorts(ctx context.Context, r *reporter) {
 func (c *Connector) smbChecks(ctx context.Context, r *reporter, port *check) {
 	shares, err := c.sharePoints(ctx)
 	if err != nil {
-		r.report(check{id: "smb-shares", skip: err.Error()})
+		r.report(check{id: "smb-shares", area: "smb-shares", skip: err.Error()})
 		return
 	}
 	if len(shares) == 0 {
@@ -223,9 +223,7 @@ func (c *Connector) smbChecks(ctx context.Context, r *reporter, port *check) {
 		return
 	}
 	port.evidence["share_points"] = slices.Sorted(maps.Keys(shares))
-	for _, ch := range shareChecks(shares) {
-		r.report(ch)
-	}
+	r.reportAll(inArea("smb-shares", shareChecks(shares)))
 }
 
 func listenerCheck(l listener) check {
@@ -328,12 +326,12 @@ func (c *Connector) backgroundItems(ctx context.Context, r *reporter) {
 	out, _ := c.text(ctx, "/usr/bin/sfltool", "dumpbtm")
 	items := parseBTM(out)
 	if len(items) == 0 {
-		r.report(check{id: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); falling back to launchctl and launchd plists"})
+		r.report(check{id: "btm", area: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); falling back to launchctl and launchd plists"})
 		c.launchItems(ctx, r)
 		return
 	}
 	for _, it := range items {
-		ch := check{id: "btm:" + it.ident, resource: "background_item", name: it.name,
+		ch := check{id: "btm:" + it.ident, area: "btm", resource: "background_item", name: it.name,
 			detail:   fmt.Sprintf("%s [%s] %s %s (Team %s)", it.name, it.typ, it.ident, it.exe, it.team),
 			evidence: map[string]any{"type": it.typ, "identifier": it.ident, "executable": it.exe, "team_id": it.team},
 			rem:      manual("Check you recognise it. Turn it off in System Settings > General > Login Items & Extensions, or uninstall the app that installed it."),
@@ -398,7 +396,7 @@ func (c *Connector) launchItems(ctx context.Context, r *reporter) {
 	home, _ := c.Home()
 	for _, dir := range []string{home + "/Library/LaunchAgents", "/Library/LaunchAgents", "/Library/LaunchDaemons"} {
 		for _, p := range plists(dir) {
-			r.report(check{id: "launch-item:" + p, resource: "background_item", sev: finding.SevInfo, detail: p,
+			r.report(check{id: "launch-item:" + p, area: "btm", resource: "background_item", sev: finding.SevInfo, detail: p,
 				title: "Launch item " + p, rem: manual("Check you recognise it.")})
 		}
 	}
@@ -408,7 +406,7 @@ func (c *Connector) launchItems(ctx context.Context, r *reporter) {
 		if i == 0 || len(f) < 3 || strings.HasPrefix(f[2], "com.apple.") {
 			continue
 		}
-		r.report(check{id: "launchctl:" + f[2], resource: "background_item", sev: finding.SevInfo, detail: f[2],
+		r.report(check{id: "launchctl:" + f[2], area: "btm", resource: "background_item", sev: finding.SevInfo, detail: f[2],
 			title: "launchd job " + f[2], rem: manual("Check you recognise it.")})
 	}
 }
