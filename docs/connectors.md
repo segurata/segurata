@@ -97,7 +97,7 @@ One JSON object per finding (`internal/finding`):
 | `evidence` | Connector | Whatever backs the finding: scopes, dates, paths, counts. Never a secret value |
 | `created_at`, `last_used_at` | Connector | What the provider reports, RFC 3339. `null` when it reports nothing, never a made-up date |
 | `remediation` | Connector | `summary` says what to do by hand; `url` is the page where it is done; `action` names an automatable remediation or is empty; `automatable` is computed by the core |
-| `observed_at` | Core | When the record was written |
+| `observed_at` | Core | When the record was written; a connector's own value is replaced |
 | `accepted` | Core | Set from the accepted-risks file |
 
 Besides findings, a connector emits per-account status records saying whether something could be
@@ -285,6 +285,10 @@ Prints one JSON object:
   name (a stray `segurata-example.orig`), nor one whose name a built-in connector already has.
 - `describe` runs on every command that lists connectors, once per command: it must answer within
   10 seconds and print less than 1 MiB.
+- `timeout` (optional): how long one `inventory` may take by default, as a Go duration (`"6h"`),
+  for a connector that routinely needs longer than the core's one hour. The owner's config
+  `timeout` for the instance overrides it. At the deadline the core kills the process and the run
+  ends failed, so nothing it left out is taken as resolved.
 - A description whose name is not its file's, that speaks another protocol, or declares
   `remediates` on protocol 1, is ignored with a message on stderr.
 

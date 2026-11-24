@@ -55,7 +55,7 @@ func (c CLI) Accept(args []string) int {
 		c.list(t, now)
 		return 0
 	}
-	files, err := remediate.LatestFiles(*out)
+	files, err := remediate.LatestFiles(*out, time.Now())
 	if err != nil {
 		return c.fail(err)
 	}

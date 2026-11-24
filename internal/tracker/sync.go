@@ -47,6 +47,9 @@ type SyncReport struct {
 	Coverage CoverageReport
 	// Every item.
 	Woken, Lapsed int
+	// Unreadable are run files that could not be read (a torn line): skipped with their error, so
+	// their connector instance counts as not run and nothing it reported closes.
+	Unreadable []string
 }
 
 // run is one connector instance's latest output.
@@ -104,13 +107,16 @@ func (r *run) notChecked(why string) string {
 // per run instead of closing. See docs/architecture.md, "Run completeness".
 func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	var rep SyncReport
-	runs, err := readRuns(opt)
+	runs, unreadable, err := readRuns(opt, now)
 	if err != nil {
 		return rep, err
 	}
+	rep.Unreadable = unreadable
 	folded := map[string]*run{}
 	for _, r := range runs {
-		if prev, ok := t.Sources[r.label]; ok && r.at.Before(prev) {
+		// A source after now came from a future timestamp: it counts as absent, or it would hold
+		// every later run back as stale.
+		if prev, ok := t.Sources[r.label]; ok && !prev.After(now) && r.at.Before(prev) {
 			rep.Stale = append(rep.Stale, r.label)
 			continue
 		}
@@ -284,6 +290,9 @@ func SyncLine(r SyncReport) string {
 	if len(r.Stale) > 0 {
 		s += fmt.Sprintf("Skipped older runs than the tracker already holds: %s.\n", strings.Join(r.Stale, ", "))
 	}
+	for _, u := range r.Unreadable {
+		s += fmt.Sprintf("Skipped an unreadable run, nothing it reported was closed: %s\n", u)
+	}
 	return s
 }
 
@@ -338,25 +347,28 @@ func RunLabel(file string, rf remediate.RunFile) string {
 	return base[:len(base)-len(filepath.Ext(base))]
 }
 
-func readRuns(opt SyncOptions) ([]*run, error) {
-	files, err := remediate.LatestFiles(opt.OutDir)
+// readRuns reads the latest run of every connector instance as of now, and opt.From. A latest run that
+// cannot be read is left out and returned with its error in unreadable: one torn file must not
+// stop the sync of every other connector, and an instance with no run folded closes nothing.
+func readRuns(opt SyncOptions, now time.Time) (runs []*run, unreadable []string, err error) {
+	files, err := remediate.LatestFiles(opt.OutDir, now)
 	if err != nil {
 		if opt.From == "" {
-			return nil, err
+			return nil, nil, err
 		}
 		files = nil
 	}
-	var runs []*run
 	var from *run
 	if opt.From != "" {
 		if from, err = readRunFile(opt.From); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	for _, f := range files {
 		r, err := readRunFile(f)
 		if err != nil {
-			return nil, err
+			unreadable = append(unreadable, err.Error())
+			continue
 		}
 		if from == nil || r.label != from.label {
 			runs = append(runs, r)
@@ -365,7 +377,7 @@ func readRuns(opt SyncOptions) ([]*run, error) {
 	if from != nil {
 		runs = append(runs, from)
 	}
-	return runs, nil
+	return runs, unreadable, nil
 }
 
 func readRunFile(file string) (*run, error) {
@@ -374,12 +386,16 @@ func readRunFile(file string) (*run, error) {
 		return nil, err
 	}
 	r := &run{label: RunLabel(file, rf), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
+	// A finished run's time is when it ended. A file without run_end falls back to its newest
+	// observed_at that is not in the future, then to its modification time.
 	if rf.End != nil {
 		r.at, r.failed, r.fingerprints = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints
-	}
-	for _, f := range rf.Findings {
-		if f.ObservedAt.After(r.at) {
-			r.at = f.ObservedAt
+	} else {
+		limit := time.Now()
+		for _, f := range rf.Findings {
+			if f.ObservedAt.After(r.at) && !f.ObservedAt.After(limit) {
+				r.at = f.ObservedAt
+			}
 		}
 	}
 	if r.at.IsZero() {

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -107,7 +109,7 @@ func TestLatestRunsPreferFinishedRuns(t *testing.T) {
 	runtest.WriteUnfinished(t, path("2026-11-21", "macos.jsonl"), f("m1")) // legacy only
 	runtest.WriteUnfinished(t, path("2026-11-22", "macos.jsonl"), f("m2"))
 
-	runs, err := LatestRuns(out)
+	runs, err := LatestRuns(out, time.Now())
 	if err != nil || len(runs) != 2 {
 		t.Fatalf("runs %+v err %v", runs, err)
 	}
@@ -136,5 +138,57 @@ func TestLatestRunsPreferFinishedRuns(t *testing.T) {
 	_ = os.WriteFile(middle, append([]byte("{not json\n"), raw...), 0o600)
 	if _, err := ReadRun(middle); err == nil {
 		t.Fatal("a broken line before the last one is an error, not a torn tail")
+	}
+}
+
+// A date directory after the day of now (a clock set wrong once) never stands in for the latest run.
+func TestHistorySkipsDaysAfterToday(t *testing.T) {
+	out := t.TempDir()
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.Local)
+	today := filepath.Join(out, "2026-11-24", "github.jsonl")
+	runtest.Write(t, today, finding.Finding{Type: "finding", Connector: "github", ID: "a"})
+	runtest.Write(t, filepath.Join(out, "2026-11-25", "github.jsonl"), finding.Finding{Type: "finding", Connector: "github", ID: "b"})
+	h, err := History(out, now)
+	if err != nil || len(h["github.jsonl"]) != 1 || h["github.jsonl"][0] != today {
+		t.Fatalf("history %v, %v", h, err)
+	}
+}
+
+// Prune removes run files older than the cutoff that no latest run needs, and nothing else: a
+// connector that has not run for months keeps its last finished run and the one before it.
+func TestPruneKeepsWhatLatestRunsNeed(t *testing.T) {
+	out := t.TempDir()
+	path := func(day, name string) string { return filepath.Join(out, day, name) }
+	f := func(c string) finding.Finding { return finding.Finding{Type: "finding", Connector: c, ID: "x"} }
+	runtest.Write(t, path("2026-01-01", "github.jsonl"), f("github"))
+	runtest.Write(t, path("2026-01-02", "github.jsonl"), f("github"))
+	runtest.Write(t, path("2026-11-20", "github.jsonl"), f("github"))
+	runtest.Write(t, path("2026-11-21", "github.jsonl"), f("github"))
+	runtest.Write(t, path("2026-01-01", "macos.jsonl"), f("macos")) // gone quiet: prev of the next
+	runtest.Write(t, path("2026-01-02", "macos.jsonl"), f("macos")) // and its latest
+	partial := path("2026-01-02", "github.jsonl.123.partial")
+	other := path("2026-01-01", "notes.txt")
+	for _, p := range []string{partial, other} {
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := Prune(out, time.Date(2026, 11, 24, 0, 0, 0, 0, time.Local), time.Date(2026, 11, 1, 0, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{path("2026-01-01", "github.jsonl"), path("2026-01-02", "github.jsonl"), partial}
+	if !slices.Equal(removed, want) {
+		t.Fatalf("removed %v, want %v", removed, want)
+	}
+	for _, p := range append(want[:2:2], partial) {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s still there", p)
+		}
+	}
+	for _, p := range []string{other, path("2026-01-01", "macos.jsonl"), path("2026-01-02", "macos.jsonl"), path("2026-11-20", "github.jsonl")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s removed: %v", p, err)
+		}
 	}
 }

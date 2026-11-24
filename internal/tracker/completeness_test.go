@@ -2,7 +2,9 @@ package tracker
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -228,5 +230,62 @@ func TestStaleSetupItemsCloseOnAFinishedRun(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A torn run file (two runs once wrote into it) is skipped with a warning: the other connectors
+// still fold, and the torn one counts as not run, so nothing it reported closes.
+func TestAnUnreadableRunIsSkippedAndClosesNothing(t *testing.T) {
+	tr, out, _, port := lifecycleFixture(t)
+	day1 := t0.AddDate(0, 0, 1)
+	torn := filepath.Join(out, day1.Format(time.DateOnly), "macos.jsonl")
+	runtest.Write(t, torn, at(port, day1), okStatus("macos", "Mac"))
+	raw, err := os.ReadFile(torn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(torn, append([]byte(`{"type":"finding","acc`+"\n"), raw...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeRun(t, out, day1, "github.jsonl", okStatus("github", "github:me"))
+	rep := syncOrDie(t, tr, out, day1)
+	if len(rep.Unreadable) != 1 || !strings.Contains(rep.Unreadable[0], "macos.jsonl") {
+		t.Fatalf("unreadable: %q", rep.Unreadable)
+	}
+	if !slices.Equal(rep.Runs, []string{"github"}) {
+		t.Errorf("runs folded: %v", rep.Runs)
+	}
+	if it := byTitle(t, tr, "The firewall is off"); it.Status != Open || it.Findings[0].Gone {
+		t.Errorf("an unreadable run closed an item: %+v", it)
+	}
+	if !tr.Sources["macos"].Equal(t0) {
+		t.Errorf("an unreadable run moved its source to %v", tr.Sources["macos"])
+	}
+	if line := SyncLine(rep); !strings.Contains(line, "macos.jsonl") {
+		t.Errorf("sync line does not name the unreadable run:\n%s", line)
+	}
+}
+
+// A run's time is when it ended. A future observed_at in a run, or a future source a tracker
+// already holds from one, must not make every later real run look stale.
+func TestAFutureTimestampNeverFreezesAConnector(t *testing.T) {
+	future := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	out := filepath.Join(t.TempDir(), "out")
+	day1 := t0.AddDate(0, 0, 1)
+	f := at(fnd("macos", "", "Mac", "macos_setting", "firewall", "firewall", finding.SevMedium, "The firewall is off", t0), future)
+	var tally finding.Tally
+	tally.Status(okStatus("macos", "Mac"))
+	runtest.WriteUnfinished(t, filepath.Join(out, t0.Format(time.DateOnly), "macos.jsonl"), f, okStatus("macos", "Mac"), tally.End("macos", "", t0, t0, nil))
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0)
+	if got := tr.Sources["macos"]; !got.Equal(t0) {
+		t.Fatalf("source %v, want the run's end %v", got, t0)
+	}
+
+	tr.Sources["macos"] = future // written by an earlier version
+	writeRun(t, out, day1, "macos.jsonl", okStatus("macos", "Mac"))
+	rep := syncOrDie(t, tr, out, day1)
+	if len(rep.Stale) != 0 || byTitle(t, tr, "The firewall is off").Status != Done {
+		t.Fatalf("a future source froze the connector: %+v", rep)
 	}
 }

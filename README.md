@@ -102,6 +102,11 @@ no setup item and is counted on one line, "N expected (by your config)", but its
 counts as not inspected. Details:
 [docs/architecture.md](docs/architecture.md#expected-statuses).
 
+Each connector instance's inventory runs under a deadline, one hour unless the connector declares
+more (local-secrets 6h, prowler 12h) or the instance sets `timeout`:
+`{"connectors": {"gcp": {"timeout": "2h"}}}`. A run that hits it ends failed, so nothing it left
+out is closed. Details: [docs/architecture.md](docs/architecture.md#run-completeness).
+
 A done item is verified when a later run no longer reports its findings, and reopened if one does;
 an item whose findings vanish on their own is closed as "verified (no longer reported)", and a
 setup item whose status a finished run no longer reports as "verified (status no longer
@@ -817,7 +822,9 @@ every day (or `--every`), writes `~/.segurata/last-report.md`, and posts a macOS
 notification when a high or critical finding appears that the previous run did not have. By default
 it runs every connector except those that need the browser's debugging port; `--connectors
 macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/segurata/`, inventories to
-`~/.segurata/out`. Install it from the binary you will keep: the agent runs that
+`~/.segurata/out`, pruned to the last 30 days after each run (`"keep_runs_days"` in the config; the
+latest run of each connector and the one before it always stay). Install it from the binary you
+will keep: the agent runs that
 exact path, with the PATH you had when installing. On Linux it prints a systemd user timer to
 install by hand. Details: [docs/architecture.md](docs/architecture.md#scheduled-runs).
 

@@ -5,6 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/segurata/segurata/internal/proc"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 func TestStoreSendsTheValueOnStdinOnly(t *testing.T) {
@@ -49,5 +53,30 @@ func TestReadTakesTheValueFromStdout(t *testing.T) {
 	}
 	if _, err := k.Read(context.Background(), "missing"); err == nil || !strings.Contains(err.Error(), "reading missing") {
 		t.Errorf("missing: %v", err)
+	}
+}
+
+func TestExecEndsAHungProgramWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := Exec(ctx, nil, proctest.Hung(t, "op", "")); err == nil {
+		t.Fatal("a hung program succeeded")
+	}
+	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
+		t.Fatalf("took %s", took)
+	}
+}
+
+func TestReadTellsAMissingItemFromAnyOtherFailure(t *testing.T) {
+	fail := func(msg string) Keychain {
+		return Keychain{Run: func(context.Context, []byte, string, ...string) ([]byte, error) { return nil, errors.New(msg) }}
+	}
+	if _, err := fail("security: The specified item could not be found in the keychain.").Read(context.Background(), "svc"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing: %v", err)
+	}
+	_, err := fail("security: User interaction is not allowed.").Read(context.Background(), "svc")
+	if errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "User interaction is not allowed") {
+		t.Errorf("denied: %v", err)
 	}
 }

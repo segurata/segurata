@@ -38,7 +38,7 @@ type Env struct {
 	GOOS       string
 	Connectors []connector.Connector
 	// Request builds a connector request, resolving its secret references (run.NewRequest).
-	Request func(config.Config, config.Instance) (connector.Request, []error)
+	Request func(context.Context, config.Config, config.Instance) (connector.Request, []error)
 	// CDPVersion reads the browser's /json/version (cdp.ReadVersion).
 	CDPVersion func(ctx context.Context, url string) (cdp.Version, error)
 	LookPath   func(string) (string, error)
@@ -176,7 +176,7 @@ func (e Env) connectors(ctx context.Context, cfg config.Config, targets []run.Ta
 
 func (e Env) target(ctx context.Context, cfg config.Config, t run.Target) []connector.Check {
 	d := t.Connector.Describe()
-	req, errs := e.Request(cfg, t.Instance)
+	req, errs := e.Request(ctx, cfg, t.Instance)
 	checks := secretChecks(t, req, errs)
 	doctor, own := t.Connector.(connector.Doctor)
 	for _, need := range d.Needs {

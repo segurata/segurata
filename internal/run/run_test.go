@@ -12,12 +12,16 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/proc"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 type fake struct{ got connector.Request }
@@ -202,6 +206,56 @@ func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
 	}
 }
 
+// One instance named twice on the command line runs once.
+func TestTargetsRunEachInstanceOnce(t *testing.T) {
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"fake:work": {}, "fake:personal": {}}}
+	ts, err := Targets(cfg, []connector.Connector{&fake{}}, []string{"fake:work", "fake", "fake:work"})
+	if err != nil || len(ts) != 2 || ts[0].Label() != "fake:work" || ts[1].Label() != "fake:personal" {
+		t.Fatalf("targets %v, %v", ts, err)
+	}
+}
+
+// Two runs of one instance at once (a manual run alongside the scheduled one) each write their own
+// partial file, so the file left behind is one whole run and neither run fails.
+func TestConcurrentRunsOfOneInstanceNeverTearTheFile(t *testing.T) {
+	const n = 400
+	out, cfg := t.TempDir(), config.Config{}
+	var started sync.WaitGroup
+	started.Add(2)
+	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		started.Done()
+		started.Wait() // both runs have their partial file open
+		for i := range n {
+			e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: fmt.Sprint(i)},
+				Severity: finding.SevLow, Title: strings.Repeat("x", i%97)})
+		}
+		return nil
+	})
+	var wg sync.WaitGroup
+	var results [2][]*Result
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], _ = Inventory(context.Background(), cfg, mustTargets(t, cfg, inv), out, nil, nil)
+		}()
+	}
+	wg.Wait()
+	for _, res := range results {
+		if res[0].Err != nil {
+			t.Fatalf("run failed: %v", res[0].Err)
+		}
+	}
+	lines := readLines(t, results[0][0].File)
+	if len(lines) != n+2 || lines[len(lines)-1]["type"] != "run_end" {
+		t.Fatalf("got %d lines, want %d ending in run_end", len(lines), n+2)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(results[0][0].File), "*.partial")); len(left) > 0 {
+		t.Fatalf("partial files left behind: %v", left)
+	}
+}
+
 type recordingFake struct{ onReq func(connector.Request) }
 
 func (recordingFake) Describe() connector.Description {
@@ -331,8 +385,8 @@ func TestUnfinishedRunKeepsTheEarlierFile(t *testing.T) {
 	if bytes.Equal(before, after) || !bytes.Contains(after, []byte("run_end")) {
 		t.Fatal("the finished second run did not replace the file")
 	}
-	if _, err := os.Stat(first[0].File + ".partial"); err == nil {
-		t.Fatal("the partial file was left behind")
+	if left, _ := filepath.Glob(first[0].File + ".*.partial"); len(left) > 0 {
+		t.Fatalf("partial files left behind: %v", left)
 	}
 }
 
@@ -440,22 +494,150 @@ func TestRemediationSecretsAreNeverResolvedForARequest(t *testing.T) {
 		Secrets:            map[string]string{"OPENAI_ADMIN_KEY": "env:SEGURATA_TEST_READ"},
 		RemediationSecrets: map[string]string{"OPENAI_ADMIN_WRITE_KEY": "env:SEGURATA_TEST_WRITE_UNSET"},
 	}}}
-	req, errs := NewRequest(cfg, cfg.Instances("openai")[0])
+	req, errs := NewRequest(context.Background(), cfg, cfg.Instances("openai")[0])
 	if len(errs) > 0 || req.Secrets["OPENAI_ADMIN_KEY"] != "read-value" || len(req.Secrets) != 1 {
 		t.Fatalf("inventory request: %v %v", req.Secrets, errs)
 	}
-	cs, errs := InstanceCredentials(cfg, "openai", "")
+	cs, errs := InstanceCredentials(context.Background(), cfg, "openai", "")
 	if len(errs) > 0 {
 		t.Fatalf("an unset write reference must not fail before apply: %v", errs)
 	}
 	if !cs.HasWrite("OPENAI_ADMIN_WRITE_KEY") || cs.HasWrite("OTHER_WRITE_KEY") {
 		t.Fatal("HasWrite must tell configured references from missing ones")
 	}
-	if _, err := cs.Write("OPENAI_ADMIN_WRITE_KEY"); err == nil || !strings.Contains(err.Error(), "SEGURATA_TEST_WRITE_UNSET") {
+	if _, err := cs.Write(context.Background(), "OPENAI_ADMIN_WRITE_KEY"); err == nil || !strings.Contains(err.Error(), "SEGURATA_TEST_WRITE_UNSET") {
 		t.Fatalf("resolving an unset write reference: %v", err)
 	}
 	t.Setenv("SEGURATA_TEST_WRITE_UNSET", "write-value")
-	if v, err := cs.Write("OPENAI_ADMIN_WRITE_KEY"); err != nil || v != "write-value" {
+	if v, err := cs.Write(context.Background(), "OPENAI_ADMIN_WRITE_KEY"); err != nil || v != "write-value" {
 		t.Fatalf("Write resolves at call time: %q %v", v, err)
+	}
+}
+
+// flaky fails the writes numbered in fail (1-based) with ENOSPC and keeps the rest.
+type flaky struct {
+	buf  bytes.Buffer
+	n    int
+	fail map[int]bool
+}
+
+func (w *flaky) Write(p []byte) (int, error) {
+	w.n++
+	if w.fail[w.n] {
+		return 0, syscall.ENOSPC
+	}
+	return w.buf.Write(p)
+}
+
+// A record the sink could not write makes the run fail: run_end carries the error, so the
+// findings that were lost never count as resolved.
+func TestALostRecordFailsTheRun(t *testing.T) {
+	w := &flaky{fail: map[int]bool{2: true}}
+	s := &sink{name: "fake", out: w, res: &Result{}}
+	s.Status(finding.Status{Account: "acct", State: finding.StateOK})
+	s.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "lost"}, Severity: finding.SevHigh, Title: "lost"})
+	ended, err := s.end(context.Background(), time.Now(), nil, nil)
+	if !errors.Is(err, syscall.ENOSPC) || !ended {
+		t.Fatalf("end: ended=%v err=%v", ended, err)
+	}
+	if s.res.End.Complete || !strings.Contains(s.res.End.Error, "no space left") {
+		t.Fatalf("run_end %+v", s.res.End)
+	}
+	if !bytes.Contains(w.buf.Bytes(), []byte(`"error":"writing the run file: no space left`)) {
+		t.Fatalf("the written run_end does not carry the error:\n%s", w.buf.String())
+	}
+
+	// run_end itself lost: the run did not end.
+	w = &flaky{fail: map[int]bool{2: true}}
+	s = &sink{name: "fake", out: w, res: &Result{}}
+	s.Status(finding.Status{Account: "acct", State: finding.StateOK})
+	if ended, err := s.end(context.Background(), time.Now(), nil, nil); ended || err == nil {
+		t.Fatalf("lost run_end: ended=%v err=%v", ended, err)
+	}
+}
+
+// A connector instance that hangs is stopped at its deadline (the instance's timeout, else the
+// connector's own default, else DefaultTimeout), and its run ends failed so nothing closes.
+func TestAHungInstanceTimesOutAndClosesNothing(t *testing.T) {
+	hang := emitting(func(ctx context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		<-ctx.Done()
+		return nil
+	})
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"fake": {Timeout: "50ms"}}}
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, hang), t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := res[0].End
+	if end.Complete || !strings.Contains(end.Error, "timed out after 50ms") || !strings.Contains(end.Error, "connectors.fake.timeout") {
+		t.Fatalf("run_end %+v", end)
+	}
+}
+
+type slow struct{ emitting }
+
+func (slow) Describe() connector.Description {
+	return connector.Description{Name: "fake", Version: "0", Protocol: 1, Timeout: "6h"}
+}
+
+func TestTheTimeoutComesFromTheInstanceThenTheConnector(t *testing.T) {
+	for _, c := range []struct {
+		conn connector.Connector
+		cfg  config.ConnectorConfig
+		want time.Duration
+	}{
+		{&fake{}, config.ConnectorConfig{}, DefaultTimeout},
+		{slow{}, config.ConnectorConfig{}, 6 * time.Hour},
+		{slow{}, config.ConnectorConfig{Timeout: "90m"}, 90 * time.Minute},
+		{&fake{}, config.ConnectorConfig{Timeout: "2h"}, 2 * time.Hour},
+	} {
+		tg := Target{Connector: c.conn, Instance: config.Instance{ConnectorConfig: c.cfg}}
+		if got := tg.Timeout(); got != c.want {
+			t.Errorf("%s with %+v: %s, want %s", c.conn.Describe().Timeout, c.cfg, got, c.want)
+		}
+	}
+}
+
+// An external connector that hangs in a child it did not exec is stopped too.
+func TestAHungExternalConnectorTimesOut(t *testing.T) {
+	script := proctest.Hung(t, "segurata-hang", `[ "$1" = describe ] && { echo '{"name":"hang","version":"1","protocol":1,"summary":"t","needs":[]}'; exit 0; }`)
+	t.Setenv("PATH", filepath.Dir(script)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var conns []connector.Connector
+	for _, e := range connector.Discover() {
+		if e.Describe().Name == "hang" {
+			conns = append(conns, e)
+		}
+	}
+	if len(conns) != 1 {
+		t.Fatal("external connector not discovered")
+	}
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"hang": {Timeout: "200ms"}}}
+	start := time.Now()
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, conns...), t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
+		t.Fatalf("took %s", took)
+	}
+	if end := res[0].End; end.Complete || !strings.Contains(end.Error, "timed out") {
+		t.Fatalf("run_end %+v", end)
+	}
+}
+
+// observed_at belongs to the core: a connector's own value, a future one above all, is replaced
+// with the time the record was written.
+func TestTheCoreStampsObservedAt(t *testing.T) {
+	future := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "k"}, Severity: finding.SevLow, Title: "t", ObservedAt: future})
+		return nil
+	})
+	before := time.Now()
+	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, inv), t.TempDir(), nil, nil)
+	if got := res[0].Findings[0].ObservedAt; got.Before(before.Add(-time.Second)) || got.After(time.Now()) {
+		t.Fatalf("observed_at %v", got)
 	}
 }

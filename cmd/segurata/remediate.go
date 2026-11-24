@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
@@ -35,7 +36,7 @@ func remediateCmd(args []string) int {
 		return 2
 	}
 
-	files, err := remediate.LatestFiles(*out)
+	files, err := remediate.LatestFiles(*out, time.Now())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -67,13 +68,15 @@ func remediateCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	conns := all()
 	creds := func(f finding.Finding) (connector.Credentials, error) {
 		cfg, err := config.Load(config.DefaultPath())
 		if err != nil {
 			return connector.Credentials{}, err
 		}
-		cs, errs := run.InstanceCredentials(cfg, f.Connector, f.Instance)
+		cs, errs := run.InstanceCredentials(ctx, cfg, f.Connector, f.Instance)
 		if len(errs) > 0 {
 			return connector.Credentials{}, fmt.Errorf("%s: %w", remediate.Selector(f), errors.Join(errs...))
 		}
@@ -85,8 +88,6 @@ func remediateCmd(args []string) int {
 		return 1
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	reinventory := func(ctx context.Context) ([]*run.Result, error) {
 		cfg, err := config.Load(config.DefaultPath())
 		if err != nil {

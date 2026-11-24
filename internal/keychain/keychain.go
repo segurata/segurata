@@ -7,11 +7,14 @@ package keychain
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/segurata/segurata/internal/proc"
 )
 
 // Runner runs one external program with stdin and returns its stdout.
@@ -25,7 +28,7 @@ const Security = "/usr/bin/security"
 func Exec(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := proc.Command(ctx, name, args...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -41,6 +44,22 @@ func Scrub(msg, value, placeholder string) string {
 		return msg
 	}
 	return strings.ReplaceAll(msg, value, placeholder)
+}
+
+// ErrNotFound is returned by Read when no item has the service.
+var ErrNotFound = errors.New("no such Keychain item")
+
+// itemNotFound is security's exit status for errSecItemNotFound.
+const itemNotFound = 44
+
+// notFound reports whether security failed because the item does not exist: its exit status, or
+// its message when a Runner gives no exit status.
+func notFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == itemNotFound || strings.Contains(err.Error(), "could not be found in the keychain")
 }
 
 // Keychain is the login Keychain, for one account ("" matches any account on reads).
@@ -66,9 +85,14 @@ func (k Keychain) Store(ctx context.Context, service, value string) error {
 	return nil
 }
 
-// Read returns the stored value, to use or check in memory; callers never print it.
+// Read returns the stored value, to use or check in memory; callers never print it. A missing item
+// is ErrNotFound; any other failure (access denied, a prompt nobody answered) keeps the reason
+// security gave.
 func (k Keychain) Read(ctx context.Context, service string) (string, error) {
 	out, err := k.Run(ctx, nil, Security, k.args("find-generic-password", service, "-w")...)
+	if notFound(err) {
+		return "", fmt.Errorf("%w: %s", ErrNotFound, service)
+	}
 	if err != nil {
 		return "", fmt.Errorf("reading %s from the Keychain: %w", service, err)
 	}

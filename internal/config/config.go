@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
 )
@@ -22,6 +23,9 @@ type ConnectorConfig struct {
 	RemediationSecrets map[string]string `json:"remediation_secrets,omitempty"`
 	// Expected are the statuses other than ok this instance reports on purpose (see Expect).
 	Expected []Expected `json:"expected,omitempty"`
+	// Timeout bounds one inventory of this instance, as a Go duration ("3h"); empty means the
+	// connector's own default (connector.Description.Timeout), else one hour.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // Instance is one configured account of a connector. A config key "openrouter" gives the unnamed
@@ -39,6 +43,24 @@ type Config struct {
 	// connectors cannot discover (an old AWS account no profile reaches): attribution counts a
 	// secret naming one of them as the owner's. See internal/attribution.
 	Owned attribution.Owned `json:"owned,omitempty"`
+	// KeepRunsDays is how many days of run files a scheduled run keeps under out/ (0: the default,
+	// DefaultKeepRunsDays; negative: keep everything). See RunRetention.
+	KeepRunsDays int `json:"keep_runs_days,omitempty"`
+}
+
+// DefaultKeepRunsDays is the retention of run files when the config names none.
+const DefaultKeepRunsDays = 30
+
+// RunRetention is how old a run file may grow before a scheduled run prunes it, 0 for never.
+func (c Config) RunRetention() time.Duration {
+	days := c.KeepRunsDays
+	switch {
+	case days < 0:
+		return 0
+	case days == 0:
+		days = DefaultKeepRunsDays
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 // DefaultPath is ~/.config/segurata/config.json on every OS, like most CLIs, unless
@@ -76,6 +98,12 @@ func Load(path string) (Config, error) {
 		cfg.CDPURL = env
 	}
 	return cfg, nil
+}
+
+// RunTimeout is the instance's timeout, 0 when it sets none. Load has validated it.
+func (cc ConnectorConfig) RunTimeout() time.Duration {
+	d, _ := time.ParseDuration(cc.Timeout)
+	return d
 }
 
 // Instances returns the configured instances of a connector sorted by label, or one unnamed,

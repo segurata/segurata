@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/searchpath"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -83,16 +84,12 @@ var describeTimeout = 10 * time.Second
 const (
 	maxDescribeBytes = 1 << 20
 	maxStderrBytes   = 1 << 20
-	// waitDelay bounds how long the core waits for a killed plugin's pipes, which a child it left
-	// behind may still hold open.
-	waitDelay = 2 * time.Second
 )
 
-// command prepares `<path> <sub>`, killed when ctx is done.
+// command prepares `<path> <sub>`, killed when ctx is done; proc.Command bounds the wait for pipes
+// a child it left behind may still hold open.
 func command(ctx context.Context, path, sub string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, path, sub)
-	cmd.WaitDelay = waitDelay
-	return cmd
+	return proc.Command(ctx, path, sub)
 }
 
 // LoadExternal runs `<path> describe` and checks what it prints, including that the name it

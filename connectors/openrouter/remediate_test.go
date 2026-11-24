@@ -45,7 +45,7 @@ func keysServer(t *testing.T) *httpxtest.Server {
 
 func creds(write bool) connector.Credentials {
 	cs := connector.Credentials{Request: connector.Request{Secrets: map[string]string{secretName: testKey}},
-		Resolve: func(string) (string, error) { return testWriteKey, nil }}
+		Resolve: func(context.Context, string) (string, error) { return testWriteKey, nil }}
 	if write {
 		cs.WriteRefs = map[string]string{writeSecret: "keychain:segurata-openrouter-admin-write"}
 	}

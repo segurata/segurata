@@ -89,9 +89,18 @@ coverage is derived (`finding.Tally`):
   status with neither leaves everything uninspected;
 - a connector declares what no status carries with `Emitter.Scope(id, false, reason)` (external
   connectors: a `scope` record);
-- a connector error, a cancelled context, or a run where no status said `ok` and nothing was
-  declared inspected, leaves everything (`*`) uninspected; so does a skipped list over the cap;
+- a connector error, a cancelled context, a timeout, a record that could not be written, or a run
+  where no status said `ok` and nothing was declared inspected, leaves everything (`*`)
+  uninspected; so does a skipped list over the cap;
 - a skipped scope ending in `*` covers every scope with that prefix.
+
+**Deadlines.** Each instance's inventory runs under a deadline: the instance's `timeout` in the
+config (`"connectors": {"prowler": {"timeout": "10h"}}`, a Go duration), else the `timeout` its
+connector declares in `describe` (local-secrets `6h`, prowler `12h`), else one hour. At the
+deadline the connector's context ends, and the run ends with `error` "timed out after … (raise
+connectors.<key>.timeout)", so nothing it left out closes. Every child process the core and the
+connectors start is killed when its context ends and waited on for at most three seconds more
+(`internal/proc`), so a wrapper script that does not exec its program cannot outlive a timeout.
 
 A finding is not checked by a run when the run has no `run_end`, when everything was skipped, or
 when a skipped scope matches its scope or its account (`finding.Coverage`).
@@ -323,7 +332,11 @@ owner's after all. Ignoring it by hand afterwards sticks.
 finished run of every connector instance (`remediate.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
-   syncing two output folders (interactive and scheduled) never makes items flap.
+   syncing two output folders (interactive and scheduled) never makes items flap. A run's time is
+   its `run_end` `ended_at` (a file without one: its newest `observed_at` not in the future, else
+   its modification time). A source after now counts as absent, and `out/` days after today are
+   never read, so one wrong clock cannot freeze a connector. A latest run that cannot be read (a
+   torn line) is skipped with a warning; its instance counts as not run.
 2. Folds local-secrets findings into rotate items (below) and every other finding at low or above
    into the item its rule names, creating it (`found`) or adding the new finding (`seen`).
 3. Marks a linked finding `gone` when its connector instance ran and did not report it, unless
@@ -592,7 +605,7 @@ report.
 segurata schedule install [--every 24h] [--connectors a,b] [--apply [--yes]]
 segurata schedule uninstall [--apply [--yes]]
 segurata schedule status
-segurata schedule run [--connectors a,b]        what the agent executes
+segurata schedule run [--every 24h] [--connectors a,b]   what the agent executes
 ```
 
 `internal/schedule`. On macOS, `install` builds a launchd user agent,
@@ -606,7 +619,11 @@ already loaded and bootstraps the new one. `uninstall` boots it out and removes 
 reports and logs. `install` refuses a binary under the temp directory (`go run`), which would be
 gone by the first run.
 
-One `schedule run`:
+One `schedule run` ends before the next is due: it has 90% of the interval, and its inventory 80%,
+which leaves time for the report. At the deadline the inventory gets an interrupt, so it writes
+`run_end` (with the interruption as `error`) and syncs the tracker, and a kill two minutes later.
+`install` puts an interval other than 24h on the agent's command line (`schedule run --every 6h`),
+so an agent installed before that runs with the 24h bound until it is installed again.
 
 1. Reads the high and critical findings of the latest scheduled run (`~/.segurata/out`),
    leaving out accepted ones.
@@ -618,6 +635,12 @@ One `schedule run`:
    is also written to the log.
 4. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
+5. Once the report is written, prunes `~/.segurata/out` (`remediate.Prune`): it removes the
+   `<date>/*.jsonl` files and leftover `*.partial` files of days older than `keep_runs_days` in
+   the config (default 30; a negative value keeps everything), except the latest finished run of
+   each instance, the one before it and a newer unfinished one, which the tracker, `report` and
+   `remediate` read. Nothing else under `out/` is touched, and empty days are removed.
+   `accounts list` reads every remaining run, so it shows accounts seen within that window.
 
 Scheduled inventories live apart from the interactive `out/`; `segurata remediate --out
 ~/.segurata/out --list` works from them.
@@ -686,8 +709,13 @@ the request, without writing it to disk. A literal value in the config is reject
 | Reference | Resolved with |
 |---|---|
 | `env:NAME` | Environment variable |
-| `keychain:service` | `security find-generic-password -s service -w` (macOS Keychain) |
+| `keychain:service` | `/usr/bin/security find-generic-password -s service -w` (macOS Keychain) |
 | `op://vault/item/field` | `op read` (1Password CLI) |
+
+Both programs run through `internal/keychain` with a 30 s timeout inside the run's deadline, so a
+prompt nobody answers in a scheduled run fails the reference instead of hanging. A missing
+Keychain item and a denied read (`User interaction is not allowed`) are reported apart, with
+security's reason for the latter.
 
 Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 
@@ -704,9 +732,10 @@ Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 ### Several accounts of one provider
 
 A config key `name` is the connector's unnamed instance; `name:label` adds a labelled one, with
-its own config and secrets. Each instance runs separately, writes `out/<date>/<name>-<label>.jsonl`,
-and stamps `"instance": "<label>"` on its records (part of the finding id). On the command line,
-`name` selects every instance and `name:label` just one.
+its own config and secrets. A label is letters, digits, `_`, `.` and `-` only. Each instance runs
+separately, writes `out/<date>/<name>-<label>.jsonl`, and stamps `"instance": "<label>"` on its
+records (part of the finding id). On the command line, `name` selects every instance and
+`name:label` just one; an instance named twice runs once.
 
 ```json
 "openrouter:work":     {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:segurata-openrouter-work"}},

@@ -30,6 +30,20 @@ type Target struct {
 	Instance  config.Instance
 }
 
+// DefaultTimeout bounds one inventory of an instance whose config and connector name no timeout.
+const DefaultTimeout = time.Hour
+
+// Timeout bounds one inventory of the target: the instance's config `timeout`, else the
+// connector's declared default, else DefaultTimeout.
+func (t Target) Timeout() time.Duration {
+	for _, d := range []time.Duration{t.Instance.RunTimeout(), t.Connector.Describe().RunTimeout()} {
+		if d > 0 {
+			return d
+		}
+	}
+	return DefaultTimeout
+}
+
 // Label is "name" or "name:label", the same spelling as the config key.
 func (t Target) Label() string {
 	name := t.Connector.Describe().Name
@@ -40,7 +54,8 @@ func (t Target) Label() string {
 }
 
 // Targets expands connectors into their configured instances. A selector "name" picks every
-// instance of that connector, "name:label" just one; no selectors means everything.
+// instance of that connector, "name:label" just one; no selectors means everything. Each instance
+// appears once, however many selectors name it.
 func Targets(cfg config.Config, conns []connector.Connector, selectors []string) ([]Target, error) {
 	var all []Target
 	for _, c := range conns {
@@ -52,14 +67,20 @@ func Targets(cfg config.Config, conns []connector.Connector, selectors []string)
 		return all, nil
 	}
 	var out []Target
+	picked := map[string]bool{}
 	for _, sel := range selectors {
-		n := len(out)
+		matched := false
 		for _, t := range all {
-			if sel == t.Connector.Describe().Name || sel == t.Label() {
+			if sel != t.Connector.Describe().Name && sel != t.Label() {
+				continue
+			}
+			matched = true
+			if !picked[t.Label()] {
+				picked[t.Label()] = true
 				out = append(out, t)
 			}
 		}
-		if len(out) == n {
+		if !matched {
 			return nil, fmt.Errorf("unknown connector or instance %q (see: segurata connectors)", sel)
 		}
 	}
@@ -82,24 +103,43 @@ type sink struct {
 	name     string
 	label    string
 	inst     string
-	enc      *json.Encoder
+	out      io.Writer
 	verbose  io.Writer
 	annotate func(*finding.Finding)
 	expect   func(*finding.Status) // the config's expected rules
 	res      *Result
 	tally    finding.Tally
+	werr     error // the first record that could not be written
+}
+
+// write appends one record as a JSON line. The first failure is kept for run_end: a run that lost
+// a record must not count as complete, or the lost findings would look resolved. Unlike
+// json.Encoder, which fails for good after one error, a later record is still tried, so run_end
+// can say what was lost. The caller holds mu.
+func (s *sink) write(v any) error {
+	b, err := json.Marshal(v)
+	if err == nil {
+		_, err = s.out.Write(append(b, '\n'))
+	}
+	if err != nil && s.werr == nil {
+		s.werr = fmt.Errorf("writing the run file: %w", err)
+	}
+	return err
 }
 
 func (s *sink) Finding(f finding.Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f.Connector, f.Instance = s.name, s.inst
-	f.Fill(time.Now())
+	// The core owns observed_at: a connector's own value, a future one above all, would make the
+	// tracker take every later run as older (see tracker.Sync).
+	now := time.Now()
+	f.Connector, f.Instance, f.ObservedAt = s.name, s.inst, now.UTC()
+	f.Fill(now)
 	if s.annotate != nil {
 		s.annotate(&f)
 	}
 	s.res.Findings = append(s.res.Findings, f)
-	_ = s.enc.Encode(f)
+	_ = s.write(f)
 }
 
 func (s *sink) Status(st finding.Status) {
@@ -111,7 +151,7 @@ func (s *sink) Status(st finding.Status) {
 	}
 	s.res.Statuses = append(s.res.Statuses, st)
 	s.tally.Status(st)
-	_ = s.enc.Encode(st)
+	_ = s.write(st)
 }
 
 // Scope records coverage in the run_end record only; it writes no line of its own.
@@ -121,17 +161,20 @@ func (s *sink) Scope(id string, inspected bool, reason string) {
 	s.tally.Declare(id, inspected, reason)
 }
 
-// end writes the run_end record. err is the connector's own error; a cancelled context counts as
-// one, since the connector may have stopped early without saying so.
-func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[string]string) {
-	if err == nil && ctx.Err() != nil {
-		err = fmt.Errorf("interrupted: %w", ctx.Err())
+// end writes the run_end record and reports whether it was written, with the first write error.
+// err is the connector's own error; a context that ended counts as one, with its cause (a
+// timeout), since the connector may have stopped early without saying so, and so does a record
+// that could not be written.
+func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[string]string) (ended bool, werr error) {
+	if ctx.Err() != nil {
+		err = errors.Join(fmt.Errorf("interrupted: %w", context.Cause(ctx)), err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.res.End = s.tally.End(s.name, s.inst, started, time.Now(), err)
+	s.res.End = s.tally.End(s.name, s.inst, started, time.Now(), errors.Join(err, s.werr))
 	s.res.End.SecretFingerprints = fps
-	_ = s.enc.Encode(s.res.End)
+	ended = s.write(s.res.End) == nil
+	return ended, s.werr
 }
 
 func (s *sink) Log(msg string) {
@@ -162,31 +205,39 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 
 func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, annotate func(*finding.Finding)) *Result {
 	name, label := t.Connector.Describe().Name, t.Label()
+	timeout := t.Timeout()
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timed out after %s (raise connectors.%s.timeout)", timeout, label))
+	defer cancel()
 	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, strings.ReplaceAll(label, ":", "-")+".jsonl")}
-	// The run writes to <file>.partial and renames it over <file> only once run_end is written, so
-	// a killed run never truncates an earlier finished run of the same day. The partial file does
-	// not match *.jsonl, so readers never pick it up. 0600: the output names accounts, apps and
-	// services.
-	partial := res.File + ".partial"
-	f, err := os.OpenFile(partial, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	// The run writes to a partial file of its own and renames it over <file> only once run_end is
+	// written, so a killed run never truncates an earlier finished run of the same day, and two runs
+	// of the same instance at once never write into one file. The partial file does not match
+	// *.jsonl, so readers never pick it up. CreateTemp makes it 0600: the output names accounts,
+	// apps and services.
+	f, err := os.CreateTemp(dir, filepath.Base(res.File)+".*.partial")
 	if err != nil {
 		res.Err = err
 		return res
 	}
-	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
+	partial := f.Name()
+	s := &sink{name: name, label: label, inst: t.Instance.Label, out: f, verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
 
-	req, errs := NewRequest(cfg, t.Instance)
+	req, errs := NewRequest(ctx, cfg, t.Instance)
 	if missing := unresolved(t.Connector, errs, s); !missing {
 		res.Err = t.Connector.Inventory(ctx, req, s)
 	}
-	s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
-	if err := f.Close(); err != nil {
+	ended, werr := s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
+	res.Err = errors.Join(res.Err, werr)
+	// A file without its run_end, or one that did not close, never replaces an earlier run.
+	if err := f.Close(); err != nil || !ended {
 		res.Err = errors.Join(res.Err, err)
+		_ = os.Remove(partial)
 		return res
 	}
 	if err := os.Rename(partial, res.File); err != nil {
 		res.Err = errors.Join(res.Err, err)
+		_ = os.Remove(partial)
 	}
 	return res
 }
@@ -265,20 +316,20 @@ func secretFingerprints(secrets map[string]string) map[string]string {
 	return out
 }
 
-// NewRequest builds the request for one connector instance, resolving its secret references.
-// A secret that cannot be resolved is left out of the request and returned as an error.
-func NewRequest(cfg config.Config, in config.Instance) (connector.Request, []error) {
-	resolved, errs := secrets.ResolveAll(in.Secrets)
+// NewRequest builds the request for one connector instance, resolving its secret references under
+// ctx. A secret that cannot be resolved is left out of the request and returned as an error.
+func NewRequest(ctx context.Context, cfg config.Config, in config.Instance) (connector.Request, []error) {
+	resolved, errs := secrets.ResolveAll(ctx, in.Secrets)
 	return connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: in.Config, Secrets: resolved}, errs
 }
 
 // InstanceCredentials are what a remediation of the instance a finding came from may use (label
 // "" is the unnamed one): NewRequest, and the unresolved references of its remediation_secrets,
 // which only Apply resolves.
-func InstanceCredentials(cfg config.Config, name, label string) (connector.Credentials, []error) {
+func InstanceCredentials(ctx context.Context, cfg config.Config, name, label string) (connector.Credentials, []error) {
 	for _, in := range cfg.Instances(name) {
 		if in.Label == label {
-			req, errs := NewRequest(cfg, in)
+			req, errs := NewRequest(ctx, cfg, in)
 			return connector.Credentials{Request: req, WriteRefs: in.RemediationSecrets, Resolve: secrets.Resolve}, errs
 		}
 	}

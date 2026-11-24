@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/segurata/segurata/internal/proc"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 func shell(t *testing.T) string {
@@ -166,5 +169,18 @@ func TestGuardRefusesBeforeRunning(t *testing.T) {
 	}
 	if out, err := g.Run(context.Background(), "projects", "list"); err != nil || string(out) != "ok" || len(ran) != 1 {
 		t.Fatalf("allowed command: out=%q err=%v ran=%v", out, err, ran)
+	}
+}
+
+// Homebrew's az is a bash wrapper that does not exec python: killing bash leaves python holding
+// stdout. The timeout must still end the command.
+func TestExecTimeoutEndsAWrapperThatDoesNotExec(t *testing.T) {
+	start := time.Now()
+	_, err := Exec{Path: proctest.Hung(t, "az", ""), Timeout: 100 * time.Millisecond}.Run(context.Background(), "account", "list")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err %v", err)
+	}
+	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
+		t.Fatalf("took %s", took)
 	}
 }

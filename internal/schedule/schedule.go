@@ -42,8 +42,16 @@ type Runner interface {
 // System runs commands as real processes.
 type System struct{}
 
+// stopGrace is how long a command whose context ended has to stop after its interrupt before it is
+// killed: enough for an inventory to write run_end and sync the tracker.
+var stopGrace = 2 * time.Minute
+
+// Run runs the command. When ctx ends, the command gets an interrupt, the signal segurata
+// commands stop cleanly on, then a kill after stopGrace.
 func (System) Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = stopGrace
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	return cmd.Run()
 }
@@ -63,6 +71,9 @@ type Env struct {
 	Now    func() time.Time
 	// Connectors are the installed connectors, to choose the default selection.
 	Connectors []connector.Connector
+	// Keep is how old a run file may grow before a finished run prunes it (config keep_runs_days);
+	// 0 keeps everything.
+	Keep time.Duration
 }
 
 // Paths are the files the schedule uses, all under the owner's home.
@@ -105,9 +116,13 @@ func (o Options) every() (time.Duration, error) {
 	return o.Every, nil
 }
 
-// runArgs is the command line the agent runs.
+// runArgs is the command line the agent runs. It names an interval other than the default, which
+// bounds how long a run may take.
 func (e Env) runArgs(o Options) []string {
 	args := []string{e.Exe, "schedule", "run"}
+	if o.Every != 0 && o.Every != DefaultEvery {
+		args = append(args, "--every", o.Every.String())
+	}
 	if len(o.Connectors) > 0 {
 		args = append(args, "--connectors", strings.Join(o.Connectors, ","))
 	}

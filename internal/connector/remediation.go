@@ -42,20 +42,20 @@ type CredentialedRemediator interface {
 // resolves one, through Write.
 type Credentials struct {
 	Request   Request
-	WriteRefs map[string]string                // name -> reference, unresolved
-	Resolve   func(ref string) (string, error) // secrets.Resolve
+	WriteRefs map[string]string                                     // name -> reference, unresolved
+	Resolve   func(ctx context.Context, ref string) (string, error) // secrets.Resolve
 }
 
 // HasWrite reports whether the config names a reference for the write secret, without resolving it.
 func (c Credentials) HasWrite(name string) bool { return c.WriteRefs[name] != "" }
 
 // Write resolves one write secret. Only Apply calls it, after the owner confirmed.
-func (c Credentials) Write(name string) (string, error) {
+func (c Credentials) Write(ctx context.Context, name string) (string, error) {
 	ref := c.WriteRefs[name]
 	if ref == "" || c.Resolve == nil {
 		return "", fmt.Errorf("%s is not configured under remediation_secrets", name)
 	}
-	v, err := c.Resolve(ref)
+	v, err := c.Resolve(ctx, ref)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", name, err)
 	}

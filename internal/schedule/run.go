@@ -31,22 +31,37 @@ func (e Env) DefaultConnectors() []string {
 // connectors, a notification for high and critical findings that were not in the previous run,
 // then `segurata report --format md`. Both commands are this same binary, run as separate
 // processes so a scheduled run does exactly what the owner would type.
-func (e Env) Run(ctx context.Context, connectors []string) error {
+//
+// The run ends before the next one is due, and the inventory early enough to leave time for the
+// report: launchd starts no run while one is still going, so one that hung would stop scheduled
+// scanning without a word.
+func (e Env) Run(ctx context.Context, o Options) error {
+	every, err := o.every()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, every*9/10)
+	defer cancel()
+	invCtx, cancelInv := context.WithTimeout(ctx, every*8/10)
+	defer cancelInv()
 	p := e.Paths()
 	if err := os.MkdirAll(p.Out, 0o700); err != nil {
 		return err
 	}
+	connectors := o.Connectors
 	if len(connectors) == 0 {
 		connectors = e.DefaultConnectors()
 	}
+	// The snapshot before is only what notifications compare with: a run file it cannot read must
+	// not stop the inventory that writes the file replacing it.
 	before, err := e.serious(p.Out)
 	if err != nil {
-		return err
+		fmt.Fprintf(e.IO.Err, "previous findings unreadable, every high or critical finding counts as new: %v\n", err)
+		before = map[string]finding.Finding{}
 	}
-	stamp := func(msg string) { fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg) }
-	stamp("inventory " + strings.Join(connectors, " "))
+	e.stamp("inventory " + strings.Join(connectors, " "))
 	inv := append([]string{"inventory", "--out", p.Out}, connectors...)
-	if err := e.Runner.Run(ctx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
+	if err := e.Runner.Run(invCtx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("inventory: %w", err)
 	}
 	after, err := e.serious(p.Out)
@@ -66,7 +81,7 @@ func (e Env) Run(ctx context.Context, connectors []string) error {
 		return fresh[i].ID < fresh[j].ID
 	})
 	if len(fresh) > 0 {
-		stamp(fmt.Sprintf("%d new high or critical findings", len(fresh)))
+		e.stamp(fmt.Sprintf("%d new high or critical findings", len(fresh)))
 		for _, f := range fresh {
 			fmt.Fprintf(e.IO.Out, "  [%s] %s %s\n", f.Severity, remediate.Selector(f), f.Title)
 		}
@@ -76,18 +91,39 @@ func (e Env) Run(ctx context.Context, connectors []string) error {
 			}
 		}
 	}
-	stamp("report " + p.Report)
+	e.stamp("report " + p.Report)
 	rep := []string{"report", "--format", "md", "--out", p.Report, "--dir", p.Out}
 	if err := e.Runner.Run(ctx, e.Exe, rep, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("report: %w", err)
 	}
+	e.prune(p.Out)
 	return nil
+}
+
+// stamp logs one step of the run with the time.
+func (e Env) stamp(msg string) {
+	fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg)
+}
+
+// prune removes run files older than Keep that no latest run needs (remediate.Prune). A failure is
+// logged: the scan itself succeeded.
+func (e Env) prune(outDir string) {
+	if e.Keep <= 0 {
+		return
+	}
+	removed, err := remediate.Prune(outDir, e.Now(), e.Now().Add(-e.Keep))
+	if len(removed) > 0 {
+		e.stamp(fmt.Sprintf("pruned %d run files older than %s", len(removed), e.Keep))
+	}
+	if err != nil {
+		fmt.Fprintf(e.IO.Err, "pruning %s: %v\n", outDir, err)
+	}
 }
 
 // serious returns the high and critical findings of the latest run of each connector, leaving out
 // accepted ones. No run yet means none.
 func (e Env) serious(outDir string) (map[string]finding.Finding, error) {
-	files, err := remediate.LatestFiles(outDir)
+	files, err := remediate.LatestFiles(outDir, e.Now())
 	if err != nil {
 		return map[string]finding.Finding{}, nil // nothing inventoried yet
 	}

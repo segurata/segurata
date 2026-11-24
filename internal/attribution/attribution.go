@@ -11,11 +11,12 @@ package attribution
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/segurata/segurata/internal/proc"
 )
 
 // Claims are the account identifiers one sighting of a secret names. local-secrets fills them at
@@ -239,7 +240,7 @@ func contains(list []string, v string, fold bool) bool {
 func GitEmail() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "config", "--get", "user.email").Output()
+	out, err := proc.Command(ctx, "git", "config", "--get", "user.email").Output()
 	if err != nil {
 		return ""
 	}
