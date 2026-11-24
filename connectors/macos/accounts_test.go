@@ -41,8 +41,8 @@ func TestAccountChecksReportEveryOtherHumanAccount(t *testing.T) {
 		title string
 	}{
 		"repairtech": {finding.SevHigh, `Administrator account "repairtech" exists besides yours (last login mié 12 feb 10:01 - 18:22 (08:21))`},
-		"temp":        {finding.SevMedium, `Local account "temp" exists besides yours (last login 192.168.1.9 lun 23 nov 09:00 still logged in)`},
-		"ghost":       {finding.SevLow, `Local account "ghost" exists besides yours (no home folder, no login since lunes, 20 de octubre de 2025, 10:38:56 CEST)`},
+		"temp":       {finding.SevMedium, `Local account "temp" exists besides yours (last login 192.168.1.9 lun 23 nov 09:00 still logged in)`},
+		"ghost":      {finding.SevLow, `Local account "ghost" exists besides yours (no home folder, no login since lunes, 20 de octubre de 2025, 10:38:56 CEST)`},
 	}
 	for u, w := range want {
 		f := rec.ByResource(t, "local_account", "account:"+u)

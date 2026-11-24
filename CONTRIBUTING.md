@@ -26,3 +26,4 @@ go test ./...
 
 How to write a connector, the finding model and the external protocol:
 [docs/connectors.md](docs/connectors.md). Design: [docs/architecture.md](docs/architecture.md).
+Releases and their signatures: [docs/releasing.md](docs/releasing.md).
