@@ -411,6 +411,14 @@ func TestMissingScopesBecomeStatuses(t *testing.T) {
 	if gh.called("/user/memberships/orgs?state=active&per_page=100") || gh.called("/user/repos?affiliation=owner,organization_member&per_page=100") {
 		t.Error("requests made for scopes the token lacks")
 	}
+	// Each missing token scope leaves only what it hides uninspected, never the whole account.
+	var scopes []string
+	for _, s := range statusesOf(rec, "github:octo-tester") {
+		scopes = append(scopes, s.Scope)
+	}
+	if strings.Join(scopes, ",") != "org:*,user:octo-tester,repo:*" {
+		t.Errorf("status scopes %v", scopes)
+	}
 }
 
 func TestOwnerWithoutAdminOrgScope(t *testing.T) {
