@@ -70,7 +70,9 @@ inspected:
 {"type": "status", "connector": "openai", "account": "org-…", "state": "missing_credentials", "detail": "…"}
 ```
 
-`state`: `ok`, `reauth`, `signedout`, `missing_credentials`, `unsupported`, `error`.
+`state`: `ok`, `reauth`, `signedout`, `noscope` (signed in, but the credential lacks a permission),
+`unverified` (signed in, but the reader was never checked against a real page),
+`missing_credentials`, `unsupported`, `error`.
 
 ## Remediation
 
@@ -202,6 +204,7 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | Connector | How it looks | What it looks for |
 |---|---|---|
 | `google-personal` | CDP over the signed-in browser | Linked apps, scopes, dates, accounts that need a fresh sign-in |
+| `connected-apps` | CDP over the signed-in browser, `gh api` | Apps connected to GitHub (OAuth apps with scopes and organization access, GitHub Apps, sessions, SSH/signing/GPG keys), X, Slack (every signed-in workspace), Notion (developer connections), Facebook (first page of Apps and websites), Instagram and LinkedIn (empty list verified only), Microsoft and Dropbox (session check only). `services` in the config selects some; one instance per service is allowed |
 | `local-secrets` | `rg`, `gitleaks`, `git`, `ssh-keygen` | Plaintext secrets in config and `.env` files, shell histories, logs, agent transcripts and git history; SSH keys without a passphrase; HMAC fingerprints so one secret is recognised in every place it appears |
 | `gcp` | `gcloud` CLI | Unrestricted API keys, service-account keys and their age, service accounts with broad roles, billing budgets and alerts, local ADC credentials and their scopes |
 | `aws` | `aws` CLI | Root keys or no root MFA, old or unused access keys, budgets |
@@ -219,8 +222,8 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 OS settings, the same files exist on Linux, and the triage compares extensions across all profiles
 of a browser at once (duplicates, one finding per extension).
 
-The Node script in `connected-apps/` is a prototype. It keeps working until its Go connector
-replaces it, and then it is deleted.
+Every connector is written in Go. The Node prototypes (`google/`, `connected-apps/`, `workspace/`,
+`secrets/`, `macos/`) were deleted once their connectors matched them on a live run.
 
 ## Rotation ledger
 

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/pagetext"
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -222,7 +223,7 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 		}
 		d := parseDetail(dp.Text)
 		scopes = union(scopes, d.Scopes)
-		if t := parseGivenOn(d.GivenOn, now); t != nil {
+		if t := pagetext.Date(d.GivenOn, now); t != nil {
 			if created == nil || t.Before(*created) {
 				created = t
 			}
