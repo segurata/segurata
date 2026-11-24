@@ -173,37 +173,6 @@ func TestPEMEncrypted(t *testing.T) {
 	}
 }
 
-func TestFingerprintKeyIsCreatedPrivateAndStable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "conf", "fingerprint.key")
-	a, err := loadKey(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("key file mode %v err %v", st.Mode().Perm(), err)
-	}
-	b, err := loadKey(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret := fake("ghp_", 36)
-	fa, fb := a.ofString(secret), b.ofString(secret)
-	if fa != fb || len(fa) != 16 || !regexp.MustCompile(`^[0-9a-f]{16}$`).MatchString(fa) {
-		t.Errorf("fingerprints %q %q", fa, fb)
-	}
-	other, _ := loadKey(filepath.Join(t.TempDir(), "k"))
-	if other.ofString(secret) == fa {
-		t.Error("two keys gave the same fingerprint")
-	}
-	if err := os.WriteFile(path, []byte("not hex"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadKey(path); err == nil {
-		t.Error("corrupt key accepted")
-	}
-}
-
 func TestGuards(t *testing.T) {
 	refused := func(c cli.Checker, args ...string) bool { return errors.Is(c.Check(args), cli.ErrRefused) }
 	if !refused(rgCheck, "--pre", "sh", "-e", "x") || !refused(rgCheck, "--pre=sh") || !refused(rgCheck, "-z", "-e", "x") {

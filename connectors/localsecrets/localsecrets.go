@@ -4,7 +4,7 @@
 // docs/architecture.md, "Rotation ledger", for how findings become rotation items.
 //
 // No secret value ever leaves the process: findings carry a redacted hint and an HMAC fingerprint
-// (fingerprint.go), and each one is checked not to contain the value before it is emitted.
+// (internal/fingerprint), and each one is checked not to contain the value before it is emitted.
 package localsecrets
 
 import (
@@ -22,6 +22,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
@@ -53,17 +54,12 @@ func New() *Connector {
 		SSHKeygen: cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
 		LookPath:  exec.LookPath,
 		Home:      os.UserHomeDir,
-		KeyPath:   DefaultKeyPath,
+		KeyPath:   fingerprint.DefaultPath,
 		Now:       time.Now,
 	}
 }
 
 func init() { connector.Register(New()) }
-
-// DefaultKeyPath is ~/.config/securizame/fingerprint.key.
-func DefaultKeyPath(home string) string {
-	return filepath.Join(home, ".config", "securizame", "fingerprint.key")
-}
 
 func (c *Connector) Describe() connector.Description {
 	return connector.Description{
@@ -123,7 +119,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if err != nil {
 		return err
 	}
-	fp, err := loadKey(c.KeyPath(home))
+	fp, err := fingerprint.Load(c.KeyPath(home))
 	if err != nil {
 		return fmt.Errorf("fingerprint key: %w", err)
 	}
@@ -193,7 +189,7 @@ type scan struct {
 	home string
 	src  string
 	cfg  settings
-	fp   fingerprinter
+	fp   fingerprint.Key
 	now  time.Time
 	emit connector.Emitter
 
@@ -204,7 +200,7 @@ type scan struct {
 	git gitCache
 }
 
-func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprinter, emit connector.Emitter) *scan {
+func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprint.Key, emit connector.Emitter) *scan {
 	return &scan{ctx: ctx, c: c, home: home, src: cfg.reposRoot, cfg: cfg, fp: fp, now: c.Now(), emit: emit,
 		rows: map[string]*row{}, git: gitCache{roots: map[string]string{}, files: map[string]map[string]bool{}, remote: map[string]bool{}}}
 }
@@ -361,7 +357,7 @@ func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
 		}
 	}
 	ev.Path = s.tilde(abs)
-	ev.Fingerprint = s.fp.ofString(value)
+	ev.Fingerprint = s.fp.Of(value)
 	ev.Bucket = bucketOf(ev)
 	ev.Fix = fixFor(ev)
 	if len(value) >= 6 {
