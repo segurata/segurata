@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,11 +65,12 @@ type lineEdit struct {
 	head     string // keychain: the line up to and including "=", which holds no secret
 }
 
-// fileEdit is one used_in file to change.
+// fileEdit is one file to change, which may stand under several used_in names.
 type fileEdit struct {
-	path  string // as the ledger records it (~/…)
-	abs   string // the file written: path with ~ expanded and symlinks resolved
-	link  bool   // path itself is a symlink to abs
+	path  string   // as the ledger records it (~/…)
+	also  []string // other used_in names of the same file (a symlink and its target)
+	abs   string   // the file written: path with ~ expanded and symlinks resolved
+	link  bool     // path itself is a symlink to abs
 	mode  fs.FileMode
 	orig  []byte
 	lines []lineEdit
@@ -89,7 +91,8 @@ type replacement struct {
 }
 
 // locate finds the old value in every used_in file: on the line the scan recorded, and on any
-// other line of the same file. It refuses when the recorded line no longer holds it.
+// other line of the same file. It refuses when the recorded line no longer holds it. used_in names
+// that resolve to one file (a symlink and its target) make one edit.
 func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, error) {
 	if it.Closed() {
 		return nil, fmt.Errorf("%s is %s; `segurata rotations reopen %s` first if it still needs replacing", it.Secret.ID, stateOf(it), it.Secret.ID)
@@ -102,15 +105,24 @@ func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, e
 		return nil, fmt.Errorf("no working file holds %s, so there is nothing to replace; once rotated: `segurata rotations done %s`", it.Secret.ID, it.Secret.ID)
 	}
 	r := &replacement{item: it, hint: hint, key: key}
+	byAbs := map[string]*fileEdit{}
 	for _, p := range it.Secret.UsedIn {
 		f, err := r.locateIn(p, home)
 		if err != nil {
 			return nil, err
 		}
+		if same := byAbs[f.abs]; same != nil {
+			same.also = append(same.also, p)
+			continue
+		}
+		byAbs[f.abs] = f
 		r.files = append(r.files, f)
 	}
 	return r, nil
 }
+
+// names are the used_in names of the file.
+func (f *fileEdit) names() []string { return append([]string{f.path}, f.also...) }
 
 func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	var recorded []int
@@ -231,7 +243,7 @@ func (r *replacement) checkNew(raw []byte, service string) (string, error) {
 func (r *replacement) planKeychain() error {
 	rc := false
 	for _, f := range r.files {
-		if !secretrisk.IsShellRC(f.path) {
+		if !slices.ContainsFunc(f.names(), secretrisk.IsShellRC) {
 			continue
 		}
 		rc = true
@@ -282,6 +294,9 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 		if f.link {
 			where += " (→ " + f.abs + ")"
 		}
+		if len(f.also) > 0 {
+			where += ", also " + strings.Join(f.also, ", ")
+		}
 		fmt.Fprintf(w, "\n%s  mode %o\n", where, f.mode)
 		for _, le := range f.lines {
 			if le.keychain {
@@ -305,18 +320,21 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 	}
 }
 
-// write applies the edits: each file must still be as planned, then it is replaced atomically with
-// its mode kept, after an optional backup. It returns the files written so far.
+// write applies the edits: every file must still be as planned, checked before any is written,
+// then each is replaced atomically with its mode kept, after an optional backup. It returns the
+// names of the files written so far.
 func (r *replacement) write(backup bool, now time.Time) ([]string, error) {
-	var done []string
 	for _, f := range r.files {
 		cur, err := os.ReadFile(f.abs)
 		if err != nil {
-			return done, err
+			return nil, err
 		}
 		if !bytes.Equal(cur, f.orig) {
-			return done, fmt.Errorf("%s changed since the plan; nothing more written", f.path)
+			return nil, fmt.Errorf("%s changed since the plan; nothing written", f.path)
 		}
+	}
+	var done []string
+	for _, f := range r.files {
 		if backup {
 			if _, err := statefile.Backup(f.abs, f.orig, now); err != nil {
 				return done, err
@@ -325,7 +343,7 @@ func (r *replacement) write(backup bool, now time.Time) ([]string, error) {
 		if err := statefile.Replace(f.abs, f.next, f.mode); err != nil {
 			return done, fmt.Errorf("%s: %w", f.path, err)
 		}
-		done = append(done, f.path)
+		done = append(done, f.names()...)
 	}
 	return done, nil
 }
@@ -356,7 +374,7 @@ func (r *replacement) verify(v string) error {
 				return fmt.Errorf("%s lost line %d", f.path, le.n)
 			}
 			line := lines[le.n-1]
-			ok := strings.Contains(line, v) && r.key.Of(v) == r.newFP
+			ok := strings.Contains(line, v)
 			if le.keychain {
 				ok = line == le.head+lookupLine(r.service)
 			}
@@ -487,7 +505,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
-	fmt.Fprintf(c.Out, "\nReplaced in %d %s and checked. %s is now rotated.\n", len(written), textfmt.Plural(len(written), "file", "files"), it.Secret.ID)
+	fmt.Fprintf(c.Out, "\nReplaced in %s and checked. %s is now rotated.\n", textfmt.Count(len(r.files), "file", "files"), it.Secret.ID)
 	if !*fromStdin {
 		if err := clip.clear(ctx); err != nil {
 			fmt.Fprintln(c.Err, "rotations: could not clear the clipboard, clear it yourself:", err)

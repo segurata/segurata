@@ -331,6 +331,46 @@ func TestReplaceAfterAUsedInFileWasDeletedAndRescanned(t *testing.T) {
 	}
 }
 
+// The dotfiles layout: ~/.zshrc links to ~/dotfiles/zshrc and the scan found the key under both
+// names. The file is planned, written and checked once, under both names, and the item is rotated.
+func TestReplaceWritesAFileUsedUnderTwoNamesOnce(t *testing.T) {
+	fx := newReplaceFixture(t)
+	dot := filepath.Join(fx.home, "dotfiles", "zshrc")
+	write(t, dot, read(t, fx.zshrc), 0o640)
+	if err := os.Remove(fx.zshrc); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dot, fx.zshrc); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := tracker.Load(fx.state)
+	redacted := fx.item(t).Secret.Redacted
+	l.SyncSecrets([]tracker.Sighting{{Evidence: secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted,
+		Path: "~/dotfiles/zshrc", Line: 2, Mode: "640", Fingerprint: fx.key.Of(fx.old)}}}, t0, false)
+	if err := l.Save(fx.state); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(fx.item(t).Secret.UsedIn, " "); got != "~/.zshrc ~/dotfiles/zshrc ~/src/app/.env" {
+		t.Fatalf("used_in %q", got)
+	}
+	o, e, code := fx.run(t, "", false, "replace", fx.id(), "--apply", "--yes")
+	if code != 0 {
+		t.Fatalf("apply: %d %s\n%s", code, e, o)
+	}
+	if strings.Count(o, "line 2:") != 1 || !strings.Contains(o, "Replaced in 2 files and checked") {
+		t.Errorf("output:\n%s", o)
+	}
+	if got, want := read(t, dot), strings.ReplaceAll(zshrcOld, "%s", fx.new); got != want {
+		t.Error("link target not rewritten as planned")
+	}
+	if it := fx.item(t); it.Status != tracker.Done || !strings.Contains(it.History[len(it.History)-1].Detail, "~/.zshrc, ~/dotfiles/zshrc, ~/src/app/.env") {
+		t.Errorf("item %s %+v", it.Status, it.History[len(it.History)-1])
+	}
+	if !fx.cleared() {
+		t.Error("clipboard not cleared")
+	}
+}
+
 func TestReplaceBackupIsPrivate(t *testing.T) {
 	fx := newReplaceFixture(t)
 	before := read(t, fx.zshrc)
@@ -477,9 +517,13 @@ func TestReplaceWriteRefusesAFileChangedAfterThePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, fx.env, read(t, fx.env)+"LATER=1\n", 0o600)
+	rc := read(t, fx.zshrc)
 	written, err := r.write(false, t0)
-	if err == nil || !strings.Contains(err.Error(), "changed since the plan") || strings.Join(written, ",") != "~/.zshrc" {
+	if err == nil || !strings.Contains(err.Error(), "changed since the plan") || len(written) != 0 {
 		t.Errorf("written %v err %v", written, err)
+	}
+	if read(t, fx.zshrc) != rc {
+		t.Error("a file was written before every file was checked")
 	}
 	if err := r.verify(fx.new); err == nil {
 		t.Error("verify passed with the old value still in a file")
