@@ -59,8 +59,7 @@ func (e Env) Run(ctx context.Context, o Options) error {
 		fmt.Fprintf(e.IO.Err, "previous findings unreadable, every high or critical finding counts as new: %v\n", err)
 		before = map[string]finding.Finding{}
 	}
-	stamp := func(msg string) { fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg) }
-	stamp("inventory " + strings.Join(connectors, " "))
+	e.stamp("inventory " + strings.Join(connectors, " "))
 	inv := append([]string{"inventory", "--out", p.Out}, connectors...)
 	if err := e.Runner.Run(invCtx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("inventory: %w", err)
@@ -82,7 +81,7 @@ func (e Env) Run(ctx context.Context, o Options) error {
 		return fresh[i].ID < fresh[j].ID
 	})
 	if len(fresh) > 0 {
-		stamp(fmt.Sprintf("%d new high or critical findings", len(fresh)))
+		e.stamp(fmt.Sprintf("%d new high or critical findings", len(fresh)))
 		for _, f := range fresh {
 			fmt.Fprintf(e.IO.Out, "  [%s] %s %s\n", f.Severity, remediate.Selector(f), f.Title)
 		}
@@ -92,13 +91,18 @@ func (e Env) Run(ctx context.Context, o Options) error {
 			}
 		}
 	}
-	stamp("report " + p.Report)
+	e.stamp("report " + p.Report)
 	rep := []string{"report", "--format", "md", "--out", p.Report, "--dir", p.Out}
 	if err := e.Runner.Run(ctx, e.Exe, rep, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("report: %w", err)
 	}
 	e.prune(p.Out)
 	return nil
+}
+
+// stamp logs one step of the run with the time.
+func (e Env) stamp(msg string) {
+	fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg)
 }
 
 // prune removes run files older than Keep that no latest run needs (remediate.Prune). A failure is
@@ -109,7 +113,7 @@ func (e Env) prune(outDir string) {
 	}
 	removed, err := remediate.Prune(outDir, e.Now().Add(-e.Keep))
 	if len(removed) > 0 {
-		fmt.Fprintf(e.IO.Out, "%s pruned %d run files older than %s\n", e.Now().Format("2006-01-02 15:04:05"), len(removed), e.Keep)
+		e.stamp(fmt.Sprintf("pruned %d run files older than %s", len(removed), e.Keep))
 	}
 	if err != nil {
 		fmt.Fprintf(e.IO.Err, "pruning %s: %v\n", outDir, err)
