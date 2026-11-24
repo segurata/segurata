@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/segurata/segurata/connectors/localsecrets"
@@ -14,6 +13,20 @@ import (
 // finder returns the secrets to replace in a piece of text: local-secrets' hits, already filtered
 // by the command's scope.
 type finder func(text string) []localsecrets.Hit
+
+// memo remembers what find returned for each text: rewriting a line asks again about texts it
+// already searched (the line itself when nothing in it was replaced, unchanged strings).
+func (find finder) memo() finder {
+	seen := map[string][]localsecrets.Hit{}
+	return func(text string) []localsecrets.Hit {
+		if hs, ok := seen[text]; ok {
+			return hs
+		}
+		hs := find(text)
+		seen[text] = hs
+		return hs
+	}
+}
 
 // Tag is what replaces a secret: its type and the first eight characters of its fingerprint, so
 // the redacted copy still points at its rotation item.
@@ -82,6 +95,7 @@ func rewrite(raw []byte, lines []int, find finder) (result, error) {
 // decoded value of every string that holds escapes, re-encoding only that string, so field order
 // and the rest of the line are kept.
 func rewriteLine(line string, find finder, res *result) (string, error) {
+	find = find.memo()
 	t := strings.TrimSpace(line)
 	isJSON := t != "" && (t[0] == '{' || t[0] == '[') && json.Valid([]byte(line))
 	if !isJSON {
@@ -93,6 +107,7 @@ func rewriteLine(line string, find finder, res *result) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	applied := len(res.applied)
 	out, err = rewriteEscaped(out, find, res)
 	if err != nil {
 		return "", err
@@ -100,9 +115,13 @@ func rewriteLine(line string, find finder, res *result) (string, error) {
 	if !json.Valid([]byte(out)) {
 		return "", errBrokeJSON
 	}
+	// A second pass over the escaped strings finds what the first left. When the first replaced
+	// nothing it returned its input unchanged, and the same pass over the same text finds nothing.
 	var probe result
-	if _, err := rewriteEscaped(out, find, &probe); err != nil {
-		return "", err
+	if len(res.applied) > applied {
+		if _, err := rewriteEscaped(out, find, &probe); err != nil {
+			return "", err
+		}
 	}
 	res.residue += len(find(out)) + len(probe.applied)
 	return out, nil
@@ -138,8 +157,34 @@ func rewriteRaw(line string, find finder, res *result) (string, error) {
 	return splice(line, ok, res), nil
 }
 
-// wholeContent reports whether s is complete JSON string content: no bare quote, no cut escape.
-func wholeContent(s string) bool { return json.Valid([]byte(`"` + s + `"`)) }
+// wholeContent reports whether s is complete JSON string content: no bare quote, no control
+// character, no cut escape. It is json.Valid of s between quotes, without copying s.
+func wholeContent(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '"' || c < 0x20:
+			return false
+		case c == '\\':
+			if i+1 == len(s) {
+				return false
+			}
+			switch s[i+1] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				i++
+			case 'u':
+				if i+6 > len(s) || !isHex(s[i+2]) || !isHex(s[i+3]) || !isHex(s[i+4]) || !isHex(s[i+5]) {
+					return false
+				}
+				i += 5
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isHex(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F' }
 
 // rewriteEscaped replaces secrets inside the decoded value of each JSON string that holds an
 // escape (a string without one decodes to its raw bytes, already handled), re-encoding only
@@ -171,26 +216,28 @@ func rewriteEscaped(line string, find finder, res *result) (string, error) {
 	return line, nil
 }
 
-// stringSpans returns the byte span of every string token (keys and values) of a JSON text.
+// stringSpans returns the byte span of every string token (keys and values) of a JSON text, which
+// must be valid JSON (every caller has checked it, or built it from valid JSON by replacing whole
+// string content): outside strings no quote appears, so each quote opens a token that runs to
+// the next unescaped quote.
 func stringSpans(line string) ([][2]int, error) {
-	dec := json.NewDecoder(strings.NewReader(line))
 	var spans [][2]int
-	for {
-		prev := int(dec.InputOffset())
-		tok, err := dec.Token()
-		if err == io.EOF {
-			return spans, nil
+	for i := 0; i < len(line); i++ {
+		if line[i] != '"' {
+			continue
 		}
-		if err != nil {
-			return nil, err
+		start := i
+		for i++; i < len(line) && line[i] != '"'; i++ {
+			if line[i] == '\\' {
+				i++
+			}
 		}
-		if _, ok := tok.(string); ok {
-			end := int(dec.InputOffset())
-			// Between two tokens there is only whitespace, ',' or ':', so the first quote opens it.
-			start := prev + strings.IndexByte(line[prev:end], '"')
-			spans = append(spans, [2]int{start, end})
+		if i >= len(line) {
+			return nil, errors.New("unterminated JSON string")
 		}
+		spans = append(spans, [2]int{start, i + 1})
 	}
+	return spans, nil
 }
 
 // encodeString is the JSON form of s, without HTML escaping.

@@ -2,10 +2,13 @@ package redact
 
 import (
 	"encoding/json"
+	"fmt"
+	"math/rand/v2"
 	"strings"
 	"testing"
 
 	"github.com/segurata/segurata/connectors/localsecrets"
+	"github.com/segurata/segurata/internal/testcorpus"
 )
 
 // literalFinder finds every occurrence of the given values, standing in for local-secrets.
@@ -115,4 +118,95 @@ func TestWholeJSONFileStaysValid(t *testing.T) {
 	if _, err := rewrite(raw, []int{2}, literalFinder(`"`+secret)); err != errBrokeJSON {
 		t.Errorf("a replacement eating a quote: %v", err)
 	}
+}
+
+// The hand-written JSON scanners must agree with encoding/json: wholeContent with json.Valid of
+// the text between quotes, stringSpans with the string tokens json.Decoder reads.
+
+func decoderSpans(line string) [][2]int {
+	dec := json.NewDecoder(strings.NewReader(line))
+	var spans [][2]int
+	for {
+		prev := int(dec.InputOffset())
+		tok, err := dec.Token()
+		if err != nil {
+			return spans
+		}
+		if _, ok := tok.(string); ok {
+			end := int(dec.InputOffset())
+			spans = append(spans, [2]int{prev + strings.IndexByte(line[prev:end], '"'), end})
+		}
+	}
+}
+
+func jsonCorpus() []string {
+	r := rand.New(rand.NewPCG(4, 4))
+	pool := testcorpus.Secrets(r)
+	var out []string
+	for _, s := range testcorpus.ShortLines(r, pool) {
+		enc, _ := json.Marshal(map[string]any{"k": s, "n": []any{1, s, map[string]any{"x\"y": s}, nil, true}, "e": ""})
+		out = append(out, string(enc))
+	}
+	out = append(out, testcorpus.Line(r, 200_000, 8, pool), `[]`, `{}`, `[ "a" , {"b" : "\"\\"} ]`)
+	return out
+}
+
+func TestStringSpansAgreesWithTheDecoder(t *testing.T) {
+	for _, line := range jsonCorpus() {
+		got, err := stringSpans(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := decoderSpans(line); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%.80q: %v, decoder %v", line, got, want)
+		}
+	}
+}
+
+func wholeContentSamples() []string {
+	out := []string{"", `\`, `\\`, `\"`, `"`, `a"b`, "\x1f", "\x7f", "\xff\xfe", `\u`, `\u12`, `\u12g4`, `ኯ`, `\x`,
+		`\/`, `\b\f\n\r\t`, `abc\`, `\\\`, "é", `\ud800`}
+	for _, line := range jsonCorpus() {
+		for i := 0; i+40 <= len(line) && i < 4000; i += 7 {
+			out = append(out, line[i:i+40], line[i:i+3])
+		}
+	}
+	return out
+}
+
+func TestWholeContentAgreesWithJSONValid(t *testing.T) {
+	for _, s := range wholeContentSamples() {
+		if got, want := wholeContent(s), json.Valid([]byte(`"`+s+`"`)); got != want {
+			t.Errorf("%q: %v, json.Valid %v", s, got, want)
+		}
+	}
+}
+
+func FuzzWholeContent(f *testing.F) {
+	for _, s := range wholeContentSamples() {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		if got, want := wholeContent(s), json.Valid([]byte(`"`+s+`"`)); got != want {
+			t.Fatalf("%q: %v, json.Valid %v", s, got, want)
+		}
+	})
+}
+
+func FuzzStringSpans(f *testing.F) {
+	for _, s := range jsonCorpus()[:50] {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		if !json.Valid([]byte(s)) {
+			return
+		}
+		got, err := stringSpans(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := decoderSpans(s); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%q: %v, decoder %v", s, got, want)
+		}
+	})
 }

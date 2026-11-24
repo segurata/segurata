@@ -499,10 +499,16 @@ redaction removes the copy that stays on disk, in backups and in sync tools.
   the scope: a program still reads its value.
 - Matching is `local-secrets`' own (`localsecrets.Trails`): ripgrep with the same passes finds
   the candidate lines, and the same patterns, classification and judgement, joined into one
-  leftmost-first alternation as ripgrep joins several `-e`, place each secret on its line. A
-  value is replaced only if an inventory would report it as non-noise (`--include-noise` adds
-  generic `assignment` matches, public, expired and encrypted values). Each becomes
-  `[REDACTED:<type>:<fingerprint8>]`, so the copy still points at its rotation item.
+  leftmost-first alternation as ripgrep joins several `-e`, place each secret on its line. Go's
+  regexp has no DFA and runs that alternation at about 2 MB/s, so `matcher.go` produces the same
+  matches another way: each pattern's syntax tree gives literals every match contains at a
+  bounded offset from its start; one pass finds them and each pattern is tried alone, anchored,
+  where they allow, in the order the alternation would pick. Texts it cannot handle that way go
+  through the alternation of the patterns whose literals occur. Tests and a fuzz target check
+  both give identical spans. Files are planned in parallel. A value is replaced only if an
+  inventory would report it as non-noise (`--include-noise` adds generic `assignment` matches,
+  public, expired and encrypted values). Each becomes `[REDACTED:<type>:<fingerprint8>]`, so the
+  copy still points at its rotation item.
 - Plain lines (shell history, logs) change only in the secret's bytes, which keeps zsh's
   `: <ts>:<d>;cmd` format. A line that is valid JSON is edited inside its strings: where the
   secret stands byte for byte inside one string, and only when the bytes before, the secret and
