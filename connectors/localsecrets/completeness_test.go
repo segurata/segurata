@@ -178,3 +178,39 @@ func TestRepositoryConfigRunsNothing(t *testing.T) {
 		}
 	}
 }
+
+// gitleaks exits 0 with an empty report when the git it runs fails (a bad revision in --log-opts,
+// a corrupt object) and only logs git's error: that scan is a failure, and the history cache must
+// not record the repository as scanned.
+func TestGitErrorUnderGitleaksIsAFailedScan(t *testing.T) {
+	for _, tc := range []struct {
+		name, stderr string
+		failed       bool
+	}{
+		{"git fatal", "12:16AM ERR [git] fatal: bad revision 'deadbeef'\n12:16AM ERR error=\"stderr is not empty\"", true},
+		{"git error", "12:16AM ERR [git] error: object file is empty\n", true},
+		{"git warning only", "12:16AM ERR [git] warning: refname 'x' is ambiguous.\n12:16AM ERR error=\"stderr is not empty\"", false},
+		{"remote link only", "12:16AM ERR skipping finding links: unable to parse remote URL\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newHistoryRepo(t)
+			r.commit("a.env")
+			gl := New().Gitleaks.(cli.Exec)
+			gl.Path = writeExe(t, "gitleaks", `[ "$1" = version ] && { echo 8.30.1; exit 0; }
+printf '%s\n' "`+tc.stderr+`" >&2
+echo '[]'`)
+			c := &Connector{Gitleaks: gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+				Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) }}
+			cfg := settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute, gitCache: true}
+			s := newScan(context.Background(), c, r.home, cfg, fingerprint.FromBytes(make([]byte, 32)), &recorder{})
+			err := s.gitleaks(r.dir)
+			if (err != nil) != tc.failed {
+				t.Fatalf("scan error %v, want failed=%v", err, tc.failed)
+			}
+			cached, _ := filepath.Glob(filepath.Join(DefaultCacheDir(r.home), "*.json"))
+			if (len(cached) == 0) != tc.failed {
+				t.Errorf("cache files %v after failed=%v", cached, tc.failed)
+			}
+		})
+	}
+}

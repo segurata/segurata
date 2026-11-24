@@ -32,6 +32,10 @@ type Exec struct {
 	Path    string        // binary name, looked up in PATH, or a path to it
 	Timeout time.Duration // per command
 	Env     []string      // KEY=VALUE pairs added to the inherited environment
+	// StderrCheck, when set, judges the stderr of a command that exited 0, for a CLI that reports
+	// some failures only there (gitleaks logs the git errors it swallows). Its error makes the run
+	// an *Error.
+	StderrCheck func(stderr string) error
 }
 
 // Error is a CLI that ran and failed. Stderr is kept whole because that is where the CLIs explain
@@ -64,6 +68,9 @@ func (e Exec) Run(ctx context.Context, args ...string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	if err == nil && e.StderrCheck != nil {
+		err = e.StderrCheck(stderr.String())
+	}
 	if err == nil {
 		return out, nil
 	}

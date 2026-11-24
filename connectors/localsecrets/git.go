@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -270,7 +271,7 @@ func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	if logOpts == "" {
 		logOpts = gitleaksDefaultLogOpts
 	}
-	args := []string{"git", "--no-banner", "--log-level", "fatal", "--exit-code", "0",
+	args := []string{"git", "--no-banner", "--log-level", "error", "--no-color", "--exit-code", "0",
 		"--timeout", secs, "--report-format", "json", "--report-path", "-", "--log-opts", gitLogSafety + " " + logOpts}
 	out, err := guardGitleaks(s.c.Gitleaks).Run(ctx, append(args, repo)...)
 	if ctx.Err() == context.DeadlineExceeded {
@@ -343,6 +344,22 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 	}
 	c.Evidence = ev
 	return c, true, false
+}
+
+// errGitUnderGitleaks is a git failure gitleaks logged and then reported as a clean scan.
+var errGitUnderGitleaks = errors.New("git failed under gitleaks")
+
+// gitleaksStderr judges the error log of a gitleaks run that exited 0. gitleaks reports the leaks
+// it got before the git it runs failed (a bad revision in --log-opts, a corrupt object) and only
+// logs git's error: such a scan is incomplete, and caching it would mark the commits scanned.
+// git's warnings and gitleaks' own errors about finding links leave the scan whole.
+func gitleaksStderr(stderr string) error {
+	for _, l := range strings.Split(stderr, "\n") {
+		if _, msg, ok := strings.Cut(l, " ERR [git] "); ok && (strings.HasPrefix(msg, "fatal:") || strings.HasPrefix(msg, "error:")) {
+			return errGitUnderGitleaks
+		}
+	}
+	return nil
 }
 
 // gitleaksDefaultLogOpts is what gitleaks scans without --log-opts: every commit.

@@ -56,6 +56,24 @@ func TestExecFailureKeepsStderr(t *testing.T) {
 	}
 }
 
+func TestExecStderrCheckFailsARunThatExitedZero(t *testing.T) {
+	broken := errors.New("swallowed failure")
+	e := Exec{Path: shell(t), Timeout: 10 * time.Second, StderrCheck: func(stderr string) error {
+		if strings.Contains(stderr, "fatal") {
+			return broken
+		}
+		return nil
+	}}
+	out, err := e.Run(context.Background(), "-c", "printf partial; echo 'fatal: x' >&2")
+	var ce *Error
+	if !errors.As(err, &ce) || !errors.Is(err, broken) || string(out) != "partial" || strings.TrimSpace(ce.Stderr) != "fatal: x" {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+	if out, err := e.Run(context.Background(), "-c", "printf ok; echo 'warning: y' >&2"); err != nil || string(out) != "ok" {
+		t.Fatalf("a run the check accepts failed: out=%q err=%v", out, err)
+	}
+}
+
 func TestExecFailureKeepsPartialStdout(t *testing.T) {
 	out, err := Exec{Path: shell(t), Timeout: 10 * time.Second}.Run(context.Background(), "-c", "printf partial; exit 2")
 	var ce *Error
