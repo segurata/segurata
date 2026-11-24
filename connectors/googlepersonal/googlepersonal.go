@@ -33,6 +33,21 @@ const (
 		`Set up another way to sign in to the app first if you still need that account.`
 )
 
+// dependency is a grant held by a command-line tool you run, segurata's own among them: removing
+// it signs the tool out, so the fix is never "Remove all access".
+type dependency struct{ label, fix string }
+
+// dependencies by the app name Google shows. Google gives these CLIs the whole cloud-platform
+// scope and offers nothing narrower.
+var dependencies = map[string]dependency{
+	"Google Cloud SDK": {"segurata depends on it",
+		"segurata's gcp connector runs gcloud with this grant: do not remove it on accounts you inventory. " +
+			"On an account you no longer use gcloud with, run `gcloud auth revoke <account>`, which revokes this machine's token, instead of removing access here."},
+	"Firebase CLI": {"developer tool",
+		"The Firebase CLI (`firebase login`) runs with this grant; removing it signs the CLI out. " +
+			"Keep it while you deploy with it; otherwise run `firebase logout`, which revokes its token."},
+}
+
 func init() { connector.Register(GooglePersonal{}) }
 
 type GooglePersonal struct{}
@@ -283,12 +298,19 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 	if len(scopes) > 0 {
 		resType, summary = "oauth_grant", summaryGrant
 	}
+	title := fmt.Sprintf("%s can %s", appName, label)
+	ev := map[string]any{"scopes": scopes, "cross_account_protection": ov.CrossAccount, "detail_urls": nonNil(page.Details)}
+	if dep, ok := dependencies[appName]; ok && resType == "oauth_grant" {
+		title += " (" + dep.label + ")"
+		ev["dependency"] = dep.label
+		summary = dep.fix
+	}
 	res.finding = finding.Finding{
 		Resource:  finding.Resource{Type: resType, ID: overviewID(l.Href), Name: appName},
 		Kind:      finding.KindGrant,
 		Severity:  sev,
-		Title:     fmt.Sprintf("%s can %s", appName, label),
-		Evidence:  map[string]any{"scopes": scopes, "cross_account_protection": ov.CrossAccount, "detail_urls": nonNil(page.Details)},
+		Title:     title,
+		Evidence:  ev,
 		CreatedAt: created,
 		Remediation: finding.Remediation{
 			Summary: summary,

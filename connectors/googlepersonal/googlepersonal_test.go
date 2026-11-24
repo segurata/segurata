@@ -311,3 +311,19 @@ func TestInventoryFailsToStartWithoutBrowser(t *testing.T) {
 		t.Fatal("expected an error when CDP is unreachable")
 	}
 }
+
+func TestGcloudGrantIsADependencyNotARevocation(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{
+		connectionsURL(0):   conns("a@example.test", "", appLink{Name: "Google Cloud SDK", Href: base + "overview/G"}),
+		base + "overview/G": page(overviewENAccess),
+	}}
+	rec := &recorder{}
+	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	f := rec.findings[0]
+	if !strings.HasSuffix(f.Title, "(segurata depends on it)") || f.Evidence["dependency"] != "segurata depends on it" ||
+		!strings.Contains(f.Remediation.Summary, "gcloud auth revoke") || strings.Contains(f.Remediation.Summary, "Remove all access") {
+		t.Errorf("gcloud grant: %q %q", f.Title, f.Remediation.Summary)
+	}
+}
