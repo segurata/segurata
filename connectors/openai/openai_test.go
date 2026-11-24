@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,7 +103,7 @@ func TestInventoryFindsUncappedIdleAndOrphanKeysAndBudgets(t *testing.T) {
 		{"organization", account, finding.KindSpend, finding.SevHigh}, // no limit, no alerts
 		{"project", "proj_prod", finding.KindSpend, finding.SevHigh},
 		{"project", "proj_lab", finding.KindSpend, finding.SevInfo},
-		{"api_key", "key_busy", finding.KindCredential, finding.SevHigh}, // nothing caps prod
+		{"api_key", "key_busy", finding.KindCredential, finding.SevInfo}, // nothing caps prod: the project finding says so
 		{"api_key", "key_orphan", finding.KindCredential, finding.SevHigh},
 		{"api_key", "key_capped", finding.KindCredential, finding.SevInfo},
 		{"api_key", "key_stale", finding.KindCredential, finding.SevMedium},
@@ -126,6 +127,14 @@ func TestInventoryFindsUncappedIdleAndOrphanKeysAndBudgets(t *testing.T) {
 	}
 	if got := rec.ByResource(t, "project", "proj_prod").Evidence["cost_30d_usd"]; got != 12.5 {
 		t.Errorf("prod cost = %v, want 12.5", got)
+	}
+	prod := rec.ByResource(t, "project", "proj_prod")
+	if prod.Evidence["api_keys"] != 2 || !strings.Contains(prod.Title, ": 2 API keys can spend without a cap") {
+		t.Errorf("prod budget: %q %v", prod.Title, prod.Evidence)
+	}
+	busy := rec.ByResource(t, "api_key", "key_busy")
+	if busy.Evidence["spend_capped"] != false || strings.Contains(busy.Title, "spend limit on its project") {
+		t.Errorf("busy key: %q %v", busy.Title, busy.Evidence)
 	}
 	lab := rec.ByResource(t, "project", "proj_lab")
 	if lab.Evidence["hard_limit_usd_per_month"] != 50.0 {
@@ -203,7 +212,7 @@ func TestKeyAssessment(t *testing.T) {
 		want      finding.Severity
 	}{
 		{"active and capped", at(1), nil, false, capped, finding.SevInfo},
-		{"active, no limit anywhere", at(1), nil, false, open, finding.SevHigh},
+		{"active, no limit anywhere: the project finding carries it", at(1), nil, false, open, finding.SevInfo},
 		{"limit state unknown is not called uncapped", at(1), nil, false, unknown, finding.SevInfo},
 		{"idle 91 days", at(91), nil, false, capped, finding.SevMedium},
 		{"idle 89 days", at(89), nil, false, capped, finding.SevInfo},

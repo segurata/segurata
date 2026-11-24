@@ -124,22 +124,24 @@ func TestBudgetErrorIsPerSubscription(t *testing.T) {
 func TestSecretFinding(t *testing.T) {
 	at := func(d time.Duration) *time.Time { x := now.Add(d); return &x }
 	day := 24 * time.Hour
+	date := func(t *time.Time) string { return t.UTC().Format(time.DateOnly) }
 	cases := []struct {
-		name string
-		end  *time.Time
-		want finding.Severity
+		name  string
+		end   *time.Time
+		want  finding.Severity
+		title string
 	}{
-		{"no end date", nil, finding.SevHigh},
-		{"far future", at(3 * 365 * day), finding.SevHigh},
-		{"healthy", at(200 * day), finding.SevInfo},
-		{"expiring", at(10 * day), finding.SevMedium},
-		{"expired", at(-day), finding.SevLow},
+		{"no end date", nil, finding.SevHigh, `Client secret of app "ci" has no expiry date`},
+		{"far future", at(3 * 365 * day), finding.SevHigh, `Client secret of app "ci" never expires in practice (expires ` + date(at(3*365*day)) + ")"},
+		{"healthy", at(200 * day), finding.SevInfo, `Client secret of app "ci" expires ` + date(at(200*day))},
+		{"expiring", at(10 * day), finding.SevMedium, `Client secret of app "ci" expires ` + date(at(10*day)) + ", in 10 days"},
+		{"expired", at(-day), finding.SevLow, `Client secret of app "ci" expired on ` + date(at(-day)) + " and is still registered"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := secretFinding(app{AppID: "a", DisplayName: "ci"}, passwordCredential{KeyID: "k", Hint: "abc", EndDateTime: tc.end}, now)
-			if f.Severity != tc.want {
-				t.Fatalf("got %s %q", f.Severity, f.Title)
+			if f.Severity != tc.want || f.Title != tc.title {
+				t.Fatalf("got %s %q, want %s %q", f.Severity, f.Title, tc.want, tc.title)
 			}
 		})
 	}

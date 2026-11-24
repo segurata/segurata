@@ -17,6 +17,7 @@ Optional, in `~/.config/segurata/config.json`:
 {"connectors": {"gcp": {"config": {
   "accounts": ["me@example.com"],
   "projects": ["my-project"],
+  "skip_projects": ["someone-elses-project"],
   "billing_project": "my-quota-project",
   "gcloud_path": "/path/to/gcloud"
 }}}}
@@ -24,8 +25,9 @@ Optional, in `~/.config/segurata/config.json`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `accounts` | every account in `gcloud auth list` | Accounts to inspect with |
+| `accounts` | every account in `gcloud auth list` except service accounts (`*.iam.gserviceaccount.com`) | Accounts to inspect with; a service account listed here is used |
 | `projects` | every active project each account can list | Restrict to these projects |
+| `skip_projects` | none | Projects never inspected, for example ones you can see but do not own |
 | `billing_project` | gcloud's own quota project | Passed as `--billing-project` to `billing budgets list`, for when the Budget API rejects the configured quota project (`USER_PROJECT_DENIED`) |
 | `gcloud_path` | `PATH`, then the standard install folders: `~/google-cloud-sdk/bin/gcloud`, `/usr/lib/google-cloud-sdk/bin/gcloud`, `/opt/homebrew/share/google-cloud-sdk/bin/gcloud`, `/usr/local/share/google-cloud-sdk/bin/gcloud` | CLI path |
 
@@ -39,7 +41,17 @@ the binary, for example for an SDK unpacked in `~/src/utils`:
 
 The path must be absolute (`~` is not expanded). Keep the file mode at `0600`.
 
-Each project is inspected once, with the first account that lists it. Up to 4 projects run in
+A service account that `gcloud auth activate-service-account` added shows in `gcloud auth list`
+next to people; it is a credential (its key on disk is a finding), not an identity to inventory
+with, so it is skipped unless `accounts` names it. Skipped service accounts and `skip_projects`
+are declared as skipped scopes (docs/connectors.md, "Coverage"), so findings an earlier run made
+there are not taken as resolved.
+
+Each project is inspected once, with the first account that lists it. A check that account is
+denied is retried with the next account that lists the project, so a project another account can
+read is not reported as denied; the status names every account it tried and is scoped to the
+project. Findings keep the project's first account whichever account read them, so their ids do
+not change with who answered. Up to 4 projects run in
 parallel, each command has a 90 s timeout, and rate-limit answers (HTTP 429, `RESOURCE_EXHAUSTED`)
 are retried twice with backoff. Cloud Billing returns 429 with much more parallelism than that.
 

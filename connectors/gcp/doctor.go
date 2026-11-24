@@ -21,7 +21,7 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 		return []connector.Check{{Level: connector.Fail, What: "gcloud", Detail: err.Error(),
 			Fix: "install the Google Cloud SDK (https://cloud.google.com/sdk/docs/install) or set gcloud_path"}}
 	}
-	accounts, err := c.accounts(ctx, g, cfg)
+	accounts, err := c.accounts(ctx, g, cfg, func(string) {})
 	if err != nil {
 		_, why := classify(err)
 		return []connector.Check{{Level: connector.Fail, What: "gcloud auth list", Detail: why, Fix: "gcloud auth login"}}

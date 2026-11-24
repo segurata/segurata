@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,10 +49,12 @@ type Connector struct {
 	Now func() time.Time
 	// CredentialsFile returns the shared credentials file path to scan for long-lived keys.
 	CredentialsFile func() string
+	// ConfigFile returns the shared config file path, read for each profile's region and endpoint.
+	ConfigFile func() string
 }
 
 func New() *Connector {
-	return &Connector{Run: cli.Exec{Path: "aws", Timeout: 2 * time.Minute}, Now: time.Now, CredentialsFile: defaultCredentialsFile}
+	return &Connector{Run: cli.Exec{Path: "aws", Timeout: 2 * time.Minute}, Now: time.Now, CredentialsFile: defaultCredentialsFile, ConfigFile: defaultConfigFile}
 }
 
 func init() { connector.Register(New()) }
@@ -65,20 +69,25 @@ func (c *Connector) Describe() connector.Description {
 	}
 }
 
-func defaultCredentialsFile() string {
-	if p := os.Getenv("AWS_SHARED_CREDENTIALS_FILE"); p != "" {
+func defaultCredentialsFile() string { return sharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials") }
+
+func defaultConfigFile() string { return sharedFile("AWS_CONFIG_FILE", "config") }
+
+// sharedFile is the path the AWS CLI reads: the environment override, else ~/.aws/<name>.
+func sharedFile(env, name string) string {
+	if p := os.Getenv(env); p != "" {
 		return p
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".aws", "credentials")
+	return filepath.Join(home, ".aws", name)
 }
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
 	now := c.Now()
-	c.scanCredentialsFile(emit)
+	issuers := c.scanLocalFiles(emit)
 
 	profiles, err := c.profiles(ctx, req.Config)
 	if err != nil {
@@ -93,6 +102,10 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	costExplorer, _ := req.Config["cost_explorer"].(bool)
 	seen := map[string]bool{}
 	for _, p := range profiles {
+		if by := issuers[p]; by != providerAWS {
+			emit.Log(fmt.Sprintf("profile %s holds %s, not an AWS key: skipped", p, by))
+			continue
+		}
 		c.inspectProfile(ctx, p, now, costExplorer, seen, emit)
 	}
 	return nil
@@ -169,6 +182,7 @@ type audit struct {
 	now        time.Time
 	emitter    connector.Emitter
 	failedWith []string
+	denied     []string // IAM actions the principal may not call, in the order first seen
 }
 
 // emit stamps a finding with the account and with the profile as its scope: a profile whose
@@ -187,10 +201,66 @@ func (a *audit) call(out any, args ...string) error {
 	return a.c.call(a.ctx, a.profile, out, args...)
 }
 
+// checkAction is the IAM action each check needs first, named when a denial does not say.
+var checkAction = map[string]string{
+	"root user":     "iam:GetAccountSummary",
+	"IAM users":     "iam:ListUsers",
+	"budgets":       "budgets:ViewBudget",
+	"cost explorer": "ce:GetCostAndUsage",
+}
+
+var deniedAction = regexp.MustCompile(`not authorized to perform: ([a-z0-9-]+:[A-Za-z0-9]+)`)
+
 func (a *audit) check(name string, fn func() error) {
-	if err := fn(); err != nil {
+	err := fn()
+	switch {
+	case err == nil:
+	case containsAny(err.Error(), "AccessDenied", "UnauthorizedOperation"):
+		action := checkAction[name]
+		if m := deniedAction.FindStringSubmatch(err.Error()); m != nil {
+			action = m[1]
+		}
+		if !slices.Contains(a.denied, action) {
+			a.denied = append(a.denied, action)
+		}
+	default:
 		a.failedWith = append(a.failedWith, fmt.Sprintf("%s: %v", name, err))
 	}
+}
+
+// policyHint names the AWS managed policies that grant the denied read-only actions: SecurityAudit
+// allows iam:Get* and iam:List*, AWSBudgetsReadOnlyAccess allows budgets:ViewBudget and
+// budgets:Describe*. Anything else (Cost Explorer) has to be allowed by name.
+func policyHint(principal string, denied []string) string {
+	var iam, budgets, other []string
+	for _, a := range denied {
+		switch {
+		case strings.HasPrefix(a, "iam:"):
+			iam = append(iam, a)
+		case strings.HasPrefix(a, "budgets:"):
+			budgets = append(budgets, a)
+		default:
+			other = append(other, a)
+		}
+	}
+	var fixes []string
+	if len(iam) > 0 {
+		fixes = append(fixes, fmt.Sprintf("SecurityAudit (%s)", strings.Join(iam, ", ")))
+	}
+	if len(budgets) > 0 {
+		fixes = append(fixes, fmt.Sprintf("AWSBudgetsReadOnlyAccess (%s)", strings.Join(budgets, ", ")))
+	}
+	hint := principal + " may not call " + strings.Join(denied, ", ") + ": "
+	if len(fixes) > 0 {
+		hint += "attach the AWS managed policies " + strings.Join(fixes, " and ")
+		if len(other) > 0 {
+			hint += ", and "
+		}
+	}
+	if len(other) > 0 {
+		hint += "allow " + strings.Join(other, ", ") + " in an inline policy"
+	}
+	return hint
 }
 
 func profileScope(profile string) string { return "profile " + profile }
@@ -223,10 +293,33 @@ func (c *Connector) inspectProfile(ctx context.Context, profile string, now time
 	}
 
 	st := finding.Status{Account: a.account, State: finding.StateOK}
-	if len(a.failedWith) > 0 {
+	switch {
+	case len(a.failedWith) > 0:
 		st.State, st.Detail = finding.StateError, strings.Join(a.failedWith, "; ")
+		if len(a.denied) > 0 {
+			st.Detail += "; " + policyHint(principalName(id.Arn), a.denied)
+		}
+	case len(a.denied) > 0:
+		st.State, st.Detail = finding.StateNoScope, policyHint(principalName(id.Arn), a.denied)
 	}
 	emit.Status(st)
+}
+
+// principalName turns arn:aws:iam::1:user/alice into "user alice" for status details.
+func principalName(arn string) string {
+	_, res, ok := strings.Cut(arn, ":iam::")
+	if !ok {
+		if arn == "" {
+			return "the profile"
+		}
+		return arn
+	}
+	_, res, _ = strings.Cut(res, ":")
+	kind, name, ok := strings.Cut(res, "/")
+	if !ok {
+		return res
+	}
+	return kind + " " + name
 }
 
 func (a *audit) root() error {

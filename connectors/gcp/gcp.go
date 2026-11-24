@@ -53,6 +53,7 @@ func (c *Connector) Describe() connector.Description {
 type settings struct {
 	accounts       []string
 	projects       []string
+	skipProjects   []string
 	billingProject string // passed as --billing-project to budgets list when set
 	gcloudPath     string
 }
@@ -64,6 +65,9 @@ func parseSettings(m map[string]any) (settings, error) {
 		return s, err
 	}
 	if s.projects, err = stringList(m, "projects"); err != nil {
+		return s, err
+	}
+	if s.skipProjects, err = stringList(m, "skip_projects"); err != nil {
 		return s, err
 	}
 	s.billingProject, _ = m["billing_project"].(string)
@@ -91,9 +95,11 @@ func stringList(m map[string]any, key string) ([]string, error) {
 	return out, nil
 }
 
-// target is one project inspected with one account. Each project is inspected once.
+// target is one project and the accounts that list it, in config or `gcloud auth list` order.
+// Each project is inspected once: a check denied to the first account is retried with the next.
 type target struct {
-	account, project, number string
+	accounts        []string
+	project, number string
 }
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
@@ -109,7 +115,9 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
 		return nil
 	}
-	accounts, err := c.accounts(ctx, g, cfg)
+	accounts, err := c.accounts(ctx, g, cfg, func(sa string) {
+		emit.Scope(sa, false, "service account: not used as an inventory account (list it in connectors.gcp.config.accounts to use it)")
+	})
 	if err != nil {
 		_, why := classify(err)
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateError, Detail: "gcloud auth list: " + why})
@@ -120,7 +128,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		return nil
 	}
 
-	targets, usable := c.plan(ctx, g, accounts, cfg.projects, emit)
+	targets, usable := c.plan(ctx, g, accounts, cfg, emit)
 	bill := &billing{g: g, billingProject: cfg.billingProject, accounts: map[string]*billingState{}}
 	for _, a := range usable {
 		bill.discover(ctx, a, emit)
@@ -156,8 +164,14 @@ func (c *Connector) gcloud(cfg settings) (*gcloud, error) {
 	return &gcloud{run: r, backoff: c.backoff}, nil
 }
 
-// accounts are the configured accounts, or every credentialed account gcloud lists.
-func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings) ([]string, error) {
+// serviceAccountSuffix ends the email of every user-managed service account. gcloud lists a service
+// account it activated (`gcloud auth activate-service-account`) next to people: it is a credential
+// the gcp checks already report, not an identity to inventory projects with.
+const serviceAccountSuffix = ".iam.gserviceaccount.com"
+
+// accounts are the configured accounts, or every credentialed account gcloud lists except
+// service accounts, each of which is passed to skipped.
+func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings, skipped func(string)) ([]string, error) {
 	if len(cfg.accounts) > 0 {
 		return cfg.accounts, nil
 	}
@@ -169,20 +183,29 @@ func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings) ([]st
 	}
 	var out []string
 	for _, a := range listed {
+		if strings.HasSuffix(a.Account, serviceAccountSuffix) {
+			skipped(a.Account)
+			continue
+		}
 		out = append(out, a.Account)
 	}
 	return out, nil
 }
 
-// plan lists each account's projects and assigns every project to the first account that sees
-// it. Configured projects nobody lists go to the first account that could list projects.
-func (c *Connector) plan(ctx context.Context, g *gcloud, accounts, only []string, emit connector.Emitter) ([]target, []string) {
+// plan lists each account's projects and gives every project the accounts that see it, first
+// lister first. Configured projects nobody lists go to the accounts that could list projects.
+// Skipped projects and projects pending deletion are left out.
+func (c *Connector) plan(ctx context.Context, g *gcloud, accounts []string, cfg settings, emit connector.Emitter) ([]target, []string) {
 	var targets []target
 	var usable []string
-	seen := map[string]bool{}
+	index := map[string]int{}
 	want := map[string]bool{}
-	for _, p := range only {
+	for _, p := range cfg.projects {
 		want[p] = true
+	}
+	skip, declared := map[string]bool{}, map[string]bool{}
+	for _, p := range cfg.skipProjects {
+		skip[p] = true
 	}
 	for _, a := range accounts {
 		var projects []struct {
@@ -198,26 +221,36 @@ func (c *Connector) plan(ctx context.Context, g *gcloud, accounts, only []string
 		usable = append(usable, a)
 		emit.Status(finding.Status{Account: a, State: finding.StateOK, Detail: fmt.Sprintf("%d project(s) visible", len(projects))})
 		for _, p := range projects {
-			if seen[p.ProjectID] || (len(only) > 0 && !want[p.ProjectID]) ||
+			if skip[p.ProjectID] && !declared[p.ProjectID] {
+				declared[p.ProjectID] = true
+				emit.Scope(p.ProjectID, false, "in connectors.gcp.config.skip_projects")
+			}
+			if skip[p.ProjectID] || (len(want) > 0 && !want[p.ProjectID]) ||
 				(p.LifecycleState != "" && p.LifecycleState != "ACTIVE") {
 				continue
 			}
-			seen[p.ProjectID] = true
-			targets = append(targets, target{account: a, project: p.ProjectID, number: p.ProjectNumber})
+			if i, ok := index[p.ProjectID]; ok {
+				targets[i].accounts = append(targets[i].accounts, a)
+				continue
+			}
+			index[p.ProjectID] = len(targets)
+			targets = append(targets, target{accounts: []string{a}, project: p.ProjectID, number: p.ProjectNumber})
 		}
 	}
-	for _, p := range only {
-		if !seen[p] && len(usable) > 0 {
-			seen[p] = true
-			targets = append(targets, target{account: usable[0], project: p})
+	for _, p := range cfg.projects {
+		if _, ok := index[p]; !ok && !skip[p] && len(usable) > 0 {
+			index[p] = len(targets)
+			targets = append(targets, target{accounts: usable, project: p})
 		}
 	}
 	return targets, usable
 }
 
-// inspect runs the per-project checks and reports the ones that failed in one status line.
+// inspect runs the per-project checks and reports the ones that failed in one status line, on
+// the project's first account. A check denied to one account is retried with the next account
+// that lists the project, so a project another account can read is not reported as denied.
 func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *billing, emit connector.Emitter) {
-	acct, proj := "--account="+t.account, "--project="+t.project
+	proj := "--project=" + t.project
 	var failed, denied []string
 	worst := finding.StateOK
 	fail := func(check string, err error) {
@@ -231,6 +264,22 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		}
 		failed = append(failed, check+": "+why)
 	}
+	// run calls fn with each account in turn until one is not denied, and returns that account.
+	// Findings stay on the project's first account whichever account read them, so their ids and
+	// the coverage of that account's project scope do not depend on who answered.
+	run := func(check string, fn func(acct string) error) (string, bool) {
+		var err error
+		for _, a := range t.accounts {
+			if err = fn(a); err == nil {
+				return a, true
+			}
+			if _, why := classify(err); !strings.HasPrefix(why, deniedPrefix) {
+				break
+			}
+		}
+		fail(check, err)
+		return "", false
+	}
 	emitAll := func(fs []finding.Finding) {
 		for _, f := range fs {
 			f.Scope = t.project
@@ -239,45 +288,50 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	}
 
 	var policy iamPolicy
-	if err := g.json(ctx, &policy, "projects", "get-iam-policy", t.project, acct); err != nil {
-		fail("iam policy", err)
-	} else {
-		emitAll(iamFindings(t.account, t.project, policy))
+	if _, ok := run("iam policy", func(a string) error {
+		return g.json(ctx, &policy, "projects", "get-iam-policy", t.project, "--account="+a)
+	}); ok {
+		emitAll(iamFindings(t.accounts[0], t.project, policy))
 	}
 
 	var sas []serviceAccount
-	if err := g.json(ctx, &sas, "iam", "service-accounts", "list", proj, acct); err != nil {
-		fail("service accounts", err)
-	}
+	run("service accounts", func(a string) error {
+		return g.json(ctx, &sas, "iam", "service-accounts", "list", proj, "--account="+a)
+	})
 	for _, sa := range sas {
 		var keys []saKey
-		if err := g.json(ctx, &keys, "iam", "service-accounts", "keys", "list", "--iam-account="+sa.Email, "--managed-by=user", proj, acct); err != nil {
-			fail("keys of "+sa.Email, err)
-			continue
+		if _, ok := run("keys of "+sa.Email, func(a string) error {
+			return g.json(ctx, &keys, "iam", "service-accounts", "keys", "list", "--iam-account="+sa.Email, "--managed-by=user", proj, "--account="+a)
+		}); ok {
+			emitAll(saKeyFindings(t.accounts[0], t.project, sa, keys, c.now()))
 		}
-		emitAll(saKeyFindings(t.account, t.project, sa, keys, c.now()))
 	}
 
 	var keys []apiKey
-	if err := g.json(ctx, &keys, "services", "api-keys", "list", proj, acct); err != nil {
-		fail("api keys", err)
-	} else {
-		emitAll(apiKeyFindings(t.account, t.project, keys))
+	if _, ok := run("api keys", func(a string) error {
+		return g.json(ctx, &keys, "services", "api-keys", "list", proj, "--account="+a)
+	}); ok {
+		emitAll(apiKeyFindings(t.accounts[0], t.project, keys))
 	}
 
 	var info billingInfo
-	if err := g.json(ctx, &info, "billing", "projects", "describe", t.project, acct); err != nil {
-		fail("billing", err)
-	} else if info.BillingEnabled && info.BillingAccountName != "" {
-		bill.link(t, strings.TrimPrefix(info.BillingAccountName, "billingAccounts/"))
+	if a, ok := run("billing", func(a string) error {
+		return g.json(ctx, &info, "billing", "projects", "describe", t.project, "--account="+a)
+	}); ok && info.BillingEnabled && info.BillingAccountName != "" {
+		bill.link(a, t, strings.TrimPrefix(info.BillingAccountName, "billingAccounts/"))
 	}
 
 	if len(denied) > 0 {
-		failed = append([]string{"permission denied for " + strings.Join(denied, ", ")}, failed...)
+		msg := "permission denied for " + strings.Join(denied, ", ")
+		if len(t.accounts) > 1 {
+			msg += " (to every account that lists it: " + strings.Join(t.accounts, ", ") + ")"
+		}
+		failed = append([]string{msg}, failed...)
 	}
 	if len(failed) > 0 {
-		// Scoped to the project: the account's other projects were read.
-		emit.Status(finding.Status{Account: t.account, Scope: t.project, State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
+		// Scoped to the project: the account's other projects were read. Only checks denied to
+		// every account that lists the project get here.
+		emit.Status(finding.Status{Account: t.accounts[0], Scope: t.project, State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
 	}
 }
 
@@ -320,10 +374,10 @@ func (b *billing) discover(ctx context.Context, account string, emit connector.E
 	}
 }
 
-func (b *billing) link(t target, id string) {
+func (b *billing) link(account string, t target, id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	st := b.state(id, t.account)
+	st := b.state(id, account)
 	st.linked = append(st.linked, linkedProject{id: t.project, number: t.number})
 }
 

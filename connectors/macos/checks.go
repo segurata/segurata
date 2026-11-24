@@ -66,12 +66,19 @@ func (c *Connector) systemChecks(ctx context.Context) []check {
 		title: "The screen does not lock right away when it sleeps",
 		rem:   manual("In System Settings > Lock Screen, set \"Require password after screen saver begins or display is turned off\" to Immediately.")})
 
-	idle := c.pref(ctx, defaultsBin, "-currentHost", "read", "com.apple.screensaver", "idleTime")
-	pm, _ := c.text(ctx, "/usr/bin/pmset", "-g")
-	out = append(out, check{id: "screensaver", sev: finding.SevInfo,
-		detail: fmt.Sprintf("screensaver after %s s, display off after %s min", orQ(idle), orQ(displaySleep(pm))),
-		title:  "Screen saver and display sleep timing",
-		rem:    manual("Shorter is safer: System Settings > Lock Screen.")})
+	saver := c.readSetting(ctx, defaultsBin, "-currentHost", "read", "com.apple.screensaver", "idleTime")
+	if !saver.set && saver.err == "" {
+		saver = c.readSetting(ctx, defaultsBin, "read", "com.apple.screensaver", "idleTime")
+	}
+	pm, pmOK := c.text(ctx, "/usr/bin/pmset", "-g")
+	display := setting{err: pm}
+	if pmOK {
+		display = setting{}
+		if v := displaySleep(pm); v != "" {
+			display.value, display.set = v, true
+		}
+	}
+	out = append(out, screenIdleCheck(saver, display))
 
 	user := c.pref(ctx, defaultsBin, "read", loginWindowPrefs, "autoLoginUser")
 	out = append(out, check{id: "auto-login", ok: user == "", detail: "automatic login as " + user, sev: finding.SevHigh,
@@ -113,6 +120,87 @@ func orQ(v string) string {
 		return "?"
 	}
 	return v
+}
+
+// setting is one value read from a tool: set when it has one, err when the read failed (an
+// unset defaults key is neither).
+type setting struct {
+	value string
+	set   bool
+	err   string
+}
+
+// readSetting reads one defaults key, telling an unset key from a failed read.
+func (c *Connector) readSetting(ctx context.Context, args ...string) setting {
+	s, ok := c.text(ctx, args...)
+	switch {
+	case ok:
+		return setting{value: s, set: true}
+	case strings.Contains(s, "does not exist"):
+		return setting{}
+	}
+	return setting{err: s}
+}
+
+// maxIdleLock is the longest an idle Mac should stay unlocked. The screen locks when the screen
+// saver starts or the display sleeps, whichever comes first.
+const maxIdleLock = 10 * 60
+
+// screenIdleCheck passes when the screen saver (idleTime, seconds) or display sleep (minutes)
+// starts within maxIdleLock. 0 means never for both.
+func screenIdleCheck(saver, display setting) check {
+	ch := check{id: "screensaver", sev: finding.SevLow,
+		rem: manual("In System Settings > Lock Screen, set \"Start Screen Saver when inactive\" or \"Turn display off when inactive\" to 10 minutes or less.")}
+	saverSecs, saverOK := seconds(saver, 1)
+	displaySecs, displayOK := seconds(display, 60)
+	ch.detail = fmt.Sprintf("screen saver %s, display off %s", describeIdle(saver, saverSecs, "idleTime"), describeIdle(display, displaySecs, "displaysleep"))
+	if !saverOK && !displayOK {
+		ch.skip, ch.skipState = "could not read the idle timing: "+ch.detail, finding.StateError
+		return ch
+	}
+	effective := 0
+	for _, v := range []int{saverSecs, displaySecs} {
+		if v > 0 && (effective == 0 || v < effective) {
+			effective = v
+		}
+	}
+	ch.evidence = map[string]any{"effective_seconds": effective, "max_seconds": maxIdleLock}
+	switch {
+	case effective == 0 && saverOK && displayOK:
+		ch.sev = finding.SevMedium
+		ch.title = "The screen never locks on its own: screen saver and display sleep are both off"
+	case effective == 0:
+		ch.skip, ch.skipState = "could not judge the idle timing: "+ch.detail, finding.StateError
+	case effective > maxIdleLock:
+		ch.title = fmt.Sprintf("The screen locks only after %d minutes idle (more than %d)", effective/60, maxIdleLock/60)
+	default:
+		ch.ok = true
+	}
+	return ch
+}
+
+// seconds converts a read setting to seconds; ok is false when it was not read or not a number.
+func seconds(s setting, unit int) (int, bool) {
+	if !s.set {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s.value))
+	if err != nil {
+		return 0, false
+	}
+	return n * unit, true
+}
+
+func describeIdle(s setting, secs int, key string) string {
+	switch {
+	case s.err != "":
+		return fmt.Sprintf("unreadable (%s: %s)", key, firstLine(s.err))
+	case !s.set:
+		return "not set (macOS default)"
+	case secs == 0:
+		return "never"
+	}
+	return fmt.Sprintf("after %d s", secs)
 }
 
 // screenLockText drops sysadminctl's log prefix ("2026-11-23 ... sysadminctl[1:2] ").
@@ -187,11 +275,14 @@ var knownPorts = map[string]struct{ label, fix string }{
 type listener struct {
 	port  string
 	addrs []string
-	proc  string
+	proc  string // executable name
+	path  string // executable path, "" when ps did not list the pid
 }
 
-// listeningPorts reports every TCP port listening outside loopback, one finding per port.
-func (c *Connector) listeningPorts(ctx context.Context, r *reporter) {
+// listeningPorts reports every TCP port listening outside loopback, one finding per port. A port
+// that judges nothing on its own (an app's network feature) is folded into the background item
+// that runs the process, when there is one.
+func (c *Connector) listeningPorts(ctx context.Context, r *reporter, items *bgItems) {
 	ns, _ := c.text(ctx, netstatBin, "-anv", "-p", "tcp")
 	ps, _ := c.text(ctx, psBin, "-axo", "pid=,comm=")
 	ls := parseListeners(ns, parseProcs(ps))
@@ -201,6 +292,9 @@ func (c *Connector) listeningPorts(ctx context.Context, r *reporter) {
 	}
 	for _, l := range ls {
 		ch := listenerCheck(l)
+		if ch.sev == finding.SevInfo && items.absorb(l) {
+			continue
+		}
 		if l.port == "445" {
 			c.smbChecks(ctx, r, &ch)
 		}
@@ -261,8 +355,7 @@ func parseProcs(ps string) map[string]string {
 		if len(f) < 2 {
 			continue
 		}
-		path := strings.Join(f[1:], " ")
-		m[f[0]] = path[strings.LastIndex(path, "/")+1:]
+		m[f[0]] = strings.Join(f[1:], " ")
 	}
 	return m
 }
@@ -292,13 +385,14 @@ func parseListeners(ns string, procs map[string]string) []listener {
 			continue
 		}
 		port := addr[strings.LastIndex(addr, ".")+1:]
-		proc := procs[f[pidCol]]
+		path := procs[f[pidCol]]
+		proc := path[strings.LastIndex(path, "/")+1:]
 		if proc == "" {
 			proc = "pid " + f[pidCol]
 		}
 		l, ok := byPort[port]
 		if !ok {
-			l = &listener{port: port, proc: proc}
+			l = &listener{port: port, proc: proc, path: path}
 			byPort[port] = l
 			order = append(order, port)
 		}
@@ -318,19 +412,70 @@ func parseListeners(ns string, procs map[string]string) []listener {
 	return out
 }
 
-type btmItem struct{ name, typ, ident, exe, team string }
+type btmItem struct{ name, typ, ident, exe, team, url string }
 
-// backgroundItems reports enabled login items, agents and daemons from `sfltool dumpbtm`, which
-// needs no sudo on macOS 13 and later. Without it, it lists LaunchAgents and LaunchDaemons.
-func (c *Connector) backgroundItems(ctx context.Context, r *reporter) {
-	out, _ := c.text(ctx, "/usr/bin/sfltool", "dumpbtm")
-	items := parseBTM(out)
-	if len(items) == 0 {
-		r.report(check{id: "btm", area: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); falling back to launchctl and launchd plists"})
-		c.launchItems(ctx, r)
-		return
+// label is the launchd label of a legacy agent or daemon: BTM prefixes it with the item type
+// ("16.com.example.helper").
+func (it btmItem) label() string {
+	if n, rest, ok := strings.Cut(it.ident, "."); ok && strings.Trim(n, "0123456789") == "" {
+		return rest
 	}
-	for _, it := range items {
+	return it.ident
+}
+
+// paths are the places the item's process runs from: its executable, made absolute against the
+// bundle its URL names when BTM gives it relative to that bundle.
+func (it btmItem) paths() []string {
+	u := strings.TrimSuffix(strings.TrimPrefix(it.url, "file://"), "/")
+	exe := it.exe
+	if exe != "" && !strings.HasPrefix(exe, "/") && strings.HasSuffix(u, ".app") {
+		exe = u + "/" + exe
+	}
+	if strings.HasSuffix(u, ".app") {
+		return []string{exe, u}
+	}
+	return []string{exe}
+}
+
+// backgroundItems collects launch items whose program or app is gone, then enabled login items,
+// agents and daemons from `sfltool dumpbtm`, which needs no sudo on macOS 13 and later. Without
+// it, it lists the launchd plists and non-Apple launchctl jobs.
+func (c *Connector) backgroundItems(ctx context.Context, r *reporter) *bgItems {
+	items := &bgItems{}
+	jobs := c.launchJobs(ctx)
+	var ids []string
+	bundleIDs := func() []string {
+		if ids == nil {
+			ids = append(c.installedBundleIDs(ctx), "")
+		}
+		return ids
+	}
+	leftover := map[string]bool{}
+	for _, j := range jobs {
+		if ch, ok := leftoverCheck(j, bundleIDs); ok {
+			leftover[j.label] = true
+			items.add(ch, j.program)
+		}
+	}
+
+	out, err := guard(c.Run).Run(ctx, sfltoolBin, "dumpbtm")
+	btm := parseBTM(string(out))
+	if err != nil || len(btm) == 0 {
+		skip := check{id: "btm", area: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); listed launchd plists and launchctl jobs instead"}
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			skip.skip, skip.skipState = fmt.Sprintf("sfltool dumpbtm timed out after %s; listed launchd plists and launchctl jobs instead", slowTimeout), finding.StateError
+		case err != nil:
+			skip.skip, skip.skipState = fmt.Sprintf("sfltool dumpbtm failed (%v); listed launchd plists and launchctl jobs instead", err), finding.StateError
+		}
+		r.report(skip)
+		c.launchItems(ctx, items, jobs, leftover)
+		return items
+	}
+	for _, it := range btm {
+		if leftover[it.label()] {
+			continue
+		}
 		ch := check{id: "btm:" + it.ident, area: "btm", resource: "background_item", name: it.name,
 			detail:   fmt.Sprintf("%s [%s] %s %s (Team %s)", it.name, it.typ, it.ident, it.exe, it.team),
 			evidence: map[string]any{"type": it.typ, "identifier": it.ident, "executable": it.exe, "team_id": it.team},
@@ -341,13 +486,14 @@ func (c *Connector) backgroundItems(ctx context.Context, r *reporter) {
 			ch.detail = fmt.Sprintf("%s [%s] %s %s (no developer signature: check you recognise it)", it.name, it.typ, it.ident, it.exe)
 			ch.title = fmt.Sprintf("Background item %s (%s) runs at login without a developer signature", it.name, it.typ)
 		}
-		r.report(ch)
+		items.add(ch, it.paths()...)
 	}
+	return items
 }
 
 var (
 	btmItemStart = regexp.MustCompile(`^ #\d+:`)
-	btmField     = regexp.MustCompile(`^ +(Name|Type|Disposition|Identifier|Executable Path|Team Identifier): ?(.*)$`)
+	btmField     = regexp.MustCompile(`^ +(Name|Type|Disposition|Identifier|URL|Executable Path|Team Identifier): ?(.*)$`)
 	btmKind      = regexp.MustCompile(`agent|daemon|login item`)
 )
 
@@ -381,6 +527,8 @@ func parseBTM(out string) []btmItem {
 			disp = m[2]
 		case "Identifier":
 			cur.ident = m[2]
+		case "URL":
+			cur.url = m[2]
 		case "Executable Path":
 			cur.exe = m[2]
 		case "Team Identifier":
@@ -391,23 +539,37 @@ func parseBTM(out string) []btmItem {
 	return items
 }
 
-// launchItems is the fallback when sfltool gives nothing: launchd plists and non-Apple launchctl jobs.
-func (c *Connector) launchItems(ctx context.Context, r *reporter) {
-	home, _ := c.Home()
-	for _, dir := range []string{home + "/Library/LaunchAgents", "/Library/LaunchAgents", "/Library/LaunchDaemons"} {
-		for _, p := range plists(dir) {
-			r.report(check{id: "launch-item:" + p, area: "btm", resource: "background_item", sev: finding.SevInfo, detail: p,
-				title: "Launch item " + p, rem: manual("Check you recognise it.")})
+// launchItems is the fallback when sfltool gives nothing: one item per launchd label, from the
+// plists first and then the launchctl jobs no plist names. Apple's jobs and the application.*
+// jobs launchd creates for each running app are left out, as are the leftovers already reported.
+func (c *Connector) launchItems(ctx context.Context, items *bgItems, jobs []launchJob, leftover map[string]bool) {
+	seen := maps.Clone(leftover)
+	for _, j := range jobs {
+		if seen[j.label] {
+			continue
 		}
+		seen[j.label] = true
+		detail := j.plist
+		if j.program != "" {
+			detail += " starts " + j.program
+		}
+		items.add(check{id: "launch-item:" + j.label, area: "btm", resource: "background_item", name: j.label, sev: finding.SevInfo,
+			detail: detail, evidence: map[string]any{"label": j.label, "plist": j.plist, "program": j.program},
+			title: "Launch item " + j.label, rem: manual("Check you recognise it.")}, j.program)
 	}
 	out, _ := c.text(ctx, "/bin/launchctl", "list")
 	for i, l := range strings.Split(out, "\n") {
 		f := strings.Fields(l)
-		if i == 0 || len(f) < 3 || strings.HasPrefix(f[2], "com.apple.") {
+		if i == 0 || len(f) < 3 {
 			continue
 		}
-		r.report(check{id: "launchctl:" + f[2], area: "btm", resource: "background_item", sev: finding.SevInfo, detail: f[2],
-			title: "launchd job " + f[2], rem: manual("Check you recognise it.")})
+		label := f[2]
+		if seen[label] || strings.HasPrefix(label, "com.apple.") || strings.HasPrefix(label, "application.") {
+			continue
+		}
+		seen[label] = true
+		items.add(check{id: "launchctl:" + label, area: "btm", resource: "background_item", name: label, sev: finding.SevInfo, detail: label,
+			title: "launchd job " + label, rem: manual("Check you recognise it.")})
 	}
 }
 

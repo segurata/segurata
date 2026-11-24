@@ -16,6 +16,7 @@ const (
 	urlAnomaly     = "https://docs.aws.amazon.com/cost-management/latest/userguide/getting-started-ad.html"
 	urlSSO         = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html"
 	urlConfigFiles = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html"
+	urlR2Tokens    = "https://dash.cloudflare.com/?to=/:account/r2/overview"
 )
 
 func days(d time.Duration) int { return int(d.Hours() / 24) }

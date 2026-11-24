@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -57,15 +58,70 @@ func xService(ctx context.Context, e *env) {
 		e.status(who, finding.StateError, "%v; wait 15 minutes and run again", err)
 		return
 	}
+	// Oldest approval first, so apps of one severity are listed by age; undated ones last.
+	sort.SliceStable(apps, func(i, j int) bool {
+		a, b := apps[i].approved, apps[j].approved
+		return a != nil && (b == nil || a.Before(*b))
+	})
+	var old []grant
 	for _, a := range apps {
 		extra := map[string]any{"grants": a.grants, "token_type": a.tokenType}
 		if a.expires != nil {
 			extra["expires_at"] = a.expires
 		}
-		e.report(grant{who: who, resType: "x_app", name: a.name, scopes: a.scopes, publisher: a.org,
-			created: a.approved, url: xURL + "/" + a.id, revoke: xRevoke, extra: extra})
+		if a.approved != nil {
+			extra["age_years"] = int(e.now.Sub(*a.approved).Hours() / 24 / 365)
+		}
+		g := grant{who: who, resType: "x_app", name: a.name, scopes: a.scopes, publisher: a.org,
+			created: a.approved, url: xURL + "/" + a.id, revoke: xRevoke, extra: extra}
+		if a.approved != nil && e.now.Sub(*a.approved) > xOldAfter {
+			old = append(old, g)
+			continue
+		}
+		e.report(g)
+	}
+	if len(old) > 0 {
+		e.emit.Finding(xOldAppsFinding(e, who, old))
 	}
 	e.status(who, finding.StateOK, "%d connected apps", len(apps))
+}
+
+// xOldAfter is the approval age past which X apps are revoked as one batch: most services
+// authorized on X that long ago are defunct (Posterous, Vine, Klout, Delicious), and nobody
+// reviews them one by one.
+const xOldAfter = 10 * 365 * 24 * time.Hour
+
+// xOldAppsFinding is one finding for every app approved more than xOldAfter ago, as bad as the
+// worst of them, listing each with its date and what it can do.
+func xOldAppsFinding(e *env, who string, old []grant) finding.Finding {
+	worst := finding.SevInfo
+	var names []string
+	var apps []map[string]any
+	for _, g := range old {
+		sev, label := assess(e.service, g)
+		if sev.Rank() > worst.Rank() {
+			worst = sev
+		}
+		names = append(names, g.name)
+		apps = append(apps, map[string]any{"name": g.name, "approved": g.created.Format(time.DateOnly), "severity": sev,
+			"can": label, "publisher": g.publisher, "url": g.url})
+	}
+	years := int(xOldAfter.Hours() / 24 / 365)
+	cutoff := e.now.Add(-xOldAfter).Format("January 2006")
+	return finding.Finding{
+		ID:        finding.StableID(name, "x_old_apps", e.account(who)),
+		Account:   e.account(who),
+		Resource:  finding.Resource{Type: "x_old_apps", ID: "x:old-apps", Name: fmt.Sprintf("X apps approved more than %d years ago", years)},
+		Kind:      finding.KindGrant,
+		Severity:  worst,
+		Title:     fmt.Sprintf("Revoke %d X apps authorized before %s (services mostly defunct)", len(old), cutoff),
+		Evidence:  map[string]any{"service": e.service, "apps": apps, "names": names, "older_than_years": years},
+		CreatedAt: old[0].created,
+		Remediation: finding.Remediation{
+			Summary: fmt.Sprintf("Open %s and revoke each of them (%s): \"Revoke app permissions\" on its page. Services you still use ask you to connect again.", xURL, strings.Join(names, ", ")),
+			URL:     xURL,
+		},
+	}
 }
 
 // xGrant is one grant in oauth/list.json. Fields not named here, the tokens among them, are

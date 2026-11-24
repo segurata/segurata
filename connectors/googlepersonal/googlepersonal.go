@@ -33,6 +33,21 @@ const (
 		`Set up another way to sign in to the app first if you still need that account.`
 )
 
+// dependency is a grant held by a command-line tool you run, segurata's own among them: removing
+// it signs the tool out, so the fix is never "Remove all access".
+type dependency struct{ label, fix string }
+
+// dependencies by the app name Google shows. Google gives these CLIs the whole cloud-platform
+// scope and offers nothing narrower.
+var dependencies = map[string]dependency{
+	"Google Cloud SDK": {"segurata depends on it",
+		"segurata's gcp connector runs gcloud with this grant: do not remove it on accounts you inventory. " +
+			"On an account you no longer use gcloud with, run `gcloud auth revoke <account>`, which revokes this machine's token, instead of removing access here."},
+	"Firebase CLI": {"developer tool",
+		"The Firebase CLI (`firebase login`) runs with this grant; removing it signs the CLI out. " +
+			"Keep it while you deploy with it; otherwise run `firebase logout`, which revokes its token."},
+}
+
 func init() { connector.Register(GooglePersonal{}) }
 
 type GooglePersonal struct{}
@@ -53,7 +68,34 @@ func (GooglePersonal) Inventory(ctx context.Context, req connector.Request, emit
 		return err
 	}
 	defer c.Close()
-	return inventory(ctx, cdpBrowser{c}, emit, time.Now())
+	only, err := accountFilter(req.Config)
+	if err != nil {
+		return err
+	}
+	return inventory(ctx, cdpBrowser{c}, emit, time.Now(), only)
+}
+
+// accountFilter reads config `accounts`: when set, only these emails are inventoried. Other
+// accounts signed in to the browser (someone else's mailbox you were given access to) get no
+// status; each is declared as a skipped scope.
+func accountFilter(cfg map[string]any) (map[string]bool, error) {
+	raw, ok := cfg["accounts"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, errors.New(`google-personal config: "accounts" must be a list of emails`)
+	}
+	only := map[string]bool{}
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok {
+			return nil, errors.New(`google-personal config: "accounts" must be a list of emails`)
+		}
+		only[strings.ToLower(s)] = true
+	}
+	return only, nil
 }
 
 // browser loads a page, polls a JavaScript expression until ready accepts its value or tries
@@ -126,7 +168,9 @@ func connectionsURL(u int) string {
 	return fmt.Sprintf("https://myaccount.google.com/u/%d/connections", u)
 }
 
-func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.Time) error {
+// inventory walks the accounts signed in to the browser. only, when not nil, names the accounts
+// to inventory.
+func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.Time, only map[string]bool) error {
 	seen := map[string]bool{}
 	for u := 0; u < maxAccounts && ctx.Err() == nil; u++ {
 		raw, err := b.load(ctx, connectionsURL(u), connectionsJS, connectionsReady, 24)
@@ -147,6 +191,12 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 			break
 		}
 		seen[page.Mail] = true
+		if only != nil && !only[strings.ToLower(page.Mail)] {
+			// Turned off by config: declared skipped, so findings an earlier run made for this
+			// account are not taken as resolved.
+			emit.Scope(page.Mail, false, "not in connectors.google-personal.config.accounts")
+			continue
+		}
 		if isReauth(page.Text) {
 			emit.Status(finding.Status{Account: page.Mail, State: finding.StateReauth, Detail: "Google asks to verify it's you before showing linked apps: sign in again in the browser"})
 			continue
@@ -154,6 +204,7 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 		apps := inspectAll(ctx, b, page.Apps, now)
 		failed := 0
 		occurrences := map[string]int{}
+		var signIns, all []finding.Finding
 		for i, a := range apps {
 			if a.err != nil {
 				failed++
@@ -165,7 +216,18 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 			}
 			f := a.finding
 			f.Account = page.Mail
+			all = append(all, f)
+			if f.Resource.Type == "sign_in_with_google" {
+				signIns = append(signIns, f)
+				continue
+			}
 			f.ID = stableID(f, occurrences)
+			emit.Finding(f)
+		}
+		if f, ok := signInSummary(page.Mail, connectionsURL(u), signIns); ok {
+			emit.Finding(f)
+		}
+		if f, ok := loginDependency(page.Mail, all); ok {
 			emit.Finding(f)
 		}
 		emit.Status(finding.Status{Account: page.Mail, State: finding.StateOK, Detail: fmt.Sprintf("%d linked apps, %d unreadable", len(apps)-failed, failed)})
@@ -239,12 +301,19 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 	if len(scopes) > 0 {
 		resType, summary = "oauth_grant", summaryGrant
 	}
+	title := fmt.Sprintf("%s can %s", appName, label)
+	ev := map[string]any{"scopes": scopes, "cross_account_protection": ov.CrossAccount, "detail_urls": nonNil(page.Details)}
+	if dep, ok := dependencies[appName]; ok && resType == "oauth_grant" {
+		title += " (" + dep.label + ")"
+		ev["dependency"] = dep.label
+		summary = dep.fix
+	}
 	res.finding = finding.Finding{
 		Resource:  finding.Resource{Type: resType, ID: overviewID(l.Href), Name: appName},
 		Kind:      finding.KindGrant,
 		Severity:  sev,
-		Title:     fmt.Sprintf("%s can %s", appName, label),
-		Evidence:  map[string]any{"scopes": scopes, "cross_account_protection": ov.CrossAccount, "detail_urls": nonNil(page.Details)},
+		Title:     title,
+		Evidence:  ev,
 		CreatedAt: created,
 		Remediation: finding.Remediation{
 			Summary: summary,

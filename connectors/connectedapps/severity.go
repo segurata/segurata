@@ -71,14 +71,23 @@ var scopeRules = map[string][]rule{
 }
 
 // assess returns a grant's severity and the label that completes "<name> can …". A grant last
-// used more than a year ago goes up one level.
+// used more than a year ago goes up one level. A Notion integration the owner created is low:
+// it is their own API token, whose leaks local-secrets reports.
 func assess(service string, g grant) (finding.Severity, string) {
 	sev, label := base(service, g)
 	if g.stale {
 		sev = raise(sev)
 	}
+	if g.resType == "notion_integration" && ownIntegration(g.publisher) && sev.Rank() > finding.SevLow.Rank() {
+		sev = finding.SevLow
+	}
 	return sev, label
 }
+
+// youRE is how Notion marks the signed-in user in an owner column.
+var youRE = regexp.MustCompile(`\((You|Tú|Tu)\)`)
+
+func ownIntegration(owner string) bool { return youRE.MatchString(owner) }
 
 func base(service string, g grant) (finding.Severity, string) {
 	switch g.resType {

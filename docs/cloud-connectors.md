@@ -77,6 +77,15 @@ profile's name, its access key id (emitted redacted) and whether it has a sessio
 values are skipped as the file is read. Profiles with a session token expire on their own and are
 not reported. [Config and credential files](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html).
 
+The same files hold keys for S3-compatible services. From `~/.aws/config` (or `AWS_CONFIG_FILE`)
+the connector reads only each profile's `region` and `endpoint_url`. AWS access key ids start with
+`AKIA` (long-lived) or `ASIA` (temporary); a profile whose key does not is not AWS and gets no STS
+or IAM call and no status. It is a Cloudflare R2 token when the endpoint is
+`<account>.r2.cloudflarestorage.com`, the region is `auto`, or the key id is 32 hex characters (the
+id of the R2 API token, [R2 tokens](https://developers.cloudflare.com/r2/api/tokens/)); the finding
+then points to R2 > Manage API Tokens. Other keys are reported as an S3-compatible key of another
+provider. Both keep the same severities as an AWS key.
+
 ### Severity
 
 | Situation | Kind | Severity |
@@ -97,8 +106,14 @@ not reported. [Config and credential files](https://docs.aws.amazon.com/cli/late
 IAM actions the identity needs: `sts:GetCallerIdentity` (always allowed), `iam:ListAccountAliases`,
 `iam:GetAccountSummary`, `iam:ListUsers`, `iam:ListAccessKeys`, `iam:GetAccessKeyLastUsed`,
 `iam:GetLoginProfile`, `iam:ListMFADevices` and `budgets:ViewBudget`; with the opt-in,
-`ce:GetCostAndUsage` and `ce:GetAnomalyMonitors`. A missing one leaves that check as an `error`
-status and the others still run.
+`ce:GetCostAndUsage` and `ce:GetAnomalyMonitors`. A denied call (`AccessDenied`) skips that check
+and the others still run; the account status is then `noscope`, and its detail names the denied
+actions and the managed policy that grants them:
+[SecurityAudit](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/SecurityAudit.html)
+(`iam:Get*`, `iam:List*`) and
+[AWSBudgetsReadOnlyAccess](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSBudgetsReadOnlyAccess.html)
+(`budgets:ViewBudget`, which SecurityAudit does not include). Cost Explorer actions are in neither,
+so the detail asks for them in an inline policy. Any other failure keeps the status at `error`.
 
 ## Azure (`azure`)
 
@@ -126,6 +141,9 @@ it keeps `keyId`, `hint` (the first three characters, as the portal shows), `dis
 | Budget without enabled notifications | `spend` | medium |
 | Expired client secret still registered | `credential` | low |
 | Other client secrets, budgets with alerts | `credential` / `spend` | info |
+
+Every client secret title carries its expiry date (`expires 2027-03-23`, `expired on 2025-03-23`),
+and one expiring within 30 days also says in how many days.
 
 Not covered: certificate credentials (`keyCredentials`), service principal secrets outside app
 registrations, and the spending limit of free or credit-based offers, which `az` does not expose.
