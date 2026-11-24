@@ -193,3 +193,22 @@ func TestLoadRejectsABadRule(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// An automatable fix of the finding itself makes segurata the item's next step; a hardening
+// action riding on it (a chmod on a key graded for rotation) does not.
+func TestOnlyTheFindingsOwnFixMakesSegurataTheNextStep(t *testing.T) {
+	for name, c := range map[string]struct {
+		rem finding.Remediation
+		who Who
+	}{
+		"own fix":   {finding.Remediation{Summary: "Turn the firewall on.", Action: "macos.firewall.enable", Automatable: true}, Segurata},
+		"hardening": {finding.Remediation{Summary: "Rotate it.", Action: "file.chmod600", Severity: finding.SevLow, Automatable: true}, You},
+	} {
+		p := &proposal{rule: &rule{}}
+		p.add(finding.Finding{ID: "f1", Connector: "x", Account: "a", Severity: finding.SevHigh, Title: "t", Remediation: c.rem})
+		p.finish("T-0001")
+		if p.next.Who != c.who {
+			t.Errorf("%s: next step by %v, want %v", name, p.next.Who, c.who)
+		}
+	}
+}

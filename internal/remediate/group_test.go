@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -162,5 +165,52 @@ func TestListShowsAGroupAsOneLineRankedByItsActionSeverity(t *testing.T) {
 	}
 	if strings.Contains(out, "harden01") || !strings.Contains(out, "1 more below medium") {
 		t.Fatalf("a hardening action ranks by its own severity:\n%s", out)
+	}
+}
+
+func TestChmodGroupClosesEachFileOnceAndKeepsScriptsRunnable(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, mode os.FileMode) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("X=1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	env, script, done := write(".env", 0o644), write("deploy.sh", 0o755), write("closed", 0o600)
+	member := func(id, path string) finding.Finding {
+		return finding.Finding{ID: id, Connector: "local-secrets", Evidence: map[string]any{"path": path},
+			Remediation: finding.Remediation{Action: ActionChmod600, Group: "files in " + dir, Severity: finding.SevLow}}
+	}
+	// Two secrets in .env are two findings naming one file.
+	group := []finding.Finding{member("a", env), member("b", env), member("c", script), member("d", done)}
+	fs := Files{}
+	p, err := fs.PlanGroup(context.Background(), group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []connector.FileChange{{Path: env, Mode: 0o600, Was: 0o644}, {Path: script, Mode: 0o700, Was: 0o755}}
+	if !reflect.DeepEqual(p.Files, want) || p.Summary != "Make 2 files readable and writable by their owner only." {
+		t.Fatalf("plan %+v", p)
+	}
+	if len(p.Undo) != 2 || p.Undo[1].String() != "/bin/chmod 755 "+script {
+		t.Fatalf("undo %v", p.Undo)
+	}
+	if !strings.Contains(strings.Join(p.SideEffects, "\n"), "Left out: "+done+" is already private") {
+		t.Fatalf("side effects %v", p.SideEffects)
+	}
+	if err := fs.ApplyGroup(context.Background(), group, p, quietIO()); err != nil {
+		t.Fatal(err)
+	}
+	for path, mode := range map[string]os.FileMode{env: 0o600, script: 0o700} {
+		if fi, _ := os.Stat(path); fi.Mode().Perm() != mode {
+			t.Errorf("%s: mode %o, want %o", path, fi.Mode().Perm(), mode)
+		}
+	}
+	if _, err := fs.PlanGroup(context.Background(), group); err == nil || !strings.Contains(err.Error(), "nothing to change in 3 files") {
+		t.Fatalf("all closed: %v", err)
 	}
 }
