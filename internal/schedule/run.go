@@ -27,9 +27,9 @@ func (e Env) DefaultConnectors() []string {
 	return out
 }
 
-// Run is one scheduled run, what the agent executes: `securizame inventory` over the selected
+// Run is one scheduled run, what the agent executes: `segurata inventory` over the selected
 // connectors, a notification for high and critical findings that were not in the previous run,
-// then `securizame report --format md`. Both commands are this same binary, run as separate
+// then `segurata report --format md`. Both commands are this same binary, run as separate
 // processes so a scheduled run does exactly what the owner would type.
 func (e Env) Run(ctx context.Context, connectors []string) error {
 	p := e.Paths()
@@ -122,7 +122,7 @@ func notification(fresh []finding.Finding) string {
 		head = "1 new " + string(fresh[0].Severity) + " finding"
 	}
 	return fmt.Sprintf("display notification %s with title %s subtitle %s",
-		appleString(strings.Join(titles, "; ")), appleString("securizame"), appleString(head))
+		appleString(strings.Join(titles, "; ")), appleString("segurata"), appleString(head))
 }
 
 // appleString quotes s as an AppleScript string literal.

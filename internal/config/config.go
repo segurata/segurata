@@ -1,4 +1,4 @@
-// Package config loads ~/.config/securizame/config.json. A missing file means defaults.
+// Package config loads ~/.config/segurata/config.json. A missing file means defaults.
 package config
 
 import (
@@ -28,17 +28,17 @@ type Config struct {
 	Connectors map[string]ConnectorConfig `json:"connectors"`
 }
 
-// DefaultPath is ~/.config/securizame/config.json on every OS, like most CLIs, unless
-// SECURIZAME_CONFIG says otherwise.
+// DefaultPath is ~/.config/segurata/config.json on every OS, like most CLIs, unless
+// SEGURATA_CONFIG says otherwise.
 func DefaultPath() string {
-	if p := os.Getenv("SECURIZAME_CONFIG"); p != "" {
+	if p := os.Getenv("SEGURATA_CONFIG"); p != "" {
 		return p
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "securizame.json"
+		return "segurata.json"
 	}
-	return filepath.Join(home, ".config", "securizame", "config.json")
+	return filepath.Join(home, ".config", "segurata", "config.json")
 }
 
 func Load(path string) (Config, error) {
@@ -56,7 +56,7 @@ func Load(path string) (Config, error) {
 			cfg.Connectors = map[string]ConnectorConfig{}
 		}
 	}
-	if env := os.Getenv("SECURIZAME_CDP"); env != "" {
+	if env := os.Getenv("SEGURATA_CDP"); env != "" {
 		cfg.CDPURL = env
 	}
 	return cfg, nil

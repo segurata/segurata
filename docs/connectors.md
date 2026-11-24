@@ -18,11 +18,11 @@ Rules every connector follows, whatever its language:
 | | Built-in | External |
 |---|---|---|
 | Language | Go, standard library only | Any |
-| Lives in | `connectors/<name>/`, registered from `init` and imported in `connectors/connectors.go` | A `securizame-<name>` executable anywhere on `PATH` |
+| Lives in | `connectors/<name>/`, registered from `init` and imported in `connectors/connectors.go` | A `segurata-<name>` executable anywhere on `PATH` |
 | Contract | The Go interface `connector.Connector` (`Describe`, `Inventory`) | The protocol below, over stdin and stdout |
 | Remediation | Optional `connector.Remediator` (`Plan`, `Apply`); the core runs its commands from a hand-written allowlist and may use sudo | Protocol 2 (`plan`, `apply`); the connector runs its own plan, never as root |
 | Prerequisite checks (`doctor`) | Optional `connector.Doctor`: checks its own CLIs, sign-ins and tokens with the inventory's read-only code paths | The core checks the `cli:`, `secret:` and `os:` needs of `describe` |
-| Ships with securizame | Yes | No: installed by the owner |
+| Ships with segurata | Yes | No: installed by the owner |
 
 Write a built-in connector when it belongs in the binary for everyone and can be written with the
 Go standard library. Write an external one for anything else: another language, a heavy
@@ -169,7 +169,7 @@ next to a test, so every finding of a kind gets the same answer.
 
 ## External connector protocol
 
-An external connector is a `securizame-<name>` executable on `PATH`. The core runs it with one
+An external connector is a `segurata-<name>` executable on `PATH`. The core runs it with one
 subcommand and, except for `describe`, one JSON request on stdin. The core speaks protocol 1 and
 protocol 2; a connector declares the one it speaks in `describe`, and every request carries that
 number.
@@ -185,7 +185,7 @@ Prints one JSON object:
 ```
 
 - `needs`: `cdp` (drives the browser over the DevTools protocol), `cli:<tool>`, `secret:<NAME>`.
-  `securizame schedule` leaves out connectors that need `cdp` unless asked for them.
+  `segurata schedule` leaves out connectors that need `cdp` unless asked for them.
 - `remediates` (protocol 2 only): the remediation actions this connector plans and applies. A
   finding whose `remediation.action` is not in this list cannot be remediated through it. An action
   the core owns (`file.chmod600`) is always handled by the core.
@@ -241,7 +241,7 @@ and prints one JSON object, the plan, with the fields of `connector.Plan`, chang
   will make itself.
 - No sudo: a plan with a `"sudo": true` step or `"needs_sudo": true` is refused. The core runs a
   root command only when it is on a hand-written allowlist of exact argument lists compiled into
-  securizame, with the owner's terminal attached so sudo asks for the password itself. A plugin's
+  segurata, with the owner's terminal attached so sudo asks for the password itself. A plugin's
   command line arrives at run time and was never reviewed, so the core cannot vet it, and running
   it as root would give the plugin root on the strength of one "y". A fix that needs root stays a
   manual one in the finding's `summary`, or becomes a built-in action.
@@ -264,7 +264,7 @@ and exits 0 on success, non-zero on failure. stderr goes to the owner's terminal
 
 What the core does around it, the same as for a built-in remediation:
 
-1. `securizame remediate <id>` asks `plan`, checks it (action, summary, no sudo, no empty command)
+1. `segurata remediate <id>` asks `plan`, checks it (action, summary, no sudo, no empty command)
    and prints it. Without `--apply` it stops there.
 2. With `--apply`, it asks `Apply? [y/N]` on the terminal (or takes `--yes`), then asks `plan`
    again and refuses to go on if the new plan differs in any field from the one shown.
@@ -299,9 +299,9 @@ version 2, change `protocol` to 2 and accept `2` in the requests; add `remediate
   as the core's own tests do (`internal/remediate/external_test.go`).
 - Every connector test asserts that the synthetic secret is absent from everything emitted, and
   that ids stay the same across two runs over the same input.
-- By hand: `securizame connectors` shows whether `describe` loaded; `securizame inventory
+- By hand: `segurata connectors` shows whether `describe` loaded; `segurata inventory
   --verbose <name>` runs it and prints its logs and stderr; `echo '{"protocol":2}' |
-  securizame-<name> inventory` runs it without the core.
+  segurata-<name> inventory` runs it without the core.
 - Before a connector counts as done, run it once against a real account and compare the findings
   with the provider's own pages.
 

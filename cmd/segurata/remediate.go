@@ -16,7 +16,7 @@ import (
 	"github.com/segurata/segurata/internal/run"
 )
 
-// remediateCmd is `securizame remediate --list | <finding-id> [--apply] [--yes]`. Without --apply
+// remediateCmd is `segurata remediate --list | <finding-id> [--apply] [--yes]`. Without --apply
 // it only prints the plan.
 func remediateCmd(args []string) int {
 	fs := flag.NewFlagSet("remediate", flag.ExitOnError)
@@ -32,7 +32,7 @@ func remediateCmd(args []string) int {
 		_ = fs.Parse(fs.Args()[1:])
 	}
 	if fs.NArg() > 0 || (id == "") == !*list {
-		fmt.Fprintln(os.Stderr, "usage: securizame remediate --list | securizame remediate <finding-id> [--apply] [--yes]")
+		fmt.Fprintln(os.Stderr, "usage: segurata remediate --list | segurata remediate <finding-id> [--apply] [--yes]")
 		return 2
 	}
 

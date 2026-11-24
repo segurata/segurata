@@ -196,7 +196,7 @@ func tokenFinding(t apiToken, self bool, now time.Time) finding.Finding {
 		ev["ip_not_in"] = ip.NotIn
 	}
 	if self {
-		ev["used_by_securizame"] = true
+		ev["used_by_segurata"] = true
 	}
 	return finding.Finding{
 		Account:    userAccount,

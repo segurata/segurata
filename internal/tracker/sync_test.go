@@ -149,7 +149,7 @@ func TestGroupingRules(t *testing.T) {
 		t.Errorf("repos %+v", it)
 	}
 	posts := byTitle(t, tr, "3 X apps can post and delete posts as you")
-	if posts.Kind != KindReview || posts.Theme != "connected-apps" || posts.Next.Command != "securizame track show "+posts.ID {
+	if posts.Kind != KindReview || posts.Theme != "connected-apps" || posts.Next.Command != "segurata track show "+posts.ID {
 		t.Errorf("X apps %+v %+v", posts, posts.Next)
 	}
 	byTitle(t, tr, "Gil can read your direct messages")
@@ -172,7 +172,7 @@ func TestGroupingRules(t *testing.T) {
 		t.Errorf("dumps %+v %+v", a, b)
 	}
 	trails := byTitle(t, tr, "Redact secrets from 2 trail files")
-	if trails.Theme != "transcripts" || trails.Severity != finding.SevMedium || trails.Next.Who != Securizame || trails.Next.Command != "securizame redact --trails" {
+	if trails.Theme != "transcripts" || trails.Severity != finding.SevMedium || trails.Next.Who != Segurata || trails.Next.Command != "segurata redact --trails" {
 		t.Errorf("trails item %+v %+v", trails, trails.Next)
 	}
 	if countKind(tr, KindRotate) != 2 {
@@ -180,7 +180,7 @@ func TestGroupingRules(t *testing.T) {
 	}
 	reauth := byTitle(t, tr, "gcp · admin@x.com: needs a fresh sign-in")
 	if reauth.Kind != KindSetup || reauth.Theme != "setup" || reauth.Next.Action != "Do what the status detail says." ||
-		reauth.Next.Command != "securizame inventory gcp" || reauth.Findings[0].Title != "run gcloud auth login admin@x.com" {
+		reauth.Next.Command != "segurata inventory gcp" || reauth.Findings[0].Title != "run gcloud auth login admin@x.com" {
 		t.Errorf("setup item %+v %+v", reauth, reauth.Next)
 	}
 	byTitle(t, tr, "connected-apps · microsoft: is signed out")

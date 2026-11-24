@@ -51,7 +51,7 @@ type Resource struct {
 }
 
 // Remediation says how to fix a finding. Action names a built-in remediation (such as
-// "macos.firewall.enable") that `securizame remediate` can apply; it is empty when the fix is
+// "macos.firewall.enable") that `segurata remediate` can apply; it is empty when the fix is
 // manual. Automatable is derived from Action by Fill.
 type Remediation struct {
 	Summary     string `json:"summary"`
@@ -104,7 +104,7 @@ func HiddenNote(n int) string {
 	if n == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d accepted findings hidden; see securizame accept --list", n)
+	return fmt.Sprintf("%d accepted findings hidden; see segurata accept --list", n)
 }
 
 // Fill sets the fields a connector should not have to compute: type, stable id, observation time

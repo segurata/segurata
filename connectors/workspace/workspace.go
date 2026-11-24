@@ -132,10 +132,10 @@ func parseSettings(m map[string]any, home string) (settings, error) {
 // DefaultConfigDir is the separate gcloud config a tenant's credentials live in, so the usual
 // ADC is left alone.
 func DefaultConfigDir(home, domain string) string {
-	return filepath.Join(home, ".config", "securizame", "gcloud-"+domain)
+	return filepath.Join(home, ".config", "segurata", "gcloud-"+domain)
 }
 
-const noTenantHint = `no tenant configured: add one instance per tenant to ~/.config/securizame/config.json, ` +
+const noTenantHint = `no tenant configured: add one instance per tenant to ~/.config/segurata/config.json, ` +
 	`such as "workspace:example.com": {"config": {"domain": "example.com"}}, and run again for the one-time sign-in steps`
 
 // loginHelp gives the one-time setup per tenant. gcloud requires cloud-platform on the ADC login;
@@ -151,7 +151,7 @@ func loginHelp(s settings) string {
 		`     CLOUDSDK_CONFIG="` + s.cloudsdkConfig + `" gcloud auth application-default login \`,
 		`       --client-id-file=$HOME/Downloads/client_secret.json \`,
 		"       --scopes=openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform," + strings.Join(Scopes, ","),
-		"Then run securizame inventory workspace again. To authenticate some other way, set the " + secretName + " secret.",
+		"Then run segurata inventory workspace again. To authenticate some other way, set the " + secretName + " secret.",
 	}, "\n")
 }
 

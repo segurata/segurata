@@ -34,7 +34,7 @@ const (
 	actPrioritize  = "prioritize"
 	actHistory     = "history-only"
 	actRedacted    = "redacted"
-	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `securizame rotations`.
+	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `segurata rotations`.
 	ActNext          = "next"
 	ActReplacePlan   = "replace-plan"
 	ActReplaceFailed = "replace-failed"
@@ -297,12 +297,12 @@ func priorityOf(s finding.Severity) secretrisk.Priority {
 // Find resolves an item id (T-0012 or T-12), a rotate item's short id, or a unique prefix of a
 // short id or fingerprint.
 func (t *Tracker) Find(ref string) (*Item, error) {
-	return t.find(ref, func(*Item) bool { return true }, "securizame track list --all")
+	return t.find(ref, func(*Item) bool { return true }, "segurata track list --all")
 }
 
 // FindRotate is Find among rotate items only.
 func (t *Tracker) FindRotate(ref string) (*Item, error) {
-	return t.find(ref, func(it *Item) bool { return it.Kind == KindRotate }, "securizame rotations list --all")
+	return t.find(ref, func(it *Item) bool { return it.Kind == KindRotate }, "segurata rotations list --all")
 }
 
 func (t *Tracker) find(ref string, keep func(*Item) bool, hint string) (*Item, error) {

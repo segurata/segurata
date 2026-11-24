@@ -108,12 +108,16 @@ func TestLoadValidates(t *testing.T) {
 }
 
 func TestPaths(t *testing.T) {
-	t.Setenv("SECURIZAME_HOME", "/h")
-	t.Setenv("SECURIZAME_STATE", "/s")
-	t.Setenv("SECURIZAME_ACCEPTED", "/a.json")
+	t.Setenv("SEGURATA_HOME", "/h")
+	t.Setenv("SEGURATA_STATE", "/s")
+	t.Setenv("SEGURATA_ACCEPTED", "/a.json")
 	p, err := Paths{}.Resolve()
 	if err != nil || p.Tracker != "/h/tracker.json" || p.LegacyLedger != "/s/rotations.json" || p.LegacyAccepted != "/a.json" {
 		t.Errorf("default paths %+v %v", p, err)
+	}
+	t.Setenv("SEGURATA_STATE", "")
+	if p, err := (Paths{}).Resolve(); err != nil || p.LegacyLedger != "/h/rotations.json" {
+		t.Errorf("without SEGURATA_STATE the old ledger is read from the tracker directory: %+v %v", p, err)
 	}
 	if p, _ := (Paths{Tracker: "/x/tracker.json"}).Resolve(); p.LegacyLedger != "" || p.LegacyAccepted != "" {
 		t.Errorf("a tracker path alone must never reach the owner's old files: %+v", p)

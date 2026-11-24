@@ -83,7 +83,7 @@ func shareCheck(sp sharePoint) check {
 		evidence: map[string]any{"name": sp.Name, "path": sp.Path, "path_exists": exists,
 			"guest": guest, "read_only": sp.ReadOnly == 1, "smb_shared": sp.Shared == 1}}
 	remove := finding.Remediation{Action: ActionShareRemove,
-		Summary: "Remove the share point record with `securizame remediate <id> --apply`, or in System Settings > General > Sharing > File Sharing (i)."}
+		Summary: "Remove the share point record with `segurata remediate <id> --apply`, or in System Settings > General > Sharing > File Sharing (i)."}
 	switch {
 	case sp.Shared != 1:
 		ch.sev, ch.rem = finding.SevInfo, remove
@@ -106,7 +106,7 @@ func shareCheck(sp sharePoint) check {
 		ch.detail = fmt.Sprintf("%s is shared over SMB as %q with guest access", sp.Path, sp.Name)
 		ch.title = fmt.Sprintf("Shared folder %q (%s) allows guests: anyone on the network can open it without a password", sp.Name, sp.Path)
 		ch.rem = finding.Remediation{Action: ActionShareGuestOff,
-			Summary: "Turn off guest access with `securizame remediate <id> --apply`, or in System Settings > General > Sharing > File Sharing (i) > the folder > Guest: No Access. To stop sharing the folder altogether, remove it in that same panel."}
+			Summary: "Turn off guest access with `segurata remediate <id> --apply`, or in System Settings > General > Sharing > File Sharing (i) > the folder > Guest: No Access. To stop sharing the folder altogether, remove it in that same panel."}
 	default:
 		ch.sev, ch.rem = finding.SevMedium, remove
 		ch.detail = fmt.Sprintf("%s is shared over SMB as %q", sp.Path, sp.Name)

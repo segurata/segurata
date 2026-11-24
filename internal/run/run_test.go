@@ -49,9 +49,9 @@ func readLines(t *testing.T, path string) []map[string]any {
 }
 
 func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
-	t.Setenv("SECURIZAME_TEST_SECRET", "s3cret")
+	t.Setenv("SEGURATA_TEST_SECRET", "s3cret")
 	cfg := config.Config{CDPURL: "http://cdp", Connectors: map[string]config.ConnectorConfig{
-		"fake": {Secrets: map[string]string{"OK": "env:SECURIZAME_TEST_SECRET", "BAD": "env:SECURIZAME_TEST_UNSET"}},
+		"fake": {Secrets: map[string]string{"OK": "env:SEGURATA_TEST_SECRET", "BAD": "env:SEGURATA_TEST_UNSET"}},
 	}}
 	fk := &fake{}
 	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, fk), t.TempDir(), nil, nil)
@@ -104,7 +104,7 @@ inventory)
   echo '{"type":"log","msg":"done"}';;
 esac
 `
-	if err := os.WriteFile(filepath.Join(dir, "securizame-ext"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "segurata-ext"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -141,11 +141,11 @@ func mustTargets(t *testing.T, cfg config.Config, conns ...connector.Connector) 
 
 // Two accounts of one provider: each instance gets its own secrets, output file and finding ids.
 func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
-	t.Setenv("SECURIZAME_TEST_A", "key-a")
-	t.Setenv("SECURIZAME_TEST_B", "key-b")
+	t.Setenv("SEGURATA_TEST_A", "key-a")
+	t.Setenv("SEGURATA_TEST_B", "key-b")
 	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{
-		"fake:work":     {Secrets: map[string]string{"K": "env:SECURIZAME_TEST_A"}},
-		"fake:personal": {Secrets: map[string]string{"K": "env:SECURIZAME_TEST_B"}},
+		"fake:work":     {Secrets: map[string]string{"K": "env:SEGURATA_TEST_A"}},
+		"fake:personal": {Secrets: map[string]string{"K": "env:SEGURATA_TEST_B"}},
 	}}
 	seen := map[string]string{}
 	var mu sync.Mutex

@@ -56,9 +56,9 @@ func (t *Tracker) Status(path string, now time.Time, f Filter) *doc.Doc {
 			items = append(items, it)
 		}
 	}
-	d := &doc.Doc{Title: "securizame status"}
+	d := &doc.Doc{Title: "segurata status"}
 	d.H(1, d.Title)
-	sync := "never synced: run securizame track sync after an inventory"
+	sync := "never synced: run segurata track sync after an inventory"
 	if t.LastSyncAt != nil {
 		sync = "last synced " + t.LastSyncAt.In(now.Location()).Format("2006-01-02 15:04")
 	}
@@ -126,7 +126,7 @@ func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
 }
 
 // doNext lists the most urgent things to do. Secrets are one entry per priority (there can be
-// hundreds), pointing to `securizame rotations next`; every other item is listed on its own.
+// hundreds), pointing to `segurata rotations next`; every other item is listed on its own.
 func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time) {
 	d.H(2, "Do next")
 	type entry struct {
@@ -152,8 +152,8 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time) {
 		if n := secrets[p]; n > 0 {
 			entries = append(entries, entry{p, 5, doc.Item{Badge: string(p), Text: fmt.Sprintf("Rotate %s", count(n, string(p)+" secret", string(p)+" secrets")),
 				Meta: "Secrets to rotate · one at a time, most exposed first",
-				Details: []doc.Detail{{Label: "Next", Text: "Rotate it at the provider, then let securizame put the new value where it is used."},
-					{Label: "Command", Text: "securizame rotations next --priority " + string(p), Kind: doc.DCode}}}})
+				Details: []doc.Detail{{Label: "Next", Text: "Rotate it at the provider, then let segurata put the new value where it is used."},
+					{Label: "Command", Text: "segurata rotations next --priority " + string(p), Kind: doc.DCode}}}})
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -172,7 +172,7 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time) {
 	}
 	d.List(list)
 	if len(entries) > statusTop {
-		d.P(fmt.Sprintf("… and %d more: ", len(entries)-statusTop), doc.Code("securizame track list"), ".")
+		d.P(fmt.Sprintf("… and %d more: ", len(entries)-statusTop), doc.Code("segurata track list"), ".")
 	}
 }
 
@@ -206,7 +206,7 @@ func decisions(d *doc.Doc, items []*Item, now time.Time) {
 		if len(it.Decision.Options) > 0 {
 			out.Details = append(out.Details, doc.Detail{Label: "Options", Text: strings.Join(it.Decision.Options, " | ")})
 		}
-		out.Details = append(out.Details, doc.Detail{Label: "Answer", Text: "securizame track decide " + it.ID + ` --answer "…"`, Kind: doc.DCode})
+		out.Details = append(out.Details, doc.Detail{Label: "Answer", Text: "segurata track decide " + it.ID + ` --answer "…"`, Kind: doc.DCode})
 		list = append(list, out)
 	}
 	if len(list) == 0 {
@@ -295,7 +295,7 @@ func (t *Tracker) changes(d *doc.Doc, items []*Item, now time.Time) {
 	}
 	d.List(list)
 	if len(listed) > statusChanges {
-		d.P(fmt.Sprintf("… and %d more changes: ", len(listed)-statusChanges), doc.Code("securizame track show <id>"), ".")
+		d.P(fmt.Sprintf("… and %d more changes: ", len(listed)-statusChanges), doc.Code("segurata track show <id>"), ".")
 	}
 }
 

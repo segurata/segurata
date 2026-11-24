@@ -28,7 +28,7 @@ func (c CLI) next(t *tracker.Tracker, path string, args []string, now time.Time)
 	}
 	items := selectItems(t, now, false, splitList(*prio), splitList(*service))
 	if len(items) == 0 {
-		fmt.Fprintln(c.Out, "Nothing open matches. `securizame rotations list --all` shows rotated, snoozed and ignored items.")
+		fmt.Fprintln(c.Out, "Nothing open matches. `segurata rotations list --all` shows rotated, snoozed and ignored items.")
 		return 0
 	}
 	it := items[0]
@@ -87,7 +87,7 @@ func printNext(w io.Writer, it *tracker.Item, queue []*tracker.Item) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for i, loc := range locs {
 		if i == maxLeaks {
-			fmt.Fprintf(tw, "  … and %d more: securizame rotations show %s\n", len(locs)-maxLeaks, s.ID)
+			fmt.Fprintf(tw, "  … and %d more: segurata rotations show %s\n", len(locs)-maxLeaks, s.ID)
 			break
 		}
 		fmt.Fprintf(tw, "  %s\t%s\n", loc.Where(), loc.Spot().Label)
@@ -132,17 +132,17 @@ func printNext(w io.Writer, it *tracker.Item, queue []*tracker.Item) {
 	_, single := secretrisk.ParseHint(s.Redacted)
 	switch {
 	case len(s.UsedIn) == 0:
-		fmt.Fprintf(w, "  2. securizame rotations done %s --note \"rotated at the provider\"\n", s.ID)
+		fmt.Fprintf(w, "  2. segurata rotations done %s --note \"rotated at the provider\"\n", s.ID)
 	case !single:
 		fmt.Fprintf(w, "  2. Put the new value in the files above by hand (not a one-line value).\n")
-		fmt.Fprintf(w, "  3. securizame rotations done %s --note \"rotated at the provider\"\n", s.ID)
+		fmt.Fprintf(w, "  3. segurata rotations done %s --note \"rotated at the provider\"\n", s.ID)
 	default:
-		fmt.Fprintf(w, "  2. securizame rotations replace %s            # dry run: plan from the clipboard\n", s.ID)
+		fmt.Fprintf(w, "  2. segurata rotations replace %s            # dry run: plan from the clipboard\n", s.ID)
 		keychain := ""
 		if rc {
 			keychain = " [--to-keychain <VAR_NAME>]"
 		}
-		fmt.Fprintf(w, "  3. securizame rotations replace %s --apply%s\n", s.ID, keychain)
+		fmt.Fprintf(w, "  3. segurata rotations replace %s --apply%s\n", s.ID, keychain)
 	}
-	fmt.Fprintf(w, "  Then: securizame rotations next   (not now: snooze %s --until YYYY-MM-DD; false positive: ignore %s --reason …)\n", s.ID, s.ID)
+	fmt.Fprintf(w, "  Then: segurata rotations next   (not now: snooze %s --until YYYY-MM-DD; false positive: ignore %s --reason …)\n", s.ID, s.ID)
 }

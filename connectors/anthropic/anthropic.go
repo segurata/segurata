@@ -31,8 +31,8 @@ const (
 )
 
 const setupHint = "set " + secretName + ": create an Admin API key at " + adminURL +
-	`, store it with: security add-generic-password -s securizame-anthropic-admin -a "$USER" -w` +
-	` and reference it as "keychain:securizame-anthropic-admin" under connectors.anthropic.secrets in ~/.config/securizame/config.json (docs/ai-connectors.md)`
+	`, store it with: security add-generic-password -s segurata-anthropic-admin -a "$USER" -w` +
+	` and reference it as "keychain:segurata-anthropic-admin" under connectors.anthropic.secrets in ~/.config/segurata/config.json (docs/ai-connectors.md)`
 
 // Connector is the built-in Anthropic connector. Zero values use the real API and clock.
 type Connector struct {

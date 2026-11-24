@@ -30,8 +30,8 @@ const (
 )
 
 const setupHint = "set " + secretName + ": create a read-only Management API key at " + managementURL +
-	`, store it with: security add-generic-password -s securizame-openrouter-admin -a "$USER" -w` +
-	` and reference it as "keychain:securizame-openrouter-admin" under connectors.openrouter.secrets in ~/.config/securizame/config.json (docs/ai-connectors.md)`
+	`, store it with: security add-generic-password -s segurata-openrouter-admin -a "$USER" -w` +
+	` and reference it as "keychain:segurata-openrouter-admin" under connectors.openrouter.secrets in ~/.config/segurata/config.json (docs/ai-connectors.md)`
 
 // Connector is the built-in OpenRouter connector. Zero values use the real API and clock.
 type Connector struct {

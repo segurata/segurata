@@ -5,6 +5,7 @@ import (
 	"os/user"
 	"time"
 
+	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/rotation"
 )
@@ -15,5 +16,5 @@ func rotationsCmd(args []string) int {
 		account = u.Username
 	}
 	return rotation.CLI{Out: os.Stdout, Err: os.Stderr, In: os.Stdin, TTY: remediate.IsTerminal(os.Stdin),
-		Home: os.UserHomeDir, User: account, Exec: rotation.Exec, Now: time.Now}.Run(args)
+		Home: os.UserHomeDir, User: account, Exec: keychain.Exec, Now: time.Now}.Run(args)
 }

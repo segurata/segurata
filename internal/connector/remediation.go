@@ -37,7 +37,7 @@ func (p Plan) NeedsSudo() bool {
 }
 
 // Step is one exact command line. A sudo step runs as `sudo <argv>` with the terminal attached, so
-// sudo asks for the password itself and securizame never sees it.
+// sudo asks for the password itself and segurata never sees it.
 type Step struct {
 	Argv []string `json:"argv"`
 	Sudo bool     `json:"sudo,omitempty"`

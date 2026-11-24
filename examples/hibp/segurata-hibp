@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""securizame-hibp: external securizame connector for Have I Been Pwned (API v3).
+"""segurata-hibp: external segurata connector for Have I Been Pwned (API v3).
 
 For each address in config.emails it asks HIBP which breaches include it and emits one exposure
-finding per breach and address. Standard library only; speaks the securizame external connector
+finding per breach and address. Standard library only; speaks the segurata external connector
 protocol (docs/connectors.md). Read-only: it only sends GET requests to the breachedaccount
 endpoint.
 
-    securizame-hibp describe
-    securizame-hibp inventory < request.json
+    segurata-hibp describe
+    segurata-hibp inventory < request.json
 """
 
 import json
@@ -22,7 +22,7 @@ NAME = "hibp"
 VERSION = "0.1.0"
 PROTOCOL = 2
 SECRET = "HIBP_API_KEY"
-USER_AGENT = "securizame-hibp"
+USER_AGENT = "segurata-hibp"
 DEFAULT_BASE_URL = "https://haveibeenpwned.com/api/v3"
 HIBP_URL = "https://haveibeenpwned.com/"
 KEY_URL = HIBP_URL + "API/Key"
@@ -33,9 +33,9 @@ TIMEOUT = 30
 
 SETUP_HINT = (
     "set " + SECRET + ": buy an API key at " + KEY_URL + ", store it with: "
-    'security add-generic-password -s securizame-hibp -a "$USER" -w '
-    'and reference it as "keychain:securizame-hibp" under connectors.hibp.secrets '
-    "in ~/.config/securizame/config.json (examples/hibp/README.md)"
+    'security add-generic-password -s segurata-hibp -a "$USER" -w '
+    'and reference it as "keychain:segurata-hibp" under connectors.hibp.secrets '
+    "in ~/.config/segurata/config.json (examples/hibp/README.md)"
 )
 
 PASSWORD_CLASSES = {"passwords", "password hints"}
@@ -278,7 +278,7 @@ def check(email, url, headers, emit, get, sleep, now):
 
 def main(argv, stdin=sys.stdin, stdout=sys.stdout):
     if len(argv) != 2:
-        sys.stderr.write("usage: securizame-hibp describe | inventory < request.json\n")
+        sys.stderr.write("usage: segurata-hibp describe | inventory < request.json\n")
         return 2
     if argv[1] == "describe":
         stdout.write(json.dumps(describe()) + "\n")
@@ -287,14 +287,14 @@ def main(argv, stdin=sys.stdin, stdout=sys.stdout):
         try:
             req = json.load(stdin)
         except ValueError:
-            sys.stderr.write("securizame-hibp: the request on stdin is not JSON\n")
+            sys.stderr.write("segurata-hibp: the request on stdin is not JSON\n")
             return 2
         if req.get("protocol") not in (1, 2):
-            sys.stderr.write("securizame-hibp: unsupported protocol %r\n" % req.get("protocol"))
+            sys.stderr.write("segurata-hibp: unsupported protocol %r\n" % req.get("protocol"))
             return 2
         inventory(req, Emitter(stdout))
         return 0
-    sys.stderr.write("securizame-hibp: unknown subcommand %r\n" % argv[1])
+    sys.stderr.write("segurata-hibp: unknown subcommand %r\n" % argv[1])
     return 2
 
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
@@ -22,7 +23,7 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-const replaceUsage = `usage: securizame rotations replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
+const replaceUsage = `usage: segurata rotations replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
 
 After you rotated the secret at the provider, copy the new value and run this. It reads the new
 value from the clipboard (pbpaste), or from stdin with --stdin (piped, never typed: a terminal
@@ -92,14 +93,14 @@ type replacement struct {
 func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, error) {
 	switch it.Status {
 	case tracker.Done, tracker.Ignored, tracker.Accepted:
-		return nil, fmt.Errorf("%s is %s; `securizame rotations reopen %s` first if it still needs replacing", it.Secret.ID, stateOf(it), it.Secret.ID)
+		return nil, fmt.Errorf("%s is %s; `segurata rotations reopen %s` first if it still needs replacing", it.Secret.ID, stateOf(it), it.Secret.ID)
 	}
 	hint, ok := secretrisk.ParseHint(it.Secret.Redacted)
 	if !ok {
-		return nil, fmt.Errorf("%s (%s) is not a single value on one line; replace it by hand, then `securizame rotations done %s`", it.Secret.ID, it.Secret.Type, it.Secret.ID)
+		return nil, fmt.Errorf("%s (%s) is not a single value on one line; replace it by hand, then `segurata rotations done %s`", it.Secret.ID, it.Secret.Type, it.Secret.ID)
 	}
 	if len(it.Secret.UsedIn) == 0 {
-		return nil, fmt.Errorf("no working file holds %s, so there is nothing to replace; once rotated: `securizame rotations done %s`", it.Secret.ID, it.Secret.ID)
+		return nil, fmt.Errorf("no working file holds %s, so there is nothing to replace; once rotated: `segurata rotations done %s`", it.Secret.ID, it.Secret.ID)
 	}
 	r := &replacement{item: it, hint: hint, key: key}
 	for _, p := range it.Secret.UsedIn {
@@ -157,7 +158,7 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	}
 	for _, n := range recorded {
 		if !f.has(n) {
-			return nil, fmt.Errorf("%s: the old value is no longer on line %d (the file changed since the scan); run `securizame inventory local-secrets` and `securizame rotations sync`, then try again", p, n)
+			return nil, fmt.Errorf("%s: the old value is no longer on line %d (the file changed since the scan); run `segurata inventory local-secrets` and `segurata rotations sync`, then try again", p, n)
 		}
 	}
 	return f, nil
@@ -464,11 +465,11 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		return c.fail(errors.New(note))
 	}
 	if r.service != "" {
-		kc := keychain{run: c.Exec, account: r.account}
-		if err := kc.store(ctx, r.service, v); err != nil {
+		kc := keychain.Keychain{Run: c.Exec, Account: r.account}
+		if err := kc.Store(ctx, r.service, v); err != nil {
 			return failed(err, nil)
 		}
-		got, err := kc.read(ctx, r.service)
+		got, err := kc.Read(ctx, r.service)
 		if err != nil {
 			return failed(err, nil)
 		}
@@ -495,6 +496,6 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 			fmt.Fprintln(c.Out, "Clipboard cleared.")
 		}
 	}
-	fmt.Fprintf(c.Out, "Restart whatever reads these files (open a new shell for rc files). Copies in history, transcripts and logs still hold the old value: `securizame rotations show %s`.\nNext: securizame rotations next\n", it.Secret.ID)
+	fmt.Fprintf(c.Out, "Restart whatever reads these files (open a new shell for rc files). Copies in history, transcripts and logs still hold the old value: `segurata rotations show %s`.\nNext: segurata rotations next\n", it.Secret.ID)
 	return 0
 }

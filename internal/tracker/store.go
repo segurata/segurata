@@ -25,37 +25,37 @@ type Paths struct {
 	LegacyAccepted string // accepted.json to import once; "" means none
 }
 
-// Dir is $SECURIZAME_HOME, or ~/.securizame: the tracker and its generated views.
+// Dir is $SEGURATA_HOME, or ~/.segurata: the tracker and its generated views.
 func Dir() (string, error) {
-	if d := os.Getenv("SECURIZAME_HOME"); d != "" {
+	if d := os.Getenv("SEGURATA_HOME"); d != "" {
 		return d, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".securizame"), nil
+	return filepath.Join(home, ".segurata"), nil
 }
 
-// DefaultPaths is the tracker in Dir and the legacy files where securizame kept them before:
-// $SECURIZAME_STATE/rotations.json (or ~/.local/state/securizame/rotations.json) and
-// $SECURIZAME_ACCEPTED (or ~/.config/securizame/accepted.json).
+// DefaultPaths is the tracker in Dir and the legacy files it imports once: $SEGURATA_STATE/rotations.json
+// (or rotations.json in Dir, where the startup migration moves the old state directory's files) and
+// $SEGURATA_ACCEPTED (or ~/.config/segurata/accepted.json).
 func DefaultPaths() (Paths, error) {
 	dir, err := Dir()
 	if err != nil {
 		return Paths{}, err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Paths{}, err
-	}
-	state := os.Getenv("SECURIZAME_STATE")
+	state := os.Getenv("SEGURATA_STATE")
 	if state == "" {
-		state = filepath.Join(home, ".local", "state", "securizame")
+		state = dir
 	}
-	accepted := os.Getenv("SECURIZAME_ACCEPTED")
+	accepted := os.Getenv("SEGURATA_ACCEPTED")
 	if accepted == "" {
-		accepted = filepath.Join(home, ".config", "securizame", "accepted.json")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return Paths{}, err
+		}
+		accepted = filepath.Join(home, ".config", "segurata", "accepted.json")
 	}
 	return Paths{Tracker: filepath.Join(dir, "tracker.json"), LegacyLedger: filepath.Join(state, "rotations.json"), LegacyAccepted: accepted}, nil
 }

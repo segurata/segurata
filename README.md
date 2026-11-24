@@ -1,7 +1,12 @@
-# securizame
+# segurata
 
-Inventory, assess and clean up a personal digital footprint: Google and other consumer accounts,
-clouds, AI providers and secrets on disk. Design: [docs/architecture.md](docs/architecture.md).
+segurata — your digital night watchman. Patrols your accounts and machines, sweeps out leaked keys,
+locks the doors you left open.
+
+It inventories, assesses and cleans up a personal digital footprint: Google and other consumer
+accounts, clouds, AI providers and secrets on disk. Design: [docs/architecture.md](docs/architecture.md).
+
+The name: "segurata" is Spanish slang for a security guard.
 
 House rule: every connector **inventories first, read-only**. Removing access is a separate step,
 by hand or with an explicit remediation, after reviewing the list.
@@ -9,45 +14,45 @@ by hand or with an explicit remediation, after reviewing the list.
 ## Build
 
 ```bash
-go build -o securizame ./cmd/securizame
-./securizame connectors            # built-in and external connectors
-./securizame inventory [name ...]  # all connectors when none is given
+go build -o segurata ./cmd/segurata
+./segurata connectors            # built-in and external connectors
+./segurata inventory [name ...]  # all connectors when none is given
 ```
 
-Before the first inventory, `./securizame doctor` checks, read-only, the config and its secret
+Before the first inventory, `./segurata doctor` checks, read-only, the config and its secret
 references (resolved, never printed), the browser's debugging port, each connector's CLIs and
 sign-ins (expired gcloud accounts, AWS profiles, `az`, `gh` scopes, Workspace tokens, the
-Cloudflare token's permissions, rg and gitleaks) and the modes of securizame's own files, with the exact fix for each problem
+Cloudflare token's permissions, rg and gitleaks) and the modes of segurata's own files, with the exact fix for each problem
 (`--connector name` checks one). Details: [docs/architecture.md](docs/architecture.md#doctor).
 
-An external connector is any `securizame-<name>` executable on `PATH`, in any language; how to
+An external connector is any `segurata-<name>` executable on `PATH`, in any language; how to
 write one, built-in or external: [docs/connectors.md](docs/connectors.md). Contributing:
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Output goes to `out/<date>/<connector>.jsonl` (mode 0600; `out/` is gitignored because it holds
 email addresses and each account's services), with a summary sorted by severity. Each inventory
-ends with `securizame track sync`, which folds the latest runs into the tracker.
+ends with `segurata track sync`, which folds the latest runs into the tracker.
 
 ## Tracker and status
 
 ```bash
-./securizame status                         # the briefing: what to do next, decisions, blockers, changes
-./securizame status --priority P0,P1 --theme github-orgs
-./securizame status --write                 # also ~/.securizame/status.md and status.html (mode 0600)
-./securizame track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
-./securizame track show T-0042
-./securizame track start|done|reopen T-0042 [--note "..."]
-./securizame track note T-0042 "ordered a backup disk"
-./securizame track snooze T-0042 --until 2027-01-15
-./securizame track ignore T-0042 --reason "test fixture"
-./securizame track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
-./securizame track decide T-0003 --answer "yes"
-./securizame track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
-./securizame track add --kind decide --question "Keep the old VPS?" --option yes --option no
-./securizame track sync [--out out]         # also run by inventory and rotations sync
+./segurata status                         # the briefing: what to do next, decisions, blockers, changes
+./segurata status --priority P0,P1 --theme github-orgs
+./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600)
+./segurata track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
+./segurata track show T-0042
+./segurata track start|done|reopen T-0042 [--note "..."]
+./segurata track note T-0042 "ordered a backup disk"
+./segurata track snooze T-0042 --until 2027-01-15
+./segurata track ignore T-0042 --reason "test fixture"
+./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
+./segurata track decide T-0003 --answer "yes"
+./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
+./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
+./segurata track sync [--out out]         # also run by inventory and rotations sync
 ```
 
-`~/.securizame/tracker.json` (mode 0600 in a 0700 folder; `SECURIZAME_HOME` names another folder)
+`~/.segurata/tracker.json` (mode 0600 in a 0700 folder; `SEGURATA_HOME` names another folder)
 is the single record of what to do, what is done and what is pending, and survives restarts: one
 item per thing a person would act on. Five GitHub orgs that do not require 2FA are one item; each
 secret to rotate, each data dump and each Mac setting is its own item; a connector that needs a
@@ -62,15 +67,15 @@ written atomically and the previous version kept as `tracker.json.bak`. A tracke
 parse is never overwritten: fix it or restore the backup. It holds redacted hints and fingerprints,
 never a secret value, so the backup holds none either.
 
-The tracker absorbed the rotation ledger (`~/.local/state/securizame/rotations.json`) and the
-accepted risks (`~/.config/securizame/accepted.json`). The first command run without a tracker
+The tracker absorbed the rotation ledger (`rotations.json` in `~/.segurata`, or `$SEGURATA_STATE`) and the
+accepted risks (`~/.config/segurata/accepted.json`). The first command run without a tracker
 imports both, history included, and renames them to `*.migrated-<date>`. Details:
 [docs/architecture.md](docs/architecture.md#tracker).
 
 ## Google: linked apps (`google-personal`)
 
 ```bash
-./securizame inventory google-personal
+./segurata inventory google-personal
 ```
 
 Walks every Google account signed in to the browser and reports each linked app with its scopes,
@@ -79,7 +84,7 @@ Ads; `info` for Sign in with Google only. Accounts where Google asks for a fresh
 `reauth` statuses.
 
 - Requires Brave or Chrome started with `--remote-debugging-port=9222` (another address via
-  `cdp_url` in the config or `SECURIZAME_CDP`). Pages open in the background and always close,
+  `cdp_url` in the config or `SEGURATA_CDP`). Pages open in the background and always close,
   without touching your tabs.
 - To remove access: the finding's remediation URL. On Google, "Remove all access" there also
   removes that app's Sign in with Google link.
@@ -87,7 +92,7 @@ Ads; `info` for Sign in with Google only. Accounts where Google asks for a fresh
 ## Connected apps outside Google (`connected-apps`)
 
 ```bash
-./securizame inventory connected-apps
+./segurata inventory connected-apps
 ```
 
 Reads each service's settings pages in the browser's existing sessions and reports every app with
@@ -129,7 +134,7 @@ confirm, run again); `noscope` (`gh` lacks a scope; the detail carries the exact
 ## GitHub security settings (`github`)
 
 ```bash
-./securizame inventory github
+./segurata inventory github
 ```
 
 Reads, through the signed-in `gh` CLI, the security settings of the account, of every
@@ -173,8 +178,8 @@ Config, optional, under `connectors.github.config`:
 ## Google Workspace administration (`workspace`)
 
 ```bash
-./securizame inventory workspace                    # every configured tenant
-./securizame inventory workspace:example.com      # one tenant
+./segurata inventory workspace                    # every configured tenant
+./segurata inventory workspace:example.com      # one tenant
 ```
 
 One instance per tenant, read-only through the Admin SDK (GET requests with read-only scopes):
@@ -190,7 +195,7 @@ One instance per tenant, read-only through the Admin SDK (GET requests with read
 Without the Reports scope the token activity is skipped and the status says so. Fixes are manual;
 each finding links the Google help page for it.
 
-Config, one key per tenant in `~/.config/securizame/config.json`:
+Config, one key per tenant in `~/.config/segurata/config.json`:
 
 ```json
 "workspace:example.com":   {"config": {"domain": "example.com"}},
@@ -200,12 +205,12 @@ Config, one key per tenant in `~/.config/securizame/config.json`:
 | Key | Default | Meaning |
 |---|---|---|
 | `domain` | required | The tenant's primary domain |
-| `cloudsdk_config` | `~/.config/securizame/gcloud-<domain>` | gcloud config folder holding this tenant's credentials |
+| `cloudsdk_config` | `~/.config/segurata/gcloud-<domain>` | gcloud config folder holding this tenant's credentials |
 | `quota_project` | the OAuth client's project | Sent as `X-Goog-User-Project`, for when the Admin SDK API is enabled in another project |
 | `inactive_days` | 90 | Days without a sign-in before an account counts as inactive |
 | `gcloud_path` | `PATH`, then the standard install folders | gcloud binary, as for `gcp` |
 
-Credentials, once per tenant. securizame never signs in and never creates OAuth clients or
+Credentials, once per tenant. segurata never signs in and never creates OAuth clients or
 service accounts:
 
 1. In a Google Cloud project of the tenant, enable "Admin SDK API" and create an OAuth client ID
@@ -214,7 +219,7 @@ service accounts:
    left alone:
 
    ```bash
-   CLOUDSDK_CONFIG="$HOME/.config/securizame/gcloud-example.com" \
+   CLOUDSDK_CONFIG="$HOME/.config/segurata/gcloud-example.com" \
      gcloud auth application-default login \
      --client-id-file=$HOME/Downloads/client_secret.json \
      --scopes=openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.user.security,https://www.googleapis.com/auth/admin.reports.audit.readonly
@@ -246,11 +251,11 @@ User > API Tokens > Read, Account > Account Settings > Read, Zone > Zone > Read,
 Settings > Read and Zone > DNS > Read, on all accounts and all zones, with a TTL. Then:
 
 ```bash
-security add-generic-password -s securizame-cloudflare -a "$USER" -w
+security add-generic-password -s segurata-cloudflare -a "$USER" -w
 ```
 
 ```json
-{"connectors": {"cloudflare": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:securizame-cloudflare"}}}}
+{"connectors": {"cloudflare": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:segurata-cloudflare"}}}}
 ```
 
 Endpoints, severities and limits: [docs/cloud-connectors.md](docs/cloud-connectors.md#cloudflare-cloudflare).
@@ -258,7 +263,7 @@ Endpoints, severities and limits: [docs/cloud-connectors.md](docs/cloud-connecto
 ## Plaintext secrets on disk (`local-secrets`)
 
 ```bash
-./securizame inventory local-secrets
+./segurata inventory local-secrets
 ```
 
 Looks for tokens, API keys and private keys in plain files and reports, for each one, the path,
@@ -278,7 +283,7 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   `repos_root` with its own patterns instead, but not history; install gitleaks respecting the
   4-day quarantine (`~/.claude/scripts/safe-update.sh`).
 - Incremental history: after the first full scan of a repository, later runs scan only the commits
-  added since, and replay the earlier leaks from `~/.cache/securizame/gitleaks/<repo-hash>.json`
+  added since, and replay the earlier leaks from `~/.cache/segurata/gitleaks/<repo-hash>.json`
   (mode 0600; fingerprints, redacted hints, paths and commits, never values). A rewritten or
   deleted ref, a new gitleaks version or config, or a new fingerprint key means a full scan again.
   The status line says how many repositories were unchanged, incremental or full. Details:
@@ -291,7 +296,7 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   public; the first 4 KiB of one blob are read to recognise a dump header, nothing more. gitleaks
   matches inside a dump are marked `in_data_dump` and left out of rotation, except AWS, Stripe
   live, GitHub and GitLab keys and private keys. Results are cached per repository in
-  `~/.cache/securizame/datadumps/`. What to do: [docs/secrets.md](docs/secrets.md#data-dumps-in-git);
+  `~/.cache/segurata/datadumps/`. What to do: [docs/secrets.md](docs/secrets.md#data-dumps-in-git);
   details: [docs/architecture.md](docs/architecture.md#data-dumps-in-git).
 - SSH keys in `~/.ssh`: type, permissions and whether they have a passphrase
   (`ssh-keygen -y -P ""`). A key without one is an `exposure` finding; a key with one, an `info`
@@ -300,7 +305,7 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   [Rotation ledger](docs/architecture.md#rotation-ledger)). Generic matches (`assignment`,
   gitleaks `generic-api-key`), anon or expired JWTs and encrypted private keys are `info`.
 - A finding in a working file that group or others can read carries the `file.chmod600` action:
-  `securizame remediate <finding-id>` closes the file. The secret still has to be rotated.
+  `segurata remediate <finding-id>` closes the file. The secret still has to be rotated.
 - Requirements: `rg` (ripgrep), `git`, `ssh-keygen`; `gitleaks` for history; `gh` (optional) for
   the visibility of repositories holding a dump. The disk scan takes
   about a minute; the history scan of ~330 repositories takes most of the run.
@@ -322,24 +327,24 @@ service-account JSON or a transcript, and its copy in git history all match. git
 its JSON report on stdout, read through a pipe: the raw values exist only in the process memory,
 long enough to compute the HMAC.
 
-The key lives at `~/.config/securizame/fingerprint.key` (32 random bytes in hex, created with mode
+The key lives at `~/.config/segurata/fingerprint.key` (32 random bytes in hex, created with mode
 0600 on first use). Keep it: with a new key every fingerprint changes and the rotation ledger sees
 every secret as new.
 
 ### Rotation ledger
 
 ```bash
-./securizame rotations sync                    # from the latest out/<date>/local-secrets.jsonl
-./securizame rotations list --priority P0,P1   # what to rotate first
-./securizame rotations next --priority P0      # the most urgent item and exactly what to do
-./securizame rotations show <id>               # locations, where the new value goes, rotate URL
-./securizame rotations replace <id>            # after rotating: plan with the new value from the clipboard
-./securizame rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]
-./securizame rotations done <id> --note "rolled in the dashboard"
-./securizame rotations snooze <id> --until 2027-01-15
-./securizame rotations ignore <id> --reason "test fixture"
-./securizame rotations reopen <id>
-./securizame rotations ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
+./segurata rotations sync                    # from the latest out/<date>/local-secrets.jsonl
+./segurata rotations list --priority P0,P1   # what to rotate first
+./segurata rotations next --priority P0      # the most urgent item and exactly what to do
+./segurata rotations show <id>               # locations, where the new value goes, rotate URL
+./segurata rotations replace <id>            # after rotating: plan with the new value from the clipboard
+./segurata rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]
+./segurata rotations done <id> --note "rolled in the dashboard"
+./segurata rotations snooze <id> --until 2027-01-15
+./segurata rotations ignore <id> --reason "test fixture"
+./segurata rotations reopen <id>
+./segurata rotations ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
 ```
 
 One item per secret fingerprint, with its priority (P0 to P3), the reasons in plain words, every
@@ -367,9 +372,9 @@ atomically, checks the result, marks the item rotated and clears the clipboard. 
 ### Redacting trails
 
 ```bash
-./securizame redact --trails                      # dry run: files, matches per file and per type
-./securizame redact --item <id> --apply           # one secret, in every transcript, history and log
-./securizame redact --trails --min-priority P1 --apply
+./segurata redact --trails                      # dry run: files, matches per file and per type
+./segurata redact --item <id> --apply           # one secret, in every transcript, history and log
+./segurata redact --trails --min-priority P1 --apply
 ```
 
 Agent transcripts, shell histories and logs keep pasted secrets in plaintext. Rotation is still
@@ -386,8 +391,8 @@ backup unless `--backup`. Details: [docs/architecture.md](docs/architecture.md#r
 ## macOS and Brave posture (`macos`)
 
 ```bash
-./securizame inventory macos
-./securizame inventory --verbose macos   # also logs the checks that pass
+./segurata inventory macos
+./segurata inventory --verbose macos   # also logs the checks that pass
 ```
 
 Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
@@ -430,7 +435,7 @@ flagging those without a developer signature), and whether Brave runs with
   destination that never completed a backup is `high`, a latest backup older than 7 days is
   `medium`. When `latestbackup` cannot mount the destination, the preferences' snapshot dates date
   the latest backup. If tmutil is refused (no Full Disk Access) the check is an `unsupported`
-  status; `securizame doctor --connector macos` says so with the fix.
+  status; `segurata doctor --connector macos` says so with the fix.
 - FileVault's recovery key is not checked: `fdesetup haspersonalrecoverykey` and
   `hasinstitutionalrecoverykey` need root (checked on macOS 15.6.1).
 - Endpoint agents (ESET, Sophos, CrowdStrike, SentinelOne, Microsoft Defender, Malwarebytes,
@@ -444,7 +449,7 @@ flagging those without a developer signature), and whether Brave runs with
 ## Browser extensions (`browser-extensions`)
 
 ```bash
-./securizame inventory browser-extensions
+./segurata inventory browser-extensions
 ```
 
 Reads every Brave and Chrome profile (Preferences, Secure Preferences, Local State, and the
@@ -468,30 +473,30 @@ manager, crypto wallet, AI assistant, shopping, dev tool) from a short list of i
   `brave://extensions/?id=<id>` (or `chrome://`) and names the profiles to open it in.
 - No network calls. Checking the Web Store (an extension pulled from the store, a change of owner)
   is a future enhancement.
-- To keep an extension the verdict disagrees with: `securizame accept <id> --reason "..."`.
+- To keep an extension the verdict disagrees with: `segurata accept <id> --reason "..."`.
 
 ## Report
 
 ```bash
-./securizame report                                   # terminal text
-./securizame report --format html --out report.html   # one self-contained page, mode 0600
-./securizame report --format md --out report.md
+./segurata report                                   # terminal text
+./segurata report --format html --out report.html   # one self-contained page, mode 0600
+./segurata report --format md --out report.md
 ```
 
 One page from the latest run of every connector instance (`out/<date>/<name>.jsonl`, the same
 files `remediate` reads), the accepted risks and the secrets to rotate, both from the tracker. The
-report is the per-run view; `securizame status` is the tracker's:
+report is the per-run view; `segurata status` is the tracker's:
 
 - Headline: findings by severity for each connector instance, its run date, how many are
   accepted and how many statuses need attention.
 - Needs attention: `reauth`, `signedout`, `missing_credentials`, `unsupported` and `error`
-  statuses, each with what to do and the `securizame inventory <name>` that checks it afterwards.
+  statuses, each with what to do and the `segurata inventory <name>` that checks it afterwards.
 - Changes since the previous run: new findings, resolved ones and severity changes, comparing each
   instance's latest file with its own file in the newest earlier `out/<date>/` folder. Finding ids
   are stable, so a finding is the same across runs. Running a connector twice in a day overwrites
   that day's file, so the comparison is always with an earlier day.
 - Top findings, worst first and grouped by connector, each with its remediation, its page and
-  `securizame remediate <id>` when automatable.
+  `segurata remediate <id>` when automatable.
 - Rotation ledger: open rotate items by priority, the first P0 items (redacted hint, exposure, reason,
   rotate URL; never a location) and snoozes past their date.
 - Accepted risks, with the expired ones and the ones the latest run no longer reports.
@@ -505,15 +510,15 @@ because findings and the tracker never hold one.
 ## Remediation
 
 ```bash
-./securizame remediate --list                # automatable findings of the latest run
-./securizame remediate <id>                  # the exact plan; changes nothing
-./securizame remediate <id> --apply          # asks "Apply? [y/N]", applies, re-checks
+./segurata remediate --list                # automatable findings of the latest run
+./segurata remediate <id>                  # the exact plan; changes nothing
+./segurata remediate <id> --apply          # asks "Apply? [y/N]", applies, re-checks
 ```
 
 One finding at a time. The plan shows the commands, whether they need sudo, the side effects and
 how to undo them. With `--apply` it asks for confirmation (and refuses without a terminal unless
 `--yes`), then runs that connector again and says whether the finding is gone. Commands that need
-root run as `sudo <command>` on your terminal, so sudo asks for your password itself; securizame
+root run as `sudo <command>` on your terminal, so sudo asks for your password itself; segurata
 never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 
 | Action | What it runs | Undo |
@@ -525,9 +530,9 @@ never sees it. Design: [docs/architecture.md](docs/architecture.md#remediation).
 | `macos.home.private` | `/bin/chmod 700 <home>`, no sudo, when group or others can read the home folder (every user is in `staff`, so 750 is as open as 755; 711 passes, as CIS allows) | `/bin/chmod <old mode> <home>` |
 | `file.chmod600` | Makes the file in the finding's `evidence.path` private (mode 600) | `chmod <old mode> <path>` |
 
-External connectors speaking protocol 2 add their own actions (`securizame connectors` lists
+External connectors speaking protocol 2 add their own actions (`segurata connectors` lists
 them after `remediates:`). The plan, the confirmation and the check afterwards are the same; the
-connector runs its own plan as you, and securizame refuses any plugin plan that needs sudo
+connector runs its own plan as you, and segurata refuses any plugin plan that needs sudo
 ([docs/connectors.md](docs/connectors.md#plan-v2)).
 
 The home folder path comes from the OS (`os.UserHomeDir`), never from the finding, and the octal
@@ -560,9 +565,9 @@ a restarted process can drop its ports for a moment and open them again.
 ## Accepted risks
 
 ```bash
-./securizame accept <id> --reason "AI agents drive Brave over CDP" [--until 2027-03-31]
-./securizame accept --list
-./securizame unaccept <id>
+./segurata accept <id> --reason "AI agents drive Brave over CDP" [--until 2027-03-31]
+./segurata accept --list
+./segurata unaccept <id>
 ```
 
 A finding you keep on purpose stays in `out/<date>/*.jsonl` with an `accepted` field, but leaves
@@ -575,20 +580,35 @@ own first. `unaccept` takes the finding id or the item id. Details:
 ## Scheduled runs
 
 ```bash
-./securizame schedule install                         # print the launchd agent; changes nothing
-./securizame schedule install --every 12h --apply     # write and load it, after "Apply? [y/N]"
-./securizame schedule status
-./securizame schedule uninstall --apply
+./segurata schedule install                         # print the launchd agent; changes nothing
+./segurata schedule install --every 12h --apply     # write and load it, after "Apply? [y/N]"
+./segurata schedule status
+./segurata schedule uninstall --apply
 ```
 
-A launchd user agent (`~/Library/LaunchAgents/com.securizame.inventory.plist`) runs an inventory
-every day (or `--every`), writes `~/.local/state/securizame/last-report.md`, and posts a macOS
+A launchd user agent (`~/Library/LaunchAgents/com.segurata.inventory.plist`) runs an inventory
+every day (or `--every`), writes `~/.segurata/last-report.md`, and posts a macOS
 notification when a high or critical finding appears that the previous run did not have. By default
 it runs every connector except those that need the browser's debugging port; `--connectors
-macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/securizame/`, inventories to
-`~/.local/state/securizame/out`. Install it from the binary you will keep: the agent runs that
+macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/segurata/`, inventories to
+`~/.segurata/out`. Install it from the binary you will keep: the agent runs that
 exact path, with the PATH you had when installing. On Linux it prints a systemd user timer to
 install by hand. Details: [docs/architecture.md](docs/architecture.md#scheduled-runs).
+
+## Upgrading from securizame
+
+This tool was called securizame. The first `segurata` command on a machine set up under that name
+moves `~/.securizame`, `~/.config/securizame`, `~/.cache/securizame` and `~/Library/Logs/securizame`
+to their `segurata` names and the files of `~/.local/state/securizame` into `~/.segurata`, printing
+one line per move. It never overwrites: when both names exist it warns and uses the new one. The
+fingerprint key moves byte for byte, so every fingerprint stays the same. The tracker's suggested
+commands are renamed; config references to Keychain items keep working, and
+`segurata keychain-migrate` (a dry run; `--apply` to do it) copies each `securizame-*` item to
+`segurata-*`, checks the copy, updates the reference and deletes the old item. Environment variables
+are renamed with no aliases (`SECURIZAME_CONFIG` is now `SEGURATA_CONFIG`, and so on for `CDP`,
+`HOME`, `STATE` and `ACCEPTED`), external connectors are found as `segurata-<name>`, and a scheduled
+agent installed as `com.securizame.inventory` is not migrated: the first run prints how to remove
+it, then `segurata schedule install --apply`.
 
 ## Plan
 

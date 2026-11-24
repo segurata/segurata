@@ -21,7 +21,7 @@ func TestEscapingHelpers(t *testing.T) {
 func TestEveryFormatRendersTheSameContent(t *testing.T) {
 	d := &Doc{Title: "t"}
 	d.H(1, d.Title)
-	d.P("run ", Code("securizame status"), " now")
+	d.P("run ", Code("segurata status"), " now")
 	d.List([]Item{{Badge: "P0", Text: "Rotate <key>", Meta: "id 1", Details: []Detail{{Label: "Where", Text: "https://example.com/x", Kind: DLink}}}})
 	d.Table([]string{"A", "N"}, [][]Cell{{{Text: "row"}, {Text: "3", Num: true}}})
 	for _, f := range []Format{Text, Markdown, HTML} {
@@ -32,7 +32,7 @@ func TestEveryFormatRendersTheSameContent(t *testing.T) {
 		if err := Render(&b, d, f); err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"securizame status", "P0", "https://example.com/x", "row"} {
+		for _, want := range []string{"segurata status", "P0", "https://example.com/x", "row"} {
 			if !strings.Contains(b.String(), want) {
 				t.Errorf("%s lacks %q", f, want)
 			}

@@ -19,8 +19,8 @@ const (
 	secretName     = "VERCEL_TOKEN"
 	DefaultBaseURL = "https://api.vercel.com"
 	setupHint      = "create a token at https://vercel.com/account/settings/tokens (set an expiry), store it with " +
-		"`security add-generic-password -s securizame-vercel -a \"$USER\" -w` and reference it in " +
-		"~/.config/securizame/config.json as connectors.vercel.secrets.VERCEL_TOKEN = \"keychain:securizame-vercel\""
+		"`security add-generic-password -s segurata-vercel -a \"$USER\" -w` and reference it in " +
+		"~/.config/segurata/config.json as connectors.vercel.secrets.VERCEL_TOKEN = \"keychain:segurata-vercel\""
 )
 
 // Connector is the built-in Vercel connector. Zero values use the real API and clock.

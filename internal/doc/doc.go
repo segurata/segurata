@@ -1,4 +1,4 @@
-// Package doc is the small document model securizame's reports are built with (headings,
+// Package doc is the small document model segurata's reports are built with (headings,
 // paragraphs, lists, tables) and its three renderers: terminal text, Markdown and a self-contained
 // HTML page. A document is built once and rendered by format, so the formats always say the same
 // thing. Markdown escapes markup in titles; HTML escapes everything, links only absolute http(s)

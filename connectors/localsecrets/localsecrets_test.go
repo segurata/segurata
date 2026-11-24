@@ -312,7 +312,7 @@ func (fx *fixture) connector(t *testing.T, gitleaksReport string) *Connector {
 		}},
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 		Home:     func() (string, error) { return fx.home, nil },
-		KeyPath:  func(home string) string { return filepath.Join(home, ".config", "securizame", "fingerprint.key") },
+		KeyPath:  func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") },
 		CacheDir: DefaultCacheDir,
 		Now:      func() time.Time { return time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC) },
 	}
@@ -444,7 +444,7 @@ func TestInventoryEndToEnd(t *testing.T) {
 	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateOK || !strings.Contains(rec.statuses[0].Detail, "gitleaks: 1 repositories (0 unchanged, 0 incremental, 1 full), 0 failed") {
 		t.Errorf("statuses %+v", rec.statuses)
 	}
-	if st, err := os.Stat(filepath.Join(fx.home, ".config", "securizame", "fingerprint.key")); err != nil || st.Mode().Perm() != 0o600 {
+	if st, err := os.Stat(filepath.Join(fx.home, ".config", "segurata", "fingerprint.key")); err != nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("fingerprint key not created 0600: %v", err)
 	}
 }

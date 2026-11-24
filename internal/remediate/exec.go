@@ -1,4 +1,4 @@
-// Package remediate is the core of `securizame remediate`: it finds a finding in the latest run,
+// Package remediate is the core of `segurata remediate`: it finds a finding in the latest run,
 // shows the exact plan, asks for confirmation, runs only allowlisted commands and checks afterwards
 // that the finding is gone. See docs/architecture.md, "Remediation".
 package remediate

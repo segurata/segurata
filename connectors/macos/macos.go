@@ -4,7 +4,7 @@
 // network, SMB share points, the home folder mode, login and background items and Brave's remote
 // debugging port. Browser extensions are the browser-extensions connector.
 // Inventory is read-only and never uses sudo. A few findings can be fixed with
-// `securizame remediate` (remediate.go).
+// `segurata remediate` (remediate.go).
 package macos
 
 import (
@@ -119,7 +119,7 @@ type Connector struct {
 	// Root prefixes the system folders the file checks read (accounts' homes, /Library, /Users/Shared,
 	// /Applications); "" is the real root. Tests point it at a temporary tree.
 	Root string
-	// UID is the user running securizame, whose account is not reported as an extra one.
+	// UID is the user running segurata, whose account is not reported as an extra one.
 	UID func() int
 	Now func() time.Time
 }

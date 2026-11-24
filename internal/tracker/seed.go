@@ -10,7 +10,7 @@ import (
 var themes = []Theme{
 	{"rotations", "Secrets to rotate", "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."},
 	{"data-dumps", "Data dumps in git", "Database dumps committed to repositories, one item per file: purge from history, rotate what they hold, check breach duties."},
-	{"transcripts", "Secrets in trail files", "Agent transcripts, shell histories and logs that still hold secrets in plaintext: securizame redact cleans the local copies."},
+	{"transcripts", "Secrets in trail files", "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."},
 	{"mac", "This Mac", "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."},
 	{"browser-extensions", "Browser extensions", "Extensions that can read or drive your pages, one item per extension."},
 	{"github-orgs", "GitHub", "Organizations and repositories you administer: 2FA, default permissions, Actions, secret scanning."},
@@ -18,7 +18,7 @@ var themes = []Theme{
 	{"google", "Google", "Apps with access to your Google accounts, and Workspace tenants."},
 	{"cloud", "Cloud", "GCP, AWS, Azure, Cloudflare, Vercel and Supabase: keys, roles, budgets."},
 	{"ai-spend", "AI providers", "OpenAI, Anthropic and OpenRouter keys, limits and spend."},
-	{"setup", "Setup", "What keeps securizame from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."},
+	{"setup", "Setup", "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."},
 	{"decisions", "Decisions", "Questions only you can answer before the related work can go ahead."},
 	{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."},
 }
@@ -65,7 +65,7 @@ var seedDecisions = []seedDecision{
 	{"primary-password-manager", "Which password manager is primary?",
 		[]string{"1Password", "Bitwarden"}, secretrisk.P2},
 	{"daily-schedule", "Install the daily scheduled inventory?",
-		[]string{"yes: securizame schedule install --apply", "not now"}, secretrisk.P3},
+		[]string{"yes: segurata schedule install --apply", "not now"}, secretrisk.P3},
 }
 
 // seed adds the themes and seeded decisions that are missing.
@@ -92,7 +92,7 @@ func (t *Tracker) AddDecision(key, question string, options []string, now time.T
 	it := t.newItem(KindDecide, key, "decisions", question, now)
 	it.Decision = &Decision{Question: question, Options: options}
 	it.Priority, it.Severity = secretrisk.P2, "medium"
-	it.Next = &Next{Who: You, Action: "Decide: " + question, Command: "securizame track decide " + it.ID + ` --answer "…"`}
+	it.Next = &Next{Who: You, Action: "Decide: " + question, Command: "segurata track decide " + it.ID + ` --answer "…"`}
 	it.Log(now, EvFound, actFound, "decision to take")
 	return it
 }

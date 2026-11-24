@@ -21,7 +21,7 @@ import (
 func LatestFiles(outDir string) ([]string, error) {
 	entries, err := os.ReadDir(outDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no inventory under %s: run `securizame inventory` first", outDir)
+		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
 	}
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func LatestFiles(outDir string) ([]string, error) {
 		}
 	}
 	if len(newest) == 0 {
-		return nil, fmt.Errorf("no inventory under %s: run `securizame inventory` first", outDir)
+		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
 	}
 	out := make([]string, 0, len(newest))
 	for _, f := range newest {

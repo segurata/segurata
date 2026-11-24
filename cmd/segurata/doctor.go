@@ -18,9 +18,9 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-const doctorUsage = "usage: securizame doctor [--connector name|name:label] [--out out]"
+const doctorUsage = "usage: segurata doctor [--connector name|name:label] [--out out]"
 
-// doctorCmd is `securizame doctor`: read-only prerequisite checks.
+// doctorCmd is `segurata doctor`: read-only prerequisite checks.
 func doctorCmd(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	only := fs.String("connector", "", "check one connector (or one instance, name:label)")

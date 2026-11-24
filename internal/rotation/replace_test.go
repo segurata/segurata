@@ -257,7 +257,7 @@ func TestReplaceApply(t *testing.T) {
 	if envAfter, _ := os.Stat(fx.env); os.SameFile(envBefore, envAfter) {
 		t.Error("file rewritten in place, not replaced atomically")
 	}
-	if backups, _ := filepath.Glob(filepath.Join(fx.home, "src", "app", ".env.securizame-bak-*")); len(backups) != 0 {
+	if backups, _ := filepath.Glob(filepath.Join(fx.home, "src", "app", ".env.segurata-bak-*")); len(backups) != 0 {
 		t.Error("backup written without --backup")
 	}
 	leftovers, _ := filepath.Glob(filepath.Join(fx.home, "src", "app", ".*-*"))
@@ -311,7 +311,7 @@ func TestReplaceBackupIsPrivate(t *testing.T) {
 	if _, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--backup"); code != 0 {
 		t.Fatalf("apply: %s", e)
 	}
-	backups, _ := filepath.Glob(fx.zshrc + ".securizame-bak-*")
+	backups, _ := filepath.Glob(fx.zshrc + ".segurata-bak-*")
 	if len(backups) != 1 {
 		t.Fatalf("backups %v", backups)
 	}
@@ -491,7 +491,7 @@ func TestNext(t *testing.T) {
 		"Source: https://platform.claude.com/docs/",
 		"~/.zshrc:2  (shell rc: --to-keychain",
 		"~/src/app/.env:1",
-		"securizame rotations replace " + fx.id() + " ",
+		"segurata rotations replace " + fx.id() + " ",
 		"--apply [--to-keychain <VAR_NAME>]",
 	} {
 		if !strings.Contains(o, want) {

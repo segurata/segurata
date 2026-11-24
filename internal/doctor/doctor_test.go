@@ -50,7 +50,7 @@ func newFixture(t *testing.T, cfg string) *fixture {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("DOCTOR_TEST_KEY", secretValue)
-	dir := filepath.Join(home, ".config", "securizame")
+	dir := filepath.Join(home, ".config", "segurata")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +63,8 @@ func newFixture(t *testing.T, cfg string) *fixture {
 		Out:        fx.out,
 		ConfigPath: filepath.Join(dir, "config.json"),
 		KeyPath:    filepath.Join(dir, "fingerprint.key"),
-		Tracker: tracker.Paths{Tracker: filepath.Join(home, ".securizame", "tracker.json"),
-			LegacyLedger: filepath.Join(home, ".local", "state", "securizame", "rotations.json"), LegacyAccepted: filepath.Join(dir, "accepted.json")},
+		Tracker: tracker.Paths{Tracker: filepath.Join(home, ".segurata", "tracker.json"),
+			LegacyLedger: filepath.Join(home, ".segurata", "rotations.json"), LegacyAccepted: filepath.Join(dir, "accepted.json")},
 		OutDir: filepath.Join(home, "out"),
 		GOOS:   "darwin",
 		Connectors: []connector.Connector{
@@ -170,7 +170,7 @@ func TestDoctorUnconfiguredSecretAndOneConnector(t *testing.T) {
 	wantLines(t, out,
 		"WARN  config  "+fx.env.ConfigPath+": not found",
 		"WARN  api     secret API_KEY: not configured: the connector is skipped",
-		`fix: add "secrets": {"API_KEY": "keychain:securizame-api"} to connectors.api`,
+		`fix: add "secrets": {"API_KEY": "keychain:segurata-api"} to connectors.api`,
 	)
 	for _, other := range []string{"plugin", "cdp", "cloud"} {
 		if strings.Contains(out, other) {

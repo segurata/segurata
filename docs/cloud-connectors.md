@@ -164,11 +164,11 @@ spend. Hobby has no usage billing, so no check is asked for there.
 Setup:
 
 1. Create a token at <https://vercel.com/account/settings/tokens>, with an expiry.
-2. `security add-generic-password -s securizame-vercel -a "$USER" -w` (paste the token at the prompt).
-3. In `~/.config/securizame/config.json`:
+2. `security add-generic-password -s segurata-vercel -a "$USER" -w` (paste the token at the prompt).
+3. In `~/.config/segurata/config.json`:
 
    ```json
-   {"connectors": {"vercel": {"secrets": {"VERCEL_TOKEN": "keychain:securizame-vercel"}}}}
+   {"connectors": {"vercel": {"secrets": {"VERCEL_TOKEN": "keychain:segurata-vercel"}}}}
    ```
 
 ## Supabase (`supabase`)
@@ -203,11 +203,11 @@ Setup:
 1. Create a token at <https://supabase.com/dashboard/account/tokens>. Prefer a scoped, read-only
    token; the endpoints above are tagged with the scopes `organizations:read`, `projects:read` and
    `secrets:read` in the API description.
-2. `security add-generic-password -s securizame-supabase -a "$USER" -w`
-3. In `~/.config/securizame/config.json`:
+2. `security add-generic-password -s segurata-supabase -a "$USER" -w`
+3. In `~/.config/segurata/config.json`:
 
    ```json
-   {"connectors": {"supabase": {"secrets": {"SUPABASE_ACCESS_TOKEN": "keychain:securizame-supabase"}}}}
+   {"connectors": {"supabase": {"secrets": {"SUPABASE_ACCESS_TOKEN": "keychain:segurata-supabase"}}}}
    ```
 
 ## Cloudflare (`cloudflare`)
@@ -218,7 +218,7 @@ Each login is one instance: `cloudflare` and, for more, `cloudflare:<label>` wit
 
 | Endpoint | Used for | Permission | Docs |
 |---|---|---|---|
-| `GET /user/tokens/verify` | The token is active (otherwise `reauth`); its id marks it `used_by_securizame` in the list | none | [verify token](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/) |
+| `GET /user/tokens/verify` | The token is active (otherwise `reauth`); its id marks it `used_by_segurata` in the list | none | [verify token](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/) |
 | `GET /user/tokens` | User API tokens: `status`, `issued_on`, `modified_on`, `last_used_on`, `expires_on`, `condition` (client IP `in`/`not_in`), `policies` (effect, permission group names, resources) | User > API Tokens > Read | [list tokens](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/list/) |
 | `GET /accounts` | Accounts the token reaches | none (lists what the token's account permissions cover) | [list accounts](https://developers.cloudflare.com/api/resources/accounts/methods/list/) |
 | `GET /accounts/{id}` | `settings.enforce_twofactor` | Account > Account Settings > Read | [account details](https://developers.cloudflare.com/api/resources/accounts/methods/get/) |
@@ -288,17 +288,17 @@ Setup:
    - Zone > DNS > Read
 
    Account Resources: Include > All accounts. Zone Resources: Include > All zones. Set a TTL and,
-   if you run securizame from a fixed address, Client IP Address Filtering. A read-only token on
+   if you run segurata from a fixed address, Client IP Address Filtering. A read-only token on
    all zones is not flagged as broad; only edit permissions are.
-2. `security add-generic-password -s securizame-cloudflare -a "$USER" -w` (paste the token at the prompt).
-3. In `~/.config/securizame/config.json`:
+2. `security add-generic-password -s segurata-cloudflare -a "$USER" -w` (paste the token at the prompt).
+3. In `~/.config/segurata/config.json`:
 
    ```json
-   {"connectors": {"cloudflare": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:securizame-cloudflare"}}}}
+   {"connectors": {"cloudflare": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:segurata-cloudflare"}}}}
    ```
 
-   A second login: `"cloudflare:work": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:securizame-cloudflare-work"}}`.
+   A second login: `"cloudflare:work": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:segurata-cloudflare-work"}}`.
 
-`securizame doctor --connector cloudflare` verifies the token, shows its expiry and reads one page
+`segurata doctor --connector cloudflare` verifies the token, shows its expiry and reads one page
 of tokens, accounts and zones, plus the settings and DNSSEC of the first zone, so a missing
 permission shows with the group to add.

@@ -488,7 +488,7 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 	}
 }
 
-// action offers `securizame remediate` a chmod 600 for a working file other users can read. It
+// action offers `segurata remediate` a chmod 600 for a working file other users can read. It
 // closes the file; it does not make rotation unnecessary.
 func action(ev secretrisk.Evidence) string {
 	// Noise (generic matches, public or encrypted values) gets no fix: closing a third-party
@@ -509,7 +509,7 @@ func remediation(p secretrisk.Priority, spot secretrisk.Spot, ev secretrisk.Evid
 	case spot.Level == secretrisk.Remote:
 		return fmt.Sprintf("It left this machine: rotate it at the provider, then keep the new value out of plain files (%s).", ev.Fix)
 	case spot.Level == secretrisk.Shared:
-		return fmt.Sprintf("Rotate it, then move the new value to the Keychain or 1Password (%s). `securizame remediate` can close the file (chmod 600) meanwhile.", ev.Fix)
+		return fmt.Sprintf("Rotate it, then move the new value to the Keychain or 1Password (%s). `segurata remediate` can close the file (chmod 600) meanwhile.", ev.Fix)
 	}
 	return fmt.Sprintf("Move it to the Keychain or 1Password and delete the plaintext copy (%s).", ev.Fix)
 }

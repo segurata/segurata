@@ -101,7 +101,7 @@ right after:
 
 ```bash
 # copy the new admin key, then:
-ANTHROPIC_ADMIN_KEY="$(pbpaste)" securizame inventory anthropic; pbcopy </dev/null
+ANTHROPIC_ADMIN_KEY="$(pbpaste)" segurata inventory anthropic; pbcopy </dev/null
 # delete the key at https://platform.claude.com/settings/admin-keys
 ```
 
@@ -155,25 +155,25 @@ What the API does not give:
    shell history):
 
    ```sh
-   security add-generic-password -s securizame-openai-admin -a "$USER" -w
-   security add-generic-password -s securizame-anthropic-admin -a "$USER" -w
-   security add-generic-password -s securizame-openrouter-admin -a "$USER" -w
+   security add-generic-password -s segurata-openai-admin -a "$USER" -w
+   security add-generic-password -s segurata-anthropic-admin -a "$USER" -w
+   security add-generic-password -s segurata-openrouter-admin -a "$USER" -w
    ```
 
-3. Reference them in `~/.config/securizame/config.json`:
+3. Reference them in `~/.config/segurata/config.json`:
 
    ```json
    {
      "connectors": {
-       "openai": {"secrets": {"OPENAI_ADMIN_KEY": "keychain:securizame-openai-admin"}},
-       "anthropic": {"secrets": {"ANTHROPIC_ADMIN_KEY": "keychain:securizame-anthropic-admin"}},
-       "openrouter": {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:securizame-openrouter-admin"}}
+       "openai": {"secrets": {"OPENAI_ADMIN_KEY": "keychain:segurata-openai-admin"}},
+       "anthropic": {"secrets": {"ANTHROPIC_ADMIN_KEY": "keychain:segurata-anthropic-admin"}},
+       "openrouter": {"secrets": {"OPENROUTER_MANAGEMENT_KEY": "keychain:segurata-openrouter-admin"}}
      }
    }
    ```
 
-4. Run `securizame inventory openai anthropic openrouter`. Without a key each connector reports
+4. Run `segurata inventory openai anthropic openrouter`. Without a key each connector reports
    `missing_credentials` with these steps and does nothing else.
 
 The OpenAI and Anthropic keys can do far more than read. Keep them in the Keychain only, give them
-an expiration where the console allows it, and revoke them when you stop running securizame.
+an expiration where the console allows it, and revoke them when you stop running segurata.

@@ -19,11 +19,11 @@ func stubRunner(t *testing.T, want string, out string, err error) {
 }
 
 func TestResolveEnv(t *testing.T) {
-	t.Setenv("SECURIZAME_TEST_KEY", "value")
-	if v, err := Resolve("env:SECURIZAME_TEST_KEY"); err != nil || v != "value" {
+	t.Setenv("SEGURATA_TEST_KEY", "value")
+	if v, err := Resolve("env:SEGURATA_TEST_KEY"); err != nil || v != "value" {
 		t.Fatalf("got %q, %v", v, err)
 	}
-	if _, err := Resolve("env:SECURIZAME_TEST_MISSING"); err == nil {
+	if _, err := Resolve("env:SEGURATA_TEST_MISSING"); err == nil {
 		t.Fatal("missing env var should fail")
 	}
 }

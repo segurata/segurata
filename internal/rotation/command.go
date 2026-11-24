@@ -1,4 +1,4 @@
-// Package rotation is `securizame rotations`: the guided flow over the tracker's rotate items, one
+// Package rotation is `segurata rotations`: the guided flow over the tracker's rotate items, one
 // per secret fingerprint (list, next, show, replace, done, snooze, ignore, reopen). The items, their
 // risk model and the reopen rules live in internal/tracker. See docs/architecture.md, "Rotation
 // ledger".
@@ -19,7 +19,7 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-// CLI is the `securizame rotations` command family.
+// CLI is the `segurata rotations` command family.
 type CLI struct {
 	Out, Err io.Writer
 	In       io.Reader     // confirmations, and the new value with replace --stdin
@@ -32,13 +32,13 @@ type CLI struct {
 	Now      func() time.Time
 }
 
-const usage = `usage: securizame rotations <command>
+const usage = `usage: segurata rotations <command>
   sync    [--from out/<date>/local-secrets.jsonl] [--out out] [--include-noise]
   list    [--all] [--priority P0,P1] [--service stripe,aws]
   next    [--priority P0] [--service stripe]   the most urgent item, with what to do
   show    <id>
   replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
-          put the new value in every used_in file (see: securizame rotations replace --help)
+          put the new value in every used_in file (see: segurata rotations replace --help)
   done    <id> [--note text]
   snooze  <id> --until YYYY-MM-DD [--note text]
   ignore  <id> --reason text
@@ -109,7 +109,7 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 		return c.fail(err)
 	}
 	if !rep.FoldedSecrets() {
-		return c.fail(fmt.Errorf("no %s output under %s: run `securizame inventory %s` first", tracker.SecretsConnector, *out, tracker.SecretsConnector))
+		return c.fail(fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", tracker.SecretsConnector, *out, tracker.SecretsConnector))
 	}
 	if err := t.Save(path); err != nil {
 		return c.fail(err)
@@ -167,7 +167,7 @@ func (c CLI) list(t *tracker.Tracker, args []string, now time.Time) int {
 
 func (c CLI) show(t *tracker.Tracker, args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(c.Err, "usage: securizame rotations show <id>")
+		fmt.Fprintln(c.Err, "usage: segurata rotations show <id>")
 		return 2
 	}
 	it, err := t.FindRotate(args[0])
@@ -261,7 +261,7 @@ func (c CLI) change(t *tracker.Tracker, path, cmd string, args []string, now tim
 		return 2
 	}
 	if (len(pos) == 1) == (*under != "") {
-		fmt.Fprintf(c.Err, "usage: securizame rotations %s <id> | --path <prefix> (see: securizame rotations)\n", cmd)
+		fmt.Fprintf(c.Err, "usage: segurata rotations %s <id> | --path <prefix> (see: segurata rotations)\n", cmd)
 		return 2
 	}
 	var items []*tracker.Item

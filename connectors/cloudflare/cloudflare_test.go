@@ -78,8 +78,8 @@ const (
 // fullRoutes is a synthetic user with two accounts, three zones and four tokens.
 func fullRoutes(t *testing.T) map[string]httpxtest.Route {
 	tokens := []any{
-		// The securizame token itself: read-only, expires, used today.
-		json.RawMessage(fmt.Sprintf(`{"id":"tok-self","name":"securizame","status":"active","issued_on":%q,"last_used_on":%q,"expires_on":"2027-01-01T00:00:00Z",
+		// The segurata token itself: read-only, expires, used today.
+		json.RawMessage(fmt.Sprintf(`{"id":"tok-self","name":"segurata","status":"active","issued_on":%q,"last_used_on":%q,"expires_on":"2027-01-01T00:00:00Z",
 			"policies":[{"id":"p1","effect":"allow","permission_groups":[{"id":"g1","name":"Zone Read"},{"id":"g2","name":"DNS Read"}],"resources":{"com.cloudflare.api.account.zone.*":"*"}}]}`, ago(10), ago(0))),
 		// Edit on all zones, no IP filter, no expiry.
 		json.RawMessage(fmt.Sprintf(`{"id":"tok-broad","name":"ci deploy","status":"active","issued_on":%q,"last_used_on":%q,
@@ -178,7 +178,7 @@ func TestInventory(t *testing.T) {
 		t.Errorf("token account %q", broad.Account)
 	}
 	self := rec.ByResource(t, "cloudflare_api_token", "tok-self")
-	if self.Evidence["used_by_securizame"] != true {
+	if self.Evidence["used_by_segurata"] != true {
 		t.Errorf("own token not marked: %+v", self.Evidence)
 	}
 	if idle := rec.ByResource(t, "cloudflare_api_token", "tok-idle"); !strings.Contains(idle.Title, "unused for 200 days") || strings.Contains(idle.Title, "IP") {
@@ -282,8 +282,8 @@ func TestMissingTokenExplainsSetup(t *testing.T) {
 	for _, want := range []string{
 		"User > API Tokens > Read", "Account > Account Settings > Read", "Zone > Zone > Read",
 		"Zone > Zone Settings > Read", "Zone > DNS > Read",
-		`security add-generic-password -s securizame-cloudflare -a "$USER" -w`,
-		`"CLOUDFLARE_API_TOKEN": "keychain:securizame-cloudflare"`, "cloudflare:<label>",
+		`security add-generic-password -s segurata-cloudflare -a "$USER" -w`,
+		`"CLOUDFLARE_API_TOKEN": "keychain:segurata-cloudflare"`, "cloudflare:<label>",
 	} {
 		if !strings.Contains(st.Detail, want) {
 			t.Errorf("setup hint lacks %q", want)

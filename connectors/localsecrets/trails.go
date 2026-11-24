@@ -17,7 +17,7 @@ import (
 )
 
 // Trails is the part of a scan that covers trail files (shell histories, logs, agent
-// transcripts), for `securizame redact`: it finds in them exactly the secrets an inventory would
+// transcripts), for `segurata redact`: it finds in them exactly the secrets an inventory would
 // report, with the bytes each one occupies on its line, so they can be replaced in place.
 type Trails struct {
 	s   *scan
@@ -49,7 +49,7 @@ func (c *Connector) Trails(ctx context.Context, cfg map[string]any) (*Trails, er
 	}
 	fp, err := fingerprint.Open(c.KeyPath(home))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, errors.New("no fingerprint key yet: run `securizame inventory local-secrets` first")
+		return nil, errors.New("no fingerprint key yet: run `segurata inventory local-secrets` first")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint key: %w", err)

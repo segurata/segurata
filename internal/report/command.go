@@ -13,9 +13,9 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-const usage = "usage: securizame report [--format text|md|html] [--out file] [--dir out] [--min-severity low] [--top 10]"
+const usage = "usage: segurata report [--format text|md|html] [--out file] [--dir out] [--min-severity low] [--top 10]"
 
-// CLI is `securizame report`.
+// CLI is `segurata report`.
 type CLI struct {
 	Out, Err io.Writer
 	Paths    tracker.Paths // zero means tracker.DefaultPaths

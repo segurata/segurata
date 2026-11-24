@@ -1,6 +1,6 @@
-# securizame-hibp
+# segurata-hibp
 
-An external securizame connector in Python 3 (standard library only) that asks
+An external segurata connector in Python 3 (standard library only) that asks
 [Have I Been Pwned](https://haveibeenpwned.com/API/v3) which breaches include your email
 addresses. It is also the reference example of the external protocol
 ([docs/connectors.md](../../docs/connectors.md)).
@@ -8,27 +8,27 @@ addresses. It is also the reference example of the external protocol
 ## Install
 
 ```bash
-ln -s "$PWD/examples/hibp/securizame-hibp" ~/.local/bin/securizame-hibp   # any directory on PATH
-securizame connectors | grep hibp                                         # describe loaded
+ln -s "$PWD/examples/hibp/segurata-hibp" ~/.local/bin/segurata-hibp   # any directory on PATH
+segurata connectors | grep hibp                                         # describe loaded
 ```
 
 The HIBP breach search needs a paid API key (<https://haveibeenpwned.com/API/Key>). Keep it in the
 Keychain, never in the config:
 
 ```bash
-security add-generic-password -s securizame-hibp -a "$USER" -w
+security add-generic-password -s segurata-hibp -a "$USER" -w
 ```
 
-and reference it in `~/.config/securizame/config.json`:
+and reference it in `~/.config/segurata/config.json`:
 
 ```json
 "hibp": {
   "config": {"emails": ["you@example.com", "work@example.org"]},
-  "secrets": {"HIBP_API_KEY": "keychain:securizame-hibp"}
+  "secrets": {"HIBP_API_KEY": "keychain:segurata-hibp"}
 }
 ```
 
-Then `securizame inventory hibp`. Without the key it reports a `missing_credentials` status with
+Then `segurata inventory hibp`. Without the key it reports a `missing_credentials` status with
 these steps.
 
 | Config key | Default | Meaning |
@@ -42,7 +42,7 @@ these steps.
 
 One `exposure` finding per breach and address, from
 `GET /breachedaccount/{email}?truncateResponse=false` with the `hibp-api-key` header and the user
-agent `securizame-hibp`. The resource id is the breach's `Name`, which HIBP never changes, so ids
+agent `segurata-hibp`. The resource id is the breach's `Name`, which HIBP never changes, so ids
 stay stable across runs. Evidence: domain, breach and publication dates, data classes, size, and
 HIBP's flags (verified, sensitive, spam list, malware, stealer log).
 

@@ -1,15 +1,15 @@
 # Secrets out of plaintext files
 
-What to do with each finding of the `local-secrets` connector (`securizame inventory
+What to do with each finding of the `local-secrets` connector (`segurata inventory
 local-secrets`). The `evidence.fix` field of every finding points to the section that applies.
 
 Order of work: first **rotate** whatever has left the machine (git, agent transcripts), then move
 the rest to an encrypted store, and only then delete the plaintext copies. Deleting without
-rotating does nothing: the value is still valid wherever it was copied. `securizame rotations
-sync` and `securizame rotations list --priority P0,P1` keep that order for you: one item per
+rotating does nothing: the value is still valid wherever it was copied. `segurata rotations
+sync` and `segurata rotations list --priority P0,P1` keep that order for you: one item per
 secret, its locations, the files where the new value goes and the provider page where it is
-rotated; `securizame rotations done <id>` once it is rotated. `securizame rotations next` walks
-that list one item at a time with the provider's rotation steps, and `securizame rotations
+rotated; `segurata rotations done <id>` once it is rotated. `segurata rotations next` walks
+that list one item at a time with the provider's rotation steps, and `segurata rotations
 replace <id>` puts the new value in every file that held the old one, or in the Keychain
 ([README](../README.md#rotation-ledger), [architecture](architecture.md#guided-rotation-next-and-replace)).
 
@@ -51,7 +51,7 @@ backups.
 
 If the finding is a false positive (test fixture, sample key), add the gitleaks `Fingerprint`
 (`commit:file:rule:line`, printed by `gitleaks git` in that repo) to `.gitleaksignore`, and mark the
-item with `securizame rotations ignore <id> --reason …`.
+item with `segurata rotations ignore <id> --reason …`.
 
 ## Data dumps in git
 
@@ -68,7 +68,7 @@ clone.
 2. Rotate every credential the dump holds: application secrets stored in tables, API keys of
    integrations, admin passwords. Force a password reset if user password hashes are in it and the
    hashing is weak (MD5, SHA-1, unsalted). The gitleaks matches inside the dump are marked
-   `in_data_dump` and kept out of `securizame rotations` as noise, except AWS, Stripe live, GitHub
+   `in_data_dump` and kept out of `segurata rotations` as noise, except AWS, Stripe live, GitHub
    and GitLab keys and private keys, which stay in the ledger.
 3. Remove the file from history, in a fresh clone:
    `git filter-repo --path <path> --invert-paths` (from
@@ -76,7 +76,7 @@ clone.
    tag. Every collaborator must re-clone: an old clone pushed again brings the file back. On
    GitHub, cached views and pull request refs keep it until
    [GitHub Support purges them](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
-   securizame never rewrites history or pushes; this step is yours.
+   segurata never rewrites history or pushes; this step is yours.
 4. Personal data of customers or staff in the dump may be a personal data breach under the GDPR:
    the controller has 72 hours from becoming aware of it to notify the supervisory authority,
    unless it is unlikely to result in a risk to people. Spain:
@@ -88,25 +88,25 @@ clone.
    development.
 
 A false positive (a public sample database, a fixture with generated rows):
-`securizame accept <finding-id> --reason …`.
+`segurata accept <finding-id> --reason …`.
 
 ## After a rotation
 
 Once the old value is revoked, the copies left in git history, agent transcripts, logs and shell
-history are dead: nobody can use them. `securizame rotations sync` leaves such an item `rotated`
+history are dead: nobody can use them. `segurata rotations sync` leaves such an item `rotated`
 and notes once "old value still in history/transcripts". It reopens the item only when a working
 file (config, `.env`, rc file, repo working tree) still holds the old value, because a program
 still reads it from there. Purging the dead copies is optional housekeeping:
 [git](#in-git-always-rotate) (step 3), [shell history](#shell-history),
-[agent transcripts](#agent-transcripts), [logs](#logs). `securizame redact` does it for
+[agent transcripts](#agent-transcripts), [logs](#logs). `segurata redact` does it for
 transcripts, shell histories and logs in one pass, rotated or not: each secret becomes
 `[REDACTED:<type>:<fingerprint8>]`, so the trail keeps its link to the rotation item
 ([architecture](architecture.md#redaction)):
 
 ```bash
-securizame redact --trails                 # dry run: files, matches per file and per type
-securizame redact --item <id> --apply      # one secret, everywhere it appears in trails
-securizame redact --trails --apply         # everything non-noise, after confirmation
+segurata redact --trails                 # dry run: files, matches per file and per type
+segurata redact --item <id> --apply      # one secret, everywhere it appears in trails
+segurata redact --trails --apply         # everything non-noise, after confirmation
 ```
 
 It leaves alone files modified in the last two hours (`--min-age`) and files a running `claude`
@@ -167,7 +167,7 @@ kc() { security find-generic-password -a "$USER" -s "$1" -w 2>/dev/null; }
 export ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)"
 ```
 
-After rotating a key, `securizame rotations replace <id> --apply --to-keychain ANTHROPIC_API_KEY`
+After rotating a key, `segurata rotations replace <id> --apply --to-keychain ANTHROPIC_API_KEY`
 does both steps for an rc line: it stores the new value (through `security -i` on stdin, so it
 never shows in a process listing) and rewrites the line to
 `export ANTHROPIC_API_KEY="$(security find-generic-password -a "$USER" -s ANTHROPIC_API_KEY -w)"`,
@@ -305,7 +305,7 @@ RSA keys:
 
 ## Shell history
 
-`securizame redact --path ~/.zsh_history --apply` replaces each secret in place and keeps the
+`segurata redact --path ~/.zsh_history --apply` replaces each secret in place and keeps the
 `: <ts>:<d>;cmd` format. A shell still open holds the old lines in memory and may write them back
 when it exits: close the other terminals first and run `fc -R` in the one left afterwards. To
 delete whole lines instead, from a single terminal:
@@ -332,7 +332,7 @@ or uploaded somewhere, [rotate](#in-git-always-rotate).
 A secret found in `~/.claude/projects`, `~/.codex/sessions` or `~/.cursor/projects` was sent to the
 model provider. Treat it as leaked: **rotate**.
 
-Then remove the local copies: `securizame redact --trails` (dry run, then `--apply`) replaces each
+Then remove the local copies: `segurata redact --trails` (dry run, then `--apply`) replaces each
 secret inside the transcripts and keeps them readable. Or delete the transcripts that contain it
 (the list comes from the jsonl, without values):
 
@@ -340,7 +340,7 @@ secret inside the transcripts and keeps them readable. Or delete the transcripts
 jq -r 'select(.evidence.kind=="transcript") | .evidence.path' out/*/local-secrets.jsonl | sort -u
 ```
 
-or, for one secret, `securizame rotations show <id>` lists every transcript that holds it.
+or, for one secret, `segurata rotations show <id>` lists every transcript that holds it.
 
 To keep them from piling up:
 
@@ -353,7 +353,7 @@ To keep them from piling up:
 ## Logs
 
 - Truncate or delete logs with secrets (`: > log/development.log`), or replace just the secrets:
-  `securizame redact --path ~/src/app/log/development.log --apply` (the logs `local-secrets` scans:
+  `segurata redact --path ~/src/app/log/development.log --apply` (the logs `local-secrets` scans:
   `*.log` under `repos_root`, `~/Library/Logs`, `~/.local/log`).
 - Filter parameters: Rails `config.filter_parameters += [:token, :api_key, :password, :secret]`;
   Phoenix `config :phoenix, :filter_parameters, ["password", "token", "api_key", "secret"]`.

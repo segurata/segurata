@@ -210,7 +210,7 @@ func TestInventoryKeepsAcceptedFindingsInTheJSONLButHidesThemFromSummaryAndList(
 	var sum bytes.Buffer
 	run.Summary(&sum, res, finding.SevLow)
 	got := sum.String()
-	if strings.Contains(got, dbg.Title) || !strings.Contains(got, "1 accepted findings hidden; see securizame accept --list") ||
+	if strings.Contains(got, dbg.Title) || !strings.Contains(got, "1 accepted findings hidden; see segurata accept --list") ||
 		!strings.Contains(got, fw.Title+" (acceptance expired)") {
 		t.Errorf("summary:\n%s", got)
 	}

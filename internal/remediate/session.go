@@ -193,7 +193,7 @@ func Print(w io.Writer, f finding.Finding, p connector.Plan) {
 	fmt.Fprintf(w, "Plan     %s\n", p.Summary)
 	runs := "Runs, as you:"
 	if p.NeedsSudo() {
-		runs = "Runs (sudo asks for your password on this terminal; securizame never sees it):"
+		runs = "Runs (sudo asks for your password on this terminal; segurata never sees it):"
 	}
 	printSection(w, runs, "", p.Commands)
 	printSection(w, "Changes:", "", p.Files)
@@ -228,7 +228,7 @@ func List(w io.Writer, all []finding.Finding, minSev finding.Severity) {
 		shown++
 		fmt.Fprintf(w, "%s  [%-8s] %-32s %-16s %s\n", f.ID, f.Severity, f.Remediation.Action, Selector(f), f.DisplayTitle())
 	}
-	fmt.Fprintf(w, "\n%d automatable findings. Show a plan with: securizame remediate <id>\n", shown)
+	fmt.Fprintf(w, "\n%d automatable findings. Show a plan with: segurata remediate <id>\n", shown)
 	if below > 0 {
 		fmt.Fprintf(w, "%d more below %s (show them with --all).\n", below, minSev)
 	}

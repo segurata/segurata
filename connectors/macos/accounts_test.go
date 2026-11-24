@@ -177,8 +177,8 @@ func TestOrphanListIsCapped(t *testing.T) {
 }
 
 func TestOrphanedShareNamesTheDeletedAccount(t *testing.T) {
-	ch := shareCheck(sharePoint{Name: quotedName, Path: "/Users/securizame-test-deleted/Public", Shared: 1, Guest: 1})
-	if ch.evidence["deleted_account"] != "securizame-test-deleted" || !strings.Contains(ch.detail, "was deleted") {
+	ch := shareCheck(sharePoint{Name: quotedName, Path: "/Users/segurata-test-deleted/Public", Shared: 1, Guest: 1})
+	if ch.evidence["deleted_account"] != "segurata-test-deleted" || !strings.Contains(ch.detail, "was deleted") {
 		t.Errorf("%q %v", ch.detail, ch.evidence)
 	}
 	if deletedAccount("/Users/Shared/x") != "" || deletedAccount("/Volumes/x") != "" {
