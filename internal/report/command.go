@@ -7,21 +7,19 @@ import (
 	"io"
 	"time"
 
-	"github.com/segurata/segurata/internal/accept"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/rotation"
 	"github.com/segurata/segurata/internal/statefile"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 const usage = "usage: securizame report [--format text|md|html] [--out file] [--dir out] [--min-severity low] [--top 10]"
 
 // CLI is `securizame report`.
 type CLI struct {
-	Out, Err     io.Writer
-	AcceptedPath string // "" means accept.DefaultPath
-	LedgerPath   string // "" means rotation.DefaultPath
-	Now          func() time.Time
+	Out, Err io.Writer
+	Paths    tracker.Paths // zero means tracker.DefaultPaths
+	Now      func() time.Time
 }
 
 func (c CLI) fail(err error) int {
@@ -45,30 +43,20 @@ func (c CLI) Run(args []string) int {
 		return 2
 	}
 	f := Format(*format)
-	if f != Text && f != Markdown && f != HTML {
+	if !f.Valid() {
 		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
-	accPath, ledPath := c.AcceptedPath, c.LedgerPath
-	if accPath == "" {
-		if accPath, err = accept.DefaultPath(); err != nil {
-			return c.fail(err)
-		}
-	}
-	if ledPath == "" {
-		if ledPath, err = rotation.DefaultPath(); err != nil {
-			return c.fail(err)
-		}
-	}
-	acc, err := accept.Load(accPath)
+	paths, err := c.Paths.Resolve()
 	if err != nil {
 		return c.fail(err)
 	}
-	led, err := rotation.Load(ledPath)
+	now := c.Now()
+	t, err := tracker.LoadOrMigrate(paths, now, c.Err)
 	if err != nil {
 		return c.fail(err)
 	}
-	r, err := Build(Inputs{OutDir: *dir, Now: c.Now(), Accepted: acc, Ledger: led, LedgerPath: ledPath,
+	r, err := Build(Inputs{OutDir: *dir, Now: now, Tracker: t, TrackerPath: paths.Tracker,
 		MinSev: finding.Severity(*minSev), Top: *top})
 	if err != nil {
 		return c.fail(err)

@@ -1,28 +1,35 @@
+// Package rotation is `securizame rotations`: the guided flow over the tracker's rotate items, one
+// per secret fingerprint (list, next, show, replace, done, snooze, ignore, reopen). The items, their
+// risk model and the reopen rules live in internal/tracker. See docs/architecture.md, "Rotation
+// ledger".
 package rotation
 
 import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // CLI is the `securizame rotations` command family.
 type CLI struct {
-	Out, Err  io.Writer
-	In        io.Reader // confirmations, and the new value with replace --stdin
-	TTY       bool      // In is a terminal
-	StatePath string    // "" means DefaultPath
-	KeyPath   string    // fingerprint key; "" means fingerprint.DefaultPath
-	Home      func() (string, error)
-	User      string // Keychain account for replace --to-keychain
-	Exec      Runner // pbpaste, pbcopy, security
-	Now       func() time.Time
+	Out, Err io.Writer
+	In       io.Reader     // confirmations, and the new value with replace --stdin
+	TTY      bool          // In is a terminal
+	Paths    tracker.Paths // zero means tracker.DefaultPaths
+	KeyPath  string        // fingerprint key; "" means fingerprint.DefaultPath
+	Home     func() (string, error)
+	User     string // Keychain account for replace --to-keychain
+	Exec     Runner // pbpaste, pbcopy, security
+	Now      func() time.Time
 }
 
 const usage = `usage: securizame rotations <command>
@@ -45,36 +52,37 @@ func (c CLI) Run(args []string) int {
 		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
-	path := c.StatePath
-	if path == "" {
-		p, err := DefaultPath()
-		if err != nil {
-			return c.fail(err)
-		}
-		path = p
+	cmd, rest := args[0], args[1:]
+	switch cmd {
+	case "sync", "list", "next", "show", "replace", "done", "snooze", "ignore", "reopen":
+	default:
+		fmt.Fprintln(c.Err, usage)
+		return 2
 	}
-	l, err := Load(path)
+	paths, err := c.Paths.Resolve()
 	if err != nil {
 		return c.fail(err)
 	}
 	now := c.Now()
-	cmd, rest := args[0], args[1:]
+	t, err := tracker.LoadOrMigrate(paths, now, c.Err)
+	if err != nil {
+		return c.fail(err)
+	}
+	path := paths.Tracker
 	switch cmd {
 	case "sync":
-		return c.sync(l, path, rest, now)
+		return c.sync(t, path, rest, now)
 	case "list":
-		return c.list(l, rest, now)
+		return c.list(t, rest, now)
 	case "next":
-		return c.next(l, path, rest, now)
+		return c.next(t, path, rest, now)
 	case "show":
-		return c.show(l, rest)
+		return c.show(t, rest)
 	case "replace":
-		return c.replace(l, path, rest, now)
-	case "done", "snooze", "ignore", "reopen":
-		return c.change(l, path, cmd, rest, now)
+		return c.replace(t, path, rest, now)
+	default: // done, snooze, ignore, reopen
+		return c.change(t, path, cmd, rest, now)
 	}
-	fmt.Fprintln(c.Err, usage)
-	return 2
 }
 
 func (c CLI) fail(err error) int {
@@ -88,7 +96,7 @@ func newFlags(name string, errw io.Writer) *flag.FlagSet {
 	return fs
 }
 
-func (c CLI) sync(l *Ledger, path string, args []string, now time.Time) int {
+func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time) int {
 	fs := newFlags("sync", c.Err)
 	from := fs.String("from", "", "local-secrets JSONL to read (default: the latest under --out)")
 	out := fs.String("out", "out", "inventory output directory")
@@ -96,34 +104,29 @@ func (c CLI) sync(l *Ledger, path string, args []string, now time.Time) int {
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
-	src := *from
-	if src == "" {
-		p, err := LatestOutput(*out)
-		if err != nil {
-			return c.fail(err)
-		}
-		src = p
-	}
-	rep, err := l.SyncFile(src, now, *noise)
+	rep, err := t.Sync(tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise}, now)
 	if err != nil {
 		return c.fail(err)
 	}
-	if err := l.Save(path); err != nil {
+	if !rep.FoldedSecrets() {
+		return c.fail(fmt.Errorf("no %s output under %s: run `securizame inventory %s` first", tracker.SecretsConnector, *out, tracker.SecretsConnector))
+	}
+	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
-	fmt.Fprintf(c.Out, "Synced %s: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d noise-only skipped.\n",
-		src, rep.Secrets, rep.Created, rep.Updated, rep.Reopened, rep.Woken, rep.Skipped)
-	if rep.HistoryOnly > 0 {
+	r := rep.Secrets
+	fmt.Fprintf(c.Out, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d noise-only skipped.\n",
+		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Skipped)
+	if r.HistoryOnly > 0 {
 		fmt.Fprintf(c.Out, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
-			rep.HistoryOnly, plural(rep.HistoryOnly, "secret", "secrets"), historyOnly)
+			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), tracker.HistoryOnly)
 	}
 	counts := map[secretrisk.Priority]int{}
-	for _, it := range l.Items {
-		if it.Active(now) {
-			counts[it.Priority]++
-		}
+	for _, it := range selectItems(t, now, false, nil, nil) {
+		counts[it.EffectivePriority()]++
 	}
-	fmt.Fprintf(c.Out, "Open: P0 %d, P1 %d, P2 %d, P3 %d. Ledger: %s\n", counts[secretrisk.P0], counts[secretrisk.P1], counts[secretrisk.P2], counts[secretrisk.P3], path)
+	fmt.Fprintf(c.Out, "Open: P0 %d, P1 %d, P2 %d, P3 %d. Tracker: %s\n", counts[secretrisk.P0], counts[secretrisk.P1], counts[secretrisk.P2], counts[secretrisk.P3], path)
+	fmt.Fprint(c.Out, tracker.SyncLine(rep))
 	return 0
 }
 
@@ -137,7 +140,7 @@ func splitList(s string) map[string]bool {
 	return m
 }
 
-func (c CLI) list(l *Ledger, args []string, now time.Time) int {
+func (c CLI) list(t *tracker.Tracker, args []string, now time.Time) int {
 	fs := newFlags("list", c.Err)
 	all := fs.Bool("all", false, "include rotated, snoozed and ignored items")
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0,P1")
@@ -145,81 +148,104 @@ func (c CLI) list(l *Ledger, args []string, now time.Time) int {
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
-	items := l.Select(now, *all, splitList(*prio), splitList(*service))
+	items := selectItems(t, now, *all, splitList(*prio), splitList(*service))
 	tw := tabwriter.NewWriter(c.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tPRI\tSTATUS\tSERVICE/TYPE\tREDACTED\tEXPOSURE\tLOCS\tFIRST SEEN\tREASON")
 	for _, it := range items {
+		s := it.Secret
 		reason := ""
-		if len(it.Reasons) > 0 {
-			reason = it.Reasons[0]
+		if len(s.Reasons) > 0 {
+			reason = s.Reasons[0]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%s\t%s\t%d\t%s\t%s\n", it.ID, orDash(string(it.Priority)), it.Status, it.Service, it.Type,
-			orDash(it.Redacted), it.WorstLabel(), len(it.Locations), it.FirstSeen.Format(time.DateOnly), truncate(reason, 90))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%s\t%s\t%d\t%s\t%s\n", s.ID, textfmt.OrDash(string(it.EffectivePriority())), stateOf(it), s.Service, s.Type,
+			textfmt.OrDash(s.Redacted), it.WorstLabel(), len(s.Locations), s.FirstSeen.Format(time.DateOnly), textfmt.Truncate(reason, 90))
 	}
 	tw.Flush()
 	fmt.Fprintf(c.Out, "%d items\n", len(items))
 	return 0
 }
 
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n-1]) + "…"
-}
-
-func (c CLI) show(l *Ledger, args []string) int {
+func (c CLI) show(t *tracker.Tracker, args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(c.Err, "usage: securizame rotations show <id>")
 		return 2
 	}
-	it, err := l.Find(args[0])
+	it, err := t.FindRotate(args[0])
 	if err != nil {
 		return c.fail(err)
 	}
-	w := c.Out
-	fmt.Fprintf(w, "%s  %s  %s/%s  %s\n", it.ID, orDash(string(it.Priority)), it.Service, it.Type, orDash(it.Redacted))
-	fmt.Fprintf(w, "status:      %s", it.Status)
+	s, w := it.Secret, c.Out
+	fmt.Fprintf(w, "%s  %s  %s/%s  %s  (%s)\n", s.ID, textfmt.OrDash(string(it.EffectivePriority())), s.Service, s.Type, textfmt.OrDash(s.Redacted), it.ID)
+	fmt.Fprintf(w, "status:      %s", stateOf(it))
 	if it.SnoozedUntil != "" {
 		fmt.Fprintf(w, " until %s", it.SnoozedUntil)
 	}
-	fmt.Fprintf(w, "\nimpact:      %s\nfingerprint: %s\nfirst seen:  %s\nlast seen:   %s\n", it.Impact, it.Fingerprint,
-		it.FirstSeen.Format(time.DateOnly), it.LastSeen.Format(time.DateOnly))
-	fmt.Fprintf(w, "rotate at:   %s\n", orDash(it.RotateURL))
+	fmt.Fprintf(w, "\nimpact:      %s\nfingerprint: %s\nfirst seen:  %s\nlast seen:   %s\n", s.Impact, it.Fingerprint,
+		s.FirstSeen.Format(time.DateOnly), s.LastSeen.Format(time.DateOnly))
+	fmt.Fprintf(w, "rotate at:   %s\n", textfmt.OrDash(s.RotateURL))
+	if o := it.PriorityOverride; o != nil {
+		fmt.Fprintf(w, "priority:    %s set by hand (%s), computed %s\n", o.Priority, o.Reason, textfmt.OrDash(string(it.Priority)))
+	}
 	fmt.Fprintln(w, "\nreasons:")
-	for _, r := range it.Reasons {
+	for _, r := range s.Reasons {
 		fmt.Fprintf(w, "  - %s\n", r)
 	}
 	fmt.Fprintln(w, "\nput the new value in (used_in):")
-	if len(it.UsedIn) == 0 {
+	if len(s.UsedIn) == 0 {
 		fmt.Fprintln(w, "  (no working file holds it: only history, transcripts or logs)")
 	}
-	for _, p := range it.UsedIn {
+	for _, p := range s.UsedIn {
 		fmt.Fprintf(w, "  %s\n", p)
 	}
-	fmt.Fprintf(w, "\nlocations (%d):\n", len(it.Locations))
+	fmt.Fprintf(w, "\nlocations (%d):\n", len(s.Locations))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, loc := range it.Locations {
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\tmode %s\tlast seen %s\n", where(loc), loc.spot().Label, loc.Bucket, loc.Source,
-			orDash(loc.Mode), loc.LastSeen.Format(time.DateOnly))
+	for _, loc := range s.Locations {
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\tmode %s\tlast seen %s\n", loc.Where(), loc.Spot().Label, loc.Bucket, loc.Source,
+			textfmt.OrDash(loc.Mode), loc.LastSeen.Format(time.DateOnly))
 	}
 	tw.Flush()
 	fmt.Fprintln(w, "\nhistory:")
 	for _, e := range it.History {
-		fmt.Fprintf(w, "  %s  %s  %s\n", e.At.Format(time.RFC3339), e.Action, e.Note)
+		fmt.Fprintf(w, "  %s  %s  %s\n", e.At.Format(time.RFC3339), e.Action, e.Detail)
 	}
 	return 0
 }
 
-func (c CLI) change(l *Ledger, path, cmd string, args []string, now time.Time) int {
+// stateOf is an item's status in the words of this command family: a done secret is "rotated".
+func stateOf(it *tracker.Item) string {
+	if it.Status == tracker.Done {
+		return "rotated"
+	}
+	return string(it.Status)
+}
+
+// itemsUnder returns the rotate items whose every location lies under prefix (a ~/ path, as findings
+// report them; an absolute path inside the home directory is accepted too): active ones, or
+// closed ones when closed is true.
+func itemsUnder(t *tracker.Tracker, prefix string, closed bool, now time.Time) []*tracker.Item {
+	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(prefix, home+"/") {
+		prefix = "~" + prefix[len(home):]
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
+	inside := func(p string) bool { return p == prefix || strings.HasPrefix(p, prefix+"/") }
+	var out []*tracker.Item
+	for _, it := range t.Items {
+		if it.Kind != tracker.KindRotate || it.Active(now) == closed || len(it.Secret.Locations) == 0 {
+			continue
+		}
+		all := true
+		for _, loc := range it.Secret.Locations {
+			all = all && inside(loc.Path)
+		}
+		if all {
+			out = append(out, it)
+		}
+	}
+	tracker.Sort(out)
+	return out
+}
+
+func (c CLI) change(t *tracker.Tracker, path, cmd string, args []string, now time.Time) int {
 	fs := newFlags(cmd, c.Err)
 	note := fs.String("note", "", "free text kept in the history")
 	var until, reason *string
@@ -238,18 +264,18 @@ func (c CLI) change(l *Ledger, path, cmd string, args []string, now time.Time) i
 		fmt.Fprintf(c.Err, "usage: securizame rotations %s <id> | --path <prefix> (see: securizame rotations)\n", cmd)
 		return 2
 	}
-	var items []*Item
+	var items []*tracker.Item
 	if *under != "" {
-		items = l.Under(*under, cmd == "reopen", now)
+		items = itemsUnder(t, *under, cmd == "reopen", now)
 		if len(items) == 0 {
 			return c.fail(fmt.Errorf("no %s item lies entirely under %s", map[bool]string{true: "closed", false: "open"}[cmd == "reopen"], *under))
 		}
 	} else {
-		it, err := l.Find(pos[0])
+		it, err := t.FindRotate(pos[0])
 		if err != nil {
 			return c.fail(err)
 		}
-		items = []*Item{it}
+		items = []*tracker.Item{it}
 	}
 	for _, it := range items {
 		switch cmd {
@@ -270,11 +296,12 @@ func (c CLI) change(l *Ledger, path, cmd string, args []string, now time.Time) i
 			return c.fail(err) // nothing saved: a bad flag fails before the first item changes
 		}
 	}
-	if err := l.Save(path); err != nil {
+	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
 	for _, it := range items {
-		fmt.Fprintf(c.Out, "%s %s/%s %s: %s\n", it.ID, it.Service, it.Type, orDash(it.Redacted), it.Status)
+		s := it.Secret
+		fmt.Fprintf(c.Out, "%s %s/%s %s: %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted), stateOf(it))
 	}
 	if len(items) > 1 {
 		fmt.Fprintf(c.Out, "%d items\n", len(items))

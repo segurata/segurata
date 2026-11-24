@@ -10,6 +10,8 @@ import (
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // maxLeaks is how many locations `next` lists; `show` lists them all.
@@ -17,50 +19,51 @@ const maxLeaks = 8
 
 // next prints the single most urgent active item with everything needed to rotate it, and logs
 // that it was shown.
-func (c CLI) next(l *Ledger, path string, args []string, now time.Time) int {
+func (c CLI) next(t *tracker.Tracker, path string, args []string, now time.Time) int {
 	fs := newFlags("next", c.Err)
 	prio := fs.String("priority", "", "comma-separated priorities, e.g. P0 or P0,P1")
 	service := fs.String("service", "", "comma-separated services, e.g. stripe,aws")
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
-	items := l.Select(now, false, splitList(*prio), splitList(*service))
+	items := selectItems(t, now, false, splitList(*prio), splitList(*service))
 	if len(items) == 0 {
 		fmt.Fprintln(c.Out, "Nothing open matches. `securizame rotations list --all` shows rotated, snoozed and ignored items.")
 		return 0
 	}
 	it := items[0]
 	printNext(c.Out, it, items)
-	if n := len(it.History); n == 0 || it.History[n-1].Action != actNext {
-		it.log(now, actNext, "")
-		if err := l.Save(path); err != nil {
+	if n := len(it.History); n == 0 || it.History[n-1].Action != tracker.ActNext {
+		it.Log(now, tracker.EvNote, tracker.ActNext, "")
+		if err := t.Save(path); err != nil {
 			return c.fail(err)
 		}
 	}
 	return 0
 }
 
-// Select returns the items that match the priority and service filters (empty matches all), most
-// urgent first: active ones, or every item when all is true.
-func (l *Ledger) Select(now time.Time, all bool, prios, services map[string]bool) []*Item {
-	var out []*Item
-	for _, it := range l.Items {
+// selectItems returns the rotate items that match the priority and service filters (empty matches
+// all), most urgent first: active ones, or every item when all is true.
+func selectItems(t *tracker.Tracker, now time.Time, all bool, prios, services map[string]bool) []*tracker.Item {
+	var out []*tracker.Item
+	for _, it := range t.Items {
 		switch {
+		case it.Kind != tracker.KindRotate:
 		case !all && !it.Active(now):
-		case len(prios) > 0 && !prios[strings.ToLower(string(it.Priority))]:
-		case len(services) > 0 && !services[strings.ToLower(it.Service)]:
+		case len(prios) > 0 && !prios[strings.ToLower(string(it.EffectivePriority()))]:
+		case len(services) > 0 && !services[strings.ToLower(it.Secret.Service)]:
 		default:
 			out = append(out, it)
 		}
 	}
-	Sort(out)
+	tracker.Sort(out)
 	return out
 }
 
-func printNext(w io.Writer, it *Item, queue []*Item) {
+func printNext(w io.Writer, it *tracker.Item, queue []*tracker.Item) {
 	counts := map[secretrisk.Priority]int{}
 	for _, q := range queue {
-		counts[q.Priority]++
+		counts[q.EffectivePriority()]++
 	}
 	var parts []string
 	for _, p := range []secretrisk.Priority{secretrisk.P0, secretrisk.P1, secretrisk.P2, secretrisk.P3} {
@@ -68,35 +71,36 @@ func printNext(w io.Writer, it *Item, queue []*Item) {
 			parts = append(parts, fmt.Sprintf("%s %d", p, counts[p]))
 		}
 	}
-	label := secretrisk.TypeFor(it.Type, it.Redacted).Label
+	s := it.Secret
+	label := secretrisk.TypeFor(s.Type, s.Redacted).Label
 	fmt.Fprintf(w, "Next of %d open (%s)\n\n", len(queue), strings.Join(parts, ", "))
-	fmt.Fprintf(w, "%s  %s  %s  %s  (%s/%s)\n", it.ID, orDash(string(it.Priority)), label, orDash(it.Redacted), it.Service, it.Type)
+	fmt.Fprintf(w, "%s  %s  %s  %s  (%s/%s)\n", s.ID, textfmt.OrDash(string(it.EffectivePriority())), label, textfmt.OrDash(s.Redacted), s.Service, s.Type)
 
 	fmt.Fprintln(w, "\nWhy")
-	for _, r := range it.Reasons {
+	for _, r := range s.Reasons {
 		fmt.Fprintf(w, "  %s\n", r)
 	}
 
-	fmt.Fprintf(w, "\nLeaked in (%d)\n", len(it.Locations))
-	locs := append([]Location(nil), it.Locations...)
-	sort.SliceStable(locs, func(i, j int) bool { return spotRank(locs[i].spot()) > spotRank(locs[j].spot()) })
+	fmt.Fprintf(w, "\nLeaked in (%d)\n", len(s.Locations))
+	locs := append([]tracker.Location(nil), s.Locations...)
+	sort.SliceStable(locs, func(i, j int) bool { return tracker.SpotRank(locs[i]) > tracker.SpotRank(locs[j]) })
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for i, loc := range locs {
 		if i == maxLeaks {
-			fmt.Fprintf(tw, "  … and %d more: securizame rotations show %s\n", len(locs)-maxLeaks, it.ID)
+			fmt.Fprintf(tw, "  … and %d more: securizame rotations show %s\n", len(locs)-maxLeaks, s.ID)
 			break
 		}
-		fmt.Fprintf(tw, "  %s\t%s\n", where(loc), loc.spot().Label)
+		fmt.Fprintf(tw, "  %s\t%s\n", loc.Where(), loc.Spot().Label)
 	}
 	tw.Flush()
 
 	fmt.Fprintln(w, "\nRotate it")
-	if it.RotateURL != "" {
-		fmt.Fprintf(w, "  at %s\n", it.RotateURL)
+	if s.RotateURL != "" {
+		fmt.Fprintf(w, "  at %s\n", s.RotateURL)
 	} else {
 		fmt.Fprintln(w, "  in the provider's console (no account-independent page is known for this type)")
 	}
-	if g, ok := secretrisk.GuideFor(it.Type); ok {
+	if g, ok := secretrisk.GuideFor(s.Type); ok {
 		for i, s := range g.Steps {
 			fmt.Fprintf(w, "  %d. %s\n", i+1, s)
 		}
@@ -105,14 +109,14 @@ func printNext(w io.Writer, it *Item, queue []*Item) {
 
 	fmt.Fprintln(w, "\nThe new value goes in (used_in)")
 	rc := false
-	if len(it.UsedIn) == 0 {
+	if len(s.UsedIn) == 0 {
 		fmt.Fprintln(w, "  no working file: only history, transcripts or logs hold it")
 	}
-	for _, p := range it.UsedIn {
+	for _, p := range s.UsedIn {
 		line := p
-		for _, loc := range it.Locations {
+		for _, loc := range s.Locations {
 			if loc.Path == p && loc.Line > 0 && loc.Source != "gitleaks" {
-				line = where(loc)
+				line = loc.Where()
 				break
 			}
 		}
@@ -125,27 +129,20 @@ func printNext(w io.Writer, it *Item, queue []*Item) {
 
 	fmt.Fprintln(w, "\nNext commands")
 	fmt.Fprintln(w, "  1. Rotate it at the provider as above and copy the new value.")
-	_, single := secretrisk.ParseHint(it.Redacted)
+	_, single := secretrisk.ParseHint(s.Redacted)
 	switch {
-	case len(it.UsedIn) == 0:
-		fmt.Fprintf(w, "  2. securizame rotations done %s --note \"rotated at the provider\"\n", it.ID)
+	case len(s.UsedIn) == 0:
+		fmt.Fprintf(w, "  2. securizame rotations done %s --note \"rotated at the provider\"\n", s.ID)
 	case !single:
 		fmt.Fprintf(w, "  2. Put the new value in the files above by hand (not a one-line value).\n")
-		fmt.Fprintf(w, "  3. securizame rotations done %s --note \"rotated at the provider\"\n", it.ID)
+		fmt.Fprintf(w, "  3. securizame rotations done %s --note \"rotated at the provider\"\n", s.ID)
 	default:
-		fmt.Fprintf(w, "  2. securizame rotations replace %s            # dry run: plan from the clipboard\n", it.ID)
+		fmt.Fprintf(w, "  2. securizame rotations replace %s            # dry run: plan from the clipboard\n", s.ID)
 		keychain := ""
 		if rc {
 			keychain = " [--to-keychain <VAR_NAME>]"
 		}
-		fmt.Fprintf(w, "  3. securizame rotations replace %s --apply%s\n", it.ID, keychain)
+		fmt.Fprintf(w, "  3. securizame rotations replace %s --apply%s\n", s.ID, keychain)
 	}
-	fmt.Fprintf(w, "  Then: securizame rotations next   (not now: snooze %s --until YYYY-MM-DD; false positive: ignore %s --reason …)\n", it.ID, it.ID)
-}
-
-func where(loc Location) string {
-	if loc.Line > 0 {
-		return fmt.Sprintf("%s:%d", loc.Path, loc.Line)
-	}
-	return loc.Path
+	fmt.Fprintf(w, "  Then: securizame rotations next   (not now: snooze %s --until YYYY-MM-DD; false positive: ignore %s --reason …)\n", s.ID, s.ID)
 }

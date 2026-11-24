@@ -13,6 +13,7 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 const secretValue = "sk-test-0123456789abcdef"
@@ -59,13 +60,13 @@ func newFixture(t *testing.T, cfg string) *fixture {
 	}
 	installed := map[string]bool{"jq": true}
 	fx.env = Env{
-		Out:          fx.out,
-		ConfigPath:   filepath.Join(dir, "config.json"),
-		KeyPath:      filepath.Join(dir, "fingerprint.key"),
-		LedgerPath:   filepath.Join(home, ".local", "state", "securizame", "rotations.json"),
-		AcceptedPath: filepath.Join(dir, "accepted.json"),
-		OutDir:       filepath.Join(home, "out"),
-		GOOS:         "darwin",
+		Out:        fx.out,
+		ConfigPath: filepath.Join(dir, "config.json"),
+		KeyPath:    filepath.Join(dir, "fingerprint.key"),
+		Tracker: tracker.Paths{Tracker: filepath.Join(home, ".securizame", "tracker.json"),
+			LegacyLedger: filepath.Join(home, ".local", "state", "securizame", "rotations.json"), LegacyAccepted: filepath.Join(dir, "accepted.json")},
+		OutDir: filepath.Join(home, "out"),
+		GOOS:   "darwin",
 		Connectors: []connector.Connector{
 			plain{connector.Description{Name: "api", Needs: []string{"secret:API_KEY"}}},
 			plain{connector.Description{Name: "browser", Needs: []string{"cdp", "os:linux"}}},
@@ -148,7 +149,8 @@ func TestDoctorReportsEveryArea(t *testing.T) {
 		"OK    cloud       secret CLOUD_TOKEN: env:DOCTOR_TEST_KEY resolves",
 		"OK    cloud       cloudctl: signed in",
 		"WARN  state       fingerprint key "+fx.env.KeyPath+": not created yet",
-		"OK    state       rotations ledger "+fx.env.LedgerPath+": none yet",
+		"OK    state       tracker "+fx.env.Tracker.Tracker+": none yet",
+		"OK    state       tracker dir "+filepath.Dir(fx.env.Tracker.Tracker)+": not created yet",
 		"OK    state       output dir "+fx.env.OutDir+": not created yet",
 	)
 	if strings.Contains(out, "cloudctl: not found") || strings.Contains(out, "secret CLOUD_TOKEN: not configured") {
@@ -201,8 +203,11 @@ func TestDoctorInvalidConfig(t *testing.T) {
 func TestDoctorStateModes(t *testing.T) {
 	fx := newFixture(t, "")
 	write(t, fx.env.KeyPath, strings.Repeat("ab", 32)+"\n", 0o644)
-	write(t, fx.env.LedgerPath, `{"version": 1, "items": []}`, 0o600)
-	write(t, fx.env.AcceptedPath, `{broken`, 0o600)
+	write(t, fx.env.Tracker.Tracker, `{broken`, 0o600)
+	write(t, fx.env.Tracker.LegacyLedger, `{"version": 1, "items": []}`, 0o600)
+	if err := os.Chmod(filepath.Dir(fx.env.Tracker.Tracker), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(fx.env.OutDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -213,8 +218,9 @@ func TestDoctorStateModes(t *testing.T) {
 	wantLines(t, out,
 		"FAIL  state   fingerprint key "+fx.env.KeyPath+": mode 0644, want 0600",
 		"fix: chmod 600 "+fx.env.KeyPath,
-		"OK    state   rotations ledger "+fx.env.LedgerPath+": readable, mode 0600",
-		"FAIL  state   accepted risks "+fx.env.AcceptedPath+": unreadable:",
+		"FAIL  state   tracker "+fx.env.Tracker.Tracker+": unreadable:",
+		"WARN  state   old state file "+fx.env.Tracker.LegacyLedger+": not imported into the tracker yet",
+		"OK    state   tracker dir "+filepath.Dir(fx.env.Tracker.Tracker)+": mode 0700",
 		"WARN  state   output dir "+fx.env.OutDir+": mode 0755, want 0700",
 		"fix: chmod 700 "+fx.env.OutDir,
 	)

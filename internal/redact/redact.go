@@ -26,9 +26,10 @@ import (
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/remediate"
-	"github.com/segurata/segurata/internal/rotation"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
+	"github.com/segurata/segurata/internal/textfmt"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // DefaultMinAge keeps files an agent or a shell may still be writing out of reach.
@@ -53,10 +54,10 @@ type CLI struct {
 	In       io.Reader
 	TTY      bool // In is a terminal
 	// Trails opens local-secrets' trail scan with the user's config.
-	Trails    func(ctx context.Context) (*localsecrets.Trails, error)
-	Lsof      Runner // lists the files claude and codex processes have open
-	StatePath string // rotation ledger; "" means rotation.DefaultPath
-	Now       func() time.Time
+	Trails func(ctx context.Context) (*localsecrets.Trails, error)
+	Lsof   Runner        // lists the files claude and codex processes have open
+	Paths  tracker.Paths // the tracker whose rotate items are noted; zero means tracker.DefaultPaths
+	Now    func() time.Time
 }
 
 type options struct {
@@ -82,22 +83,22 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	statePath := c.StatePath
-	if statePath == "" {
-		if statePath, err = rotation.DefaultPath(); err != nil {
-			return c.fail(err)
-		}
-	}
-	ledger, err := rotation.Load(statePath)
+	paths, err := c.Paths.Resolve()
 	if err != nil {
 		return c.fail(err)
 	}
-	s := &selection{opt: o, items: map[string]*rotation.Item{}}
+	ledger, err := tracker.LoadOrMigrate(paths, now, c.Err)
+	if err != nil {
+		return c.fail(err)
+	}
+	s := &selection{opt: o, items: map[string]*tracker.Item{}}
 	for _, it := range ledger.Items {
-		s.items[it.Fingerprint] = it
+		if it.Kind == tracker.KindRotate {
+			s.items[it.Fingerprint] = it
+		}
 	}
 	if o.item != "" {
-		it, err := ledger.Find(o.item)
+		it, err := ledger.FindRotate(o.item)
 		if err != nil {
 			return c.fail(err)
 		}
@@ -135,7 +136,7 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 		fmt.Fprintln(c.Out, "Not applied.")
 		return 0
 	}
-	return c.apply(ctx, t, s, p, ledger, statePath, now)
+	return c.apply(ctx, t, s, p, ledger, paths.Tracker, now)
 }
 
 func (c CLI) parse(args []string) (options, bool) {
@@ -199,9 +200,9 @@ func expandHome(p, home string) string {
 // selection decides which files and which secrets are in scope.
 type selection struct {
 	opt    options
-	prefix string                    // --path, absolute
-	only   *rotation.Item            // --item
-	items  map[string]*rotation.Item // the ledger by fingerprint
+	prefix string                   // --path, absolute
+	only   *tracker.Item            // --item
+	items  map[string]*tracker.Item // rotate items by fingerprint
 }
 
 func (s *selection) file(abs string) bool {
@@ -219,8 +220,8 @@ func (s *selection) keep(h localsecrets.Hit) bool {
 	}
 	if s.opt.minPriority != "" {
 		p := h.Priority
-		if it := s.items[h.Fingerprint]; it != nil && it.Priority != "" {
-			p = it.Priority
+		if it := s.items[h.Fingerprint]; it != nil && it.EffectivePriority() != "" {
+			p = it.EffectivePriority()
 		}
 		if p == "" || p.Rank() > s.opt.minPriority.Rank() {
 			return false
@@ -397,7 +398,7 @@ func (p *plan) print(w io.Writer, t *localsecrets.Trails, o options, s *selectio
 		scope = append(scope, "trail files under "+t.Tilde(s.prefix))
 	}
 	if s.only != nil {
-		scope = append(scope, fmt.Sprintf("only item %s (%s %s)", s.only.ID, s.only.Type, s.only.Redacted))
+		scope = append(scope, fmt.Sprintf("only item %s (%s %s)", s.only.Secret.ID, s.only.Secret.Type, s.only.Secret.Redacted))
 	}
 	if o.minPriority != "" {
 		scope = append(scope, "priority "+string(o.minPriority)+" or more urgent")
@@ -437,7 +438,7 @@ func (p *plan) print(w io.Writer, t *localsecrets.Trails, o options, s *selectio
 		fmt.Fprintln(w, "\nLeft alone, although they hold secrets in scope:")
 		for _, r := range reasons {
 			n := len(p.skipped[r])
-			fmt.Fprintf(w, "  %d %s %s\n", n, plural(n, "file", "files"), r)
+			fmt.Fprintf(w, "  %d %s %s\n", n, textfmt.Plural(n, "file", "files"), r)
 			if r != skipRecent {
 				for _, path := range p.skipped[r] {
 					fmt.Fprintf(w, "    %s\n", path)
@@ -446,10 +447,10 @@ func (p *plan) print(w io.Writer, t *localsecrets.Trails, o options, s *selectio
 		}
 	}
 	fmt.Fprintf(w, "\nTotal: %d %s, %d %s of %d distinct %s, %d bytes of secret text replaced.\n",
-		len(p.files), plural(len(p.files), "file", "files"), matches, plural(matches, "match", "matches"),
-		len(all), plural(len(all), "secret", "secrets"), bytes)
+		len(p.files), textfmt.Plural(len(p.files), "file", "files"), matches, textfmt.Plural(matches, "match", "matches"),
+		len(all), textfmt.Plural(len(all), "secret", "secrets"), bytes)
 	if residue > 0 {
-		fmt.Fprintf(w, "%d %s cannot be replaced without breaking JSON and will stay.\n", residue, plural(residue, "match", "matches"))
+		fmt.Fprintf(w, "%d %s cannot be replaced without breaking JSON and will stay.\n", residue, textfmt.Plural(residue, "match", "matches"))
 	}
 	if len(total) == 0 {
 		return
@@ -475,16 +476,9 @@ func typeCounts(m map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
-}
-
 // apply rewrites every planned file that is still as planned, verifies the result by scanning
 // the rewritten files again, and notes the redaction on the rotation items.
-func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p *plan, ledger *rotation.Ledger, statePath string, now time.Time) int {
+func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p *plan, ledger *tracker.Tracker, statePath string, now time.Time) int {
 	open, err := c.openFiles(ctx)
 	if err != nil {
 		return c.fail(err)
@@ -507,8 +501,8 @@ func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p 
 	for _, f := range written {
 		matches += f.matches
 	}
-	fmt.Fprintf(c.Out, "Rewrote %d %s (%d %s). Scanning them again...\n", len(written), plural(len(written), "file", "files"),
-		matches, plural(matches, "match", "matches"))
+	fmt.Fprintf(c.Out, "Rewrote %d %s (%d %s). Scanning them again...\n", len(written), textfmt.Plural(len(written), "file", "files"),
+		matches, textfmt.Plural(matches, "match", "matches"))
 	if err := c.verify(t, s, written); err != nil {
 		return c.fail(err)
 	}
@@ -532,7 +526,7 @@ func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p 
 			return c.fail(err)
 		}
 		fmt.Fprintf(c.Out, "Noted the redaction on %d rotation %s. Rotation is still needed: these copies reached the model provider or wherever the trail was sent.\n",
-			noted, plural(noted, "item", "items"))
+			noted, textfmt.Plural(noted, "item", "items"))
 	}
 	if failed > 0 {
 		return 1
@@ -626,7 +620,7 @@ func (c CLI) verify(t *localsecrets.Trails, s *selection, written []*filePlan) e
 			continue
 		}
 		if left := len(res.applied) + res.residue; left > f.residue {
-			problem("%d %s in scope still there", left, plural(left, "secret", "secrets"))
+			problem("%d %s in scope still there", left, textfmt.Plural(left, "secret", "secrets"))
 		}
 	}
 	if len(problems) > 0 {

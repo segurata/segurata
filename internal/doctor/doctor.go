@@ -13,31 +13,30 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/segurata/segurata/internal/accept"
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fingerprint"
-	"github.com/segurata/segurata/internal/rotation"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // Env is everything doctor reads. The command fills it from the defaults; tests point it at a
 // temporary home and inject fakes.
 type Env struct {
-	Out          io.Writer
-	ConfigPath   string
-	KeyPath      string // fingerprint key
-	LedgerPath   string // rotations.json
-	AcceptedPath string
-	OutDir       string // inventory output directory
-	GOOS         string
-	Connectors   []connector.Connector
+	Out        io.Writer
+	ConfigPath string
+	KeyPath    string        // fingerprint key
+	Tracker    tracker.Paths // tracker.json and the legacy files it imports once
+	OutDir     string        // inventory output directory
+	GOOS       string
+	Connectors []connector.Connector
 	// Request builds a connector request, resolving its secret references (run.NewRequest).
 	Request func(config.Config, config.Instance) (connector.Request, []error)
 	// CDPVersion reads the browser's /json/version (cdp.ReadVersion).
@@ -251,11 +250,19 @@ func (e Env) state() []connector.Check {
 	} else {
 		checks = append(checks, fileCheck("fingerprint key", e.KeyPath, err, 0o600))
 	}
-	_, err := rotation.Load(e.LedgerPath)
-	checks = append(checks, optionalFile("rotations ledger", e.LedgerPath, err, 0o600, "securizame rotations sync creates it"))
-	_, err = accept.Load(e.AcceptedPath)
-	checks = append(checks, optionalFile("accepted risks", e.AcceptedPath, err, 0o600, "securizame accept creates it"))
-	checks = append(checks, outDir(e.OutDir))
+	_, err := tracker.Load(e.Tracker.Tracker)
+	checks = append(checks, optionalFile("tracker", e.Tracker.Tracker, err, 0o600, "securizame track sync creates it"))
+	for _, legacy := range []string{e.Tracker.LegacyLedger, e.Tracker.LegacyAccepted} {
+		if legacy == "" {
+			continue
+		}
+		if _, err := os.Stat(legacy); err == nil {
+			checks = append(checks, connector.Check{Level: connector.Warn, What: "old state file " + legacy,
+				Detail: "not imported into the tracker yet", Fix: "securizame status imports it (the old file is kept as " + legacy + ".migrated-<date>)"})
+		}
+	}
+	checks = append(checks, dirCheck("tracker dir", filepath.Dir(e.Tracker.Tracker), "the first command that saves the tracker creates it"))
+	checks = append(checks, dirCheck("output dir", e.OutDir, "securizame inventory creates it"))
 	return checks
 }
 
@@ -282,14 +289,14 @@ func fileCheck(label, path string, loadErr error, want fs.FileMode) connector.Ch
 	return connector.Check{Level: connector.OK, What: what, Detail: fmt.Sprintf("readable, mode %#o", want)}
 }
 
-// outDir checks the inventory output folder. Its files are 0600 already, so a looser folder is a
-// warning: it only shows which connectors ran and when.
-func outDir(dir string) connector.Check {
-	what := "output dir " + dir
+// dirCheck checks one of securizame's folders. Its files are 0600 already, so a looser folder is a
+// warning: it only shows which files exist and when they changed.
+func dirCheck(label, dir, creator string) connector.Check {
+	what := label + " " + dir
 	st, err := os.Stat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return connector.Check{Level: connector.OK, What: what, Detail: "not created yet (securizame inventory creates it, mode 0700)"}
+		return connector.Check{Level: connector.OK, What: what, Detail: "not created yet (" + creator + ", mode 0700)"}
 	case err != nil:
 		return connector.Check{Level: connector.Fail, What: what, Detail: err.Error(), Fix: "fix or remove " + dir}
 	case !st.IsDir():

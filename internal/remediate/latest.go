@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,9 @@ import (
 // enough: after midnight it may hold only the connectors run since.
 func LatestFiles(outDir string) ([]string, error) {
 	entries, err := os.ReadDir(outDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("no inventory under %s: run `securizame inventory` first", outDir)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -17,7 +17,8 @@ import (
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/remediate"
-	"github.com/segurata/segurata/internal/rotation"
+	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // Every secret here is generated at run time from a fixed seed: no real or real-looking literal
@@ -75,7 +76,7 @@ func newFixture(t testing.TB) *fixture {
 	conn := localsecrets.New()
 	conn.Home = func() (string, error) { return home, nil }
 	conn.KeyPath = func(string) string { return keyPath }
-	fx := &fixture{t: t, home: home, key: key, conn: conn, state: filepath.Join(home, "state", "rotations.json"),
+	fx := &fixture{t: t, home: home, key: key, conn: conn, state: filepath.Join(home, ".securizame", "tracker.json"),
 		secrets: map[string]string{}, old: time.Now().Add(-3 * time.Hour).Truncate(time.Second)}
 	return fx
 }
@@ -119,7 +120,7 @@ func (fx *fixture) cli(in string, tty bool) (CLI, *bytes.Buffer, *bytes.Buffer) 
 			}
 			return []byte(b.String()), fx.lsofErr
 		},
-		StatePath: fx.state, Now: time.Now}, &out, &errb
+		Paths: tracker.Paths{Tracker: fx.state}, Now: time.Now}, &out, &errb
 }
 
 // run executes the command and checks that no planted secret appears in its output.
@@ -426,8 +427,9 @@ func TestItemOnlyAndLedgerNote(t *testing.T) {
 	a := fx.write(".claude/projects/a/s.jsonl", fx.transcript(), 0o600)
 	b := fx.write("Library/Logs/app/app.log", "token "+fx.secrets["anthropic"]+" and "+fx.secrets["github"]+"\n", 0o600)
 	fp := fx.key.Of(fx.secrets["anthropic"])
-	l := &rotation.Ledger{Version: 1, Items: []*rotation.Item{{ID: fp[:8], Fingerprint: fp, Type: "anthropic", Redacted: "sk-ant-…(73)",
-		Status: rotation.Open, Priority: "P1"}}}
+	l := tracker.New(time.Now())
+	l.SyncSecrets([]tracker.Sighting{{Evidence: secretrisk.Evidence{Fingerprint: fp, Type: "anthropic", Redacted: "sk-ant-…(73)",
+		Source: "scan", Kind: "transcript", Path: "~/.claude/projects/a/s.jsonl", Mode: "600"}}}, time.Now(), false)
 	if err := l.Save(fx.state); err != nil {
 		t.Fatal(err)
 	}
@@ -445,12 +447,16 @@ func TestItemOnlyAndLedgerNote(t *testing.T) {
 			t.Errorf("%s lost a secret outside --item", p)
 		}
 	}
-	l, err := rotation.Load(fx.state)
+	l, err := tracker.Load(fx.state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := l.Items[0].History
-	if len(h) == 0 || h[len(h)-1].Action != "redacted" || h[len(h)-1].Note != "redacted from 2 trail files" {
+	it, err := l.FindRotate(fp[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := it.History
+	if len(h) == 0 || h[len(h)-1].Action != "redacted" || h[len(h)-1].Detail != "redacted from 2 trail files" {
 		t.Errorf("history: %+v", h)
 	}
 }

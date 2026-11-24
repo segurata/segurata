@@ -7,18 +7,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/rotation"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 var severities = []finding.Severity{finding.SevCritical, finding.SevHigh, finding.SevMedium, finding.SevLow, finding.SevInfo}
 
 // document lays the report out section by section.
-func (r *Report) document() *doc {
-	d := &doc{title: "securizame report"}
-	d.h(1, d.title)
-	d.p(fmt.Sprintf("Generated %s from the latest run of each connector instance under %s. Findings below %s and accepted risks are left out of the lists.",
+func (r *Report) document() *doc.Doc {
+	d := &doc.Doc{Title: "securizame report"}
+	d.H(1, d.Title)
+	d.P(fmt.Sprintf("Generated %s from the latest run of each connector instance under %s. Findings below %s and accepted risks are left out of the lists.",
 		r.Generated.Format("2006-01-02 15:04"), r.OutDir, r.MinSev))
 	r.headline(d)
 	r.attention(d)
@@ -26,20 +27,20 @@ func (r *Report) document() *doc {
 	r.topFindings(d)
 	r.rotations(d)
 	r.accepted(d)
-	d.h(2, "Manual review")
-	d.p("Services without a connector are reviewed by hand every quarter, and right after a breach of a service you sign in with: docs/manual-review.md.")
+	d.H(2, "Manual review")
+	d.P("Services without a connector are reviewed by hand every quarter, and right after a breach of a service you sign in with: docs/manual-review.md.")
 	return d
 }
 
-func (r *Report) headline(d *doc) {
-	d.h(2, "Headline")
+func (r *Report) headline(d *doc.Doc) {
+	d.H(2, "Headline")
 	head := []string{"Connector", "Run"}
 	for _, s := range severities {
 		head = append(head, strings.ToUpper(string(s[:1]))+string(s[1:]))
 	}
 	head = append(head, "Accepted", "Attention")
 	total := make([]int, len(severities)+2)
-	var rows [][]cell
+	var rows [][]doc.Cell
 	for _, run := range r.Runs {
 		counts := make([]int, len(severities)+2)
 		for _, f := range run.Findings {
@@ -50,18 +51,18 @@ func (r *Report) headline(d *doc) {
 			counts[sevIndex(f.Severity)]++
 		}
 		counts[len(severities)+1] = len(needsAttention(run.Statuses))
-		row := []cell{{text: run.Label}, {text: run.Date}}
+		row := []doc.Cell{{Text: run.Label}, {Text: run.Date}}
 		for i, n := range counts {
 			total[i] += n
-			row = append(row, cell{text: strconv.Itoa(n), num: true})
+			row = append(row, doc.Cell{Text: strconv.Itoa(n), Num: true})
 		}
 		rows = append(rows, row)
 	}
-	row := []cell{{text: "Total"}, {text: ""}}
+	row := []doc.Cell{{Text: "Total"}, {Text: ""}}
 	for _, n := range total {
-		row = append(row, cell{text: strconv.Itoa(n), num: true})
+		row = append(row, doc.Cell{Text: strconv.Itoa(n), Num: true})
 	}
-	d.table(head, append(rows, row))
+	d.Table(head, append(rows, row))
 }
 
 func sevIndex(s finding.Severity) int {
@@ -83,64 +84,30 @@ func needsAttention(sts []finding.Status) []finding.Status {
 	return out
 }
 
-// statusAction is what to do about a status, and the command that checks it afterwards. Connectors
-// usually put the exact fix in the detail (a command to run, a page to open); then the action
-// points there instead of guessing from the state alone.
-func statusAction(st finding.Status, label string) (string, string) {
-	rerun := "securizame inventory " + label
-	if detailHasFix(st.Detail) {
-		return "Do what the detail above says.", rerun
-	}
-	switch st.State {
-	case finding.StateReauth:
-		return "Sign in to this account again (in the browser for browser connectors, with the provider's CLI otherwise).", rerun
-	case finding.StateSignedOut:
-		return "Sign in to this account in the browser securizame drives, or drop it from the config if it is gone.", rerun
-	case finding.StateMissingCredentials:
-		return "Check the secret reference for " + label + " in ~/.config/securizame/config.json (Keychain item, 1Password field or environment variable).", rerun
-	case finding.StateNoScope:
-		return "Grant the permission the detail names to the credential this connector uses.", rerun
-	case finding.StateUnsupported:
-		return "Install what the detail names (respecting the 4-day quarantine), or remove " + label + " from the config.", rerun
-	}
-	return "Run it again with connector logs to see what failed.", rerun + " --verbose"
-}
-
-// detailHasFix reports whether a status detail already carries a concrete step.
-func detailHasFix(detail string) bool {
-	d := strings.ToLower(detail)
-	for _, cue := range []string{"run:", "run gcloud", "run gh", "run aws", "run az", "; run ", "open http", "store it with", "raise ", "create an "} {
-		if strings.Contains(d, cue) {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *Report) attention(d *doc) {
-	d.h(2, "Needs attention")
-	var items []item
+func (r *Report) attention(d *doc.Doc) {
+	d.H(2, "Needs attention")
+	var items []doc.Item
 	for _, run := range r.Runs {
 		for _, st := range needsAttention(run.Statuses) {
-			action, cmd := statusAction(st, run.Label)
+			action, cmd := tracker.StatusAction(st, run.Label)
 			text := run.Label
 			if st.Account != "" {
 				text += " · " + st.Account
 			}
-			it := item{badge: string(st.State), text: text, meta: st.Detail,
-				details: []detail{{label: "Action", text: action}, {label: "Then", text: cmd, kind: dCode}}}
+			it := doc.Item{Badge: string(st.State), Text: text, Meta: st.Detail,
+				Details: []doc.Detail{{Label: "Action", Text: action}, {Label: "Then", Text: cmd, Kind: doc.DCode}}}
 			items = append(items, it)
 		}
 	}
 	if len(items) == 0 {
-		d.p("Nothing: every connector could inspect every account.")
+		d.P("Nothing: every connector could inspect every account.")
 		return
 	}
-	d.list(items)
+	d.List(items)
 }
 
-func (r *Report) changes(d *doc) {
-	d.h(2, "Changes since the previous run")
+func (r *Report) changes(d *doc.Doc) {
+	d.H(2, "Changes since the previous run")
 	var first []string
 	compared := 0
 	for _, run := range r.Runs {
@@ -158,32 +125,32 @@ func (r *Report) changes(d *doc) {
 			}
 		}
 		sort.SliceStable(changed, func(i, j int) bool { return changed[i].Severity.Rank() > changed[j].Severity.Rank() })
-		d.h(3, fmt.Sprintf("%s: %s to %s", run.Label, run.PrevDate, run.Date))
+		d.H(3, fmt.Sprintf("%s: %s to %s", run.Label, run.PrevDate, run.Date))
 		if len(added)+len(resolved)+len(changed) == 0 {
-			d.p(fmt.Sprintf("No change at or above %s.", r.MinSev))
+			d.P(fmt.Sprintf("No change at or above %s.", r.MinSev))
 			continue
 		}
-		d.p(fmt.Sprintf("%d new, %d resolved, %d with another severity.", len(added), len(resolved), len(changed)))
-		var items []item
+		d.P(fmt.Sprintf("%d new, %d resolved, %d with another severity.", len(added), len(resolved), len(changed)))
+		var items []doc.Item
 		for _, f := range capped(added, r.Top) {
-			items = append(items, item{badge: string(f.Severity), text: "New: " + f.DisplayTitle(), meta: meta(f)})
+			items = append(items, doc.Item{Badge: string(f.Severity), Text: "New: " + f.DisplayTitle(), Meta: meta(f)})
 		}
 		items = append(items, more(len(added), r.Top, "new findings"))
 		for _, c := range changed[:min(len(changed), r.Top)] {
-			items = append(items, item{badge: string(c.Severity), text: fmt.Sprintf("Was %s: %s", c.From, c.DisplayTitle()), meta: meta(c.Finding)})
+			items = append(items, doc.Item{Badge: string(c.Severity), Text: fmt.Sprintf("Was %s: %s", c.From, c.DisplayTitle()), Meta: meta(c.Finding)})
 		}
 		items = append(items, more(len(changed), r.Top, "severity changes"))
 		for _, f := range capped(resolved, r.Top) {
-			items = append(items, item{badge: "resolved", text: fmt.Sprintf("Gone (was %s): %s", f.Severity, f.Title), meta: meta(f)})
+			items = append(items, doc.Item{Badge: "resolved", Text: fmt.Sprintf("Gone (was %s): %s", f.Severity, f.Title), Meta: meta(f)})
 		}
 		items = append(items, more(len(resolved), r.Top, "resolved findings"))
-		d.list(nonEmpty(items))
+		d.List(nonEmpty(items))
 	}
 	if len(first) > 0 {
-		d.p("First run, nothing to compare: " + strings.Join(first, ", ") + ".")
+		d.P("First run, nothing to compare: " + strings.Join(first, ", ") + ".")
 	}
 	if compared > 0 {
-		d.p("A run is compared with the same connector instance's output in the newest earlier out/<date>/ folder; running a connector twice in one day overwrites that day's file.")
+		d.P("A run is compared with the same connector instance's output in the newest earlier out/<date>/ folder; running a connector twice in one day overwrites that day's file.")
 	}
 }
 
@@ -203,17 +170,17 @@ func atLeast(fs []finding.Finding, minSev finding.Severity) []finding.Finding {
 func capped(fs []finding.Finding, n int) []finding.Finding { return fs[:min(len(fs), n)] }
 
 // more is the "and N more" line under a capped list, or an empty item when nothing was cut.
-func more(total, shown int, what string) item {
+func more(total, shown int, what string) doc.Item {
 	if total <= shown {
-		return item{}
+		return doc.Item{}
 	}
-	return item{text: fmt.Sprintf("… and %d more %s", total-shown, what)}
+	return doc.Item{Text: fmt.Sprintf("… and %d more %s", total-shown, what)}
 }
 
-func nonEmpty(items []item) []item {
-	var out []item
+func nonEmpty(items []doc.Item) []doc.Item {
+	var out []doc.Item
 	for _, it := range items {
-		if it.text != "" {
+		if it.Text != "" {
 			out = append(out, it)
 		}
 	}
@@ -228,8 +195,8 @@ func meta(f finding.Finding) string {
 	return strings.Join(append(parts, "id "+f.ID), " · ")
 }
 
-func (r *Report) topFindings(d *doc) {
-	d.h(2, "Top findings")
+func (r *Report) topFindings(d *doc.Doc) {
+	d.H(2, "Top findings")
 	type group struct {
 		run   *Run
 		shown []finding.Finding
@@ -248,95 +215,96 @@ func (r *Report) topFindings(d *doc) {
 	}
 	sort.SliceStable(groups, func(i, j int) bool { return groups[i].shown[0].Severity.Rank() > groups[j].shown[0].Severity.Rank() })
 	if len(groups) == 0 {
-		d.p(fmt.Sprintf("No finding at or above %s.", r.MinSev))
+		d.P(fmt.Sprintf("No finding at or above %s.", r.MinSev))
 	}
 	for _, g := range groups {
-		d.h(3, fmt.Sprintf("%s (%d at or above %s)", g.run.Label, len(g.shown), r.MinSev))
-		var items []item
+		d.H(3, fmt.Sprintf("%s (%d at or above %s)", g.run.Label, len(g.shown), r.MinSev))
+		var items []doc.Item
 		for _, f := range capped(g.shown, r.Top) {
 			items = append(items, findingItem(f))
 		}
-		if m := more(len(g.shown), r.Top, "in "+g.run.File); m.text != "" {
+		if m := more(len(g.shown), r.Top, "in "+g.run.File); m.Text != "" {
 			items = append(items, m)
 		}
-		d.list(items)
+		d.List(items)
 	}
 	if note := finding.HiddenNote(hidden); note != "" {
-		d.p(note + ".")
+		d.P(note + ".")
 	}
 }
 
-func findingItem(f finding.Finding) item {
-	it := item{badge: string(f.Severity), text: f.DisplayTitle(), meta: meta(f)}
+func findingItem(f finding.Finding) doc.Item {
+	it := doc.Item{Badge: string(f.Severity), Text: f.DisplayTitle(), Meta: meta(f)}
 	if s := f.Remediation.Summary; s != "" {
-		it.details = append(it.details, detail{label: "Fix", text: s})
+		it.Details = append(it.Details, doc.Detail{Label: "Fix", Text: s})
 	}
 	if u := f.Remediation.URL; u != "" {
-		it.details = append(it.details, detail{label: "Where", text: u, kind: dLink})
+		it.Details = append(it.Details, doc.Detail{Label: "Where", Text: u, Kind: doc.DLink})
 	}
 	if f.Remediation.Automatable {
-		it.details = append(it.details, detail{label: "Automatable", text: "securizame remediate " + f.ID, kind: dCode})
+		it.Details = append(it.Details, doc.Detail{Label: "Automatable", Text: "securizame remediate " + f.ID, Kind: doc.DCode})
 	}
 	return it
 }
 
-func (r *Report) rotations(d *doc) {
-	d.h(2, "Rotation ledger")
+func (r *Report) rotations(d *doc.Doc) {
+	d.H(2, "Rotation ledger")
 	s := r.Rotations
 	if s.Total == 0 {
-		d.p("No rotation ledger yet at "+s.Path+": after a local-secrets inventory, run ", code("securizame rotations sync"), ".")
+		d.P("No secrets in the tracker yet ("+s.Path+"): after a local-secrets inventory, run ", doc.Code("securizame rotations sync"), ".")
 		return
 	}
-	d.p(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored.",
+	d.P(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored.",
 		s.Open[secretrisk.P0], s.Open[secretrisk.P1], s.Open[secretrisk.P2], s.Open[secretrisk.P3],
-		s.Total, s.ByStatus[rotation.Rotated], s.ByStatus[rotation.Snoozed], s.ByStatus[rotation.Ignored]))
+		s.Total, s.ByStatus[tracker.Done], s.ByStatus[tracker.Snoozed], s.ByStatus[tracker.Ignored]))
 	if len(s.TopP0) > 0 {
-		d.h(3, "Rotate first (P0)")
-		var items []item
+		d.H(3, "Rotate first (P0)")
+		var items []doc.Item
 		for _, it := range s.TopP0 {
-			items = append(items, rotationItem(it, "since "+it.FirstSeen.Format(time.DateOnly)))
+			items = append(items, rotationItem(it, "since "+it.Secret.FirstSeen.Format(time.DateOnly)))
 		}
-		if m := more(s.Open[secretrisk.P0], len(s.TopP0), "P0 items"); m.text != "" {
+		if m := more(s.Open[secretrisk.P0], len(s.TopP0), "P0 items"); m.Text != "" {
 			items = append(items, m)
 		}
-		d.list(items)
+		d.List(items)
 	}
 	if len(s.SnoozesDue) > 0 {
-		d.h(3, "Snoozes due")
-		var items []item
+		d.H(3, "Snoozes due")
+		var items []doc.Item
 		for _, it := range s.SnoozesDue {
 			items = append(items, rotationItem(it, "snoozed until "+it.SnoozedUntil))
 		}
-		d.list(items)
-		d.p("They count as open again; ", code("securizame rotations sync"), " records it.")
+		d.List(items)
+		d.P("They count as open again; ", doc.Code("securizame rotations sync"), " records it.")
 	}
-	d.p("Full list: ", code("securizame rotations list"), "; one item: ", code("securizame rotations show <id>"), ".")
+	d.P("Full list: ", doc.Code("securizame rotations list"), "; one item: ", doc.Code("securizame rotations show <id>"), ".")
 }
 
 // rotationItem shows an item by its redacted hint only, never a location's content.
-func rotationItem(it *rotation.Item, when string) item {
-	text := it.Service + "/" + it.Type
-	if it.Redacted != "" {
-		text += " " + it.Redacted
+func rotationItem(it *tracker.Item, when string) doc.Item {
+	s := it.Secret
+	text := s.Service + "/" + s.Type
+	if s.Redacted != "" {
+		text += " " + s.Redacted
 	}
-	out := item{badge: string(it.Priority), text: text, meta: fmt.Sprintf("id %s · %s · %s · %s", it.ID, it.WorstLabel(), count(len(it.Locations), "location"), when)}
-	if len(it.Reasons) > 0 {
-		out.details = append(out.details, detail{label: "Why", text: it.Reasons[0]})
+	out := doc.Item{Badge: string(it.EffectivePriority()), Text: text, Meta: fmt.Sprintf("id %s · %s · %s · %s", s.ID, it.WorstLabel(), count(len(s.Locations), "location"), when)}
+	if len(s.Reasons) > 0 {
+		out.Details = append(out.Details, doc.Detail{Label: "Why", Text: s.Reasons[0]})
 	}
-	if it.RotateURL != "" {
-		out.details = append(out.details, detail{label: "Rotate at", text: it.RotateURL, kind: dLink})
+	if s.RotateURL != "" {
+		out.Details = append(out.Details, doc.Detail{Label: "Rotate at", Text: s.RotateURL, Kind: doc.DLink})
 	}
-	out.details = append(out.details, detail{label: "Then", text: "securizame rotations done " + it.ID, kind: dCode})
+	out.Details = append(out.Details, doc.Detail{Label: "Then", Text: "securizame rotations done " + s.ID, Kind: doc.DCode})
 	return out
 }
 
-func (r *Report) accepted(d *doc) {
-	d.h(2, "Accepted risks")
+func (r *Report) accepted(d *doc.Doc) {
+	d.H(2, "Accepted risks")
 	if len(r.Accepted) == 0 {
-		d.p("No accepted risks.")
+		d.P("No accepted risks.")
 		return
 	}
-	var rows [][]cell
+	var rows [][]doc.Cell
 	expired, gone := 0, 0
 	for _, a := range r.Accepted {
 		state := "accepted"
@@ -352,15 +320,15 @@ func (r *Report) accepted(d *doc) {
 		if until == "" {
 			until = "no end"
 		}
-		rows = append(rows, []cell{{text: a.ID}, {text: a.Connector}, {text: state, badge: true}, {text: until}, {text: a.Reason}, {text: a.Title}})
+		rows = append(rows, []doc.Cell{{Text: a.ID}, {Text: a.Connector}, {Text: state, Badge: true}, {Text: until}, {Text: a.Reason}, {Text: a.Title}})
 	}
-	d.table([]string{"ID", "Connector", "State", "Until", "Reason", "Title"}, rows)
+	d.Table([]string{"ID", "Connector", "State", "Until", "Reason", "Title"}, rows)
 	if expired > 0 {
-		d.p(fmt.Sprintf("%d expired: those findings show in the lists again. Fix them, or accept again with a new date: ", expired),
-			code("securizame accept <id> --reason \"…\" --until YYYY-MM-DD"), ".")
+		d.P(fmt.Sprintf("%d expired: those findings show in the lists again. Fix them, or accept again with a new date: ", expired),
+			doc.Code("securizame accept <id> --reason \"…\" --until YYYY-MM-DD"), ".")
 	}
 	if gone > 0 {
-		d.p(fmt.Sprintf("%d no longer reported by the latest run of their connector: ", gone), code("securizame unaccept <id>"), " tidies them up.")
+		d.P(fmt.Sprintf("%d no longer reported by the latest run of their connector: ", gone), doc.Code("securizame unaccept <id>"), " tidies them up.")
 	}
 }
 

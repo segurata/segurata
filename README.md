@@ -25,7 +25,47 @@ write one, built-in or external: [docs/connectors.md](docs/connectors.md). Contr
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Output goes to `out/<date>/<connector>.jsonl` (mode 0600; `out/` is gitignored because it holds
-email addresses and each account's services), with a summary sorted by severity.
+email addresses and each account's services), with a summary sorted by severity. Each inventory
+ends with `securizame track sync`, which folds the latest runs into the tracker.
+
+## Tracker and status
+
+```bash
+./securizame status                         # the briefing: what to do next, decisions, blockers, changes
+./securizame status --priority P0,P1 --theme github-orgs
+./securizame status --write                 # also ~/.securizame/status.md and status.html (mode 0600)
+./securizame track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
+./securizame track show T-0042
+./securizame track start|done|reopen T-0042 [--note "..."]
+./securizame track note T-0042 "ordered a backup disk"
+./securizame track snooze T-0042 --until 2027-01-15
+./securizame track ignore T-0042 --reason "test fixture"
+./securizame track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
+./securizame track decide T-0003 --answer "yes"
+./securizame track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
+./securizame track add --kind decide --question "Keep the old VPS?" --option yes --option no
+./securizame track sync [--out out]         # also run by inventory and rotations sync
+```
+
+`~/.securizame/tracker.json` (mode 0600 in a 0700 folder; `SECURIZAME_HOME` names another folder)
+is the single record of what to do, what is done and what is pending, and survives restarts: one
+item per thing a person would act on. Five GitHub orgs that do not require 2FA are one item; each
+secret to rotate, each data dump and each Mac setting is its own item; a connector that needs a
+fresh sign-in is a setup item; info findings make none. Items have a kind (fix, rotate, decide,
+setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed), a computed
+priority that `prioritize` can override, the findings they link, the next step and a history.
+
+A done item is verified when a later run no longer reports its findings, and reopened if one does;
+an item whose findings vanish on their own is closed as "verified (no longer reported)". Expired
+snoozes and acceptances open their items again. Every change goes through the CLI; the file is
+written atomically and the previous version kept as `tracker.json.bak`. A tracker that does not
+parse is never overwritten: fix it or restore the backup. It holds redacted hints and fingerprints,
+never a secret value, so the backup holds none either.
+
+The tracker absorbed the rotation ledger (`~/.local/state/securizame/rotations.json`) and the
+accepted risks (`~/.config/securizame/accepted.json`). The first command run without a tracker
+imports both, history included, and renames them to `*.migrated-<date>`. Details:
+[docs/architecture.md](docs/architecture.md#tracker).
 
 ## Google: linked apps (`google-personal`)
 
@@ -304,9 +344,9 @@ every secret as new.
 
 One item per secret fingerprint, with its priority (P0 to P3), the reasons in plain words, every
 location, `used_in` (the config, `.env` and rc files that hold it, where the new value must go)
-and the provider page where it is rotated. State lives outside the repository, at
-`~/.local/state/securizame/rotations.json` (mode 0600; `SECURIZAME_STATE` names another
-directory), and holds no secret values. A secret marked done that the next sync still finds with
+and the provider page where it is rotated. These are the tracker's rotate items (see "Tracker and
+status"); ids are the first 8 characters of the fingerprint, and the tracker's `T-` id works too.
+They hold no secret values. A secret marked done that the next sync still finds with
 the same fingerprint in a working file (config, `.env`, rc, repo working tree) is reopened: a
 program still reads the old value there. Copies only in git history, transcripts or logs are dead
 after revocation, so the item stays rotated with a one-time note. Generic matches are left out
@@ -439,7 +479,8 @@ manager, crypto wallet, AI assistant, shopping, dev tool) from a short list of i
 ```
 
 One page from the latest run of every connector instance (`out/<date>/<name>.jsonl`, the same
-files `remediate` reads), the accepted risks and the rotation ledger:
+files `remediate` reads), the accepted risks and the secrets to rotate, both from the tracker. The
+report is the per-run view; `securizame status` is the tracker's:
 
 - Headline: findings by severity for each connector instance, its run date, how many are
   accepted and how many statuses need attention.
@@ -451,7 +492,7 @@ files `remediate` reads), the accepted risks and the rotation ledger:
   that day's file, so the comparison is always with an earlier day.
 - Top findings, worst first and grouped by connector, each with its remediation, its page and
   `securizame remediate <id>` when automatable.
-- Rotation ledger: open items by priority, the first P0 items (redacted hint, exposure, reason,
+- Rotation ledger: open rotate items by priority, the first P0 items (redacted hint, exposure, reason,
   rotate URL; never a location) and snoozes past their date.
 - Accepted risks, with the expired ones and the ones the latest run no longer reports.
 
@@ -459,7 +500,7 @@ files `remediate` reads), the accepted risks and the rotation ledger:
 trim the lists; `--dir` names another inventory directory. The HTML page has no script and no
 external asset, follows the system's light or dark mode and fits a phone. Written to a file, the
 report gets mode 0600: it names accounts, services and paths. It never contains a secret value,
-because findings and the ledger never hold one.
+because findings and the tracker never hold one.
 
 ## Remediation
 
@@ -526,8 +567,9 @@ a restarted process can drop its ports for a moment and open them again.
 
 A finding you keep on purpose stays in `out/<date>/*.jsonl` with an `accepted` field, but leaves
 the summary and `remediate --list`, which print how many were hidden. With `--until`, it shows
-again after that day, marked "(acceptance expired)". State: `~/.config/securizame/accepted.json`
-(mode 0600; `SECURIZAME_ACCEPTED` names another file). Details:
+again after that day, marked "(acceptance expired)". Acceptances are tracker items with status
+`accepted`; accepting one finding of a grouped item (one of five orgs) moves it to an item of its
+own first. `unaccept` takes the finding id or the item id. Details:
 [docs/architecture.md](docs/architecture.md#accepted-risks).
 
 ## Scheduled runs
