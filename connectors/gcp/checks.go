@@ -192,10 +192,12 @@ var broadRoles = map[string]bool{"roles/owner": true, "roles/editor": true}
 
 // googleManaged reports service agents that Google itself grants Editor to and that cannot hold
 // user keys. The default Compute Engine and App Engine accounts are not skipped: Google advises
-// taking Editor away from them.
+// taking Editor away from them. system.gserviceaccount.com is Google's own domain: for example
+// appsdev-apps-dev-script-auth@system.gserviceaccount.com owns every Apps Script default project
+// (sys-<digits>); the owner cannot change it.
 func googleManaged(email string) bool {
 	local, domain, _ := strings.Cut(email, "@")
-	if domain == "cloudservices.gserviceaccount.com" || strings.HasPrefix(domain, "gcp-sa-") {
+	if domain == "cloudservices.gserviceaccount.com" || domain == "system.gserviceaccount.com" || strings.HasPrefix(domain, "gcp-sa-") {
 		return true
 	}
 	digits, ok := strings.CutPrefix(local, "service-")

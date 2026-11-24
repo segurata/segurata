@@ -481,13 +481,14 @@ func TestRateLimitGivesUpAfterRetries(t *testing.T) {
 
 func TestGoogleManagedServiceAgentsAreSkipped(t *testing.T) {
 	for email, managed := range map[string]bool{
-		"123@cloudservices.gserviceaccount.com":              true,
-		"service-123@gcp-sa-pubsub.iam.gserviceaccount.com":  true,
-		"service-123@compute-system.iam.gserviceaccount.com": true,
-		"service-runner@demo.iam.gserviceaccount.com":        false,
-		"123-compute@developer.gserviceaccount.com":          false,
-		"demo@appspot.gserviceaccount.com":                   false,
-		"firebase-adminsdk-x1@demo.iam.gserviceaccount.com":  false,
+		"123@cloudservices.gserviceaccount.com":                   true,
+		"appsdev-apps-dev-script-auth@system.gserviceaccount.com": true,
+		"service-123@gcp-sa-pubsub.iam.gserviceaccount.com":       true,
+		"service-123@compute-system.iam.gserviceaccount.com":      true,
+		"service-runner@demo.iam.gserviceaccount.com":             false,
+		"123-compute@developer.gserviceaccount.com":               false,
+		"demo@appspot.gserviceaccount.com":                        false,
+		"firebase-adminsdk-x1@demo.iam.gserviceaccount.com":       false,
 	} {
 		if googleManaged(email) != managed {
 			t.Errorf("googleManaged(%s) = %v", email, !managed)
