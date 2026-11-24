@@ -504,7 +504,8 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   object, and a name that matches nothing exactly is refused. The plan is built from the same
   read, so what changed since the inventory is left out and named in the plan.
 - HTTP writes (`plan.calls`: method, URL and the name of the credential) go through
-  `connectors/internal/httpw`, a client separate from the GET-only `httpx`: it sends bodiless
+  `connectors/internal/httpw`, a client separate from the GET-only `httpx` (which follows
+  redirects but drops the credential headers on a hop to another host or port): it sends bodiless
   requests only when method and path match one of its routes (`DELETE /keys/<id>`, ids limited to
   `[A-Za-z0-9_-]+`) and follows no redirect. A test fails if any connector file other than
   `remediate.go` imports it, so no inventory code path can reach it.

@@ -114,7 +114,6 @@ inventory)
   req=$(cat)
   case "$req" in *'"protocol":1'*) ;; *) echo "bad request" >&2; exit 3;; esac
   echo '{"type":"status","account":"a","state":"reauth","detail":"sign in again"}'
-  echo 'not json'
   echo '{"type":"finding","connector":"spoofed","account":"a","resource":{"type":"oauth_grant","id":"g","name":"App"},"kind":"grant","severity":"medium","title":"App has Drive"}'
   echo '{"type":"scope","scope":"repo:a/b","inspected":false,"reason":"rate limit"}'
   echo '{"type":"log","msg":"done"}';;

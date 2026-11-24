@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -103,13 +104,15 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: segurata connectors | segurata inventory [--min-severity=low] [--out=out] [--verbose] [name ...] | segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write] | segurata track <list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync> | segurata report [--format text|md|html] [--out file] | segurata remediate --list | <finding-id> [--apply] [--yes] | segurata rotations <sync|list|next|show|replace|done|snooze|ignore|reopen> | segurata accounts <list|watch|unwatch|owned> | segurata signin [name ...] [--all] [--list] [--timeout 10m] | segurata accept <finding-id> --reason text [--until YYYY-MM-DD] | --list | segurata unaccept <finding-id> | segurata schedule install|uninstall|status [--every 24h] [--connectors a,b] [--apply] | segurata redact [--trails] [--path prefix] [--item id] [--apply] | segurata doctor [--connector name] | segurata keychain-migrate [--apply [--yes]] | segurata version")
 }
 
-func all() []connector.Connector {
+// all is every connector, built-in and external. Discovery runs each plugin's describe, so it
+// happens once per process however many times a command asks.
+var all = sync.OnceValue(func() []connector.Connector {
 	conns := connector.Builtins()
 	for _, e := range connector.Discover() {
 		conns = append(conns, e)
 	}
 	return conns
-}
+})
 
 func inventory(args []string) int {
 	fs := flag.NewFlagSet("inventory", flag.ExitOnError)

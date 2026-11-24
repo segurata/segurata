@@ -29,6 +29,9 @@ const (
 	SevCritical Severity = "critical"
 )
 
+// Valid reports whether s is one of the five severities, spelled exactly.
+func (s Severity) Valid() bool { return s == SevInfo || s.Rank() > 0 }
+
 // Rank orders severities so reports can sort worst first; unknown values rank lowest.
 func (s Severity) Rank() int {
 	switch s {
