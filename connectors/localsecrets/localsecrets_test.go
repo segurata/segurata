@@ -170,7 +170,8 @@ func TestGuards(t *testing.T) {
 	if !refused(gitleaksCheck, "git", "--report-path", "/tmp/r.json", "repo") || !refused(gitleaksCheck, "git", "--report-path=r.json", "repo") {
 		t.Error("gitleaks may write the raw report to a file")
 	}
-	if !refused(gitleaksCheck, "dir", "repo") || refused(gitleaksCheck, "git", "--report-path", "-", "repo") {
+	if !refused(gitleaksCheck, "dir", "repo") || refused(gitleaksCheck, "git", "--report-path", "-", "repo") ||
+		refused(gitleaksCheck, "version") || !refused(gitleaksCheck, "version", "--config=x") {
 		t.Error("gitleaks subcommand check")
 	}
 	if refused(gitList, "--git-dir=/r/.git", "--work-tree=/r", "ls-files", "-z") || !refused(gitList, "--git-dir=/r/.git", "config", "x") {

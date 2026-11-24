@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -344,8 +345,15 @@ func parseGitHubSession(r row) ghSession {
 	return s
 }
 
-// ghAllowlist is every gh command this connector may run: read-only API calls.
+// ghAuthStatus prints the signed-in accounts and their scopes as JSON, never the token.
+var ghAuthStatus = []string{"auth", "status", "--json", "hosts"}
+
+// ghAllowlist is every gh command this connector may run: read-only API calls, and the sign-in
+// status for doctor.
 var ghAllowlist = cli.CheckFunc(func(args []string) error {
+	if slices.Equal(args, ghAuthStatus) {
+		return nil
+	}
 	if len(args) == 3 && args[0] == "api" && args[1] == "--paginate" {
 		for _, k := range ghKeyEndpoints {
 			if args[2] == k.path {

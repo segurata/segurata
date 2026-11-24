@@ -27,8 +27,11 @@ var rgCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// gitleaksCheck allows only `gitleaks git` with the report on stdout.
+// gitleaksCheck allows only `gitleaks git` with the report on stdout, and `gitleaks version`.
 var gitleaksCheck = cli.CheckFunc(func(args []string) error {
+	if len(args) == 1 && args[0] == "version" {
+		return nil
+	}
 	if err := (cli.Allowlist{"git"}).Check(args); err != nil {
 		return err
 	}

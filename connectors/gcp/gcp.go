@@ -104,30 +104,16 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	for _, f := range localFindings(c.getenv, c.home) {
 		emit.Finding(f)
 	}
-	r := c.runner
-	if r == nil {
-		path, err := cli.FindGcloud(cfg.gcloudPath, c.home, connectorName)
-		if err != nil {
-			emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
-			return nil
-		}
-		r = cli.Exec{Path: path, Timeout: c.timeout, Env: []string{"CLOUDSDK_CORE_DISABLE_PROMPTS=1"}}
+	g, err := c.gcloud(cfg)
+	if err != nil {
+		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
+		return nil
 	}
-	g := &gcloud{run: r, backoff: c.backoff}
-
-	accounts := cfg.accounts
-	if len(accounts) == 0 {
-		var listed []struct {
-			Account string `json:"account"`
-		}
-		if err := g.json(ctx, &listed, "auth", "list"); err != nil {
-			_, why := classify(err)
-			emit.Status(finding.Status{Account: localAccount, State: finding.StateError, Detail: "gcloud auth list: " + why})
-			return nil
-		}
-		for _, a := range listed {
-			accounts = append(accounts, a.Account)
-		}
+	accounts, err := c.accounts(ctx, g, cfg)
+	if err != nil {
+		_, why := classify(err)
+		emit.Status(finding.Status{Account: localAccount, State: finding.StateError, Detail: "gcloud auth list: " + why})
+		return nil
 	}
 	if len(accounts) == 0 {
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateMissingCredentials, Detail: "gcloud has no credentialed accounts"})
@@ -154,6 +140,38 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	wg.Wait()
 	bill.judge(ctx, emit)
 	return nil
+}
+
+// gcloud is the guarded gcloud the connector runs: the injected runner, or the CLI found from
+// gcloud_path, PATH or the SDK's install folders.
+func (c *Connector) gcloud(cfg settings) (*gcloud, error) {
+	r := c.runner
+	if r == nil {
+		path, err := cli.FindGcloud(cfg.gcloudPath, c.home, connectorName)
+		if err != nil {
+			return nil, err
+		}
+		r = cli.Exec{Path: path, Timeout: c.timeout, Env: []string{"CLOUDSDK_CORE_DISABLE_PROMPTS=1"}}
+	}
+	return &gcloud{run: r, backoff: c.backoff}, nil
+}
+
+// accounts are the configured accounts, or every credentialed account gcloud lists.
+func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings) ([]string, error) {
+	if len(cfg.accounts) > 0 {
+		return cfg.accounts, nil
+	}
+	var listed []struct {
+		Account string `json:"account"`
+	}
+	if err := g.json(ctx, &listed, "auth", "list"); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, a := range listed {
+		out = append(out, a.Account)
+	}
+	return out, nil
 }
 
 // plan lists each account's projects and assigns every project to the first account that sees
