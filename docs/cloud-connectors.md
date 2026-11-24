@@ -46,6 +46,7 @@ partition (China and GovCloud partitions are not handled).
 | `aws iam list-mfa-devices --user-name` | MFA devices of the user | [list-mfa-devices](https://docs.aws.amazon.com/cli/latest/reference/iam/list-mfa-devices.html) |
 | `aws budgets describe-budgets --account-id` | Budgets | [describe-budgets](https://docs.aws.amazon.com/cli/latest/reference/budgets/describe-budgets.html) |
 | `aws budgets describe-notifications-for-budget` | Alerts of each budget | [describe-notifications-for-budget](https://docs.aws.amazon.com/cli/latest/reference/budgets/describe-notifications-for-budget.html) |
+| `aws budgets describe-budget-actions-for-account` | Whether any budget has an action that can stop spend; run only when some budget alerts | [describe-budget-actions-for-account](https://docs.aws.amazon.com/cli/latest/reference/budgets/describe-budget-actions-for-account.html) |
 
 The connector reads users one call at a time instead of using the IAM credential report, so it never
 runs `aws iam generate-credential-report`. That command changes no resource, but it does start a
@@ -68,6 +69,20 @@ With it on, each account adds two billed requests per run:
 |---|---|---|
 | `aws ce get-cost-and-usage --time-period Start=<1st>,End=<tomorrow> --granularity MONTHLY --metrics UnblendedCost` | Month-to-date spend (end date is exclusive) | [get-cost-and-usage](https://docs.aws.amazon.com/cli/latest/reference/ce/get-cost-and-usage.html) |
 | `aws ce get-anomaly-monitors` | Whether Cost Anomaly Detection watches the account | [get-anomaly-monitors](https://docs.aws.amazon.com/cli/latest/reference/ce/get-anomaly-monitors.html) |
+
+### Budgets
+
+Budgets are judged with the shared rules (docs/connectors.md, "Spend and budgets"). Only `COST`
+budgets count. From each [Budget](https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_budgets_Budget.html):
+`BudgetLimit` (amount and unit), `TimeUnit`, and `CostFilters` and `FilterExpression` as scope
+filters. From each [Notification](https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_budgets_Notification.html):
+`Threshold` (a percentage, or with `ThresholdType` `ABSOLUTE_VALUE` an amount turned into a share of
+the limit) and `NotificationType` (`FORECASTED` or `ACTUAL`); `LESS_THAN` notifications are left
+out. Every notification has at least one subscriber, so one counts as a channel; the subscribers
+themselves are not read. A [budget action](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-controls.html)
+on the budget (an IAM policy, an SCP, or stopping EC2 or RDS instances) is its automatic action.
+The account's risks are its active IAM user access keys and root access keys. When the actions
+cannot be read, the enforcement finding is skipped and the status names the denied action.
 
 The [Budgets pricing page](https://aws.amazon.com/aws-cost-management/aws-budgets/pricing/) charges
 for action-enabled budgets and budget reports, and does not list a charge for reading budgets.
@@ -105,24 +120,26 @@ provider. Both keep the same severities as an AWS key.
 | A CLI profile signs in as root | `credential` | critical |
 | Active key older than 90 days, unused for 90 days, or never used and older than 90 days | `credential` | high |
 | Console user without MFA | `setting` | high |
-| No budget in the account | `spend` | high |
+| No budget with alerts in the account | `spend` | high |
 | Long-lived key in the credentials file readable by group or others | `exposure` | high |
 | Long-lived key in the credentials file at mode 0600 | `exposure` | medium |
-| Budget without alerts | `spend` | medium |
+| Budget without an alert at 100% of actual spend; no budget action while the account has access keys | `spend` | medium |
 | No Cost Anomaly Detection monitor (opt-in) | `spend` | medium |
 | Inactive key still present | `credential` | low |
-| Any other key, budget with alerts, month-to-date spend (opt-in) | `credential` / `spend` | info |
+| Budget without a forecasted threshold; identical budgets | `spend` | low |
+| Any other key, the budget summary, no budget action in an account without keys, month-to-date spend (opt-in) | `credential` / `spend` | info |
 
 IAM actions the identity needs: `sts:GetCallerIdentity` (always allowed), `iam:ListAccountAliases`,
 `iam:GetAccountSummary`, `iam:ListUsers`, `iam:ListAccessKeys`, `iam:GetAccessKeyLastUsed`,
-`iam:GetLoginProfile`, `iam:ListMFADevices` and `budgets:ViewBudget`; with the opt-in,
+`iam:GetLoginProfile`, `iam:ListMFADevices`, `budgets:ViewBudget` and
+`budgets:DescribeBudgetActionsForAccount`; with the opt-in,
 `ce:GetCostAndUsage` and `ce:GetAnomalyMonitors`. A denied call (`AccessDenied`) skips that check
 and the others still run; the account status is then `noscope`, and its detail names the denied
 actions and the managed policy that grants them:
 [SecurityAudit](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/SecurityAudit.html)
 (`iam:Get*`, `iam:List*`) and
 [AWSBudgetsReadOnlyAccess](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSBudgetsReadOnlyAccess.html)
-(`budgets:ViewBudget`, which SecurityAudit does not include). Cost Explorer actions are in neither,
+(`budgets:ViewBudget` and `budgets:Describe*`, which SecurityAudit does not include). Cost Explorer actions are in neither,
 so the detail asks for them in an inline policy. Any other failure keeps the status at `error`.
 
 ## Azure (`azure`)
@@ -146,11 +163,24 @@ it keeps `keyId`, `hint` (the first three characters, as the portal shows), `dis
 | Situation | Kind | Severity |
 |---|---|---|
 | Client secret without end date or ending more than two years out (the portal caps new secrets at 24 months) | `credential` | high |
-| Subscription without budget | `spend` | high |
+| Subscription without a budget with alerts | `spend` | high |
 | Client secret expiring within 30 days | `credential` | medium |
-| Budget without enabled notifications | `spend` | medium |
+| Budget without an alert at 100% of actual spend; no action group while the tenant has non-expiring secrets | `spend` | medium |
 | Expired client secret still registered | `credential` | low |
-| Other client secrets, budgets with alerts | `credential` / `spend` | info |
+| Budget without a forecasted threshold; identical budgets | `spend` | low |
+| Other client secrets, the budget summary, no action group in a tenant without such secrets | `credential` / `spend` | info |
+
+Budgets are judged with the shared rules (docs/connectors.md, "Spend and budgets"). Only `Cost`
+budgets count. From each [budget](https://learn.microsoft.com/en-us/rest/api/consumption/budgets/list):
+`amount`, `timeGrain`, `currentSpend.unit` as the currency, and the `filter` dimensions and tags as
+scope filters. Each enabled notification gives a threshold (`threshold`, always a percentage),
+forecasted when `thresholdType` is `Forecasted` or, in API versions without that field, when its key
+starts with `Forecasted`. `contactEmails`, `contactRoles` and `contactGroups` are its channels; an
+action group (`contactGroups`) is also its automatic action, the hook Microsoft's
+[budget scenario](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/cost-management-budget-scenario)
+connects to a Logic App or runbook that stops resources. App secrets are read before budgets: the
+signed-in tenant's non-expiring client secrets are the risks of its subscriptions; subscriptions of
+other tenants have none.
 
 Every client secret title carries its expiry date (`expires 2027-03-23`, `expired on 2025-03-23`),
 and one expiring within 30 days also says in how many days.

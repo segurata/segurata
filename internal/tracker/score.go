@@ -127,7 +127,8 @@ var blasts = []blast{
 	{anyOf(titleHas("can delete your repositories"), titleHas("read and write all your repositories")), 1.5, "write access to every repository you own"},
 	{keyHas("check:org-default-repository-permission"), 1.5, "every member can change every repository"},
 	{refHas("x_app", ""), 0.6, "old consumer apps; at worst they post as you"},
-	{anyOf(refHas("azure_budget", ""), keyHas("|project|"), keyHas("|organization|")), 0.7, "money, bounded by the card on file"},
+	{anyOf(refHas("azure_budget", ""), refHas("budget_thresholds", ""), refHas("budget_duplicates", ""), refHas("budget_enforcement", ""),
+		refHas("budget_scope", ""), keyHas("|project|"), keyHas("|organization|")), 0.7, "money, bounded by the card on file"},
 	{refHas("endpoint_agent", ""), 0.5, "leftovers, nothing running"},
 }
 

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -109,42 +110,68 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: tenant, State: classify(err), Detail: err.Error()})
 		return nil
 	}
+	// App secrets come first: the tenant's non-expiring ones are spend risks of its subscriptions.
+	secrets := c.appSecrets(ctx, tenant, now, emit)
 	for _, s := range subs {
-		if s.State == "Enabled" {
-			c.subscription(ctx, s, emit)
+		if s.State != "Enabled" {
+			continue
 		}
+		var risks []budget.Risk
+		if s.TenantID == current.TenantID {
+			risks = []budget.Risk{{What: "non-expiring client secret", Count: secrets}}
+		}
+		c.subscription(ctx, s, risks, emit)
 	}
-	c.appSecrets(ctx, tenant, now, emit)
 	return nil
 }
 
-type budget struct {
-	Name          string  `json:"name"`
-	Amount        float64 `json:"amount"`
-	TimeGrain     string  `json:"timeGrain"`
-	Notifications map[string]struct {
-		Enabled bool `json:"enabled"`
-	} `json:"notifications"`
+// azBudget is a consumption budget as `az consumption budget list` prints it: the CLI flattens
+// the REST properties into the budget, and the REST shape nests them under properties.
+type azBudget struct {
+	Name string `json:"name"`
+	budgetProps
+	Properties *budgetProps `json:"properties"`
 }
 
-func (b budget) enabledAlerts() int {
-	n := 0
-	for _, x := range b.Notifications {
-		if x.Enabled {
-			n++
-		}
-	}
-	return n
+type budgetProps struct {
+	Amount        float64                   `json:"amount"`
+	Category      string                    `json:"category"`
+	TimeGrain     string                    `json:"timeGrain"`
+	CurrentSpend  *struct{ Unit string }    `json:"currentSpend"`
+	Filter        *budgetFilter             `json:"filter"`
+	Notifications map[string]azNotification `json:"notifications"`
 }
 
-func (c *Connector) subscription(ctx context.Context, s account, emit connector.Emitter) {
+type budgetFilter struct {
+	And        []budgetFilter `json:"and"`
+	Dimensions *struct {
+		Name   string   `json:"name"`
+		Values []string `json:"values"`
+	} `json:"dimensions"`
+	Tags *struct {
+		Name   string   `json:"name"`
+		Values []string `json:"values"`
+	} `json:"tags"`
+}
+
+type azNotification struct {
+	Enabled       bool     `json:"enabled"`
+	Operator      string   `json:"operator"`
+	Threshold     float64  `json:"threshold"`
+	ThresholdType string   `json:"thresholdType"`
+	ContactEmails []string `json:"contactEmails"`
+	ContactRoles  []string `json:"contactRoles"`
+	ContactGroups []string `json:"contactGroups"`
+}
+
+func (c *Connector) subscription(ctx context.Context, s account, risks []budget.Risk, emit connector.Emitter) {
 	label := fmt.Sprintf("%s (%s)", s.Name, s.ID)
-	var budgets []budget
+	var budgets []azBudget
 	if err := c.call(ctx, &budgets, "consumption", "budget", "list", "--subscription", s.ID); err != nil {
 		emit.Status(finding.Status{Account: label, State: classify(err), Detail: "budgets: " + err.Error()})
 		return
 	}
-	for _, f := range budgetFindings(s.ID, budgets) {
+	for _, f := range budgetFindings(s.ID, label, budgets, risks) {
 		f.Account = label
 		emit.Finding(f)
 	}
@@ -173,16 +200,21 @@ func (c *Connector) listApps(ctx context.Context) ([]app, error) {
 	return apps, err
 }
 
-func (c *Connector) appSecrets(ctx context.Context, tenant string, now time.Time, emit connector.Emitter) {
+// appSecrets reports the tenant's client secrets and returns how many never expire.
+func (c *Connector) appSecrets(ctx context.Context, tenant string, now time.Time, emit connector.Emitter) int {
 	apps, err := c.listApps(ctx)
 	if err != nil {
 		emit.Status(finding.Status{Account: tenant, State: classify(err), Detail: "app registrations: " + err.Error()})
-		return
+		return 0
 	}
+	lasting := 0
 	for _, a := range apps {
 		for _, p := range a.PasswordCredentials {
 			f := secretFinding(a, p, now)
 			f.Account = tenant
+			if f.Severity == finding.SevHigh {
+				lasting++
+			}
 			if f.Remediation.Action != "" {
 				f.Remediation.Group = tenant
 			}
@@ -190,4 +222,5 @@ func (c *Connector) appSecrets(ctx context.Context, tenant string, now time.Time
 		}
 	}
 	emit.Status(finding.Status{Account: tenant, State: finding.StateOK})
+	return lasting
 }

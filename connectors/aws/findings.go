@@ -2,21 +2,27 @@ package aws
 
 import (
 	"fmt"
+	"maps"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/internal/finding"
 )
 
 const (
-	urlRootMFA     = "https://docs.aws.amazon.com/IAM/latest/UserGuide/enable-mfa-for-root.html"
-	urlRootKeys    = "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user_manage_delete-key.html"
-	urlAccessKeys  = "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html"
-	urlUserMFA     = "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html"
-	urlBudgets     = "https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html"
-	urlAnomaly     = "https://docs.aws.amazon.com/cost-management/latest/userguide/getting-started-ad.html"
-	urlSSO         = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html"
-	urlConfigFiles = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html"
-	urlR2Tokens    = "https://dash.cloudflare.com/?to=/:account/r2/overview"
+	urlRootMFA       = "https://docs.aws.amazon.com/IAM/latest/UserGuide/enable-mfa-for-root.html"
+	urlRootKeys      = "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user_manage_delete-key.html"
+	urlAccessKeys    = "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html"
+	urlUserMFA       = "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html"
+	urlBudgets       = "https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html"
+	urlBudgetActions = "https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-controls.html"
+	urlAnomaly       = "https://docs.aws.amazon.com/cost-management/latest/userguide/getting-started-ad.html"
+	urlSSO           = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html"
+	urlConfigFiles   = "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html"
+	urlR2Tokens      = "https://dash.cloudflare.com/?to=/:account/r2/overview"
 )
 
 func days(d time.Duration) int { return int(d.Hours() / 24) }
@@ -108,37 +114,65 @@ func userMFAFinding(user string, console bool, mfaDevices int) (finding.Finding,
 	}, true
 }
 
-func noBudgetFinding() finding.Finding {
-	return finding.Finding{
-		Resource: finding.Resource{Type: "aws_budget", ID: "none", Name: "budgets"},
-		Kind:     finding.KindSpend,
-		Severity: finding.SevHigh,
-		Title:    "No AWS budget: nothing warns you when spend runs away",
-		Remediation: finding.Remediation{
-			Summary: "Create a monthly cost budget with email alerts at 50%, 80% and 100% (actual) and 100% (forecasted).",
-			URL:     urlBudgets,
-		},
+// accountWording is how the shared budget rules speak about an AWS account.
+var accountWording = budget.Wording{
+	AllScope:   "whole account",
+	ConsoleURL: "https://console.aws.amazon.com/billing/home#/budgets",
+	DocsURL:    urlBudgets,
+	ActionNoun: "a budget action",
+	CapHowTo: "Budgets only notify. Add a budget action that, at 100% of actual or forecasted spend, applies an IAM " +
+		"policy or SCP denying new resources, or stops chosen EC2 or RDS instances, automatically or after your approval.",
+	CapURL:     urlBudgetActions,
+	RisksWhere: "in this account",
+}
+
+func accountContainer(accountID, label string, activeKeys, rootKeys int) budget.Container {
+	return budget.Container{
+		ID:       accountID,
+		Label:    "account " + label,
+		Risks:    []budget.Risk{{What: "active IAM user access key", Count: activeKeys}, {What: "root access key", Count: rootKeys}},
+		NoBudget: finding.Resource{Type: "aws_budget", ID: "none", Name: "budgets"},
 	}
 }
 
-func budgetFinding(b budget, notifications int) finding.Finding {
-	ev := map[string]any{"type": b.BudgetType, "time_unit": b.TimeUnit, "notifications": notifications}
-	if b.BudgetLimit != nil {
-		ev["limit"] = b.BudgetLimit.Amount + " " + b.BudgetLimit.Unit
+var timeUnits = map[string]string{"DAILY": budget.PeriodDay, "MONTHLY": budget.PeriodMonth, "QUARTERLY": budget.PeriodQuarter, "ANNUALLY": budget.PeriodYear}
+
+// neutral maps a cost budget and its notifications to the shared model. Every AWS notification
+// has at least one subscriber (email or SNS); which kind is not read. An absolute threshold is
+// turned into a percentage of the limit; LESS_THAN notifications do not warn of overspend.
+func (b awsBudget) neutral(ns []notification) budget.Budget {
+	nb := budget.Budget{ID: b.BudgetName, Name: b.BudgetName, Period: budget.PeriodCustom}
+	if p, ok := timeUnits[b.TimeUnit]; ok {
+		nb.Period = p
 	}
-	f := finding.Finding{
-		Resource:    finding.Resource{Type: "aws_budget", ID: b.BudgetName, Name: b.BudgetName},
-		Kind:        finding.KindSpend,
-		Severity:    finding.SevInfo,
-		Title:       fmt.Sprintf("Budget %q with %d alerts", b.BudgetName, notifications),
-		Evidence:    ev,
-		Remediation: finding.Remediation{Summary: "Keep at least one actual and one forecasted alert on the budget.", URL: urlBudgets},
+	if l := b.BudgetLimit; l != nil {
+		nb.Amount, _ = strconv.ParseFloat(l.Amount, 64)
+		nb.Currency = l.Unit
 	}
-	if notifications == 0 {
-		f.Severity = finding.SevMedium
-		f.Title = fmt.Sprintf("Budget %q has no alerts", b.BudgetName)
+	for _, k := range slices.Sorted(maps.Keys(b.CostFilters)) {
+		nb.Scope.Filters = append(nb.Scope.Filters, k+": "+strings.Join(b.CostFilters[k], ", "))
 	}
-	return f
+	if raw := strings.TrimSpace(string(b.FilterExpression)); raw != "" && raw != "{}" && raw != "null" {
+		nb.Scope.Filters = append(nb.Scope.Filters, "cost filter")
+		nb.Scope.Detail = raw
+	}
+	for _, n := range ns {
+		if n.ComparisonOperator == "LESS_THAN" {
+			continue
+		}
+		pct := n.Threshold
+		if n.ThresholdType == "ABSOLUTE_VALUE" {
+			if nb.Amount <= 0 {
+				continue
+			}
+			pct = n.Threshold / nb.Amount * 100
+		}
+		nb.Thresholds = append(nb.Thresholds, budget.Threshold{Percent: pct, Forecast: n.NotificationType == "FORECASTED"})
+	}
+	if len(nb.Thresholds) > 0 {
+		nb.Notifies = []string{budget.NotifySubscribers}
+	}
+	return nb
 }
 
 func monthToDateFinding(amount, unit string, start time.Time) finding.Finding {

@@ -68,8 +68,36 @@ are retried twice with backoff. Cloud Billing returns 429 with much more paralle
 | API keys | `gcloud services api-keys list --project=P` | No API restriction (`restrictions.apiTargets`) or no application restriction (browser, server, Android, iOS): **high**. Restricted keys: info. Shows `displayName`, redacted `uid` and `createTime`. The key string is never fetched. |
 | Service account keys | `gcloud iam service-accounts list --project=P`, then `gcloud iam service-accounts keys list --iam-account=SA --managed-by=user` | Each user-managed key: **medium**; `validAfterTime` older than 90 days: **high**; disabled key: low. |
 | Broad roles | `gcloud projects get-iam-policy P` | Service account with `roles/owner` or `roles/editor`: **high**. Google service agents (`service-NUMBER@…`, `@gcp-sa-*`, `@cloudservices.gserviceaccount.com`) are skipped; the default Compute Engine and App Engine accounts are not, because Google advises removing Editor from them. |
-| Billing budgets | `gcloud billing accounts list`, `gcloud billing projects describe P`, `gcloud billing budgets list --billing-account=ID` | Billing account (open, or paying for a project seen) with no budget that alerts: **high** (`spend`). If it has some, each linked project no alerting budget covers: **high**. A budget alerts when it has `thresholdRules` and someone receives them (default IAM recipients not disabled, or a Pub/Sub topic or monitoring channel). A budget without `budgetFilter.projects` covers the whole account. Budgets that cannot be read become a status naming the projects whose alerts are unknown. |
+| Billing budgets | `gcloud billing accounts list`, `gcloud billing projects describe P`, `gcloud billing budgets list --billing-account=ID` | Judged per billing account (open, or paying for a project seen) with the shared budget rules: docs/connectors.md, "Spend and budgets". See below for how a Budget API budget is read. Budgets that cannot be read become a status naming the projects whose alerts are unknown. |
 | Local credentials (`exposure`) | Reads files only | See below. |
+
+### Billing budgets
+
+Each budget from the [Budget API v1](https://cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets)
+is mapped to the shared model:
+
+- Amount: `amount.specifiedAmount` (`units` plus `nanos`), its `currencyCode` or else the billing
+  account's `currencyCode`; `amount.lastPeriodAmount` means last period's spend.
+- Period: `budgetFilter.calendarPeriod` (`MONTH` when unset, as the API defaults), or custom when
+  `budgetFilter.customPeriod` is set.
+- Thresholds: `thresholdRules[].thresholdPercent` (1.0 is 100%), forecasted when `spendBasis` is
+  `FORECASTED_SPEND` (the API defaults to `CURRENT_SPEND`).
+- Scope: `budgetFilter.projects` (project numbers, named by id for every project the run saw); no
+  project filter covers every project on the account. `services`, `subaccounts`, `labels` and
+  `resourceAncestors` narrow what is counted but are not matched to projects.
+- Channels: the billing account's admins unless `notificationsRule.disableDefaultIamRecipients`,
+  project owners with `enableProjectLevelRecipients` on a one-project budget,
+  `monitoringNotificationChannels`, and `pubsubTopic`.
+- Actions: `notificationsRule.pubsubTopic`, the hook Google's
+  [Disable billing usage with notifications](https://cloud.google.com/billing/docs/how-to/disable-billing-with-notifications)
+  guide connects to a function that removes billing from the project; and a `spendCap` that is
+  configured or enforced.
+- Risks per project: API keys with no API or application restriction (the high API key findings)
+  and enabled user-managed service account keys found in the same run.
+
+Remediations point to `https://console.cloud.google.com/billing/<id>/budgets`. Google creates a
+budget on its own when Maps Platform is set up, which is how identical copies of one budget appear;
+the duplicate rule names them.
 
 ### Local credentials
 
@@ -147,7 +175,8 @@ Intelligence activity analysis, a separate API.
 - `gcloud billing accounts list`: <https://cloud.google.com/sdk/gcloud/reference/billing/accounts/list>
 - `gcloud billing projects describe`: <https://cloud.google.com/sdk/gcloud/reference/billing/projects/describe>
 - `gcloud billing budgets list`: <https://cloud.google.com/sdk/gcloud/reference/billing/budgets/list>
-- Budget resource (`thresholdRules`, `notificationsRule`, `budgetFilter.projects`): <https://cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets>
+- Budget resource (`amount`, `thresholdRules[].spendBasis`, `notificationsRule`, `budgetFilter`, `spendCap`): <https://cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets>
+- Disable billing usage with notifications: <https://cloud.google.com/billing/docs/how-to/disable-billing-with-notifications>
 - Budgets and alerts: <https://cloud.google.com/billing/docs/how-to/budgets>
 - Application Default Credentials: <https://cloud.google.com/docs/authentication/application-default-credentials>
 - `gcloud auth application-default login`: <https://cloud.google.com/sdk/gcloud/reference/auth/application-default/login>

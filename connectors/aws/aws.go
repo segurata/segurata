@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
@@ -41,6 +42,7 @@ var readOnly = cli.Allowlist{
 	"iam list-mfa-devices",
 	"budgets describe-budgets",
 	"budgets describe-notifications-for-budget",
+	"budgets describe-budget-actions-for-account",
 	"ce get-cost-and-usage",
 	"ce get-anomaly-monitors",
 }
@@ -201,6 +203,8 @@ type audit struct {
 	emitter    connector.Emitter
 	failedWith []string
 	denied     []string // IAM actions the principal may not call, in the order first seen
+	activeKeys int      // active IAM user access keys, a spend risk the budget rules weigh
+	rootKeys   int      // root user access keys, same
 }
 
 // emit stamps a finding with the account and with the profile as its scope: a profile whose
@@ -221,10 +225,11 @@ func (a *audit) call(out any, args ...string) error {
 
 // checkAction is the IAM action each check needs first, named when a denial does not say.
 var checkAction = map[string]string{
-	"root user":     "iam:GetAccountSummary",
-	"IAM users":     "iam:ListUsers",
-	"budgets":       "budgets:ViewBudget",
-	"cost explorer": "ce:GetCostAndUsage",
+	"root user":      "iam:GetAccountSummary",
+	"IAM users":      "iam:ListUsers",
+	"budgets":        "budgets:ViewBudget",
+	"budget actions": "budgets:DescribeBudgetActionsForAccount",
+	"cost explorer":  "ce:GetCostAndUsage",
 }
 
 var deniedAction = regexp.MustCompile(`not authorized to perform: ([a-z0-9-]+:[A-Za-z0-9]+)`)
@@ -353,6 +358,7 @@ func (a *audit) root() error {
 	if err := a.call(&s, "iam", "get-account-summary"); err != nil {
 		return err
 	}
+	a.rootKeys = s.SummaryMap["AccountAccessKeysPresent"]
 	for _, f := range rootFindings(s.SummaryMap) {
 		a.emit(f)
 	}
@@ -396,6 +402,9 @@ func (a *audit) user(u iamUser) error {
 		if err := a.call(&used, "iam", "get-access-key-last-used", "--access-key-id", k.AccessKeyId); err != nil {
 			return err
 		}
+		if k.Status == "Active" {
+			a.activeKeys++
+		}
 		a.emit(keyFinding(u.UserName, k, used.AccessKeyLastUsed.LastUsedDate, a.now))
 	}
 
@@ -419,30 +428,57 @@ func (a *audit) user(u iamUser) error {
 	return nil
 }
 
-type budget struct {
-	BudgetName  string
-	BudgetType  string
-	TimeUnit    string
-	BudgetLimit *struct{ Amount, Unit string }
+type awsBudget struct {
+	BudgetName       string
+	BudgetType       string
+	TimeUnit         string
+	BudgetLimit      *struct{ Amount, Unit string }
+	CostFilters      map[string][]string
+	FilterExpression json.RawMessage
 }
 
+type notification struct {
+	NotificationType   string
+	ComparisonOperator string
+	Threshold          float64
+	ThresholdType      string
+}
+
+// budgets judges the account's cost budgets with the shared rules. Budget actions are read only
+// when some budget alerts, since only then is their absence a finding.
 func (a *audit) budgets() error {
-	var list struct{ Budgets []budget }
+	var list struct{ Budgets []awsBudget }
 	if err := a.call(&list, "budgets", "describe-budgets", "--account-id", a.accountID); err != nil {
 		return err
 	}
-	if len(list.Budgets) == 0 {
-		a.emit(noBudgetFinding())
-		return nil
-	}
+	var nb []budget.Budget
 	for _, b := range list.Budgets {
-		var n struct {
-			Notifications []struct{ NotificationType string }
+		if b.BudgetType != "COST" {
+			continue // usage, reservation and savings plans budgets do not measure spend
 		}
+		var n struct{ Notifications []notification }
 		if err := a.call(&n, "budgets", "describe-notifications-for-budget", "--account-id", a.accountID, "--budget-name", b.BudgetName); err != nil {
 			return err
 		}
-		a.emit(budgetFinding(b, len(n.Notifications)))
+		nb = append(nb, b.neutral(n.Notifications))
+	}
+	c := accountContainer(a.accountID, a.account, a.activeKeys, a.rootKeys)
+	if slices.ContainsFunc(nb, budget.Budget.Alerting) {
+		var acts struct{ Actions []struct{ BudgetName string } }
+		if err := a.call(&acts, "budgets", "describe-budget-actions-for-account", "--account-id", a.accountID); err != nil {
+			a.check("budget actions", func() error { return err }) // the other budget findings still stand
+			c.ActionsUnknown = true
+		}
+		for _, act := range acts.Actions {
+			for i := range nb {
+				if nb[i].ID == act.BudgetName {
+					nb[i].Actions = append(nb[i].Actions, budget.ActionBudget)
+				}
+			}
+		}
+	}
+	for _, f := range budget.Evaluate(c, nb, accountWording) {
+		a.emit(f)
 	}
 	return nil
 }
