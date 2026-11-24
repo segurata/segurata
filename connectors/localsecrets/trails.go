@@ -116,11 +116,6 @@ func (t *Trails) Lines(files []string) (map[string][]int, error) {
 	return out, nil
 }
 
-var (
-	combinedOnce                  sync.Once
-	combinedSpecific, combinedAll *regexp.Regexp
-)
-
 // combined joins patterns into one alternation, as ripgrep does with several -e: the leftmost
 // match wins, and among matches at the same place the first pattern.
 func combined(ps []pattern) *regexp.Regexp {
@@ -136,29 +131,38 @@ func combined(ps []pattern) *regexp.Regexp {
 	return regexp.MustCompile(strings.Join(parts, "|"))
 }
 
-// combinedFor is patternsFor(kind) joined into one regexp, compiled once.
-func combinedFor(kind string) *regexp.Regexp {
-	combinedOnce.Do(func() {
-		combinedSpecific, combinedAll = combined(specific), combined(withAssignment)
+var (
+	matchersOnce                sync.Once
+	matcherSpecific, matcherAll *matcher
+)
+
+// matcherFor finds the matches of patternsFor(kind) joined into one alternation.
+func matcherFor(kind string) *matcher {
+	matchersOnce.Do(func() {
+		matcherSpecific, matcherAll = newMatcher(specific), newMatcher(withAssignment)
 	})
 	if specificOnly(kind) {
-		return combinedSpecific
+		return matcherSpecific
 	}
-	return combinedAll
+	return matcherAll
 }
 
 // Find returns the secrets in text, line by line, that an inventory would report for a file at
 // path. Matches an inventory drops for trails (a private-key header without its body, a
 // service-account marker) are not hits. mode is the file's effective mode, used for exposure.
 func (t *Trails) Find(path, mode, text string) []Hit {
+	return t.find(path, mode, text, matcherFor(t.s.kindOf(path)).findAll)
+}
+
+// find is Find with the function that places the alternation's matches on a line.
+func (t *Trails) find(path, mode, text string, matches func(string) [][]int) []Hit {
 	kind := t.s.kindOf(path)
 	patterns := patternsFor(kind)
-	re := combinedFor(kind)
 	spot := secretrisk.Where("scan", kind, mode, false, false)
 	var hits []Hit
 	off := 0
 	for line := range strings.SplitAfterSeq(text, "\n") {
-		for _, loc := range re.FindAllStringIndex(strings.TrimSuffix(line, "\n"), -1) {
+		for _, loc := range matches(strings.TrimSuffix(line, "\n")) {
 			mt := line[loc[0]:loc[1]]
 			c, ok := classify(path, mt, patterns)
 			if !ok {
