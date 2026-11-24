@@ -60,15 +60,19 @@ func (t *Tracker) discover(runs []*run) {
 	t.Owned = &merged
 }
 
-// collectClaims folds each sighting's claims into its rotate item's facts.
-func (t *Tracker) collectClaims(sightings []Sighting) {
+// collectClaims folds the claims of every secret sighting in the folded local-secrets runs into
+// its rotate item's facts.
+func (t *Tracker) collectClaims(folded map[string]*run) {
 	by := t.byFingerprint()
-	for _, s := range sightings {
-		it := by[s.Evidence.Fingerprint]
-		if it == nil || s.Evidence.Claims.Empty() {
+	for _, r := range folded {
+		if !r.isSecrets() {
 			continue
 		}
-		it.attributionResult().Facts.Add(s.Evidence.Claims)
+		for _, s := range Sightings(r.findings) {
+			if it := by[s.Evidence.Fingerprint]; it != nil && !s.Evidence.Claims.Empty() {
+				it.attributionResult().Facts.Add(s.Evidence.Claims)
+			}
+		}
 	}
 }
 

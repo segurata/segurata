@@ -137,9 +137,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	for _, l := range rep.Runs {
 		r := folded[l]
 		if r.isSecrets() {
-			sightings := Sightings(r.findings)
-			rep.Secrets.add(t.SyncSecrets(sightings, now, opt.IncludeNoise))
-			t.collectClaims(sightings)
+			rep.Secrets.add(t.SyncSecrets(Sightings(r.findings), now, opt.IncludeNoise))
 		}
 		for _, f := range r.findings {
 			if ev, ok := secretEvidence(f); ok {
@@ -214,6 +212,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	}
 	t.expireAll(now, &rep)
 	t.discover(runs)
+	t.collectClaims(folded)
 	t.Attribute(t.OwnedAll(opt.Owned))
 	rep.Ruled = t.applyRules(now)
 	t.seed(now)
