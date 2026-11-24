@@ -252,7 +252,8 @@ substring of the status detail, or a regular expression between slashes; `reason
   closed, so no setup item is ever opened for it. Its key keeps the reported state, so the item
   it closes is the one that state opened. If one of several statuses under a key is not
   expected, the item stays open. When a status no rule covers comes back the item opens again
-  (`auto-reopen`); when the status is gone the item is done like any other.
+  (`auto-reopen`); when the status is gone the item is done like any other, and when only
+  expected statuses come back it is expected again, not open.
 - `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
   setup blockers (and the report's "Needs attention" before any sync); `inventory` prints one line
   per instance and reason.
