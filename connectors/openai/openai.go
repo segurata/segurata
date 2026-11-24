@@ -116,16 +116,19 @@ func (s *scan) run() {
 		total += v
 	}
 	s.emitBudget(finding.Resource{Type: "organization", ID: account, Name: "OpenAI organization"},
-		"OpenAI organization", orgLimit, orgAlerts, total, costErr == nil)
+		"OpenAI organization", orgLimit, orgAlerts, total, costErr == nil, -1)
 
 	for _, p := range projects {
 		projLimit := s.spendLimit("/organization/projects/" + url.PathEscape(p.ID) + "/spend_limit")
 		projAlerts := s.alerts("/organization/projects/" + url.PathEscape(p.ID) + "/spend_alerts")
-		s.emitBudget(finding.Resource{Type: "project", ID: p.ID, Name: p.label()},
-			fmt.Sprintf("OpenAI project %q", p.label()), projLimit, projAlerts, costs[p.ID], costErr == nil)
-
 		keys, err := list[projectKey](s, "/organization/projects/"+url.PathEscape(p.ID)+"/api_keys",
 			url.Values{"owner_project_access": {"any"}})
+		keyCount := len(keys)
+		if err != nil {
+			keyCount = -1
+		}
+		s.emitBudget(finding.Resource{Type: "project", ID: p.ID, Name: p.label()},
+			fmt.Sprintf("OpenAI project %q", p.label()), projLimit, projAlerts, costs[p.ID], costErr == nil, keyCount)
 		if err != nil {
 			s.fail(err)
 			continue
@@ -364,13 +367,22 @@ func budgetSeverity(l limitState, a alertState) finding.Severity {
 	return finding.SevLow
 }
 
-func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a alertState, cost float64, costKnown bool) {
+// emitBudget reports one organization's or project's limit and alerts. keys is the number of
+// project keys the limit covers, -1 when unknown or not a project: the spend risk of every key is
+// stated here once, not on each key.
+func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a alertState, cost float64, costKnown bool, keys int) {
 	sev := budgetSeverity(l, a)
 	ev := map[string]any{"spend_alerts": a.count}
 	spent := ""
 	if costKnown {
 		ev["cost_30d_usd"] = cost
 		spent = fmt.Sprintf(" (%s in the last 30 days)", httpx.USD(cost))
+	}
+	if keys >= 0 {
+		ev["api_keys"] = keys
+		if !l.set && keys > 0 {
+			spent = fmt.Sprintf(": %d API keys can spend without a cap", keys) + spent
+		}
 	}
 	if l.set {
 		ev["hard_limit_usd_per_month"] = float64(l.cents) / 100
@@ -407,7 +419,9 @@ func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a al
 // limitCover says whether a key's traffic is capped by its project's or the organization's limit.
 type limitCover struct{ known, set bool }
 
-// keyAssessment applies the severity rules to one key.
+// keyAssessment applies the severity rules to one key from the key's own state: expired, owner
+// gone, unused. OpenAI keys have no spend limit of their own; a missing project or organization
+// limit is that project's or organization's finding, and only changes the wording here.
 func keyAssessment(lastUsed, expires *time.Time, ownerGone bool, cover limitCover, now time.Time) httpx.Assessment {
 	var a httpx.Assessment
 	if expires != nil && expires.Before(now) {
@@ -416,17 +430,17 @@ func keyAssessment(lastUsed, expires *time.Time, ownerGone bool, cover limitCove
 	if ownerGone {
 		a.Raise(finding.SevHigh, "its owner no longer has access to the project")
 	}
-	if cover.known && !cover.set {
-		a.Raise(finding.SevHigh, "no hard spend limit on its project or the organization")
-	}
 	switch {
 	case lastUsed == nil:
 		a.Raise(finding.SevMedium, "never used")
 	case now.Sub(*lastUsed) > httpx.IdleAfter:
 		a.Raise(finding.SevMedium, fmt.Sprintf("unused for %d days", httpx.Days(now, *lastUsed)))
 	}
-	if cover.set {
+	switch {
+	case cover.set:
 		return a.Done("in use and capped by a hard spend limit")
+	case cover.known:
+		return a.Done("in use; no hard spend limit caps it (see the project finding)")
 	}
 	return a.Done("in use")
 }
@@ -439,6 +453,9 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 		"project":  p.label(),
 		"owner":    k.Owner.label(),
 		"issues":   a.Reasons,
+	}
+	if cover.known {
+		ev["spend_capped"] = cover.set
 	}
 	if k.Owner.Type != "" {
 		ev["owner_type"] = k.Owner.Type
@@ -459,7 +476,7 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 		CreatedAt:  created,
 		LastUsedAt: lastUsed,
 		Remediation: finding.Remediation{
-			Summary: "Revoke keys nobody uses or owns; cap the project with a hard spend limit",
+			Summary: "Revoke keys nobody uses or owns. Spend caps are set on the project or the organization, not on the key.",
 			URL:     keysURL,
 		},
 	}

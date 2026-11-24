@@ -8,7 +8,7 @@ Severity rules shared by the three:
 
 | Situation | Severity |
 |---|---|
-| Key with no spend limit, where the provider supports one | high |
+| Key with no spend limit of its own, where the provider has per-key limits (OpenRouter) | high |
 | Key whose owner is gone (left the project or the organization) | high |
 | Key unused for more than 90 days, or never used | medium |
 | Active key under a spend limit | info |
@@ -38,15 +38,19 @@ Secret `OPENAI_ADMIN_KEY`, an Admin API key (`sk-admin-…`), sent as `Authoriza
 Lists page with `after` = `last_id` while `has_more`; costs page with `page` = `next_page`.
 
 What it reports: one `spend` finding for the organization and one per project (30-day cost, hard
-limit, number of alerts), one `credential` finding per project key and per admin key. Keys have no
-spend limit of their own at OpenAI, so a key counts as limited when its project or the organization
-has a hard limit. A key whose `owner_project_access` is `inactive` belongs to someone who no longer
-has access to the project.
+limit, number of alerts, and for a project how many API keys it holds), one `credential` finding
+per project key and per admin key. Keys have no spend limit of their own at OpenAI: a missing hard
+limit is stated once, on the project finding ("N API keys can spend without a cap") and the
+organization finding, and does not raise each key. A key's severity comes from the key alone
+(owner gone, unused, never used); its evidence says `spend_capped` when the limits could be read.
+A key whose `owner_project_access` is `inactive` belongs to someone who no longer has access to the
+project.
 
 What the API does not give, or what this connector assumes:
 
 - The docs do not say what `GET …/spend_limit` returns when no limit is set. The connector reads a
-  `404` as "no hard limit" and any other error as "unknown", which never raises a key to high.
+  `404` as "no hard limit" and any other error as "unknown", which the spend finding reports as
+  `low`.
 - `enforcement.status` (`inactive` or `enforcing`) is copied to the evidence and does not change
   the severity.
 - OpenAI's own usage-tier limit, assigned by OpenAI, is not a limit you set and is not read.
