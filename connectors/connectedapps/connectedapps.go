@@ -206,7 +206,19 @@ func (e *env) report(g grant) {
 	if g.stale {
 		title += " (not used for over a year)"
 	}
+	if g.resType == "notion_integration" && ownIntegration(g.publisher) {
+		title += " (your own integration)"
+	}
 	ev := map[string]any{"service": e.service}
+	summary := g.revoke
+	if summary == "" {
+		summary = "If you no longer use it, open the page and revoke its access."
+	}
+	if dep, ok := dependencyOf(g); ok {
+		title += " (" + dep.label + ")"
+		ev["dependency"] = dep.label
+		summary = dep.fix
+	}
 	if g.scopes != nil {
 		ev["scopes"] = g.scopes
 	}
@@ -231,10 +243,6 @@ func (e *env) report(g grant) {
 	kind := g.kind
 	if kind == "" {
 		kind = finding.KindGrant
-	}
-	summary := g.revoke
-	if summary == "" {
-		summary = "If you no longer use it, open the page and revoke its access."
 	}
 	e.emit.Finding(finding.Finding{
 		ID:          finding.StableID(name, g.resType, id),

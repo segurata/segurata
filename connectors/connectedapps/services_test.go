@@ -287,3 +287,69 @@ func TestFlexTime(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// xOldList has two apps approved more than ten years before now and one recent app.
+const xOldList = `{"applications":[
+ {"app_id":"1","name":"Old Blog","organization":"Old Blog Inc","token_type":"oauth1","can_read":true,"can_write":true,"approved":"2009-11-10T22:57:07Z"},
+ {"app_id":"2","name":"Old Reader","token_type":"oauth1","can_read":true,"approved":"2012-01-07T03:21:45Z"},
+ {"app_id":"3","name":"New Reader","token_type":"oauth1","can_read":true,"approved":"2021-03-16T00:03:07Z"},
+ {"app_id":"4","name":"Mid Writer","token_type":"oauth1","can_read":true,"can_write":true,"approved":"2020-07-25T15:01:00Z"}
+]}`
+
+func TestXGroupsAppsApprovedMoreThanTenYearsAgo(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*response{xURL: {status: 200, body: []byte(xOldList)}}}
+	rec := run(t, b, nil, "x")
+	if len(rec.findings) != 3 {
+		t.Fatalf("%d findings, want the two recent apps and one batch", len(rec.findings))
+	}
+	if rec.findings[0].Resource.Name != "Mid Writer" || rec.findings[1].Resource.Name != "New Reader" {
+		t.Errorf("recent apps not listed oldest first: %s, %s", rec.findings[0].Resource.Name, rec.findings[1].Resource.Name)
+	}
+	batch := rec.findings[2]
+	if batch.Resource.Type != "x_old_apps" || batch.Severity != finding.SevHigh || batch.Account != "x:@chirper" ||
+		batch.Title != "Revoke 2 X apps authorized before November 2016 (services mostly defunct)" {
+		t.Fatalf("batch: %s %s %q", batch.Resource.Type, batch.Severity, batch.Title)
+	}
+	if !reflect.DeepEqual(batch.Evidence["names"], []string{"Old Blog", "Old Reader"}) || !strings.Contains(batch.Remediation.Summary, "Old Blog, Old Reader") {
+		t.Errorf("batch evidence %v / %q", batch.Evidence["names"], batch.Remediation.Summary)
+	}
+	if batch.CreatedAt == nil || batch.CreatedAt.Year() != 2009 {
+		t.Errorf("batch created_at %v, want the oldest approval", batch.CreatedAt)
+	}
+	if rec.findings[0].Evidence["age_years"] != 6 {
+		t.Errorf("age_years %v", rec.findings[0].Evidence["age_years"])
+	}
+}
+
+func TestOwnNotionIntegrationIsLow(t *testing.T) {
+	b := &fakeBrowser{pages: map[string]any{notionURL: map[string]any{"url": notionURL, "text": "Integrations", "cells": [][][]string{
+		{{"Mine", "Read, update, and insert content"}, {"API token", "Internal to Example Space"}, {"Ada Example (You)"}, {"Nov 11, 2026"}},
+		{{"Theirs", "Read, update, and insert content"}, {"API token", "Internal to Example Space"}, {"Bob Example"}, {"Nov 11, 2026"}},
+	}}}}
+	rec := run(t, b, nil, "notion")
+	if m := rec.byName(t, "Mine"); m.Severity != finding.SevLow || !strings.HasSuffix(m.Title, "(your own integration)") {
+		t.Errorf("own integration: %s %q", m.Severity, m.Title)
+	}
+	if o := rec.byName(t, "Theirs"); o.Severity != finding.SevHigh {
+		t.Errorf("someone else's integration: %s", o.Severity)
+	}
+}
+
+func TestGitHubCLIIsADependencyToNarrowNotRevoke(t *testing.T) {
+	e := &env{service: "github", emit: &recorder{}, now: now, seen: map[string]int{}}
+	e.report(grant{who: "octo", resType: "github_oauth_app", name: "GitHub CLI", scopes: []string{
+		"Full control of orgs and teams, read and write org projects", "Delete repositories", "Full control of private repositories"}})
+	f := e.emit.(*recorder).findings[0]
+	if f.Severity != finding.SevHigh || f.Title != "GitHub CLI can delete your repositories (segurata depends on it)" || f.Evidence["dependency"] != "segurata depends on it" {
+		t.Errorf("finding %s %q %v", f.Severity, f.Title, f.Evidence)
+	}
+	if !strings.Contains(f.Remediation.Summary, "`gh auth refresh -h github.com -r delete_repo,admin:org`") ||
+		!strings.Contains(f.Remediation.Summary, "do not revoke") || strings.Contains(f.Remediation.Summary, "Revoke access") {
+		t.Errorf("remediation %q", f.Remediation.Summary)
+	}
+
+	e.report(grant{who: "octo", resType: "github_oauth_app", name: "Some CLI", scopes: []string{"Delete repositories"}})
+	if other := e.emit.(*recorder).findings[1]; other.Evidence["dependency"] != nil {
+		t.Errorf("only segurata's own dependencies are labelled: %+v", other)
+	}
+}

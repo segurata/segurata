@@ -129,6 +129,17 @@ deleting repositories, administering organizations and billing are `high`; broad
 `medium`; profile or email only is `low` or `info`. When the page gives a last-used date older than
 a year, the severity goes up one level.
 
+- X apps approved more than 10 years ago are one finding, "Revoke N X apps authorized before
+  <month year> (services mostly defunct)", as severe as the worst of them and listing each with
+  its date; newer apps are listed oldest first, each with `age_years`.
+- A Notion integration whose owner is you ("(You)") is `low` and says "(your own integration)":
+  its token is yours, and a leaked copy is a local-secrets finding.
+- Grants segurata runs on are labelled "(segurata depends on it)" and never told to revoke: for the
+  GitHub CLI the fix narrows it with `gh auth refresh -h github.com -r <scopes>` (`delete_repo`,
+  `admin:org`, `admin:enterprise`, whichever it holds) and a read-only token for segurata. In
+  google-personal, the Google Cloud SDK grant gets the same label and the Firebase CLI grant
+  "(developer tool)", with the CLI's own sign-out command as the fix.
+
 | Service | What it lists |
 |---|---|
 | GitHub | OAuth apps (scopes, organizations with access, last use), installed GitHub Apps, web sessions; SSH, signing and GPG keys via `gh api` (title, type, dates, never the key). Authorized GitHub Apps and the permissions of installed ones need sudo mode: `reauth` |
