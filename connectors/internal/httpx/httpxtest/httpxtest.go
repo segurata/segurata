@@ -81,17 +81,47 @@ type Route func(q url.Values) (int, any)
 // Server serves routes keyed by path, after checking every header in want on every request.
 // Unknown paths get 404 and are recorded in Misses so tests can assert full coverage; Hits
 // counts requests per path.
+//
+// A remediation test sets DeleteAuth: DELETE requests carrying exactly those headers are recorded
+// in Deleted and answered 200 (or DeleteStatus[path]); any other DELETE gets 403, as a read-only
+// key would. Without DeleteAuth only GET is allowed, which is what every inventory test asserts.
 type Server struct {
 	*httptest.Server
-	mu     sync.Mutex
-	Misses []string
-	Hits   map[string]int
+	mu           sync.Mutex
+	Misses       []string
+	Hits         map[string]int
+	DeleteAuth   http.Header
+	DeleteStatus map[string]int
+	Deleted      []string
+}
+
+func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.DeleteAuth {
+		if r.Header.Get(k) != s.DeleteAuth.Get(k) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"message":"this key is read-only"}}`))
+			return
+		}
+	}
+	s.Deleted = append(s.Deleted, r.URL.Path)
+	code := http.StatusOK
+	if c, ok := s.DeleteStatus[r.URL.Path]; ok {
+		code = c
+	}
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(`{"deleted":true}`))
 }
 
 func NewServer(t *testing.T, want http.Header, routes map[string]Route) *Server {
 	t.Helper()
 	s := &Server{Hits: map[string]int{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && s.DeleteAuth != nil {
+			s.delete(w, r)
+			return
+		}
 		if r.Method != http.MethodGet {
 			t.Errorf("connector sent %s %s; only GET is allowed", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusMethodNotAllowed)

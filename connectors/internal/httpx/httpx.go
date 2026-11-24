@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -73,7 +74,7 @@ func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) er
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &StatusError{Path: path, Code: resp.StatusCode, Message: errorMessage(body)}
+		return &StatusError{Path: path, Code: resp.StatusCode, Message: ErrorMessage(body)}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("GET %s: unexpected response: %w", path, err)
@@ -81,10 +82,10 @@ func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) er
 	return nil
 }
 
-// errorMessage pulls the message out of the JSON error envelope OpenAI, Anthropic and
+// ErrorMessage pulls the message out of the JSON error envelope OpenAI, Anthropic and
 // OpenRouter use (error.message) or Cloudflare's (errors[].message), falling back to a short
 // prefix of the body.
-func errorMessage(body []byte) string {
+func ErrorMessage(body []byte) string {
 	type message struct {
 		Message string `json:"message"`
 	}
@@ -117,6 +118,21 @@ func truncate(s string) string {
 		return s[:max] + "…"
 	}
 	return s
+}
+
+// MatchesRedacted reports whether secret is the key a provider shows as redacted, a visible
+// prefix and suffix around a mask ("sk-proj-****dYwA", "sk-or-v1-27e...d4d"). Both parts must be
+// visible and match; a redacted form without a mask matches nothing.
+func MatchesRedacted(redacted, secret string) bool {
+	i := strings.IndexAny(redacted, "*.…")
+	if i <= 0 || secret == "" {
+		return false
+	}
+	j := strings.LastIndexAny(redacted, "*.…")
+	_, size := utf8.DecodeRuneInString(redacted[j:])
+	prefix, suffix := redacted[:i], redacted[j+size:]
+	return suffix != "" && len(secret) >= len(prefix)+len(suffix) &&
+		strings.HasPrefix(secret, prefix) && strings.HasSuffix(secret, suffix)
 }
 
 // Unix converts Unix seconds to a time; 0 or nil means the provider did not say.
