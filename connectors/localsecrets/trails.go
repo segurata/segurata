@@ -90,22 +90,31 @@ func (t *Trails) Lines(files []string) (map[string][]int, error) {
 			passes = append(passes, pass{patternsFor(k), paths, nil})
 		}
 	}
+	// The passes run at once, as an inventory's do.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 	seen := map[string]map[int]bool{}
 	for _, p := range passes {
 		args := rgArgsFor(p)
 		if args == nil {
 			continue
 		}
-		eachRGMatch(t.s.rgOutput(args), func(path string, line int, _ string) {
-			if !IsTrail(t.s.kindOf(path)) {
-				return
-			}
-			if seen[path] == nil {
-				seen[path] = map[int]bool{}
-			}
-			seen[path][line] = true
+		wg.Go(func() {
+			out := t.s.rgOutput(args)
+			mu.Lock()
+			defer mu.Unlock()
+			eachRGMatch(out, func(path string, line int, _ string) {
+				if !IsTrail(t.s.kindOf(path)) {
+					return
+				}
+				if seen[path] == nil {
+					seen[path] = map[int]bool{}
+				}
+				seen[path][line] = true
+			})
 		})
 	}
+	wg.Wait()
 	if msg := t.log.get(); msg != "" {
 		return nil, errors.New(msg)
 	}

@@ -16,8 +16,10 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -303,6 +305,7 @@ func isOpen(abs string, open map[string]bool) bool {
 	return err == nil && open[real]
 }
 
+// plan works out every file's rewrite, several files at a time: matching is CPU-bound.
 func (c CLI) plan(t *localsecrets.Trails, s *selection, lines map[string][]int, open map[string]bool, now time.Time) *plan {
 	p := &plan{skipped: map[string][]string{}}
 	paths := make([]string, 0, len(lines))
@@ -312,13 +315,31 @@ func (c CLI) plan(t *localsecrets.Trails, s *selection, lines map[string][]int, 
 		}
 	}
 	slices.Sort(paths)
-	for _, abs := range paths {
-		fp, reason := c.planFile(t, s, abs, lines[abs], open, now)
+	type planned struct {
+		fp     *filePlan
+		reason string
+	}
+	out := make([]planned, len(paths))
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), len(paths)) {
+		wg.Go(func() {
+			for i := range work {
+				out[i].fp, out[i].reason = c.planFile(t, s, paths[i], lines[paths[i]], open, now)
+			}
+		})
+	}
+	for i := range paths {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	for i, r := range out {
 		switch {
-		case reason != "":
-			p.skip(reason, t.Tilde(abs))
-		case fp != nil:
-			p.files = append(p.files, fp)
+		case r.reason != "":
+			p.skip(r.reason, t.Tilde(paths[i]))
+		case r.fp != nil:
+			p.files = append(p.files, r.fp)
 		}
 	}
 	return p
