@@ -350,6 +350,40 @@ func (it *Item) reopenMerged(now time.Time) {
 	it.setStatus(now, Open, EvReopened, actAutoReopen, "no longer part of "+from)
 }
 
+// reopenProvenLive opens an ignored rotate item that a connector claims (see correlate): the key
+// works, which contradicts "not a real problem", and the connector's own item has merged into this
+// one, so leaving it ignored would leave a live key with no open item. The owner ignoring it again
+// after the proof sticks. Only ignored items give way: an accepted one is a risk kept on purpose
+// (the proof still raises its priority), a done one is governed by its working-file sightings (see
+// rotatedSeen), and a reclassified one is never claimed.
+func (it *Item) reopenProvenLive(now time.Time) {
+	live := it.live()
+	if it.Status != Ignored || len(live) == 0 || it.ignoredAfterProof() {
+		return
+	}
+	var labels []string
+	for _, r := range live {
+		if !slices.Contains(labels, r.Label()) {
+			labels = append(labels, r.Label())
+		}
+	}
+	it.setStatus(now, Open, EvReopened, actProvenLive, "proven live by "+strings.Join(labels, ", ")+"; it was ignored: "+it.lastDetail(actIgnore))
+}
+
+// ignoredAfterProof reports whether the item's latest ignore came after a proof that it is live.
+func (it *Item) ignoredAfterProof() bool {
+	ignored := false
+	for i := len(it.History) - 1; i >= 0; i-- {
+		switch it.History[i].Action {
+		case actIgnore:
+			ignored = true
+		case actProvenLive:
+			return ignored
+		}
+	}
+	return false
+}
+
 // live are the connector findings attached to a rotate item that are still reported: evidence the
 // secret works.
 func (it *Item) live() []FindingRef {

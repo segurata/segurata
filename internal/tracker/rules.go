@@ -214,19 +214,21 @@ func (r Rule) InScope(it *Item) bool {
 }
 
 // applyRules closes, with the first rule that covers it, every open, in-progress or snoozed item
-// in a rule's scope, and returns how many it closed. An item reopened by hand after the rule was
-// added is left alone: the owner overrode it. An item a rule narrowed to owners closed opens again
-// (auto-reopen) once its attribution is no longer one of them: a key that turned out to be the
-// owner's is rotated after all.
+// in a rule's scope, and returns how many it closed. An item reopened after the rule was added, by
+// hand or because a connector proved its secret live, is left alone: the owner or the evidence
+// overrode it. An item a rule narrowed to owners closed opens again (auto-reopen) once its
+// attribution is no longer one of them: a key that turned out to be the owner's is rotated after
+// all. An ignored secret a connector proves live opens again too (see reopenProvenLive).
 func (t *Tracker) applyRules(now time.Time) int {
 	n := 0
 	for _, it := range t.Items {
 		t.reopenReattributed(it, now)
+		it.reopenProvenLive(now)
 		if it.Status != Open && it.Status != InProgress && it.Status != Snoozed {
 			continue
 		}
 		for _, r := range t.Rules {
-			if !r.Matches(it) || it.reopenedByHandSince(r.At) {
+			if !r.Matches(it) || it.reopenedSince(r.At) {
 				continue
 			}
 			reason := r.closing()
@@ -279,8 +281,12 @@ func (t *Tracker) reopenReattributed(it *Item, now time.Time) {
 	}
 }
 
-func (it *Item) reopenedByHandSince(at time.Time) bool {
-	return slices.ContainsFunc(it.History, func(e Event) bool { return e.Action == actReopen && e.At.After(at) })
+// reopenedSince reports whether the item was reopened by hand, or by proof that its secret is live,
+// after at.
+func (it *Item) reopenedSince(at time.Time) bool {
+	return slices.ContainsFunc(it.History, func(e Event) bool {
+		return (e.Action == actReopen || e.Action == actProvenLive) && e.At.After(at)
+	})
 }
 
 // DecideWithEffects answers a decision, adds the rules its answer carries (the matching option's

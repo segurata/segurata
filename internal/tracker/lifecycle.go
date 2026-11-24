@@ -40,6 +40,7 @@ const (
 	actExpected    = "expected"
 	actRule        = "rule"
 	actMerged      = "merged"
+	actProvenLive  = "proven-live"
 	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `segurata rotations`.
 	ActNext          = "next"
 	ActReplacePlan   = "replace-plan"

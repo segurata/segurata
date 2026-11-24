@@ -1208,7 +1208,12 @@ On the rotate item, the refs still reported are evidence the secret is live:
   reason is "live key, leaked in <repo>:<file>", and it sorts first among secrets;
 - each ref adds a reason "live: <instance>: <title>" ("live: aws: Long-lived AWS access key for
   profile "default" stored in plain text; aws sts says it works for account 123456789012",
-  "live: openrouter:personal: API key "Claude Code": in use with a credit limit").
+  "live: openrouter:personal: API key "Claude Code": in use with a credit limit");
+- an ignored item opens again (history `reopened` / `proven-live`, "proven live by aws; it was
+  ignored: …"), since the connector's own item merged into it and the key would otherwise have no
+  open item. A decision's rule that ignored it does not close it again. Ignoring it by hand after
+  the proof sticks. An accepted item stays accepted (the risk was kept on purpose; the priority
+  still rises), and a done item is reopened only by the working-file sightings of "Rotation ledger".
 
 ## Redaction
 
