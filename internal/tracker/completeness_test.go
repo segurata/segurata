@@ -180,3 +180,53 @@ func TestRefsWithoutScopeNeedACompleteRun(t *testing.T) {
 		t.Fatalf("a complete run proves it gone: %+v", it)
 	}
 }
+
+// A setup item whose status the latest finished run no longer reports closes, whatever that run
+// inspected: an aws error replaced by noscope, an r2 profile's reauth no longer emitted. A run
+// without run_end, or whose connector failed, proves no status gone.
+func TestStaleSetupItemsCloseOnAFinishedRun(t *testing.T) {
+	day1, day2 := t0, t0.AddDate(0, 0, 1)
+	const acct = "111122223333"
+	first := []any{
+		status("aws", acct, "", finding.StateError, "root user: AccessDenied"),
+		status("aws", "profile r2-example", "", finding.StateReauth, "InvalidClientTokenId"),
+	}
+	cases := []struct {
+		name   string
+		second func(t *testing.T, out string)
+		closes bool
+	}{
+		{"finished run that inspected nothing reports other states", func(t *testing.T, out string) {
+			writeRun(t, out, day2, "aws.jsonl", status("aws", acct, "", finding.StateNoScope, "attach SecurityAudit"),
+				finding.Skipped{Scope: finding.ScopeAll, Reason: "no account was reported as inspected"})
+		}, true},
+		{"run without run_end", func(t *testing.T, out string) {
+			runtest.WriteUnfinished(t, filepath.Join(out, day2.Format(time.DateOnly), "aws.jsonl"),
+				status("aws", acct, "", finding.StateNoScope, "attach SecurityAudit"))
+		}, false},
+		{"connector failed", func(t *testing.T, out string) {
+			writeRun(t, out, day2, "aws.jsonl", errors.New("aws CLI not found"))
+		}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out")
+			writeRun(t, out, day1, "aws.jsonl", first...)
+			tr := &Tracker{}
+			syncOrDie(t, tr, out, day1)
+			errItem := byTitle(t, tr, "aws · "+acct+": failed")
+			r2 := byTitle(t, tr, "aws · profile r2-example")
+			c.second(t, out)
+			syncOrDie(t, tr, out, day2.Add(time.Hour))
+			for _, it := range []*Item{errItem, r2} {
+				if c.closes {
+					if it.Status != Done || it.VerifiedAt == nil || it.History[len(it.History)-1].Detail != "verified (status no longer reported)" {
+						t.Errorf("%s: want done, verified (status no longer reported): %+v", it.Title, it)
+					}
+				} else if it.Status != Open {
+					t.Errorf("%s: closed by a run that proves no status gone: %+v", it.Title, it)
+				}
+			}
+		})
+	}
+}

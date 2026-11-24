@@ -102,10 +102,15 @@ when a skipped scope matches its scope or its account (`finding.Coverage`).
   longer reported only when its scope was inspected.
 - `track sync` marks a finding gone only when its scope was inspected, so it never closes or
   verifies an item on an incomplete run, and logs `not checked in run <label> of <ended_at>
-  (<reason>)` once per run on each item it held back. A setup item's status ref counts as gone
-  only in a run that inspected something, in one that reports the item's key again with other
-  details (stale details, or a ref recorded before one ref per detail), or in one that reports the
-  same state for the whole instance (no account): that status covers the per-account one.
+  (<reason>)` once per run on each item it held back. Completeness protects findings, not
+  statuses: a setup item's status ref counts as gone in any finished run (with `run_end` and no
+  connector error) that does not report it, whatever that run inspected, so an aws `error`
+  replaced by `noscope`, or a `reauth` an r2 profile no longer gets, closes its item as done,
+  "verified (status no longer reported)". A run without `run_end`, or whose connector failed (it
+  may have stopped before reporting), proves no status gone, except that one reporting the item's
+  key again with other details (stale details, or a ref recorded before one ref per detail), or
+  the same state for the whole instance (no account, which covers the per-account one), still
+  retires the old ref.
 - `remediate --apply` returns "could not verify the fix" (`remediate.ErrUnverified`) when the
   check run did not inspect the finding's scope, instead of reporting it fixed.
 
