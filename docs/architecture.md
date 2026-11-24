@@ -103,8 +103,9 @@ when a skipped scope matches its scope or its account (`finding.Coverage`).
 - `track sync` marks a finding gone only when its scope was inspected, so it never closes or
   verifies an item on an incomplete run, and logs `not checked in run <label> of <ended_at>
   (<reason>)` once per run on each item it held back. A setup item's status ref counts as gone
-  only in a run that inspected something, or in one that reports the same state for the whole
-  instance (no account): that status covers the per-account one.
+  only in a run that inspected something, in one that reports the item's key again with other
+  details (stale details, or a ref recorded before one ref per detail), or in one that reports the
+  same state for the whole instance (no account): that status covers the per-account one.
 - `remediate --apply` returns "could not verify the fix" (`remediate.ErrUnverified`) when the
   check run did not inspect the finding's scope, instead of reporting it fixed.
 

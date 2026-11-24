@@ -412,7 +412,19 @@ func TestAnInstanceWideStatusCoversThePerAccountOne(t *testing.T) {
 	org := byTitle(t, tr, "anthropic:personal · organization")
 	writeRun(t, out, t0.Add(24*time.Hour), "anthropic-personal.jsonl", missing("", "ANTHROPIC_ADMIN_KEY: not set; set ANTHROPIC_ADMIN_KEY"))
 	syncOrDie(t, tr, out, t0.Add(25*time.Hour))
-	if org.Status != Done || byTitle(t, tr, "anthropic:personal: has no credentials").Status != Open {
-		t.Errorf("org item %s", org.Status)
+	inst := byTitle(t, tr, "anthropic:personal: has no credentials")
+	if org.Status != Done || inst.Status != Open {
+		t.Errorf("org item %s, instance item %s", org.Status, inst.Status)
+	}
+	// The instance item's key is reported again with a new detail: the old detail's ref is gone,
+	// even though the run inspected nothing.
+	reported := 0
+	for _, r := range inst.Findings {
+		if !r.Gone {
+			reported++
+		}
+	}
+	if len(inst.Findings) != 2 || reported != 1 {
+		t.Errorf("refs %+v", inst.Findings)
 	}
 }

@@ -356,9 +356,11 @@ func (it *Item) upsert(refs []FindingRef, seen map[string]bool) int {
 
 // markGone flags the refs this sync did not see, when their connector instance's run inspected
 // their scope; it returns, by ref id, the "not checked" note of each ref it held back instead. A
-// status ref (setup items) is gone as soon as a run that inspected anything lacks that status, or
-// when the run reports the same state for the whole instance (no account), which covers it: the
-// core's one missing_credentials status replaces the one a connector used to emit per account.
+// status ref (setup items) is gone as soon as a run that inspected anything lacks that status; when
+// the run reports the item's key with other details (the details changed, or the ref predates one
+// ref per detail); or when the run reports the same state for the whole instance (no account),
+// which covers it: the core's one missing_credentials status replaces the one a connector used to
+// emit per account.
 func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[string]string {
 	held := map[string]string{}
 	for i := range it.Findings {
@@ -373,7 +375,7 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[strin
 		why, unchecked := run.cov.Unchecked(r.Account, r.Scope)
 		if strings.HasPrefix(r.ID, "status:") {
 			why, unchecked = run.cov.NoneChecked()
-			if r.Account != "" && run.wholeInstance(finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])) {
+			if len(seen) > 0 || r.Account != "" && run.wholeInstance(finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])) {
 				unchecked = false
 			}
 		}
