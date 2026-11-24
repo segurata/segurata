@@ -111,8 +111,12 @@ func (c CLI) sync(l *Ledger, path string, args []string, now time.Time) int {
 	if err := l.Save(path); err != nil {
 		return c.fail(err)
 	}
-	fmt.Fprintf(c.Out, "Synced %s: %d secrets (%d new, %d updated, %d reopened because they are still present after rotation, %d snoozes expired); %d noise-only skipped.\n",
+	fmt.Fprintf(c.Out, "Synced %s: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d noise-only skipped.\n",
 		src, rep.Secrets, rep.Created, rep.Updated, rep.Reopened, rep.Woken, rep.Skipped)
+	if rep.HistoryOnly > 0 {
+		fmt.Fprintf(c.Out, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
+			rep.HistoryOnly, plural(rep.HistoryOnly, "secret", "secrets"), historyOnly)
+	}
 	counts := map[secretrisk.Priority]int{}
 	for _, it := range l.Items {
 		if it.Active(now) {

@@ -92,6 +92,86 @@ func TestRotatedButStillPresentReopens(t *testing.T) {
 	}
 }
 
+func TestRotatedSeenOnlyInHistoryStaysRotated(t *testing.T) {
+	l := &Ledger{}
+	rc := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.zshrc", "scan", "config", "600", false, false))
+	transcript := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.claude/projects/p/s.jsonl", "scan", "transcript", "600", false, false))
+	gitHistory := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/src/app/config.yml", "gitleaks", "repo", "", true, true))
+	l.Sync([]Sighting{rc, transcript, gitHistory}, t0, false)
+	it, _ := l.Find("aaaa")
+	it.Done(t0.Add(time.Hour), "")
+	if strings.Join(it.RotatedLocations, ",") != "gitleaks:~/src/app/config.yml,scan:~/.claude/projects/p/s.jsonl,scan:~/.zshrc" {
+		t.Fatalf("rotated locations %v", it.RotatedLocations)
+	}
+
+	// The rc file was fixed; the transcript and git history still hold the dead value, and a new
+	// log copy appeared.
+	log := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/src/app/log/dev.log", "scan", "log", "600", false, false))
+	for day := 1; day <= 3; day++ {
+		rep := l.Sync([]Sighting{transcript, gitHistory, log}, t0.Add(time.Duration(day)*24*time.Hour), false)
+		if it.Status != Rotated || rep.Reopened != 0 {
+			t.Fatalf("day %d: reopened on history-only copies: %+v %+v", day, rep, it)
+		}
+		if want := map[bool]int{true: 1, false: 0}[day == 1]; rep.HistoryOnly != want {
+			t.Errorf("day %d: history-only count %d, want %d", day, rep.HistoryOnly, want)
+		}
+	}
+	notes := 0
+	for _, e := range it.History {
+		if e.Action == actHistory {
+			notes++
+			if e.Note != historyOnly {
+				t.Errorf("note %q", e.Note)
+			}
+		}
+	}
+	if notes != 1 || len(it.Locations) != 4 {
+		t.Errorf("want one note and four locations: %d %+v", notes, it.Locations)
+	}
+
+	// A second rotation gets its own note.
+	it.Reopen(t0.Add(5*24*time.Hour), "")
+	it.Done(t0.Add(5*24*time.Hour), "rotated again")
+	if rep := l.Sync([]Sighting{transcript}, t0.Add(6*24*time.Hour), false); rep.HistoryOnly != 1 || it.Status != Rotated {
+		t.Errorf("after a new rotation: %+v %s", rep, it.Status)
+	}
+}
+
+func TestRotatedSeenInWorkingFileReopens(t *testing.T) {
+	cases := []struct {
+		name string
+		see  []Sighting
+		note string
+	}{
+		{"known working file", []Sighting{
+			sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.zshrc", "scan", "config", "600", false, false)),
+		}, "still in ~/.zshrc"},
+		{"new working file", []Sighting{
+			sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.claude/projects/p/s.jsonl", "scan", "transcript", "600", false, false)),
+			sight(ev("aaaaaaaaaaaaaaaa", "github", "~/src/new/.env", "scan", "repo", "600", false, false)),
+		}, "new working location ~/src/new/.env"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &Ledger{}
+			l.Sync([]Sighting{
+				sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.zshrc", "scan", "config", "600", false, false)),
+				sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.claude/projects/p/s.jsonl", "scan", "transcript", "600", false, false)),
+			}, t0, false)
+			it, _ := l.Find("aaaa")
+			it.Done(t0.Add(time.Hour), "")
+			rep := l.Sync(tc.see, t0.Add(24*time.Hour), false)
+			if rep.Reopened != 1 || rep.HistoryOnly != 0 || it.Status != Open || it.Reasons[0] != stillPresent {
+				t.Fatalf("report %+v item %+v", rep, it)
+			}
+			last := it.History[len(it.History)-1]
+			if last.Action != actAutoReopen || !strings.HasSuffix(last.Note, tc.note) {
+				t.Errorf("history %+v", last)
+			}
+		})
+	}
+}
+
 func TestItemsNotSeenKeepLastSeen(t *testing.T) {
 	l := &Ledger{}
 	l.Sync([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "xai", "~/.zshrc", "scan", "config", "600", false, false))}, t0, false)

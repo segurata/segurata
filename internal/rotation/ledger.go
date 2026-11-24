@@ -38,10 +38,15 @@ const (
 	actReopen     = "reopen"
 	actAutoReopen = "auto-reopen"
 	actWake       = "snooze-expired"
+	actHistory    = "history-only"
 )
 
-// stillPresent is the reason given when a rotated secret shows up again with the same value.
-const stillPresent = "still present after rotation (old value not removed)"
+// stillPresent is the reason given when a rotated secret shows up again, with the same value, in
+// a working file: somewhere a consumer still reads it.
+const stillPresent = "still present after rotation (old value still in a working file)"
+
+// historyOnly is noted once when a rotated secret is seen again only where nothing reads it.
+const historyOnly = "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
 
 // Location is one place the secret was found.
 type Location struct {
@@ -57,6 +62,16 @@ type Location struct {
 }
 
 func (l Location) key() string { return l.Source + "\x00" + l.Path }
+
+// ref names the location in rotated_locations: source and path, as key does.
+func (l Location) ref() string { return l.Source + ":" + l.Path }
+
+// working reports whether a consumer reads the secret from here: a config, .env, rc or repo
+// working-tree file. Git history (gitleaks), transcripts, logs and shell history are records of
+// the past; once the value is revoked their copies are dead.
+func (l Location) working() bool {
+	return l.Source != "gitleaks" && (l.Kind == "config" || l.Kind == "repo")
+}
 
 func (l Location) spot() secretrisk.Spot {
 	return secretrisk.Where(l.Source, l.Kind, l.Mode, l.Tracked, l.Remote)
@@ -86,6 +101,8 @@ type Item struct {
 	UsedIn       []string            `json:"used_in"`
 	RotateURL    string              `json:"rotate_url,omitempty"`
 	History      []Event             `json:"history"`
+	// RotatedLocations are the locations (source:path) known when the item was marked rotated.
+	RotatedLocations []string `json:"rotated_locations,omitempty"`
 }
 
 // Ledger is the whole state file.
@@ -211,9 +228,14 @@ func (it *Item) log(at time.Time, action, note string) {
 	it.History = append(it.History, Event{At: at.UTC(), Action: action, Note: note})
 }
 
-// Done marks the item rotated.
+// Done marks the item rotated and records the locations known at that moment.
 func (it *Item) Done(at time.Time, note string) {
 	it.Status, it.SnoozedUntil = Rotated, ""
+	it.RotatedLocations = make([]string, 0, len(it.Locations))
+	for _, l := range it.Locations {
+		it.RotatedLocations = append(it.RotatedLocations, l.ref())
+	}
+	sort.Strings(it.RotatedLocations)
 	it.log(at, actDone, note)
 	it.refresh()
 }
@@ -244,7 +266,7 @@ func (it *Item) Ignore(at time.Time, reason string) error {
 
 // Reopen puts the item back on the open list.
 func (it *Item) Reopen(at time.Time, note string) {
-	it.Status, it.SnoozedUntil = Open, ""
+	it.Status, it.SnoozedUntil, it.RotatedLocations = Open, "", nil
 	it.log(at, actReopen, note)
 	it.refresh()
 }
@@ -335,7 +357,7 @@ func (it *Item) refresh() {
 	seen := map[string]bool{}
 	it.UsedIn = []string{}
 	for _, l := range it.Locations {
-		if l.Source != "gitleaks" && (l.Kind == "config" || l.Kind == "repo") && !seen[l.Path] {
+		if l.working() && !seen[l.Path] {
 			seen[l.Path] = true
 			it.UsedIn = append(it.UsedIn, l.Path)
 		}
@@ -350,6 +372,19 @@ func (it *Item) reopenedStillPresent() bool {
 		case actAutoReopen:
 			return it.Status != Rotated
 		case actDone, actReopen:
+			return false
+		}
+	}
+	return false
+}
+
+// notedHistoryOnly reports whether the history-only note was logged since the last done.
+func (it *Item) notedHistoryOnly() bool {
+	for i := len(it.History) - 1; i >= 0; i-- {
+		switch it.History[i].Action {
+		case actHistory:
+			return true
+		case actDone:
 			return false
 		}
 	}

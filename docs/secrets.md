@@ -52,6 +52,16 @@ If the finding is a false positive (test fixture, sample key), add the gitleaks 
 (`commit:file:rule:line`, printed by `gitleaks git` in that repo) to `.gitleaksignore`, and mark the
 item with `securizame rotations ignore <id> --reason …`.
 
+## After a rotation
+
+Once the old value is revoked, the copies left in git history, agent transcripts, logs and shell
+history are dead: nobody can use them. `securizame rotations sync` leaves such an item `rotated`
+and notes once "old value still in history/transcripts". It reopens the item only when a working
+file (config, `.env`, rc file, repo working tree) still holds the old value, because a program
+still reads it from there. Purging the dead copies is optional housekeeping:
+[git](#in-git-always-rotate) (step 3), [shell history](#shell-history),
+[agent transcripts](#agent-transcripts), [logs](#logs).
+
 ## .env files
 
 Goal: keep a *reference* to the secret on disk, not the value.

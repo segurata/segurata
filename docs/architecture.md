@@ -258,10 +258,16 @@ Priority is impact × exposure, both table-driven:
   was pasted there was sent to the model provider.
 - Noise is left out by default: generic `NAME=value` matches, gitleaks `generic-api-key`, anon or
   expired JWTs, encrypted private keys. `sync --include-noise` tracks them without a priority.
-- `sync` merges locations (never drops one: git history and transcripts do not forget), refreshes
-  `last_seen` only for secrets it saw, and reopens a `rotated` item found again with the same
-  fingerprint, with the reason "still present after rotation (old value not removed)". Expired
-  snoozes go back to `open`.
+- `sync` merges locations (never drops one: git history and transcripts do not forget) and
+  refreshes `last_seen` only for secrets it saw. Expired snoozes go back to `open`.
+- After a real rotation the old value is revoked, so only a working file that still holds it
+  matters. `done` and `replace` record the locations known at that moment (`rotated_locations`).
+  A `rotated` item seen again is reopened, with the reason "still present after rotation (old
+  value still in a working file)", only when a sighting is in a working file (config, `.env`, rc
+  or repo working tree; the kinds that feed `used_in`), whether known at rotation time (the new
+  value never reached it) or new since; the history note says which. Copies only in git history,
+  transcripts, logs or shell history leave it `rotated` and add one `history-only` note per
+  rotation ([docs/secrets.md](secrets.md#after-a-rotation)).
 - `used_in` lists the working files (config, `.env`, rc files) that hold the secret: where the new
   value has to go once it is rotated.
 - `rotate_url` is the provider console page for that kind of secret, checked against each
