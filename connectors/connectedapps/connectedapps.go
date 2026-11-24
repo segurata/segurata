@@ -24,6 +24,7 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/remediate"
 )
 
 const name = "connected-apps"
@@ -36,6 +37,7 @@ type Connector struct {
 	browser browser
 	gh      cli.Runner
 	now     func() time.Time
+	exec    remediate.Executor // runs a confirmed remediation; nil is remediate.System
 }
 
 func (*Connector) Describe() connector.Description {
@@ -221,10 +223,14 @@ func (e *env) report(g grant) {
 	if summary == "" {
 		summary = "If you no longer use it, open the page and revoke its access."
 	}
+	action := ""
 	if dep, ok := dependencyOf(g); ok {
 		title += " (" + dep.label + ")"
 		ev["dependency"] = dep.label
 		summary = dep.fix
+		if len(dep.remove) > 0 {
+			action = ActionGHDropScopes
+		}
 	}
 	if g.scopes != nil {
 		ev["scopes"] = g.scopes
@@ -262,7 +268,7 @@ func (e *env) report(g grant) {
 		Evidence:    ev,
 		CreatedAt:   g.created,
 		LastUsedAt:  g.lastUsed,
-		Remediation: finding.Remediation{Summary: summary, URL: g.url},
+		Remediation: finding.Remediation{Summary: summary, URL: g.url, Action: action},
 	})
 }
 
