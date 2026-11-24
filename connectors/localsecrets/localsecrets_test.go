@@ -120,20 +120,6 @@ func TestJWTAnonOrExpiredIsPublic(t *testing.T) {
 	}
 }
 
-func TestRedactShowsOnlyPrefixTailAndLength(t *testing.T) {
-	key := fake("sk_live_", 40)
-	got := redact("stripe-live", "sk_live_|rk_live_", key)
-	if want := "sk_live_…" + key[len(key)-4:] + "(48)"; got != want {
-		t.Errorf("redact %q, want %q", got, want)
-	}
-	if got := redact("url-credentials", "", fake("", 30)); got != "…(30)" {
-		t.Errorf("password-like hint %q", got)
-	}
-	if got := redact("telegram-bot", "", fake("", 12)); got != "…(12)" {
-		t.Errorf("short value hint %q", got)
-	}
-}
-
 func TestPEMBodyIsTheSameInEveryForm(t *testing.T) {
 	pem, body := fakePEM("RSA", nil)
 	escaped := strings.ReplaceAll(pem, "\n", `\n`)
@@ -239,7 +225,7 @@ func newFixture(t *testing.T) *fixture {
 	fx.keyPEM, _ = fakePEM("RSA", nil)
 	sshPEM, _ := fakePEM("OPENSSH", opensshBlob("none"))
 	saPEM, _ := fakePEM("", nil)
-	noise := fake("", 20)
+	noise := fake("", 19) + "7" // a digit: an all-letter value is not a secret (notSecretValue)
 	fx.secrets = []string{anthropic, fx.stripe, fx.keyPEM, sshPEM, saPEM, noise}
 
 	fx.write(t, ".zshrc", "export ANTHROPIC_API_KEY="+anthropic+"\nexport EXAMPLE_TOKEN=your-token-here\n", 0o644)

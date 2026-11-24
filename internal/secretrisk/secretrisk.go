@@ -307,3 +307,60 @@ func groupReadable(mode string) bool {
 
 // Reason is the plain-words line behind a priority: what it is and how far it went.
 func Reason(t Type, s Spot) string { return t.Label + "; " + s.Phrase }
+
+// passwordLike types hold human-chosen secrets: their hint shows only the length.
+var passwordLike = map[string]bool{
+	"assignment": true, "url-credentials": true, "netrc-password": true, "docker-auth": true,
+	"url-token-param": true, "curl-auth-user": true,
+}
+
+// Redact returns the hint a finding may show: the known prefix (from the "|"-separated list
+// prefixes), the last four characters of a long random key (what provider consoles show to tell
+// keys apart) and the length. Never more.
+func Redact(typ, prefixes, secret string) string {
+	if secret == "" {
+		return ""
+	}
+	shown := KnownPrefix(prefixes, secret)
+	tail := ""
+	if !passwordLike[typ] && len(secret) >= 24 && len(secret)-len(shown) >= 20 {
+		tail = secret[len(secret)-4:]
+	}
+	return shown + "…" + tail + "(" + strconv.Itoa(len(secret)) + ")"
+}
+
+// KnownPrefix is the prefix from the "|"-separated list that secret starts with, or "".
+func KnownPrefix(prefixes, secret string) string {
+	for _, p := range strings.Split(prefixes, "|") {
+		if p != "" && strings.HasPrefix(secret, p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// Hint is a redacted hint read back: what Redact showed of a value.
+type Hint struct {
+	Prefix, Tail string
+	Len          int
+}
+
+// ParseHint reads a hint made by Redact. ok is false for hints that do not describe one value on
+// one line ("PEM", a whole file, an empty hint).
+func ParseHint(redacted string) (h Hint, ok bool) {
+	i, j := strings.Index(redacted, "…"), strings.LastIndexByte(redacted, '(')
+	if i < 0 || j < i || !strings.HasSuffix(redacted, ")") {
+		return Hint{}, false
+	}
+	n, err := strconv.Atoi(redacted[j+1 : len(redacted)-1])
+	if err != nil || n <= 0 {
+		return Hint{}, false
+	}
+	h = Hint{Prefix: redacted[:i], Tail: redacted[i+len("…") : j], Len: n}
+	return h, len(h.Prefix)+len(h.Tail) <= n
+}
+
+// Fits reports whether value could be the one the hint describes.
+func (h Hint) Fits(value string) bool {
+	return len(value) == h.Len && strings.HasPrefix(value, h.Prefix) && strings.HasSuffix(value, h.Tail)
+}

@@ -279,7 +279,7 @@ func (s *scan) leak(repo string, remote bool, l leak) {
 		if !ok {
 			return
 		}
-		ev.Type, ev.Redacted, ev.Note, ev.Public = p.typ, redact(p.typ, p.prefix, value), v.note, v.public
+		ev.Type, ev.Redacted, ev.Note, ev.Public = p.typ, secretrisk.Redact(p.typ, p.prefix, value), v.note, v.public
 	default:
 		if placeholder.MatchString(value) {
 			return
@@ -288,7 +288,7 @@ func (s *scan) leak(repo string, remote bool, l leak) {
 		if t, ok := gitleaksRules[l.RuleID]; ok {
 			ev.Type = t
 		}
-		ev.Redacted = redact(ev.Type, "", value)
+		ev.Redacted = secretrisk.Redact(ev.Type, "", value)
 	}
 	s.add(abs, ev, value)
 }

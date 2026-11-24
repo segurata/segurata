@@ -195,7 +195,7 @@ func (s *scan) value(path string, line int, kind string, p *pattern, m []string,
 		}
 	}
 	s.add(path, secretrisk.Evidence{Source: "scan", Kind: kind, Line: line, Type: p.typ,
-		Redacted: redact(p.typ, p.prefix, v.secret), Note: note, Public: v.public}, v.secret)
+		Redacted: secretrisk.Redact(p.typ, p.prefix, v.secret), Note: note, Public: v.public}, v.secret)
 }
 
 // privateKey fingerprints the key body. A header with no body in a transcript or a log is
@@ -277,7 +277,7 @@ func (s *scan) byName() {
 			if value = strings.TrimSpace(string(raw)); value == "" {
 				continue
 			}
-			ev.Type, ev.Redacted = "rails-master-key", redact("rails-master-key", "", value)
+			ev.Type, ev.Redacted = "rails-master-key", secretrisk.Redact("rails-master-key", "", value)
 		default:
 			raw, err := readSmall(f)
 			if err != nil {
