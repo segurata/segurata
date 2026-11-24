@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -538,5 +539,26 @@ func TestNoiseCopyOfARealSecretIsEmitted(t *testing.T) {
 	}
 	if _, ok := got["~/src/shop/lib/other.py"]; ok {
 		t.Error("a generic match with no real copy was emitted")
+	}
+}
+
+// A copy in someone else's repository is noise and left out, unless it names an account: then the
+// tracker may attribute it to the owner (an AWS key id of one of the owner's accounts), so it is
+// emitted for the tracker to judge.
+func TestThirdPartyCopyNamingAnAccountIsEmitted(t *testing.T) {
+	copyOf := func(fp string, c attribution.Claims) secretrisk.Evidence {
+		return secretrisk.Evidence{Fingerprint: fp, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/lms/k.py", Repo: "~/src/lms",
+			Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Origin: secretrisk.OriginThirdParty, Claims: c}
+	}
+	sc := &scan{rows: map[string]*row{
+		"a": {ev: copyOf("aaaaaaaaaaaaaaaa", attribution.Claims{AWSAccount: "171436882533"})},
+		"b": {ev: copyOf("bbbbbbbbbbbbbbbb", attribution.Claims{AuthorEmail: "me@x.com"})},
+	}}
+	got, noise := sc.findings()
+	if len(got) != 1 || evidence(got[0], "fingerprint") != "aaaaaaaaaaaaaaaa" || got[0].Severity != finding.SevInfo {
+		t.Fatalf("want only the copy naming an account, as noise: %+v", got)
+	}
+	if noise.total != 1 || noise.types["bbbbbbbbbbbbbbbb"] == "" {
+		t.Errorf("the copy naming only its author should be counted as noise: %+v", noise)
 	}
 }

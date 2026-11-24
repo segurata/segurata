@@ -134,10 +134,14 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		order = append(order, key)
 		return &p
 	}
+	// The owner's accounts are known before secrets are folded, so a secret attributed mine counts in
+	// full from its first sync (see SyncSecrets).
+	t.discover(runs)
+	owned := t.OwnedAll(opt.Owned)
 	for _, l := range rep.Runs {
 		r := folded[l]
 		if r.isSecrets() {
-			rep.Secrets.add(t.SyncSecrets(Sightings(r.findings), now, opt.IncludeNoise))
+			rep.Secrets.add(t.syncSecrets(Sightings(r.findings), now, opt.IncludeNoise, owned))
 			rep.Secrets.add(t.SyncNoise(NoiseOnly(r.findings), now))
 		}
 		for _, f := range r.findings {
@@ -212,9 +216,8 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		it.noteHeld(held, now)
 	}
 	t.expireAll(now, &rep)
-	t.discover(runs)
 	t.collectClaims(folded)
-	t.Attribute(t.OwnedAll(opt.Owned))
+	t.Attribute(owned)
 	rep.Ruled = t.applyRules(now)
 	t.seed(now)
 	if t.Sources == nil {

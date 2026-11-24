@@ -148,6 +148,12 @@ func (c Claims) Or(o Claims) Claims {
 		GCPProject: pick(c.GCPProject, o.GCPProject), AuthorEmail: pick(c.AuthorEmail, o.AuthorEmail)}
 }
 
+// NamesAccount reports whether a claim names an account, project or workspace: what can make a
+// verdict, unlike the commit author, which is only a hint.
+func (c Claims) NamesAccount() bool {
+	return c.AWSAccount != "" || c.SlackTeam != "" || c.GCPProject != ""
+}
+
 // Empty reports whether no claim is set.
 func (c Claims) Empty() bool { return c == Claims{} }
 

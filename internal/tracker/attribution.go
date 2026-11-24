@@ -98,6 +98,7 @@ func (t *Tracker) Attribute(owned attribution.Owned) {
 			}
 		}
 		*res = attribution.Attribute(res.Facts, owned)
+		it.derive() // the reasons say when attribution makes copies elsewhere count
 	}
 }
 

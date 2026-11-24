@@ -830,6 +830,17 @@ every run without a new scan.
   owner's secret leaked into someone else's repository, and counts in full. Transcripts, logs and
   histories do not make a value the owner's: an agent that read a third-party file leaves its
   value there.
+- Attributed mine. Attribution wins over the repository: a secret whose claims name one of the
+  owner's accounts (an AWS key id decoding to an account the aws connector reaches, see
+  "Attribution") is the owner's leaked secret wherever it sits. `track sync` marks its third-party
+  and fork-upstream copies `reused`, so they keep full impact and exposure (a key pushed to a
+  clone of someone else's repository is P0, not noise), and its reasons say "yours by attribution
+  (AWS account … is yours), so its copies in other people's repositories count in full". For the
+  tracker to see such copies at all, the connector emits a third-party or fork-upstream copy that
+  would count if it were the owner's and that names an account (`aws_account`, `gcp_project`,
+  `slack_team`; the commit author is not enough) as a noise finding, instead of only counting it.
+  The tracker knows the owner's accounts before it folds secrets, so this holds from the first
+  sync, and a noise summary never reclassifies an item attributed mine that has such a copy.
 - Paths (`secretrisk.RoleOf`, repository files only). Checksum lists (`*.md5`, `*.sha1`,
   `*.sha256`, `*.sha512`, `*.sum`) and lockfiles are noise. Test folders and files (`test`, `spec`,
   `fixtures`, `__tests__`, `cassettes`, `*_test.*`, `*.test.*`, `*.spec.*`, `test_*`), examples
@@ -965,6 +976,9 @@ run:
   and at least one of the owner's of each kind named is known;
 - `unknown` (low) otherwise: no claim, or a claim of a kind where none of the owner's accounts is
   known ("run its connector or set owned.aws_accounts").
+
+A verdict of mine also restores full impact to copies in third-party repositories and inherited
+fork history (see "What counts against the owner").
 
 Not-mine is a comparison with the accounts known, not proof: an old AWS account the owner still
 holds but no profile reaches reads as someone else's until it is listed in `owned.aws_accounts`.
