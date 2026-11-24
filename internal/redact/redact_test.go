@@ -50,7 +50,7 @@ func fakePEMEscaped() (pem, body string) {
 }
 
 type fixture struct {
-	t       *testing.T
+	t       testing.TB
 	home    string
 	key     fingerprint.Key
 	conn    *localsecrets.Connector
@@ -61,7 +61,7 @@ type fixture struct {
 	old     time.Time
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t testing.TB) *fixture {
 	t.Helper()
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("ripgrep not installed")
