@@ -1,7 +1,8 @@
 // Package macos checks the security posture of this Mac and of the Brave browser on it: disk
-// encryption, SIP, Gatekeeper, firewall, updates, screen lock, login options, ports reachable from
-// the network, SMB share points, the home folder mode, login and background items and Brave's
-// remote debugging port. Browser extensions are the browser-extensions connector.
+// encryption, SIP, Gatekeeper, firewall, updates, screen lock, login options, local accounts and
+// what deleted ones left behind, Time Machine backups, endpoint agents, ports reachable from the
+// network, SMB share points, the home folder mode, login and background items and Brave's remote
+// debugging port. Browser extensions are the browser-extensions connector.
 // Inventory is read-only and never uses sudo. A few findings can be fixed with
 // `securizame remediate` (remediate.go).
 package macos
@@ -68,6 +69,11 @@ var readOnly = func() map[string]bool {
 		listShares,
 		{"/usr/bin/sfltool", "dumpbtm"},
 		{"/bin/launchctl", "list"},
+		listUIDs,
+		listHomes,
+		tmDestinations,
+		tmLatest,
+		tmPrefs,
 	}
 	for _, k := range updateKeys {
 		cmds = append(cmds, []string{defaultsBin, "read", softwareUpdatePrefs, k})
@@ -84,9 +90,18 @@ var readOnly = func() map[string]bool {
 func argvKey(argv []string) string { return strings.Join(argv, "\x00") }
 
 // guard refuses any command line that is not exactly one of readOnly.
-func guard(r cli.Runner) cli.Runner {
+func guard(r cli.Runner) cli.Runner { return guardWith(r) }
+
+// guardWith also lets through the exact command lines in extra, which name live objects (the home
+// folder, an account) that a fixed list cannot. Callers build extra from a fresh read, never from
+// a finding.
+func guardWith(r cli.Runner, extra ...[]string) cli.Runner {
+	allowed := map[string]bool{}
+	for _, e := range extra {
+		allowed[argvKey(e)] = true
+	}
 	return cli.RunnerFunc(func(ctx context.Context, args ...string) ([]byte, error) {
-		if !readOnly[argvKey(args)] {
+		if k := argvKey(args); !readOnly[k] && !allowed[k] {
 			return nil, fmt.Errorf("%w: %s", cli.ErrRefused, strings.Join(args, " "))
 		}
 		return r.Run(ctx, args...)
@@ -101,10 +116,25 @@ type Connector struct {
 	// Home is the user's home directory, where Brave keeps its profiles.
 	Home func() (string, error)
 	OS   string
+	// Root prefixes the system folders the file checks read (accounts' homes, /Library, /Users/Shared,
+	// /Applications); "" is the real root. Tests point it at a temporary tree.
+	Root string
+	// UID is the user running securizame, whose account is not reported as an extra one.
+	UID func() int
+	Now func() time.Time
 }
 
 func New() *Connector {
-	return &Connector{Run: system{}, Exec: remediate.System{}, Home: os.UserHomeDir, OS: runtime.GOOS}
+	return &Connector{Run: system{}, Exec: remediate.System{}, Home: os.UserHomeDir, OS: runtime.GOOS, UID: os.Getuid, Now: time.Now}
+}
+
+// path is a system path under Root; shown is its inverse, for evidence and titles.
+func (c *Connector) path(p string) string { return filepath.Join(c.Root, p) }
+func (c *Connector) shown(p string) string {
+	if c.Root == "" {
+		return p
+	}
+	return strings.TrimPrefix(p, filepath.Clean(c.Root))
 }
 
 func init() { connector.Register(New()) }
@@ -114,7 +144,7 @@ func (c *Connector) Describe() connector.Description {
 		Name:     "macos",
 		Version:  "0.1.0",
 		Protocol: connector.ProtocolVersion,
-		Summary:  "FileVault, SIP, Gatekeeper, firewall, updates, screen lock, network ports, login items, home folder, SMB shares, Brave debugging port",
+		Summary:  "FileVault, SIP, Gatekeeper, firewall, updates, screen lock, local accounts, Time Machine, endpoint agents, network ports, login items, home folder, SMB shares, Brave debugging port",
 		Needs:    []string{"os:darwin"},
 	}
 }
@@ -182,10 +212,16 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	pending := make(chan check, 1)
 	go func() { pending <- c.pendingUpdates(ctx) }()
 
-	for _, ch := range c.systemChecks(ctx) {
-		r.report(ch)
-	}
+	r.reportAll(c.systemChecks(ctx))
 	r.report(c.homeCheck(ctx))
+	if users, err := c.localUsers(ctx); err != nil {
+		r.report(check{id: "local-accounts", skip: "dscl could not list local users: " + err.Error()})
+	} else {
+		r.reportAll(c.accountChecks(ctx, users))
+		r.reportAll(c.orphanedFiles(users))
+		r.reportAll(c.endpointAgents(ctx, users))
+	}
+	r.reportAll(c.backupChecks(ctx))
 	c.listeningPorts(ctx, r)
 	c.backgroundItems(ctx, r)
 	r.report(c.braveDebugging(ctx))
@@ -219,6 +255,12 @@ type reporter struct {
 	host    string
 	emit    connector.Emitter
 	skipped []string
+}
+
+func (r *reporter) reportAll(chs []check) {
+	for _, ch := range chs {
+		r.report(ch)
+	}
 }
 
 func (r *reporter) report(ch check) {

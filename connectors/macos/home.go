@@ -122,10 +122,9 @@ func (c *Connector) homeAllowlist() (remediate.Allowlist, error) {
 // homeGuard lets inventory run `ls -led` on the home folder the OS reports and nothing else beyond
 // the fixed read-only commands.
 func (c *Connector) homeGuard(r cli.Runner) cli.Runner {
-	return cli.RunnerFunc(func(ctx context.Context, args ...string) ([]byte, error) {
-		if home, err := c.homeDir(); err == nil && argvKey(args) == argvKey([]string{lsBin, "-led", home}) {
-			return r.Run(ctx, args...)
-		}
-		return guard(r).Run(ctx, args...)
-	})
+	home, err := c.homeDir()
+	if err != nil {
+		return guard(r)
+	}
+	return guardWith(r, []string{lsBin, "-led", home})
 }

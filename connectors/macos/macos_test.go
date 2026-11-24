@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
@@ -64,8 +65,16 @@ func healthy() map[string]string {
 		psBin + " -axo pid=,comm=":                                                  "    1 /sbin/launchd\n   42 /opt/adb\n",
 		psBin + " -axo command=":                                                    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser\n",
 		"/usr/bin/sfltool dumpbtm":                                                  btmSigned,
+		strings.Join(listUIDs, " "):                                                 "root 0\nnobody -2\n_spotlight 89\nalice 501\n",
+		strings.Join(listHomes, " "):                                                "root /var/root\nnobody /var/empty\n_spotlight /var/empty\nalice /Users/alice\n",
+		strings.Join(tmDestinations, " "):                                           tmInfo(tmDest{"D1", "Backup", "Local"}),
+		strings.Join(tmPrefs, " "):                                                  tmPrefsXML(tmPref{id: "D1", state: "Encrypted"}),
+		strings.Join(tmLatest, " "):                                                 "/Volumes/Backup/2026-11-22-093000.backup",
 	}
 }
+
+// testNow is the clock every test runs at; the healthy Mac's latest backup is two days older.
+var testNow = time.Date(2026, 11, 24, 12, 0, 0, 0, time.Local)
 
 const btmSigned = ` #1:
                  UUID: 1
@@ -84,7 +93,8 @@ func newTest(t *testing.T, replies map[string]string) (*Connector, *fakeRunner, 
 	if err := os.Chmod(home, 0o700); err != nil { // a private home folder, as on a healthy Mac
 		t.Fatal(err)
 	}
-	return &Connector{Run: fr, Exec: ex, Home: func() (string, error) { return home, nil }, OS: "darwin"}, fr, ex
+	return &Connector{Run: fr, Exec: ex, Home: func() (string, error) { return home, nil }, OS: "darwin",
+		Root: t.TempDir(), UID: func() int { return 501 }, Now: func() time.Time { return testNow }}, fr, ex
 }
 
 func inventory(t *testing.T, c *Connector) *httpxtest.Recorder {
