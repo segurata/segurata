@@ -185,6 +185,7 @@ connector or instance (the config and state are always checked).
 | `aws` | `sts get-caller-identity` per profile; SSO, static-key and missing-credential failures get different fixes |
 | `azure` | `az account show` |
 | `connected-apps` | `gh auth status --json hosts` (JSON, never the token; the one gh command added to its allowlist); scopes the key lists need (`admin:public_key`, `admin:ssh_signing_key`, `admin:gpg_key`, from `ghKeyEndpoints`) |
+| `macos` | `dscl` lists the local users; `tmutil destinationinfo -X` and the Time Machine preferences are readable (a warning with the Full Disk Access fix otherwise) |
 | `local-secrets` | rg, gitleaks (optional; not needed with `skip_git_history`), git and ssh-keygen on `PATH`; `rg --version` and `gitleaks version` (added to the gitleaks guard) |
 
 - State: the fingerprint key exists (a warning before the first `local-secrets` run), is a valid
@@ -253,7 +254,7 @@ and stamps `"instance": "<label>"` on its records (part of the finding id). On t
 | `openrouter` | API | Keys, per-key credit limit, spend |
 | `vercel` | API | Tokens, spend management |
 | `supabase` | Management API | Projects, service keys, spend cap |
-| `macos` | macOS tools, read-only and without sudo | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
+| `macos` | macOS tools, read-only and without sudo | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, local accounts other than yours (admin, home folder, last login), items owned by deleted accounts' UIDs in shared folders and launchd folders, Time Machine (no destination, unencrypted destination, latest backup age), endpoint agents and their leftovers, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
 | `workspace` | Admin SDK, token from a per-tenant gcloud config | One instance per tenant: accounts without 2SV enrolled or enforced, admins (super admins used day to day), suspended or inactive accounts, third-party apps with OAuth grants ranked by scope and users, token authorizations and revocations over 30 days |
 | `browser-extensions` | Brave and Chrome profile files, read-only, no network | Every extension in every profile: capabilities, source, install and update dates, category hint, and a `remove`/`review`/`keep` verdict with reasons (README, "Browser extensions"). Not automatable; each finding links the extension's page in the browser. Web Store lookups (pulled extensions, new owners) are a future enhancement |
 
