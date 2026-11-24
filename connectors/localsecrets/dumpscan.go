@@ -1,7 +1,6 @@
 package localsecrets
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -518,47 +517,7 @@ func (s *scan) visibility(repo string, c *dumpCache) string {
 	return v.Visibility
 }
 
-var (
-	githubURL    = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$`)
-	githubSlugRe = regexp.MustCompile(`\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z`)
-)
-
-// githubSlug reads a git config file for the owner/name of its first GitHub remote, origin first.
-func githubSlug(configPath string) string {
-	f, err := os.Open(configPath)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	var section, first, origin string
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(line, "[") {
-			section = line
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(k) != "url" || !strings.HasPrefix(section, "[remote ") {
-			continue
-		}
-		m := githubURL.FindStringSubmatch(strings.TrimSpace(v))
-		if m == nil {
-			continue
-		}
-		slug := m[1] + "/" + m[2]
-		if first == "" {
-			first = slug
-		}
-		if section == `[remote "origin"]` {
-			origin = slug
-		}
-	}
-	if origin != "" {
-		return origin
-	}
-	return first
-}
+var githubSlugRe = regexp.MustCompile(`\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z`)
 
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))

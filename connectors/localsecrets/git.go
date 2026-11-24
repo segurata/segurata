@@ -43,6 +43,13 @@ func (s *scan) rootOf(dir string) string {
 	return r
 }
 
+// repoRoot is the repository a path is in, "" for none.
+func (s *scan) repoRoot(abs string) string {
+	s.git.mu.Lock()
+	defer s.git.mu.Unlock()
+	return s.rootOf(filepath.Dir(abs))
+}
+
 // trackedFile says whether git tracks the file, and whether that repository has a remote.
 func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	s.git.mu.Lock()
@@ -212,6 +219,9 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 		go func() {
 			defer wg.Done()
 			for repo := range jobs {
+				if s.isSelf(repo) {
+					continue
+				}
 				if err := s.gitleaks(repo); err != nil {
 					mu.Lock()
 					failed++
@@ -296,6 +306,7 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 			return c, false, false
 		}
 		ev.Type, ev.Redacted, ev.Note, ev.Public = p.typ, secretrisk.Redact(p.typ, p.prefix, value), v.note, v.public
+		ev.Sample = sampleValue(value)
 		c.Expires = v.expires
 	default:
 		if placeholder.MatchString(value) {
@@ -306,6 +317,8 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 			ev.Type = t
 		}
 		ev.Redacted = secretrisk.Redact(ev.Type, "", value)
+		ev.Note, ev.Public = publicValue(value)
+		ev.Sample = sampleValue(value)
 	}
 	ev, ok = s.prepare(filepath.Join(repo, l.File), ev, value)
 	if !ok {

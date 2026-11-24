@@ -61,15 +61,28 @@ type cachedLeak struct {
 	Expires  int64               `json:"expires,omitempty"`
 }
 
-// evidence is the cached evidence as of now, for a repository that has a remote or not.
-func (c cachedLeak) evidence(now time.Time, remote bool) secretrisk.Evidence {
+// evidence is the cached evidence as of now, for a repository that has a remote or not and
+// belongs to someone (origin): JWTs and temporary AWS keys that expired since they were cached are
+// judged as of today.
+func (c cachedLeak) evidence(now time.Time, remote bool, origin string) secretrisk.Evidence {
 	ev := c.Evidence
-	ev.Remote = remote
+	ev.Remote, ev.Origin = remote, origin
 	if c.Expires > 0 && time.Unix(c.Expires, 0).Before(now) && !strings.Contains(ev.Note, "expired") {
 		ev.Note = strings.TrimSpace(ev.Note + " expired")
 		ev.Public = true
 	}
+	secretrisk.ExpireTemporaryAWS(&ev, commitDay(ev.Date), now)
 	return ev
+}
+
+// commitDay is the end of the day of a commit date ("2024-05-01", as evidence keeps it): the
+// latest the commit can have happened. Zero when the date is unreadable.
+func commitDay(date string) time.Time {
+	d, err := time.Parse(time.DateOnly, truncate(date, 10))
+	if err != nil {
+		return time.Time{}
+	}
+	return d.Add(24 * time.Hour)
 }
 
 // historyStats counts how each repository's history was scanned, for the run's status line.
@@ -79,12 +92,31 @@ func (h *historyStats) String() string {
 	return fmt.Sprintf("%d unchanged, %d incremental, %d full", h.unchanged.Load(), h.incremental.Load(), h.full.Load())
 }
 
-// gitleaks scans one repository's history, through the cache unless git_cache is false.
+// gitleaks scans one repository's history, through the cache unless git_cache is false. Each
+// leak is replayed with what may have changed since it was cached: whether the repository has a
+// remote, whose it is, which commits a fork inherited, and the data dumps and notebook outputs it
+// falls in.
 func (s *scan) gitleaks(repo string) error {
 	remote := s.hasRemote(repo)
+	org := s.originOf(repo)
 	replay := func(leaks []cachedLeak, omitted int) {
+		var inherited map[string]bool
+		if org.upstream != "" {
+			commits := make([]string, len(leaks))
+			for i, l := range leaks {
+				commits[i] = l.Evidence.Commit
+			}
+			inherited = s.inheritedCommits(repo, org.upstream, commits)
+		}
 		for _, l := range leaks {
-			ev := l.evidence(s.now, remote)
+			origin := org.origin
+			if inherited[l.Evidence.Commit] {
+				origin = secretrisk.OriginForkUpstream
+			}
+			ev := l.evidence(s.now, remote, origin)
+			if s.inNotebookOutput(repo, ev) {
+				continue
+			}
 			s.markDump(repo, &ev)
 			s.store(ev)
 		}

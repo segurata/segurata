@@ -422,15 +422,11 @@ func TestInventoryEndToEnd(t *testing.T) {
 		t.Error("service-account private key reported twice")
 	}
 
-	gen := one("generic-api-key ~/src/shop/app.js gitleaks")
-	if gen.Severity != finding.SevInfo {
-		t.Errorf("generic match severity %s", gen.Severity)
-	}
-	if len(byKey["generic-api-key ~/src/shop/README.md gitleaks"]) != 0 {
-		t.Error("placeholder from gitleaks kept")
-	}
-	if a := one("assignment ~/src/shop/.env scan"); a.Severity != finding.SevInfo {
-		t.Errorf("assignment severity %s", a.Severity)
+	// Noise (the generic gitleaks match, the generic assignment) is counted, not emitted.
+	for _, k := range []string{"generic-api-key ~/src/shop/app.js gitleaks", "assignment ~/src/shop/.env scan", "generic-api-key ~/src/shop/README.md gitleaks"} {
+		if len(byKey[k]) != 0 {
+			t.Errorf("noise emitted by default: %s", k)
+		}
 	}
 
 	ssh := one("ssh-key ~/.ssh/id_open ssh")
@@ -441,11 +437,34 @@ func TestInventoryEndToEnd(t *testing.T) {
 		t.Error("ssh key comment leaked")
 	}
 
-	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateOK || !strings.Contains(rec.statuses[0].Detail, "gitleaks: 1 repositories (0 unchanged, 0 incremental, 1 full), 0 failed") {
+	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateOK || !strings.Contains(rec.statuses[0].Detail, "gitleaks: 1 repositories (0 unchanged, 0 incremental, 1 full), 0 failed") ||
+		!strings.Contains(rec.statuses[0].Detail, "noise not emitted (emit_noise: true lists it): 2; by type: assignment 1, generic-api-key 1; by place: repo 1, ~/src/shop 1") {
 		t.Errorf("statuses %+v", rec.statuses)
 	}
 	if st, err := os.Stat(filepath.Join(fx.home, ".config", "segurata", "fingerprint.key")); err != nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("fingerprint key not created 0600: %v", err)
+	}
+}
+
+func TestEmitNoiseListsNoiseFindings(t *testing.T) {
+	fx := newFixture(t)
+	c := fx.connector(t, fx.gitleaksReport())
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"emit_noise": true}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]finding.Severity{}
+	for _, f := range rec.findings {
+		got[evidence(f, "type")+" "+evidence(f, "path")] = f.Severity
+	}
+	if got["generic-api-key ~/src/shop/app.js"] != finding.SevInfo || got["assignment ~/src/shop/.env"] != finding.SevInfo {
+		t.Errorf("noise findings with emit_noise: %v", got)
+	}
+	if _, ok := got["generic-api-key ~/src/shop/README.md"]; ok {
+		t.Error("placeholder from gitleaks kept")
+	}
+	if strings.Contains(rec.statuses[0].Detail, "noise not emitted") {
+		t.Errorf("status counts noise that was emitted: %s", rec.statuses[0].Detail)
 	}
 }
 
@@ -578,7 +597,8 @@ func TestTrailsFindAgreesWithInventory(t *testing.T) {
 	fx.write(t, "Library/Logs/app/app.log", "token "+fake("ghp_", 36)+" and https://u:"+fake("", 12)+"9@db.example.com\n", 0o600)
 	c := fx.connector(t, "[]")
 	rec := &recorder{}
-	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
+	// Noise included: Trails reports every hit, with its impact.
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"emit_noise": true}}, rec); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]bool{}
