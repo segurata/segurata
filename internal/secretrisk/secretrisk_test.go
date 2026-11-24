@@ -155,3 +155,29 @@ func TestParseHintReadsWhatRedactWrote(t *testing.T) {
 		}
 	}
 }
+
+func TestGuidesAreShortCitedAndInTheCatalog(t *testing.T) {
+	for typ, g := range guides {
+		if _, ok := Known(typ); !ok {
+			t.Errorf("guide for %q, which is not in the catalog", typ)
+		}
+		if !strings.HasPrefix(g.Doc, "https://") {
+			t.Errorf("%s: guide cites no documentation", typ)
+		}
+		if len(g.Steps) < 2 || len(g.Steps) > 4 {
+			t.Errorf("%s: %d steps, want 2 to 4", typ, len(g.Steps))
+		}
+		for _, s := range g.Steps {
+			if len(s) > 110 {
+				t.Errorf("%s: step too long: %q", typ, s)
+			}
+		}
+	}
+	for _, typ := range []string{"stripe-live", "aws-access-key-id", "gcp-service-account", "github-pat", "google-refresh-token",
+		"google-oauth-client-secret", "cloudflare-token", "anthropic", "openai-project", "xai", "openrouter", "notion",
+		"slack-token", "slack-webhook", "sendgrid", "npm-token", "telegram-bot", "sentry-token"} {
+		if _, ok := GuideFor(typ); !ok {
+			t.Errorf("no guide for %s", typ)
+		}
+	}
+}
