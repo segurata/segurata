@@ -1035,9 +1035,18 @@ every run without a new scan.
 Hints. Every value hint the connector writes is `secretrisk.Redact`'s: the known prefix, `…`, the
 last four characters when the value is long and random, and the length, `sk_live_…a1b2(107)`;
 `secretrisk.ParseHint` reads it back. Keys and whole files have no value hint (`PEM`, empty).
+Every other connector that reports a key writes its hint in the same format, from what the
+provider shows: `secretrisk.Masked` keeps every character the provider shows in front, at most the
+last four at the end, and the length, or `(?)` when the provider does not give it
+(`sk-or-v1-27e…d4d(?)`, `sk-ant-api03-R2D…igAA(?)`, Azure's first characters `abc…(?)`);
+`secretrisk.RedactID` writes an identifier that names a key (`AKIA…WXYZ(20)`). `ParseHint` reads
+`(?)` as an unknown length (`Hint.Len` 0): such a hint agrees with any length and locates no value
+(`Hint.Fits` needs a length). `secretrisk.ReadHint` also reads a provider's raw masked form, for
+findings written before this convention.
 
-Titles. A rotate item is named `<label> <hint> in <repo>:<file> (+N places), committed YYYY-MM`:
-the location that exposed it most (among equals the owner's repository, then the latest commit),
+Titles. A rotate item is named `<label> <hint> in <repo>:<file> (+N places), committed YYYY-MM`,
+with ` = "<key name>" (in use, $N this month)` after the hint when a provider's live key matched it
+(see "Correlation"): the location that exposed it most (among equals the owner's repository, then the latest commit),
 the number of other locations, and the earliest commit date. Within a priority, secrets that are
 live and leaked come first (see "Correlation"), then by exposure, then those a working file holds
 (`used_in`), with a copy in an owned repository, with the most recent commit, and found in more
@@ -1156,16 +1165,28 @@ grouping, each credential finding of a folded run is matched with a rotate item:
 
 The match is, in order: the fingerprint, when the finding carries one (the aws connector gives the
 key id's); a finding with a fingerprint matches nothing else, since the key in the file may have
-been rotated since the copy leaked. Else the redacted hint and the service: the hint forms of
-segurata (`AKIA…(20)`), OpenRouter (`sk-or-v1-27e...d4d`) and OpenAI (`sk-proj-****…xxkA`) are
-read into prefix, tail and length (`secretrisk.Hint`), and two fit when one prefix starts the
-other, one tail ends the other and known lengths agree; a hint match needs at least three
-characters of tail, enough to tell keys apart. Else the file: a rotate item with a location at the
-finding's path (`file`, `path`) whose hint, when both have one, fits. Among several candidates the
-most urgent wins. A finding whose item the owner accepted is left alone.
+been rotated since the copy leaked. Else the service, prefix, last characters and length: both
+hints are read into prefix, tail and length (`secretrisk.Hint`, see "Hints"), and they agree when
+one prefix starts the other, one tail ends the other and known lengths are equal
+(`Hint.Agrees`); a hint match needs at least three characters of tail, enough to tell keys apart.
+A hint that fits two or more secrets merges into none: each of them records the finding under
+`possible` (match `possible`, title "… (its hint fits 2 secrets)", reason "possibly: <instance>:
+<title>"), which never raises a priority, and the connector's item stays. Else the file: a rotate
+item with a location at the finding's path (`file`, `path`) whose hint, when both have one, fits;
+among several the most urgent wins, since a file can hold several parts of one credential (ADC's
+client secret and refresh token). A finding whose item the owner accepted is left alone.
+
+Each match has a `confidence`: `certain` by fingerprint (and for a secret a connector signs in
+with), `high` by a hint with four or more tail characters and the same known length on both sides,
+`medium` by a shorter tail, an unknown length or the file. A provider's key (openai, openrouter,
+anthropic) also brings its facts (`key`: name, last use, spend this month when the connector
+reports it, OpenRouter's `usage_month`), and the rotate item's title names the key from the
+surest live ref that has them: `OpenRouter API key sk-or-v1-…fd4d(73) = "Claude Code" (in use,
+$42.00 this month) in ~/.claude/projects/p/s.jsonl` (in use: used within 90 days of that run,
+`finding.IdleAfter`; else "last used YYYY-MM-DD").
 
 A matched finding is not grouped: it goes on the rotate item as a finding ref with `match`
-(`fingerprint`, `hint` or `path`), replaced at every sync that folds its connector instance. The
+(`fingerprint`, `hint` or `path`) and `confidence`, replaced at every sync that folds its connector instance. The
 connector's item loses that ref; left with nothing reported, an open, in-progress, snoozed or done
 one closes as `merged` (history `merged`, "the same secret as T-0404, which owns it now",
 `merged_into` set, next step "Nothing here: T-0404 owns this secret"). When a later sync no longer

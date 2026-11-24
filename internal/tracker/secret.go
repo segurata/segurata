@@ -537,6 +537,9 @@ func (it *Item) refreshSecret() {
 	for _, r := range live {
 		reasons = append(reasons, "live: "+r.Label()+": "+r.Title)
 	}
+	for _, r := range it.Possible {
+		reasons = append(reasons, "possibly: "+r.Label()+": "+r.Title)
+	}
 	if ok {
 		reasons = append(reasons, secretrisk.Reason(t, worst))
 		counts := map[string]int{}
@@ -599,15 +602,17 @@ func (it *Item) secretTitleAndNext() {
 	it.Next = n
 }
 
-// secretTitle names a rotate item by what it is and where it was found worst: "<label> <hint> in
-// <repo>:<file> (+N places), committed YYYY-MM". The hint is left out when it is not one value
-// ("PEM"); the date is the earliest commit among the locations.
+// secretTitle names a rotate item by what it is, the provider's name for the key when a live
+// provider key matched it, and where it was found worst: "<label> <hint> = "<key name>" (in use,
+// $42.00 this month) in <repo>:<file> (+N places), committed YYYY-MM". The hint is left out when
+// it is not one value ("PEM"); the date is the earliest commit among the locations.
 func (it *Item) secretTitle() string {
 	s := it.Secret
 	title := secretrisk.TypeFor(s.Type, s.Redacted).Label
 	if _, single := secretrisk.ParseHint(s.Redacted); single {
 		title += " " + s.Redacted
 	}
+	title += it.keyFacts()
 	primary, ok := it.primaryLocation()
 	if !ok {
 		return title
@@ -620,6 +625,37 @@ func (it *Item) secretTitle() string {
 		title += ", committed " + d[:7]
 	}
 	return title
+}
+
+// keyFacts names the provider's key the secret is, from the surest live ref that carries key facts:
+// ` = "Claude Code" (in use, $42.00 this month)`. In use means used within finding.IdleAfter of the
+// run that reported it. "" when no live provider key matched.
+func (it *Item) keyFacts() string {
+	var best *FindingRef
+	for _, r := range it.live() {
+		if r.Key != nil && r.Key.Name != "" && (best == nil || confRank[r.Confidence] > confRank[best.Confidence]) {
+			best = &r
+		}
+	}
+	if best == nil {
+		return ""
+	}
+	k := best.Key
+	var facts []string
+	switch {
+	case k.LastUsed != nil && best.LastSeen.Sub(*k.LastUsed) <= finding.IdleAfter:
+		facts = append(facts, "in use")
+	case k.LastUsed != nil:
+		facts = append(facts, "last used "+k.LastUsed.Format(time.DateOnly))
+	}
+	if k.SpendMonthUSD != nil && *k.SpendMonthUSD > 0 {
+		facts = append(facts, textfmt.USD(*k.SpendMonthUSD)+" this month")
+	}
+	out := fmt.Sprintf(" = %q", k.Name)
+	if len(facts) > 0 {
+		out += " (" + strings.Join(facts, ", ") + ")"
+	}
+	return out
 }
 
 // primaryLocation is the location that exposed the secret the most; among equals, the owner's

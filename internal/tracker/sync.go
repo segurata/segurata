@@ -153,7 +153,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	}
 	// A connector's credential that is a rotate item's secret goes to that item, not to a group of
 	// its own (see correlate.go).
-	claims := t.correlate(folded)
+	claims, possible := t.correlate(folded)
 	regroup := map[string]string{} // finding id -> key of the group it moves to
 	for _, l := range rep.Runs {
 		r := folded[l]
@@ -228,7 +228,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		}
 	}
 
-	t.attachLive(claims, folded)
+	t.attachLive(claims, possible, folded)
 	moved := claimedBy(claims)
 	for id, key := range regroup {
 		moved[id] = byKey[key].ID
