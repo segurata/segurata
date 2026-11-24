@@ -357,7 +357,7 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[strin
 // noteHeld logs, once per run, why an item that would have closed or been verified did not: every
 // finding still counted as reported belongs to a scope its latest run did not inspect.
 func (it *Item) noteHeld(held map[string]string, now time.Time) {
-	if len(held) == 0 || it.Status == Accepted || it.Status == Ignored || (it.Status == Done && it.VerifiedAt != nil) {
+	if len(held) == 0 || (it.Closed() && !(it.Status == Done && it.VerifiedAt == nil)) {
 		return
 	}
 	var notes []string

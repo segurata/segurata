@@ -91,8 +91,7 @@ type replacement struct {
 // locate finds the old value in every used_in file: on the line the scan recorded, and on any
 // other line of the same file. It refuses when the recorded line no longer holds it.
 func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, error) {
-	switch it.Status {
-	case tracker.Done, tracker.Ignored, tracker.Accepted:
+	if it.Closed() {
 		return nil, fmt.Errorf("%s is %s; `segurata rotations reopen %s` first if it still needs replacing", it.Secret.ID, stateOf(it), it.Secret.ID)
 	}
 	hint, ok := secretrisk.ParseHint(it.Secret.Redacted)

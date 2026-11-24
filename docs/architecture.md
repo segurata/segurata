@@ -147,12 +147,14 @@ truth, and every change goes through the CLI.
     `decide` (with `decision`: question, options, answer, answered_at), `setup` (what keeps
     segurata from seeing an account) or `review` (a list to keep or prune).
   - `status`: `open`, `in_progress`, `done`, `accepted` (with `accepted`: reason, until,
-    accepted_at), `ignored` or `snoozed` (with `snoozed_until`).
+    accepted_at), `ignored` (by the owner), `snoozed` (with `snoozed_until`), `reclassified`
+    (closed by segurata: every current sighting of the secret is now noise, see "Rotation
+    ledger") or `expected` (a setup item the config says to expect, see "Expected statuses").
   - `priority` is computed: a rotate item's comes from the rotation model below; others map the
     worst linked severity (critical P0, high P1, medium P2, low P3). `priority_override`
     (priority, reason, at) wins when set.
-  - `history` events are `found`, `seen`, `status`, `note`, `verified`, `reopened`, `decided` or
-    `priority`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
+  - `history` events are `found`, `seen`, `status`, `note`, `verified`, `reopened`, `decided`,
+    `priority` or `reclassified`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
     `snooze-expired`, `acceptance-expired`, `history-only`, `redacted`, `next`, …).
 - **Theme**: `{id, title, description}`, seeded in every tracker: `rotations`, `data-dumps`,
   `transcripts`, `mac`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`,
@@ -218,7 +220,7 @@ finished run of every connector instance (`remediate.LatestFiles`) and:
    - done: verified once every finding is gone in a run after it was marked done; reopened
      (`auto-reopen`) if a run after it was marked done or verified reports one again. A sync
      that only reads the run from before the item was marked done changes nothing;
-   - accepted and ignored items only get their findings updated;
+   - accepted, ignored, reclassified and expected items only get their findings updated;
    - a snooze past its date, or an acceptance past its last day, opens the item again. An
      expired acceptance stays on the item, so its findings show "(acceptance expired)" until the
      owner acts.
@@ -238,9 +240,11 @@ reached the model provider).
   `next_id`, unique keys, known kinds and statuses, rotate items with a secret and decide items
   with a decision. A file that fails is an error for every command, never an empty tracker, and
   is never overwritten (Save re-reads it and refuses): fix it or restore the backup.
-- `schema_version` 1 is the current format. A future format change adds an upgrade step from
-  version n to n+1 on the raw JSON, applied in order when loading; a newer file than the binary
-  knows is refused.
+- `schema_version` 2 is the current format. A format change adds an upgrade step from version n
+  to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
+  refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
+  `effects`; a version 1 file holds none of them, so it loads as it is and is saved as version 2
+  (the version 1 file stays as `tracker.json.bak`).
 
 ### Migration from the former state files
 
@@ -677,6 +681,13 @@ Priority is impact × exposure, both table-driven:
   was pasted there was sent to the model provider.
 - Noise is left out by default: generic `NAME=value` matches, gitleaks `generic-api-key`, anon or
   expired JWTs, encrypted private keys. `sync --include-noise` tracks them without a priority.
+- A secret that already has an item and whose best current sighting is now noise (a corrected
+  rule) is updated, not skipped: impact `noise`, no priority, and an open, in-progress, snoozed or
+  ignored item closes as `reclassified` (history event `reclassified`, detail "every current
+  sighting is noise (<type>)"; an ignored item's detail starts "was ignored: <owner's reason>").
+  Done and accepted items keep their status. Reclassified items are not counted as ignored: the
+  ignored count is what the owner judged. If a later sighting is not noise, the item opens again
+  (`auto-reopen`), or goes back to ignored with the owner's reason when it was ignored before.
 - `sync` merges locations (never drops one: git history and transcripts do not forget) and
   refreshes `last_seen` only for secrets it saw. Expired snoozes go back to `open`.
 - After a real rotation the old value is revoked, so only a working file that still holds it

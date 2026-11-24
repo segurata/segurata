@@ -132,7 +132,7 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 		return c.fail(err)
 	}
 	s := rep.Secrets
-	fmt.Fprintf(c.Out, "Secrets: %d (%d new, %d reopened, %d noise-only skipped).\n", s.Secrets, s.Created, s.Reopened, s.Skipped)
+	fmt.Fprintf(c.Out, "Secrets: %d (%d new, %d reopened, %d reclassified as noise, %d noise-only skipped).\n", s.Secrets, s.Created, s.Reopened, s.Reclassified, s.Skipped)
 	fmt.Fprint(c.Out, SyncLine(rep))
 	return 0
 }

@@ -19,7 +19,7 @@ import (
 )
 
 // SchemaVersion is the tracker.json format this binary writes.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // Kind says what sort of action an item asks for.
 type Kind string
@@ -42,11 +42,17 @@ const (
 	InProgress Status = "in_progress"
 	Done       Status = "done"
 	Accepted   Status = "accepted" // a risk kept on purpose
-	Ignored    Status = "ignored"  // not a real problem (false positive, test fixture)
+	Ignored    Status = "ignored"  // not a real problem (false positive, test fixture), said by the owner
 	Snoozed    Status = "snoozed"  // open again after snoozed_until
+	// Reclassified is closed by segurata itself: a corrected rule now rates every current sighting
+	// of the secret as noise. A later sighting that is not noise opens it again.
+	Reclassified Status = "reclassified"
+	// Expected is a setup item whose statuses the owner's config says to expect
+	// (connectors.<x>.expected); removing the rule opens it again.
+	Expected Status = "expected"
 )
 
-var statuses = []Status{Open, InProgress, Done, Accepted, Ignored, Snoozed}
+var statuses = []Status{Open, InProgress, Done, Accepted, Ignored, Snoozed, Reclassified, Expected}
 
 // Who does the next step.
 type Who string
@@ -68,6 +74,8 @@ const (
 	EvReopened = "reopened"
 	EvDecided  = "decided"
 	EvPriority = "priority"
+	// EvReclassified closes an item segurata now rates as noise (status reclassified).
+	EvReclassified = "reclassified"
 )
 
 // Event is one line of an item's history.

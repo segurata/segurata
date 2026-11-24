@@ -101,9 +101,9 @@ func (t *Tracker) headline(d *doc.Doc, items []*Item, now time.Time) {
 	for _, n := range open {
 		active += n
 	}
-	d.P(fmt.Sprintf("%d open: P0 %d, P1 %d, P2 %d, P3 %d. Done in the last 7 days: %d (%d verified by a later run). Accepted %d, ignored %d, snoozed %d.",
+	d.P(fmt.Sprintf("%d open: P0 %d, P1 %d, P2 %d, P3 %d. Done in the last 7 days: %d (%d verified by a later run). Accepted %d, ignored %d, reclassified as noise %d, expected %d, snoozed %d.",
 		active, open[secretrisk.P0], open[secretrisk.P1], open[secretrisk.P2], open[secretrisk.P3], doneWeek, verifiedWeek,
-		byStatus[Accepted], byStatus[Ignored], byStatus[Snoozed]))
+		byStatus[Accepted], byStatus[Ignored], byStatus[Reclassified], byStatus[Expected], byStatus[Snoozed]))
 	if active == 0 {
 		return
 	}

@@ -115,8 +115,8 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 		return c.fail(err)
 	}
 	r := rep.Secrets
-	fmt.Fprintf(c.Out, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d noise-only skipped.\n",
-		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Skipped)
+	fmt.Fprintf(c.Out, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d reclassified as noise, %d noise-only skipped.\n",
+		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Reclassified, r.Skipped)
 	if r.HistoryOnly > 0 {
 		fmt.Fprintf(c.Out, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
 			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), tracker.HistoryOnly)
