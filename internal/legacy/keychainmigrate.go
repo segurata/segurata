@@ -67,10 +67,10 @@ func (c KeychainCLI) Run(args []string) int {
 		}
 		accounts[old] = account
 	}
-	fmt.Fprintln(c.Out, "\nEach item: read the value, store it under the new name with security -i (value on stdin), read it back and compare, point the config at it, then delete the old item.")
 	if len(accounts) == 0 {
 		return 1
 	}
+	fmt.Fprintln(c.Out, "\nEach item: read the value, store it under the new name with security -i (value on stdin), read it back and compare, point the config at it, then delete the old item.")
 	if !*apply {
 		fmt.Fprintln(c.Out, "\nDry run: nothing was changed. Run again with --apply to move these items.")
 		return 0
