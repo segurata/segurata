@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -25,6 +24,7 @@ type CLI struct {
 	In       io.Reader     // confirmations, and the new value with replace --stdin
 	TTY      bool          // In is a terminal
 	Paths    tracker.Paths // zero means tracker.DefaultPaths
+	Config   string        // config file whose expected rules sync applies; "" means none
 	KeyPath  string        // fingerprint key; "" means fingerprint.DefaultPath
 	Home     func() (string, error)
 	User     string // Keychain account for replace --to-keychain
@@ -35,7 +35,7 @@ type CLI struct {
 const usage = `usage: segurata rotations <command>
   sync    [--from out/<date>/local-secrets.jsonl] [--out out] [--include-noise]
   list    [--all] [--priority P0,P1] [--service stripe,aws]
-  next    [--priority P0] [--service stripe]   the most urgent item, with what to do
+  next    [--priority P0] [--service stripe] [--log]   the most urgent item, with what to do (--log records it was shown)
   show    <id>
   replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
           put the new value in every used_in file (see: segurata rotations replace --help)
@@ -104,7 +104,11 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 	if _, err := cliflag.Parse(fs, args); err != nil {
 		return 2
 	}
-	rep, err := t.Sync(tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise}, now)
+	expect, err := tracker.Expectations(c.Config)
+	if err != nil {
+		return c.fail(err)
+	}
+	rep, err := t.Sync(tracker.SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise, Expect: expect}, now)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -115,8 +119,8 @@ func (c CLI) sync(t *tracker.Tracker, path string, args []string, now time.Time)
 		return c.fail(err)
 	}
 	r := rep.Secrets
-	fmt.Fprintf(c.Out, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d noise-only skipped.\n",
-		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Skipped)
+	fmt.Fprintf(c.Out, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d reclassified as noise, %d noise-only skipped.\n",
+		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Reclassified, r.Skipped)
 	if r.HistoryOnly > 0 {
 		fmt.Fprintf(c.Out, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
 			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), tracker.HistoryOnly)
@@ -223,21 +227,9 @@ func stateOf(it *tracker.Item) string {
 // report them; an absolute path inside the home directory is accepted too): active ones, or
 // closed ones when closed is true.
 func itemsUnder(t *tracker.Tracker, prefix string, closed bool, now time.Time) []*tracker.Item {
-	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(prefix, home+"/") {
-		prefix = "~" + prefix[len(home):]
-	}
-	prefix = strings.TrimSuffix(prefix, "/")
-	inside := func(p string) bool { return p == prefix || strings.HasPrefix(p, prefix+"/") }
 	var out []*tracker.Item
 	for _, it := range t.Items {
-		if it.Kind != tracker.KindRotate || it.Active(now) == closed || len(it.Secret.Locations) == 0 {
-			continue
-		}
-		all := true
-		for _, loc := range it.Secret.Locations {
-			all = all && inside(loc.Path)
-		}
-		if all {
+		if it.Kind == tracker.KindRotate && it.Active(now) != closed && it.Under(prefix) {
 			out = append(out, it)
 		}
 	}

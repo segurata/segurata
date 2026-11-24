@@ -481,6 +481,13 @@ func TestNext(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("next: %s", e)
 	}
+	if fx.lastAction(t) == tracker.ActNext {
+		t.Error("next without --log wrote to the history")
+	}
+	o, e, code = fx.run(t, "", true, "next", "--log")
+	if code != 0 {
+		t.Fatalf("next: %s", e)
+	}
 	for _, want := range []string{
 		"Next of 1 open (P1 1)",
 		fx.id() + "  P1  Anthropic API key  sk-ant-…",
@@ -501,7 +508,7 @@ func TestNext(t *testing.T) {
 	if fx.lastAction(t) != tracker.ActNext {
 		t.Error("next not recorded")
 	}
-	fx.run(t, "", true, "next")
+	fx.run(t, "", true, "next", "--log")
 	n := 0
 	for _, h := range fx.item(t).History {
 		if h.Action == tracker.ActNext {

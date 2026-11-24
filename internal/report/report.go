@@ -74,6 +74,7 @@ type Report struct {
 	Runs      []*Run
 	Accepted  []Accepted
 	Rotations Rotations
+	tr        *tracker.Tracker // names the setup item of each status
 }
 
 // Inputs are the files and options a report reads.
@@ -84,6 +85,8 @@ type Inputs struct {
 	TrackerPath string
 	MinSev      finding.Severity
 	Top         int // findings per connector in "Top findings"
+	// Expect applies the config's expected rules to each status (nil for none).
+	Expect func(*finding.Status)
 }
 
 // maxP0 is how many P0 rotation items the report names.
@@ -97,13 +100,18 @@ func Build(in Inputs) (*Report, error) {
 		return nil, err
 	}
 	annotate := in.Tracker.Annotator(func() time.Time { return in.Now })
-	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top}
+	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top, tr: in.Tracker}
 	reported := map[string]bool{} // finding ids in a latest run
 	byLabel := map[string]*Run{}
 	for _, l := range latest {
 		run, err := readRun(l, annotate)
 		if err != nil {
 			return nil, err
+		}
+		if in.Expect != nil {
+			for i := range run.Statuses {
+				in.Expect(&run.Statuses[i])
+			}
 		}
 		for _, x := range run.Findings {
 			reported[x.ID] = true

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -82,6 +84,7 @@ type sink struct {
 	enc      *json.Encoder
 	verbose  io.Writer
 	annotate func(*finding.Finding)
+	expect   func(*finding.Status) // the config's expected rules
 	res      *Result
 	tally    finding.Tally
 }
@@ -102,6 +105,9 @@ func (s *sink) Status(st finding.Status) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st.Type, st.Connector, st.Instance = "status", s.name, s.inst
+	if s.expect != nil {
+		s.expect(&st)
+	}
 	s.res.Statuses = append(s.res.Statuses, st)
 	s.tally.Status(st)
 	_ = s.enc.Encode(st)
@@ -166,13 +172,12 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		res.Err = err
 		return res
 	}
-	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, res: res}
+	s := &sink{name: name, label: label, inst: t.Instance.Label, enc: json.NewEncoder(f), verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
 
 	req, errs := NewRequest(cfg, t.Instance)
-	for _, e := range errs {
-		s.Status(finding.Status{State: finding.StateMissingCredentials, Detail: e.Error()})
+	if missing := unresolved(t.Connector, errs, s); !missing {
+		res.Err = t.Connector.Inventory(ctx, req, s)
 	}
-	res.Err = t.Connector.Inventory(ctx, req, s)
 	s.end(ctx, started, res.Err)
 	if err := f.Close(); err != nil {
 		res.Err = errors.Join(res.Err, err)
@@ -182,6 +187,31 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		res.Err = errors.Join(res.Err, err)
 	}
 	return res
+}
+
+// unresolved reports each secret reference that could not be resolved as one missing_credentials
+// status, with the connector's setup hint when it gives one, and says whether a secret the
+// connector needs is among them: then Inventory is not called, so the connector cannot report the
+// same problem again in its own words. The core owns unresolvable references; a connector still
+// reports a secret that is not configured at all.
+func unresolved(c connector.Connector, errs []error, emit connector.Emitter) bool {
+	needs := c.Describe().Needs
+	hinter, _ := c.(connector.SetupHinter)
+	missing := false
+	for _, e := range errs {
+		detail := e.Error()
+		var re *secrets.ResolveError
+		if errors.As(e, &re) {
+			if hinter != nil {
+				if h := hinter.SetupHint(re.Key); h != "" {
+					detail += "; " + h
+				}
+			}
+			missing = missing || slices.Contains(needs, "secret:"+re.Key)
+		}
+		emit.Status(finding.Status{State: finding.StateMissingCredentials, Detail: detail})
+	}
+	return missing
 }
 
 // NewRequest builds the request for one connector instance, resolving its secret references.
@@ -208,10 +238,18 @@ func Summary(w io.Writer, results []*Result, minSev finding.Severity) {
 		if r.Err != nil {
 			fmt.Fprintf(w, "! %s: %v\n", r.Name, r.Err)
 		}
+		expected := map[string]int{}
 		for _, st := range r.Statuses {
-			if st.State != finding.StateOK {
+			switch st.State {
+			case finding.StateOK:
+			case finding.StateExpected:
+				expected[st.Expected]++
+			default:
 				fmt.Fprintf(w, "~ %s %s: %s %s\n", r.Name, st.Account, st.State, st.Detail)
 			}
+		}
+		for _, reason := range slices.Sorted(maps.Keys(expected)) {
+			fmt.Fprintf(w, "~ %s: %d expected (by your config: %s)\n", r.Name, expected[reason], reason)
 		}
 		if sk := r.End.Scopes.Skipped; r.Err == nil && len(sk) > 0 {
 			fmt.Fprintf(w, "~ %s: incomplete run, %d %s not inspected (first %s: %s); missing findings there are not resolved\n",

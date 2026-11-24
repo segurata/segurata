@@ -7,8 +7,10 @@ package secrets
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -44,14 +46,23 @@ func Resolve(ref string) (string, error) {
 	return "", fmt.Errorf("unsupported secret reference %q: use env:, keychain: or op://", ref)
 }
 
-// ResolveAll resolves every reference; the errors name the key, never the value.
+// ResolveError is a reference that could not be resolved, naming its key, never the value.
+type ResolveError struct {
+	Key string
+	Err error
+}
+
+func (e *ResolveError) Error() string { return e.Key + ": " + e.Err.Error() }
+func (e *ResolveError) Unwrap() error { return e.Err }
+
+// ResolveAll resolves every reference. Each error is a *ResolveError, in key order.
 func ResolveAll(refs map[string]string) (map[string]string, []error) {
 	out := map[string]string{}
 	var errs []error
-	for k, ref := range refs {
-		v, err := Resolve(ref)
+	for _, k := range slices.Sorted(maps.Keys(refs)) {
+		v, err := Resolve(refs[k])
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", k, err))
+			errs = append(errs, &ResolveError{Key: k, Err: err})
 			continue
 		}
 		out[k] = v

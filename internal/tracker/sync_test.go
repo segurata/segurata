@@ -167,8 +167,8 @@ func TestGroupingRules(t *testing.T) {
 		t.Errorf("rotate items %d", countKind(tr, KindRotate))
 	}
 	reauth := byTitle(t, tr, "gcp · admin@x.com: needs a fresh sign-in")
-	if reauth.Kind != KindSetup || reauth.Theme != "setup" || reauth.Next.Action != "Do what the status detail says." ||
-		reauth.Next.Command != "segurata inventory gcp" || reauth.Findings[0].Title != "run gcloud auth login admin@x.com" {
+	if reauth.Kind != KindSetup || reauth.Theme != "setup" || !strings.Contains(reauth.Next.Action, "Then: segurata inventory gcp.") ||
+		reauth.Next.Command != "gcloud auth login admin@x.com" || reauth.Findings[0].Title != "run gcloud auth login admin@x.com" {
 		t.Errorf("setup item %+v %+v", reauth, reauth.Next)
 	}
 	byTitle(t, tr, "connected-apps · microsoft: is signed out")
@@ -367,5 +367,64 @@ func TestSeedDecisionsAreCreatedOnce(t *testing.T) {
 	}
 	if err := tr.newItem(KindFix, "manual:x", "other", "Fix it", t0).Decide(t0, "x"); err == nil {
 		t.Error("a fix item took an answer")
+	}
+}
+
+// Several statuses under one setup key (gcp: one per project it could not read) make one item that
+// keeps a ref per distinct detail and counts them in its title.
+func TestSetupStatusesSharingAKeyKeepEveryRef(t *testing.T) {
+	out := t.TempDir()
+	st := func(project string) finding.Status {
+		return finding.Status{Type: "status", Connector: "gcp", Account: "a@x.com", Scope: project, State: finding.StateError,
+			Detail: "project " + project + ": permission denied for iam policy, service accounts, api keys"}
+	}
+	writeRun(t, out, t0, "gcp.jsonl", okStatus("gcp", "a@x.com"), st("p1"), st("p2"), st("p3"), st("p3"))
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0.Add(time.Hour))
+	it := byTitle(t, tr, "gcp: permission denied on 3 projects for a@x.com")
+	if len(it.Findings) != 3 || it.Kind != KindSetup || it.Findings[0].LastSeen.IsZero() {
+		t.Fatalf("refs %+v", it.Findings)
+	}
+	// One project becomes readable: its ref is gone, the item stays open with the other two.
+	writeRun(t, out, t0.Add(24*time.Hour), "gcp.jsonl", okStatus("gcp", "a@x.com"), st("p1"), st("p2"))
+	syncOrDie(t, tr, out, t0.Add(25*time.Hour))
+	gone := 0
+	for _, r := range it.Findings {
+		if r.Gone {
+			gone++
+		}
+	}
+	if gone != 1 || it.Status != Open || it.Title != "gcp: permission denied on 2 projects for a@x.com" {
+		t.Errorf("after one project cleared: %d gone, %s, %q", gone, it.Status, it.Title)
+	}
+}
+
+// The core's one missing_credentials status for the instance replaces the per-account one the
+// connector used to emit: the old setup item is verified done even though the run inspected nothing.
+func TestAnInstanceWideStatusCoversThePerAccountOne(t *testing.T) {
+	out := t.TempDir()
+	missing := func(account, detail string) finding.Status {
+		return finding.Status{Type: "status", Connector: "anthropic", Instance: "personal", Account: account, State: finding.StateMissingCredentials, Detail: detail}
+	}
+	writeRun(t, out, t0, "anthropic-personal.jsonl", missing("", "ANTHROPIC_ADMIN_KEY: not set"), missing("organization", "set ANTHROPIC_ADMIN_KEY"))
+	tr := New(t0)
+	syncOrDie(t, tr, out, t0.Add(time.Hour))
+	org := byTitle(t, tr, "anthropic:personal · organization")
+	writeRun(t, out, t0.Add(24*time.Hour), "anthropic-personal.jsonl", missing("", "ANTHROPIC_ADMIN_KEY: not set; set ANTHROPIC_ADMIN_KEY"))
+	syncOrDie(t, tr, out, t0.Add(25*time.Hour))
+	inst := byTitle(t, tr, "anthropic:personal: has no credentials")
+	if org.Status != Done || inst.Status != Open {
+		t.Errorf("org item %s, instance item %s", org.Status, inst.Status)
+	}
+	// The instance item's key is reported again with a new detail: the old detail's ref is gone,
+	// even though the run inspected nothing.
+	reported := 0
+	for _, r := range inst.Findings {
+		if !r.Gone {
+			reported++
+		}
+	}
+	if len(inst.Findings) != 2 || reported != 1 {
+		t.Errorf("refs %+v", inst.Findings)
 	}
 }

@@ -207,16 +207,27 @@ func TestStatusBriefing(t *testing.T) {
 		}
 	}
 	x.now = x.now.Add(time.Hour)
+	// A plain status is read-only: the tracker file is not rewritten.
+	before, _ := os.ReadFile(x.path)
+	if _, _, code := x.run(t, "status"); code != 0 {
+		t.Fatal("status")
+	}
+	if after, _ := os.ReadFile(x.path); !bytes.Equal(before, after) {
+		t.Error("status without --mark-seen wrote the tracker")
+	}
 	backup := x.item(t, "No Time Machine")
 	if _, _, code := x.run(t, "done", backup.ID); code != 0 {
 		t.Fatal("done")
 	}
-	o, _, _ = x.run(t, "status")
+	o, _, _ = x.run(t, "status", "--mark-seen")
 	if !strings.Contains(o, "Since the last status (2026-11-23 11:00)") || !strings.Contains(o, "No Time Machine backup is configured") {
 		t.Errorf("changes since the last status:\n%s", o)
 	}
 	if strings.Count(o, "Two-factor authentication not required") != 1 {
 		t.Errorf("only the do-next list should name the 2FA item now:\n%s", o)
+	}
+	if o, _, _ = x.run(t, "status"); !strings.Contains(o, "Since the last status (2026-11-23 12:00)") {
+		t.Errorf("--mark-seen did not move the mark:\n%s", o)
 	}
 	x.noSecret(t)
 	if _, _, code := x.run(t, "status", "--format", "pdf"); code != 2 {

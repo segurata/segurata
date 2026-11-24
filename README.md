@@ -52,19 +52,23 @@ ends with `segurata track sync`, which folds the latest runs into the tracker.
 ## Tracker and status
 
 ```bash
-./segurata status                         # the briefing: what to do next, decisions, blockers, changes
+./segurata status                         # the briefing: what to do next, decisions, blockers, changes (read-only)
+./segurata status --mark-seen             # same, and start "Since the last status" from now
 ./segurata status --priority P0,P1 --theme github-orgs
-./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600)
+./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600); implies --mark-seen
 ./segurata track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
 ./segurata track show T-0042
 ./segurata track start|done|reopen T-0042 [--note "..."]
 ./segurata track note T-0042 "ordered a backup disk"
 ./segurata track snooze T-0042 --until 2027-01-15
 ./segurata track ignore T-0042 --reason "test fixture"
+./segurata track expect T-3153 --reason "ephemeral key on purpose" [--dry-run]   # a setup item kept on purpose: config rule
+
 ./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
-./segurata track decide T-0003 --answer "yes"
+./segurata track decide T-0003 --answer "yes" [--ignore-scope path:~/src/old] [--accept-scope repo:acme/site]
 ./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
 ./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
+./segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no
 ./segurata track sync [--out out]         # also run by inventory and rotations sync
 ```
 
@@ -73,8 +77,23 @@ is the single record of what to do, what is done and what is pending, and surviv
 item per thing a person would act on. Five GitHub orgs that do not require 2FA are one item; each
 secret to rotate, each data dump and each Mac setting is its own item; a connector that needs a
 fresh sign-in is a setup item; info findings make none. Items have a kind (fix, rotate, decide,
-setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed), a computed
+setup, review), a theme, a status (open, in_progress, done, accepted, ignored, snoozed, and two
+segurata sets itself: reclassified, a secret a corrected rule now rates as noise, and expected), a computed
 priority that `prioritize` can override, the findings they link, the next step and a history.
+
+A decision can carry effects: answering it adds rules (`ignore` or `accept` a scope:
+`path:<dir>`, `repo:<owner/name>`, `account:<glob>`, `gcp-project:<id>`) that close the items in
+scope now and at every sync, with the decision named in the reason. A pending decision shows
+how many open items each answer would close. Details:
+[docs/architecture.md](docs/architecture.md#decisions-and-rules).
+
+A status other than `ok` that is kept on purpose (an ephemeral key, an IAM user limited by design,
+other people's accounts) goes in the config as an expected rule, by hand or with `track expect`:
+`{"connectors": {"anthropic:personal": {"expected": [{"state": "missing_credentials", "reason":
+"…"}]}}}`, with optional `account` (a glob) and `detail` (substring, or `/regexp/`). It then opens
+no setup item and is counted on one line, "N expected (by your config)", but its scope still
+counts as not inspected. Details:
+[docs/architecture.md](docs/architecture.md#expected-statuses).
 
 A done item is verified when a later run no longer reports its findings, and reopened if one does;
 an item whose findings vanish on their own is closed as "verified (no longer reported)". Expired
@@ -374,7 +393,7 @@ every secret as new.
 ```bash
 ./segurata rotations sync                    # from the latest out/<date>/local-secrets.jsonl
 ./segurata rotations list --priority P0,P1   # what to rotate first
-./segurata rotations next --priority P0      # the most urgent item and exactly what to do
+./segurata rotations next --priority P0      # the most urgent item and exactly what to do (--log records it was shown)
 ./segurata rotations show <id>               # locations, where the new value goes, rotate URL
 ./segurata rotations replace <id>            # after rotating: plan with the new value from the clipboard
 ./segurata rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]

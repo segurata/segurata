@@ -123,7 +123,7 @@ func sevIndex(s finding.Severity) int {
 func needsAttention(sts []finding.Status) []finding.Status {
 	var out []finding.Status
 	for _, st := range sts {
-		if st.State != finding.StateOK {
+		if st.State != finding.StateOK && st.State != finding.StateExpected {
 			out = append(out, st)
 		}
 	}
@@ -133,9 +133,15 @@ func needsAttention(sts []finding.Status) []finding.Status {
 func (r *Report) attention(d *doc.Doc) {
 	d.H(2, "Needs attention")
 	var items []doc.Item
+	expected := map[string]int{}
 	for _, run := range r.Runs {
+		for _, st := range run.Statuses {
+			if st.State == finding.StateExpected {
+				expected[st.Expected]++
+			}
+		}
 		for _, st := range needsAttention(run.Statuses) {
-			action, cmd := tracker.StatusAction(st, run.Label)
+			action, cmd := tracker.StatusAction(st, run.Label, r.setupItem(run.Label, st))
 			text := run.Label
 			if st.Account != "" {
 				text += " · " + st.Account
@@ -145,11 +151,25 @@ func (r *Report) attention(d *doc.Doc) {
 			items = append(items, it)
 		}
 	}
-	if len(items) == 0 {
+	line := tracker.ExpectedLine(expected)
+	if len(items) == 0 && line == "" {
 		d.P("Nothing: every connector could inspect every account.")
-		return
 	}
 	d.List(items)
+	if line != "" {
+		d.P(line)
+	}
+}
+
+// setupItem is the id of the tracker's setup item for a status, or "".
+func (r *Report) setupItem(lbl string, st finding.Status) string {
+	if r.tr == nil {
+		return ""
+	}
+	if it := r.tr.ByKey(tracker.SetupKey(lbl, st)); it != nil {
+		return it.ID
+	}
+	return ""
 }
 
 func (r *Report) changes(d *doc.Doc) {
@@ -312,9 +332,9 @@ func (r *Report) rotations(d *doc.Doc) {
 		d.P("No secrets in the tracker yet ("+s.Path+"): after a local-secrets inventory, run ", doc.Code("segurata rotations sync"), ".")
 		return
 	}
-	d.P(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored.",
+	d.P(fmt.Sprintf("Open: P0 %d, P1 %d, P2 %d, P3 %d. %d items in all: %d rotated, %d snoozed, %d ignored, %d reclassified as noise.",
 		s.Open[secretrisk.P0], s.Open[secretrisk.P1], s.Open[secretrisk.P2], s.Open[secretrisk.P3],
-		s.Total, s.ByStatus[tracker.Done], s.ByStatus[tracker.Snoozed], s.ByStatus[tracker.Ignored]))
+		s.Total, s.ByStatus[tracker.Done], s.ByStatus[tracker.Snoozed], s.ByStatus[tracker.Ignored], s.ByStatus[tracker.Reclassified]))
 	if len(s.TopP0) > 0 {
 		d.H(3, "Rotate first (P0)")
 		var items []doc.Item

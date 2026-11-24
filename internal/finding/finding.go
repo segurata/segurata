@@ -146,6 +146,9 @@ const (
 	StateMissingCredentials State = "missing_credentials"
 	StateUnsupported        State = "unsupported"
 	StateError              State = "error"
+	// StateExpected is a status other than ok that the owner's config says to expect (see
+	// Status.Expected): it opens no setup item, and its scope still counts as not inspected.
+	StateExpected State = "expected"
 )
 
 // Status says whether an account could be inspected, and why not. Scope, when set, narrows it to
@@ -159,6 +162,10 @@ type Status struct {
 	Scope     string `json:"scope,omitempty"`
 	State     State  `json:"state"`
 	Detail    string `json:"detail,omitempty"`
+	// Expected is the reason of the config rule that made the state expected; Was is the state
+	// the connector reported. Both are set by the core, never by a connector.
+	Expected string `json:"expected,omitempty"`
+	Was      State  `json:"was,omitempty"`
 }
 
 // Redact keeps a short prefix and the length, enough to recognise a key without leaking it.
