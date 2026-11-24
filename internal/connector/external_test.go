@@ -5,7 +5,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -69,9 +68,7 @@ func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("shell script connector")
-	}
+	connectortest.NeedShell(t)
 	plugin(first, "discoverbuiltin", "discoverbuiltin")
 	plugin(first, "zzz", "discoverbuiltin")
 	plugin(first, "dup", "dup")
@@ -86,6 +83,24 @@ func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
 	raw, _ := os.ReadFile(ran)
 	if strings.Contains(string(raw), "discoverbuiltin") || strings.Contains(string(raw), "orig") {
 		t.Fatalf("ran a plugin it should have skipped unseen:\n%s", raw)
+	}
+}
+
+// A relative PATH entry would load plugins from whatever directory segurata runs in.
+func TestDiscoverSkipsRelativePathEntries(t *testing.T) {
+	dir := t.TempDir()
+	connectortest.NeedShell(t)
+	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" + describing(`{"name":"local","protocol":2}`)
+	if err := os.WriteFile(filepath.Join(dir, "bin", "segurata-local"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("PATH", "bin")
+	if got := connector.Discover(); len(got) != 0 {
+		t.Fatalf("discovered %s from a relative PATH entry", got[0].Path)
 	}
 }
 

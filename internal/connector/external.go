@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/searchpath"
 )
 
 const externalPrefix = "segurata-"
@@ -34,13 +35,15 @@ type External struct {
 
 // Discover finds segurata-<name> executables on PATH. A built-in name wins over an external one, an
 // earlier PATH directory over a later one, and a file whose suffix is not a valid name never runs.
+// Only absolute PATH entries count, so the plugin set never depends on the working directory and
+// matches what a scheduled run sees.
 func Discover() []*External {
 	seen := map[string]bool{}
 	for _, c := range Builtins() {
 		seen[c.Describe().Name] = true
 	}
 	var out []*External
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+	for _, dir := range filepath.SplitList(searchpath.Clean(os.Getenv("PATH"))) {
 		matches, _ := filepath.Glob(filepath.Join(dir, externalPrefix+"*"))
 		for _, p := range matches {
 			name := fileName(p)

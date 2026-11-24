@@ -258,7 +258,9 @@ subscriber kinds need one call per notification and are not read).
 
 ## External connector protocol
 
-An external connector is a `segurata-<name>` executable on `PATH`. The core runs it with one
+An external connector is a `segurata-<name>` executable in an absolute `PATH` directory; relative
+entries (`bin`, `./node_modules/.bin`) are skipped, so the working directory never adds a connector
+and an interactive run finds the same ones a scheduled run does. The core runs it with one
 subcommand and, except for `describe`, one JSON request on stdin. The core speaks protocol 1 and
 protocol 2; a connector declares the one it speaks in `describe`, and every request carries that
 number.
