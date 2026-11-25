@@ -60,7 +60,7 @@ func TestWhere(t *testing.T) {
 
 func TestImpactTable(t *testing.T) {
 	cases := map[string]Impact{
-		"stripe-live": High, "aws-access-key-id": High, "gcp-service-account": High, "private-key": High,
+		"stripe-live": High, "aws-secret-key": High, "aws-access-key-id": Low, "gcp-service-account": High, "private-key": High,
 		"github": High, "google-refresh-token": High, "google-oauth-client-secret": High, "cloudflare-token": High, "ssh-key": High,
 		"anthropic": Medium, "openai-project": Medium, "xai": Medium, "openrouter": Medium, "notion": Medium,
 		"slack-token": Medium, "slack-webhook": Medium, "sendgrid": Medium, "npm-token": Medium, "telegram-bot": Medium, "stripe-webhook": Medium,
@@ -99,17 +99,19 @@ func TestReasonInPlainWords(t *testing.T) {
 	}
 }
 
-func TestTemporaryAWSCredentialsAreLowImpact(t *testing.T) {
+func TestAWSKeyIDsAreLowImpact(t *testing.T) {
 	temp := Evidence{Type: "aws-access-key-id", Redacted: "ASIA…(20)"}
 	long := Evidence{Type: "aws-access-key-id", Redacted: "AKIA…(20)"}
-	if ImpactOf(temp) != Low || ImpactOf(long) != High {
-		t.Fatalf("ASIA (STS, expires) must be low and AKIA high: %v %v", ImpactOf(temp), ImpactOf(long))
+	secret := Evidence{Type: "aws-secret-key", Redacted: "…(40)"}
+	if ImpactOf(temp) != Low || ImpactOf(long) != Low || ImpactOf(secret) != High {
+		t.Fatalf("key ids (ASIA expires, AKIA signs nothing alone) low, the secret key high: %v %v %v", ImpactOf(temp), ImpactOf(long), ImpactOf(secret))
 	}
-	if PriorityOf(ImpactOf(temp), Remote) == PriorityOf(ImpactOf(long), Remote) {
-		t.Fatal("a pushed temporary credential must rank below a pushed long-lived key")
+	if !strings.HasPrefix(TypeFor(temp.Type, temp.Redacted).Label, "Temporary AWS credential") ||
+		TypeFor(long.Type, long.Redacted).Label != "AWS access key id (signs nothing without its secret key)" {
+		t.Fatal("each says why it is low")
 	}
-	if !strings.Contains(TypeFor(temp.Type, temp.Redacted).Label, "Temporary") {
-		t.Fatal("the reason must say it is temporary")
+	if PriorityOf(ImpactOf(long), Remote) != P2 || PriorityOf(ImpactOf(secret), Remote) != P0 {
+		t.Fatal("a pushed key id is P2, a pushed secret key P0")
 	}
 }
 

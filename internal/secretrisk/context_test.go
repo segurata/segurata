@@ -49,31 +49,31 @@ func TestRoleOf(t *testing.T) {
 }
 
 func TestImpactInFixturePaths(t *testing.T) {
-	aws := Evidence{Type: "aws-access-key-id", Redacted: "AKIA…(20)", Kind: "repo"}
+	key := Evidence{Type: "stripe-live", Redacted: "sk_live_…a1b2(107)", Kind: "repo"}
 	at := func(e Evidence, path string, sample bool) Impact {
 		e.Path, e.Sample = path, sample
 		return ImpactOf(e)
 	}
-	if got := at(aws, "~/src/app/config/aws.yml", false); got != High {
+	if got := at(key, "~/src/app/config/stripe.yml", false); got != High {
 		t.Errorf("ordinary path: %s", got)
 	}
-	if got := at(aws, "~/src/app/spec/fixtures/s3.yml", false); got != Medium {
+	if got := at(key, "~/src/app/spec/fixtures/stripe.yml", false); got != Medium {
 		t.Errorf("fixture path lowers one level: %s", got)
 	}
-	if got := at(aws, "~/src/app/spec/fixtures/s3.yml", true); got != Noise {
+	if got := at(key, "~/src/app/spec/fixtures/stripe.yml", true); got != Noise {
 		t.Errorf("fixture path with a sample value: %s", got)
 	}
-	if got := at(aws, "~/src/app/config/aws.yml", true); got != High {
+	if got := at(key, "~/src/app/config/stripe.yml", true); got != High {
 		t.Errorf("a sample-looking value outside fixtures keeps its impact: %s", got)
 	}
 	if got := at(Evidence{Type: "stripe-test", Redacted: "sk_test_…(30)", Kind: "repo"}, "~/src/app/test/setup.ts", false); got != Noise {
 		t.Errorf("low impact in a fixture path: %s", got)
 	}
-	if got := at(aws, "~/src/crm/files.md5", false); got != Noise {
+	if got := at(key, "~/src/crm/files.md5", false); got != Noise {
 		t.Errorf("checksum file: %s", got)
 	}
 	// Only repository files carry roles: a transcript under a folder named "test" does not.
-	tr := aws
+	tr := key
 	tr.Kind = "transcript"
 	if got := at(tr, "~/.claude/projects/test/s.jsonl", false); got != High {
 		t.Errorf("transcript: %s", got)

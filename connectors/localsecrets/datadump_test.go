@@ -353,7 +353,7 @@ func TestDataDumpsInARealRepository(t *testing.T) {
 	if !hash.InDataDump || !aws.InDataDump || jwtElsewhere.InDataDump {
 		t.Fatalf("marking: %v %v %v", hash.InDataDump, aws.InDataDump, jwtElsewhere.InDataDump)
 	}
-	if secretrisk.ImpactOf(hash) != secretrisk.Noise || secretrisk.ImpactOf(aws) != secretrisk.High || secretrisk.ImpactOf(jwtElsewhere) == secretrisk.Noise {
+	if secretrisk.ImpactOf(hash) != secretrisk.Noise || secretrisk.ImpactOf(aws) != secretrisk.Low || secretrisk.ImpactOf(jwtElsewhere) == secretrisk.Noise {
 		t.Error("impact of matches inside a dump")
 	}
 	got, _ = s.dumpFindings()

@@ -995,10 +995,13 @@ Priority is impact × exposure, both table-driven:
 
 | Impact | Local (0600 file, history, log) | Shared (readable by others, local repo history) | Remote (pushed git history, agent transcript) |
 |---|---|---|---|
-| High: Stripe live keys, AWS keys, GCP service-account keys, private and SSH keys, GitHub/GitLab tokens, Google refresh tokens and OAuth client secrets, Cloudflare tokens | P2 | P1 | P0 |
+| High: Stripe live keys, AWS secret access keys, GCP service-account keys, private and SSH keys, GitHub/GitLab tokens, Google refresh tokens and OAuth client secrets, Cloudflare tokens | P2 | P1 | P0 |
 | Medium: AI provider keys (Anthropic, OpenAI, xAI, OpenRouter…), Notion, Slack, SendGrid, npm, Telegram, Stripe webhook secrets, passwords in URLs | P3 | P2 | P1 |
-| Low: Sentry DSNs, Google API keys, Stripe test keys, JWTs of unknown origin | P3 | P3 | P2 |
+| Low: Sentry DSNs, Google API keys, Stripe test keys, JWTs of unknown origin, AWS access key ids (an id signs nothing without its secret key, which is an item of its own when found) | P3 | P3 | P2 |
 
+- An AWS access key id that liveness finds active in the owner's IAM inventory, or that a
+  connector proves live, is P0 once leaked like any live key: its secret key may have leaked with
+  it in a form no pattern matched.
 - Exposure is the worst location of the secret. An agent transcript counts as remote: whatever
   was pasted there was sent to the model provider.
 - Noise is left out by default: generic `NAME=value` matches, gitleaks `generic-api-key`, anon or

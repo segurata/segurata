@@ -94,7 +94,7 @@ func TestRuleNarrowedToNotMine(t *testing.T) {
 	d := tr.AddDecision("manual:legacyco", "Is legacyco dead?", []string{"yes", "no"}, t0)
 	now := t0.Add(2 * time.Hour)
 	preview, err := tr.PreviewDecision(d, now, "rotate mine, ignore the rest", []string{"path:" + legacy}, nil, []attribution.Owner{attribution.NotMine})
-	want := "closes 1 open item (P0 1) attributed not-mine, keeps 2 open (mine 1, unknown 1) by ignore@not-mine path:" + legacy
+	want := "closes 1 open item (P2 1) attributed not-mine, keeps 2 open (mine 1, unknown 1) by ignore@not-mine path:" + legacy
 	if err != nil || len(preview) != 1 || preview[0] != want {
 		t.Fatalf("preview %q %v, want %q", preview, err, want)
 	}
@@ -238,8 +238,9 @@ func TestAttributionMineRestoresFullImpactInThirdPartyRepositories(t *testing.T)
 	}
 	for _, fp := range []string{"1111", "4444"} {
 		it := mustRotate(t, tr, fp)
-		if it.Priority != secretrisk.P0 || it.WorstLabel() != "git+remote" || it.Owner() != attribution.Mine {
-			t.Errorf("%s: %s %s %s, want P0 git+remote mine", fp, it.Priority, it.WorstLabel(), it.Owner())
+		// A pushed AWS key id's own impact (low: it signs nothing without its secret key) is P2.
+		if it.Priority != secretrisk.P2 || it.WorstLabel() != "git+remote" || it.Owner() != attribution.Mine {
+			t.Errorf("%s: %s %s %s, want P2 git+remote mine", fp, it.Priority, it.WorstLabel(), it.Owner())
 		}
 		if r := strings.Join(it.Secret.Reasons, "; "); !strings.Contains(r, "yours by attribution (AWS account "+ownAWS+" is yours)") {
 			t.Errorf("%s: reasons %q", fp, r)

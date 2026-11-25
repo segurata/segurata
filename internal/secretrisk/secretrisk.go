@@ -188,7 +188,7 @@ const (
 var catalog = map[string]Type{
 	// High: money, infrastructure, source code, identity.
 	"stripe-live":                {"stripe", "Stripe live secret key", High, urlStripeKeys},
-	"aws-access-key-id":          {"aws", "AWS access key", High, urlAWS},
+	"aws-access-key-id":          {"aws", "AWS access key id (signs nothing without its secret key)", Low, urlAWS},
 	"aws-secret-key":             {"aws", "AWS secret access key", High, urlAWS},
 	"gcp-service-account":        {"gcp", "GCP service account key", High, urlGCPServiceAcct},
 	"private-key":                {"private-key", "Private key", High, ""},

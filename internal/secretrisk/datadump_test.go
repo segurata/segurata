@@ -11,7 +11,7 @@ func TestMatchesInsideADumpAreNoiseUnlessRecognisable(t *testing.T) {
 		{"generic-api-key", "…(32)", Noise},
 		{"jwt", "eyJ…(220)", Noise},
 		{"anthropic", "sk-ant-…abcd(108)", Noise},
-		{"aws-access-key-id", "AKIA…(20)", High},
+		{"aws-access-key-id", "AKIA…(20)", Low}, // recognisable: keeps its own (low) impact
 		{"stripe-live", "sk_live_…a1b2(107)", High},
 		{"github", "ghp_…a1b2(40)", High},
 		{"private-key", "PEM", High},

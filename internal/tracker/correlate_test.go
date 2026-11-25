@@ -124,7 +124,12 @@ func TestProofOfALiveKeyReopensAnIgnoredSecret(t *testing.T) {
 	if rot.Status != Open || rot.Priority != secretrisk.P0 {
 		t.Fatalf("proven live: %s %s", rot.Status, rot.Priority)
 	}
-	last := rot.History[len(rot.History)-1]
+	// The proof reopens it, and raises it from the P2 of a key id alone to P0.
+	n := len(rot.History)
+	last, raised := rot.History[n-2], rot.History[n-1]
+	if raised.Detail != "raised to P0 from P2" {
+		t.Errorf("history %+v", raised)
+	}
 	if last.Action != actProvenLive || !strings.Contains(last.Detail, "proven live by aws") || !strings.Contains(last.Detail, "by decision "+d.ID) {
 		t.Errorf("history %+v", last)
 	}

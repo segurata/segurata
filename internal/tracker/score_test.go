@@ -162,7 +162,7 @@ func TestSecretsEntryNamesTheNextSecret(t *testing.T) {
 	var b bytes.Buffer
 	_ = doc.Render(&b, tr.Status("tracker.json", t0.Add(time.Hour), View{}), doc.Text)
 	out := b.String()
-	for _, want := range []string{"Rotate 2 P0 secrets", "Next secret: AWS access key AKIA…(20) in r:k.py (" + key.ID + ")",
+	for _, want := range []string{"Rotate 2 P0 secrets", "Next secret: AWS access key id (signs nothing without its secret key) AKIA…(20) in r:k.py (" + key.ID + ")",
 		"Why: live key, leaked in r:k.py; live: aws: Long-lived AWS access key", "Then: segurata rotations next --priority P0"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status lacks %q:\n%s", want, out)

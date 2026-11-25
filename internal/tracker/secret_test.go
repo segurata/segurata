@@ -244,7 +244,7 @@ func TestSortByPriorityExposureService(t *testing.T) {
 	l.SyncSecrets([]Sighting{
 		sight(ev("1111111111111111", "anthropic", "~/a", "scan", "transcript", "600", false, false)),      // P1 transcript
 		sight(ev("2222222222222222", "github", "~/b", "scan", "config", "644", false, false)),             // P1 readable
-		sight(ev("3333333333333333", "aws-access-key-id", "~/c", "gitleaks", "repo", "", true, true)),     // P0
+		sight(ev("3333333333333333", "aws-secret-key", "~/c", "gitleaks", "repo", "", true, true)),        // P0
 		sight(ev("4444444444444444", "openai-project", "~/d", "scan", "transcript", "600", false, false)), // P1 transcript
 		sight(ev("5555555555555555", "sentry-dsn", "~/e", "scan", "config", "600", false, false)),         // P3
 	}, t0, false)
@@ -259,20 +259,44 @@ func TestSortByPriorityExposureService(t *testing.T) {
 	}
 }
 
+// A key id signs nothing without its secret key, which is an item of its own when found: pushed,
+// the id alone is P2, the secret key P0. Found live in the owner's IAM inventory while leaked, the
+// id is P0 again: its secret key may have leaked with it in a form no pattern matched.
+func TestAWSKeyIDAloneIsP2(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	id := ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", "~/src/r/group_vars/all.yml", "gitleaks", "repo", "", true, true)
+	id.Redacted = "AKIA…(20)"
+	secret := ev("bbbbbbbbbbbbbbbb", "aws-secret-key", "~/src/r/group_vars/all.yml", "gitleaks", "repo", "", true, true)
+	l.SyncSecrets([]Sighting{sight(id), sight(secret)}, t0, false)
+	a, _ := l.FindRotate("aaaa")
+	b, _ := l.FindRotate("bbbb")
+	if a.Priority != secretrisk.P2 || b.Priority != secretrisk.P0 {
+		t.Fatalf("id %s, secret key %s", a.Priority, b.Priority)
+	}
+	if !strings.HasPrefix(a.Title, "AWS access key id (signs nothing without its secret key) AKIA…(20)") {
+		t.Errorf("title %q", a.Title)
+	}
+	a.Secret.Liveness = &secretrisk.Liveness{State: secretrisk.Live, Provider: "aws-keys", CheckedAt: t0, Rules: secretrisk.LivenessRules}
+	a.refreshSecret()
+	if a.Priority != secretrisk.P0 {
+		t.Errorf("an active key whose id leaked: %s", a.Priority)
+	}
+}
+
 // A rule fix that lowers a secret's impact must reach existing items on the next sync.
 func TestSyncLowersImpactWhenTheCurrentSightingIsLess(t *testing.T) {
 	l := &Tracker{NextID: 1}
-	high := ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", "~/src/r/data.json", "gitleaks", "repo", "", true, true)
-	high.Redacted = "AKIA…(20)"
-	l.SyncSecrets([]Sighting{sight(high)}, t0, false)
-	if p := l.Items[0].Priority; p != "P0" {
-		t.Fatalf("pushed long-lived AWS key should be P0, got %s", p)
+	token := ev("aaaaaaaaaaaaaaaa", "sourcegraph-access-token", "~/src/r/data.json", "gitleaks", "repo", "", true, true)
+	token.Redacted = "sgp_…(49)"
+	l.SyncSecrets([]Sighting{sight(token)}, t0, false)
+	if p := l.Items[0].Priority; p != "P1" {
+		t.Fatalf("pushed Sourcegraph token should be P1, got %s", p)
 	}
-	temp := high
-	temp.Redacted = "ASIA…(20)"
-	l.SyncSecrets([]Sighting{sight(temp)}, t0.Add(time.Hour), false)
-	if it := l.Items[0]; it.Secret.Impact != "low" || it.Priority == "P0" {
-		t.Fatalf("the same item seen as a temporary credential must drop: impact=%s priority=%s", it.Secret.Impact, it.Priority)
+	hex := token
+	hex.Redacted = "…(40)" // the rule now knows a bare 40-character hex string is a hash more often
+	l.SyncSecrets([]Sighting{sight(hex)}, t0.Add(time.Hour), false)
+	if it := l.Items[0]; it.Secret.Impact != "noise" || it.Priority != "" {
+		t.Fatalf("the same item seen as a hex lookalike must drop: impact=%s priority=%s", it.Secret.Impact, it.Priority)
 	}
 }
 
