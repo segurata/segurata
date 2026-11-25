@@ -511,7 +511,7 @@ func TestCloudflareOnlyWhenNamed(t *testing.T) {
 	}
 	n := 0
 	for _, fd := range rec.findings {
-		if ev, ok := findingEvidence(fd); ok && ev.Type == "cloudflare-token" {
+		if ev, ok := secretrisk.EvidenceOf(fd); ok && ev.Type == "cloudflare-token" {
 			n++
 		}
 	}
@@ -550,7 +550,7 @@ func TestLivenessNeverDiscardsTheScan(t *testing.T) {
 	reported := func(rec *recorder) int {
 		n := 0
 		for _, f := range rec.findings {
-			if _, ok := findingEvidence(f); ok {
+			if _, ok := secretrisk.EvidenceOf(f); ok {
 				n++
 			}
 		}
