@@ -140,10 +140,8 @@ func firstSentence(s string) string {
 // they cover it (finding.Area), by its slug.
 type gap struct {
 	slug, title string
-	// covered says whether the area is audited, and how; known is false when the runs say nothing
-	// about it (the item is left as it is). nil: audited; no connector audits it.
-	covered func(t *Tracker, folded map[string]*run) (covered bool, how string, known bool)
-	// audited says connectors audit the area: they declare it among the areas they cover.
+	// audited says connectors audit the area: they declare it among the areas they cover. A gap
+	// no connector audits is open until the owner marks it done.
 	audited bool
 	// unreported, for an audited area, is whether the gap is open while no run reports it (the
 	// connector that would cover it is not set up), rather than unknown.
@@ -201,15 +199,12 @@ type CoverageReport struct{ Opened, Covered int }
 // syncCoverage opens a coverage item for each gap not covered and closes, as done and verified,
 // the ones a run now covers. An item the owner closed by hand stays closed; one segurata closed
 // opens again when the gap comes back.
-func (t *Tracker) syncCoverage(folded map[string]*run, now time.Time) CoverageReport {
+func (t *Tracker) syncCoverage(now time.Time) CoverageReport {
 	var rep CoverageReport
 	for _, g := range gaps {
 		covered, how, known := false, "", true
-		switch {
-		case g.audited:
+		if g.audited {
 			covered, how, known = t.audited(g)
-		case g.covered != nil:
-			covered, how, known = g.covered(t, folded)
 		}
 		it := t.ByKey("coverage:" + g.slug)
 		switch {

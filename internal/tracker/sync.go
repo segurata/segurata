@@ -287,7 +287,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		t.Sources[l] = r.at
 	}
 	t.recordRuns(folded)
-	rep.Coverage = t.syncCoverage(folded, now)
+	rep.Coverage = t.syncCoverage(now)
 	at := now.UTC()
 	t.LastSyncAt = &at
 	return rep, nil
