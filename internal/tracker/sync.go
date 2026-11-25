@@ -617,17 +617,28 @@ func (it *Item) derive() {
 func (t *Tracker) withFinding(id string) *Item { return t.findingHolders()[id] }
 
 // findingHolders maps each finding id to the item, other than a rotate item, that holds it.
+// When an item was replaced by another (its title, and so its family key, changed), both hold the
+// finding: the one that saw it last holds it, and an open item wins a tie over a closed one.
 func (t *Tracker) findingHolders() map[string]*Item {
-	out := map[string]*Item{}
+	type holder struct {
+		it   *Item
+		seen time.Time
+	}
+	best := map[string]holder{}
 	for _, it := range t.Items {
 		if it.Kind == KindRotate {
 			continue
 		}
 		for _, r := range it.Findings {
-			if out[r.ID] == nil {
-				out[r.ID] = it
+			h, ok := best[r.ID]
+			if !ok || r.LastSeen.After(h.seen) || r.LastSeen.Equal(h.seen) && h.it.Closed() && !it.Closed() {
+				best[r.ID] = holder{it, r.LastSeen}
 			}
 		}
+	}
+	out := make(map[string]*Item, len(best))
+	for id, h := range best {
+		out[id] = h.it
 	}
 	return out
 }
