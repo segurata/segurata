@@ -275,7 +275,7 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 					count(&st.Interrupted)
 					continue
 				}
-				r := c.ask(ctx, lk, pv, p)
+				r := withoutValue(c.ask(ctx, lk, pv, p), p)
 				r.CheckedAt, r.Rules = c.now().UTC(), secretrisk.LivenessRules
 				mu.Lock()
 				st.Asked++
@@ -340,6 +340,38 @@ func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) s
 		}
 	}
 	r.Provider = pv.name
+	return r
+}
+
+// valueWindow is the shortest run of a value that counts as holding it.
+const valueWindow = 8
+
+// withoutValue is r with every field that holds a part of the probe's value or key id (any
+// valueWindow characters of it) dropped: the reason becomes "error", the account and the endpoint's
+// path go. The judges keep no provider message, and providerText keeps only short codes; this is
+// the last guard, whatever a provider echoes.
+func withoutValue(r secretrisk.Liveness, p Probe) secretrisk.Liveness {
+	holds := func(s string) bool {
+		for _, v := range []string{p.Value, p.KeyID} {
+			for i := 0; i+valueWindow <= len(v); i++ {
+				if strings.Contains(s, v[i:i+valueWindow]) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if holds(r.Reason) {
+		r.Reason = "error"
+	}
+	if holds(r.Account) {
+		r.Account = ""
+	}
+	if holds(r.Endpoint) {
+		method, rest, _ := strings.Cut(r.Endpoint, " ")
+		host, _, _ := strings.Cut(rest, "/")
+		r.Endpoint = method + " " + host
+	}
 	return r
 }
 

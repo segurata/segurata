@@ -1,8 +1,12 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/segurata/segurata/internal/finding"
@@ -64,5 +68,25 @@ func TestBase(t *testing.T) {
 		if got := Base(c.configured, "https://api.example.com/"); got != c.want {
 			t.Errorf("Base(%q) = %q, want %q", c.configured, got, c.want)
 		}
+	}
+}
+
+// A failed call's error names where it went, never the credential a path or query carries
+// (Telegram's /bot<token>/, a key in the query).
+func TestFetchErrorHidesThePath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close() // nothing listens: the call fails
+	const token = "123456789:AAsynthetic-telegram-token-for-tests"
+	_, _, err := New(base, http.Header{}).Fetch(context.Background(), http.MethodGet, "/bot"+token+"/getMe", url.Values{"key": {"synthetic-query-key"}}, nil)
+	if err == nil {
+		t.Fatal("a call to a closed server succeeded")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "synthetic") || !strings.Contains(msg, "/bot<token>/getMe") || !strings.Contains(msg, strings.TrimPrefix(base, "http://")) {
+		t.Errorf("error %q", msg)
+	}
+	if ShownPath("/v1/models") != "/v1/models" || ShownPath("/bot") != "/bot" {
+		t.Error("ShownPath changed a path without a token")
 	}
 }

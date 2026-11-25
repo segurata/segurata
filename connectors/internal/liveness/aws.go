@@ -51,12 +51,12 @@ func askAWS(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	return call(ctx, base, "/?"+stsQuery, h, j, acct)
 }
 
-// firstGroup is the first non-empty group of re's first match in body.
+// firstGroup is the first non-empty group of re's first match in body, through providerText.
 func firstGroup(re *regexp.Regexp, body []byte) string {
 	m := re.FindSubmatch(body)
 	for i := 1; i < len(m); i++ {
 		if len(m[i]) > 0 {
-			return string(m[i])
+			return providerText(string(m[i]))
 		}
 	}
 	return ""

@@ -1,6 +1,7 @@
 package liveness
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -118,7 +119,8 @@ func deadWhen(status int, field, value string, j judge) judge {
 	}
 }
 
-// bodyField is the string or number at a dotted path into a JSON body, "" when there is none.
+// bodyField is the string or number at a dotted path into a JSON body, through providerText; ""
+// when there is none.
 func bodyField(body []byte, field string) string {
 	var v any
 	if json.Unmarshal(body, &v) != nil {
@@ -130,11 +132,30 @@ func bodyField(body []byte, field string) string {
 	}
 	switch x := v.(type) {
 	case string:
-		return x
+		return providerText(x)
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64)
 	}
 	return ""
+}
+
+// maxProviderText bounds what segurata keeps of a provider's words: a code, an account id.
+const maxProviderText = 64
+
+// providerText is the one sanitizer of text read from a provider's answer (codes, reasons,
+// statuses, account ids): kept only when it is short and made of letters, digits and _ . @ -,
+// else "". Anything else could be a message that echoes part of the key. Checker.Check also drops
+// any result field that holds a part of the probe's value (withoutValue).
+func providerText(s string) string {
+	if len(s) > maxProviderText {
+		return ""
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_.@-", r)) {
+			return ""
+		}
+	}
+	return s
 }
 
 // accepted is j, except that the codes given mean the provider accepted the key: OpenAI answers 429
@@ -172,7 +193,7 @@ func send(ctx context.Context, method, base, path string, body []byte, header ht
 	if u != nil {
 		host = u.Host
 	}
-	r := secretrisk.Liveness{Endpoint: method + " " + host + endpointPath(path)}
+	r := secretrisk.Liveness{Endpoint: method + " " + host + httpx.ShownPath(path)}
 	code, answer, err := httpx.New(base, header).Fetch(ctx, method, path, nil, body)
 	if err != nil {
 		r.State, r.Reason = secretrisk.Unknown, "no answer"
@@ -183,17 +204,6 @@ func send(ctx context.Context, method, base, path string, body []byte, header ht
 		r.Account = acct(answer)
 	}
 	return r
-}
-
-// endpointPath is the path as results show it: a token in the path (Telegram's /bot<token>/) is
-// replaced by a placeholder.
-func endpointPath(path string) string {
-	if rest, ok := strings.CutPrefix(path, "/bot"); ok {
-		if _, after, ok := strings.Cut(rest, "/"); ok {
-			return "/bot<token>/" + after
-		}
-	}
-	return path
 }
 
 // bearerAuth is the header that sends the secret as a bearer token.
@@ -279,7 +289,7 @@ func googleReason(body []byte) string {
 	}
 	for _, d := range e.Error.Details {
 		if strings.HasSuffix(d.Type, "google.rpc.ErrorInfo") && d.Reason != "" {
-			return d.Reason
+			return providerText(d.Reason)
 		}
 	}
 	return ""
@@ -292,61 +302,35 @@ var slackDead = map[string]bool{"invalid_auth": true, "token_revoked": true, "to
 // askSlack calls auth.test, which answers 200 either way: ok true with the workspace, or ok false
 // with an error code. Slack documents it as POST; it reads, and the request has no body.
 func askSlack(ctx context.Context, base string, p Probe) secretrisk.Liveness {
-	var team string
 	j := func(code int, body []byte) (secretrisk.LiveState, string) {
 		var r struct {
-			OK     bool   `json:"ok"`
-			Error  string `json:"error"`
-			TeamID string `json:"team_id"`
+			OK bool `json:"ok"`
 		}
 		if code != http.StatusOK || json.Unmarshal(body, &r) != nil {
 			return byStatus(false)(code, body)
 		}
+		e := bodyField(body, "error")
 		switch {
 		case r.OK:
-			team = r.TeamID
 			return secretrisk.Live, "ok"
-		case slackDead[r.Error]:
-			return secretrisk.Dead, r.Error
+		case slackDead[e]:
+			return secretrisk.Dead, e
 		}
-		return secretrisk.Unknown, safeCode(r.Error)
+		return secretrisk.Unknown, cmp.Or(e, "error")
 	}
-	res := send(ctx, http.MethodPost, base, "/api/auth.test", nil, bearerAuth(p.Value), j, nil)
-	if res.State == secretrisk.Live && team != "" {
-		res.Account = "slack:" + team
-	}
-	return res
+	return send(ctx, http.MethodPost, base, "/api/auth.test", nil, bearerAuth(p.Value), j, account("slack", "team_id"))
 }
 
 // askTelegram calls getMe, whose URL holds the token: the endpoint recorded hides it, and a failed
 // call keeps no error. Never dead: the Bot API says its error_code "is subject to change".
 func askTelegram(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	acct := func(body []byte) string {
-		var r struct {
-			Result struct {
-				Username string `json:"username"`
-			} `json:"result"`
+		if u := bodyField(body, "result.username"); u != "" {
+			return "telegram:@" + u
 		}
-		if json.Unmarshal(body, &r) != nil || r.Result.Username == "" {
-			return ""
-		}
-		return "telegram:@" + r.Result.Username
+		return ""
 	}
 	return call(ctx, base, "/bot"+p.Value+"/getMe", http.Header{}, byStatus(false), acct)
-}
-
-// safeCode keeps an API error code only when it is a short snake_case word: anything else could
-// be text the provider echoed.
-func safeCode(s string) string {
-	if len(s) == 0 || len(s) > 40 {
-		return "error"
-	}
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r == '_') {
-			return "error"
-		}
-	}
-	return s
 }
 
 // askXAI reads the key's own record. A key that still authenticates but is blocked or disabled,
@@ -383,21 +367,17 @@ func askNotion(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 // endpoint that needs the account id, and a legacy Global API Key needs the account's email.
 func askCloudflare(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	j := func(code int, body []byte) (secretrisk.LiveState, string) {
-		var r struct {
-			Result struct {
-				Status string `json:"status"`
-			} `json:"result"`
-		}
-		if code != http.StatusOK || json.Unmarshal(body, &r) != nil {
+		status := bodyField(body, "result.status")
+		if code != http.StatusOK || status == "" {
 			return secretrisk.Unknown, "HTTP " + strconv.Itoa(code)
 		}
-		switch r.Result.Status {
+		switch status {
 		case "active":
 			return secretrisk.Live, "active"
 		case "disabled", "expired":
-			return secretrisk.Dead, "token " + r.Result.Status
+			return secretrisk.Dead, "token " + status
 		}
-		return secretrisk.Unknown, "status " + safeCode(r.Result.Status)
+		return secretrisk.Unknown, "status " + status
 	}
 	return call(ctx, base, "/client/v4/user/tokens/verify", bearerAuth(p.Value), j, nil)
 }

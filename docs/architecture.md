@@ -1286,6 +1286,11 @@ day, dead for 7, unknown never; a result dated after now (a clock that jumped fo
 fresh, and the tracker drops one too. A result holds the state, the date, the provider, the endpoint,
 segurata's own reason (`HTTP 401`, `invalid_auth`, `InvalidClientTokenId`) and the account the
 provider names; never the value and never the provider's message, which may echo part of the key.
+Every word read from a provider's answer (a code, a reason, a status, an account id) passes one
+sanitizer, `providerText`: at most 64 characters of letters, digits and `_ . @ -`, else dropped.
+After it, any result field that holds 8 characters in a row of the value or key id is dropped too,
+and a failed call's error names the scheme, host and path with Telegram's token masked, never the
+query.
 The status line counts what was asked, read from the cache, recovered from git history, refused by
 owner or provider, unsupported, left without a value and interrupted.
 

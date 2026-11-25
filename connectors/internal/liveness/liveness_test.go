@@ -726,3 +726,48 @@ func TestFutureResultIsNotFresh(t *testing.T) {
 		t.Error("a result from the future answered")
 	}
 }
+
+// Every provider's body may echo the key in any field segurata reads: an error code, a reason, a
+// status, an account. No part of the key reaches a result, whatever the answer's status, and a
+// long or odd provider string is not kept either.
+func TestProviderTextNeverHoldsTheKey(t *testing.T) {
+	const key = "ECHO0key0for0tests0only0ZZZZ" // the characters a provider code may have
+	echo := func(v string) string {
+		return `{"login":"` + v + `","username":"` + v + `","name":"` + v + `","team_id":"` + v + `","ok":true,"error":"` + v +
+			`","id":"` + v + `","code":"` + v + `","type":"` + v + `","account":{"uuid":"` + v + `"},"bot":{"workspace_id":"` + v +
+			`"},"data":{"viewer":{"id":"` + v + `"}},"result":{"username":"` + v + `","status":"` + v + `"},"api_key_disabled":false,` +
+			`"errors":[{"extensions":{"code":"` + v + `"}}],"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"` + v + `"}]}`
+	}
+	for _, code := range []int{http.StatusOK, http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden} {
+		for _, v := range []string{key, strings.Repeat("A", 200), "a b<c>"} {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.Header.Get("Authorization"), "AWS4") {
+					w.WriteHeader(code)
+					_, _ = w.Write([]byte(`<ErrorResponse><Error><Code>` + v + `</Code></Error><Account>` + v + `</Account></ErrorResponse>`))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(code)
+				_, _ = w.Write([]byte(echo(v)))
+			}))
+			bases := map[string][]string{}
+			for _, p := range providers {
+				bases[p.name] = []string{srv.URL}
+			}
+			c := mineOnly(&Checker{Bases: bases, Interval: time.Millisecond})
+			var probes []Probe
+			for _, p := range providers {
+				if p.lookup == nil {
+					probes = append(probes, Probe{Fingerprints: []string{p.name}, Type: p.types[0], Value: key, KeyID: keyID})
+				}
+			}
+			got, st := c.Check(context.Background(), probes)
+			srv.Close()
+			noLeak(t, got, st, key)
+			raw, _ := json.Marshal(got)
+			if strings.Contains(string(raw), strings.Repeat("A", 65)) || strings.Contains(string(raw), "a b<c>") {
+				t.Errorf("HTTP %d: provider text kept: %s", code, raw)
+			}
+		}
+	}
+}
