@@ -20,8 +20,8 @@ import (
 type provider struct {
 	name  string
 	types []string
-	// bases are the API hosts, tried in order while each says dead: a key of SendGrid's EU region
-	// is rejected by the global host.
+	// bases are the API hosts, tried in order until one accepts the key (Checker.ask): a key of
+	// SendGrid's EU region is rejected by the global host.
 	bases []string
 	ask   func(ctx context.Context, base string, p Probe) secretrisk.Liveness
 	// lookup, in place of ask, classifies the secret with the owner's credentials (lookup.go).
