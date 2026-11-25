@@ -184,7 +184,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 			rl := ruleFor(f)
 			key, p := groupKey(f, rl, themeOf(f, r.theme.ID))
 			held := holders[f.ID]
-			if r.legacy() && held != nil && legacyKey(held.Key) {
+			if r.legacy() && held != nil && ruleKey(held.Key) {
 				// A run written before connectors declared how to group: its findings stay in the items
 				// that hold them, under the titles they have, until a run that declares it.
 				kept := *rl
@@ -632,8 +632,8 @@ func (t *Tracker) findingHolders() map[string]*Item {
 	return out
 }
 
-// legacyKey reports whether an item key is one grouping rules make: a group's or a pinned finding's.
-func legacyKey(key string) bool {
+// ruleKey reports whether an item key is one grouping rules make: a group's or a pinned finding's.
+func ruleKey(key string) bool {
 	return strings.HasPrefix(key, "group:") || strings.HasPrefix(key, "finding:")
 }
 

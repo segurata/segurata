@@ -47,11 +47,8 @@ const (
 	GroupFamily          = "family"           // one item per account and title family (the default)
 )
 
-// Kinds of item a Track asks for.
-const (
-	TrackFix    = "fix"
-	TrackReview = "review"
-)
+// TrackReview is the Kind of an item that asks for a review.
+const TrackReview = "review"
 
 // What {count} counts in a Track title.
 const (

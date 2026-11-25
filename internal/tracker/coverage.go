@@ -183,7 +183,7 @@ func (t *Tracker) audited(g gap) (covered bool, how string, known bool) {
 	reported, legacy := false, false
 	for _, l := range slices.Sorted(maps.Keys(t.Runs)) {
 		info := t.Runs[l]
-		legacy = legacy || info.Theme == ""
+		legacy = legacy || info.legacy()
 		a, ok := info.Areas[g.slug]
 		if a {
 			return true, l + " audited it", true

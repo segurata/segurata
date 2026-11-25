@@ -56,7 +56,7 @@ var defaultRule = &rule{by: perFamily, kind: KindFix}
 
 // declared is the rule a finding's Track declares.
 func declared(tr *finding.Track) *rule {
-	r := &rule{by: perFamily, kind: KindFix}
+	r := *defaultRule
 	if by, ok := groupsBy[tr.Group]; ok {
 		r.by = by
 	}
@@ -66,7 +66,7 @@ func declared(tr *finding.Track) *rule {
 	if tr.Title != "" {
 		r.title = declaredTitle
 	}
-	return r
+	return &r
 }
 
 // declaredTitle is the title the group's first finding declares, with the count in it.

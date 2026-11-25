@@ -249,3 +249,6 @@ type RunInfo struct {
 	// Areas are the plan areas the connector covers, each with whether this run audited it.
 	Areas map[string]bool `json:"areas,omitempty"`
 }
+
+// legacy reports whether the run was written before connectors declared themes and areas.
+func (i RunInfo) legacy() bool { return i.Theme == "" }
