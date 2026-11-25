@@ -355,3 +355,22 @@ func TestLookupByOwner(t *testing.T) {
 		t.Errorf("dead by lookup: %s %+v", key.Status, last)
 	}
 }
+
+// An unknown answer (a 429, a 5xx, a timeout) never replaces a held live or dead one, however
+// newer: a live leaked key stays P0, a dead history-only key stays done.
+func TestUnknownNeverOverwrites(t *testing.T) {
+	for _, held := range []secretrisk.LiveState{secretrisk.Live, secretrisk.Dead} {
+		out := filepath.Join(t.TempDir(), "out")
+		tr := New(t0)
+		writeSecrets(t, out, t0, ghHistory(t0, checked(held, t0, ""))...)
+		syncOrDie(t, tr, out, t0.Add(time.Minute))
+		gh := mustRotate(t, tr, ghFP[:8])
+		prio, status := gh.Priority, gh.Status
+		day2 := t0.Add(48 * time.Hour)
+		writeSecrets(t, out, day2, ghHistory(day2, checked(secretrisk.Unknown, day2, ""))...)
+		syncOrDie(t, tr, out, day2.Add(time.Minute))
+		if gh.LivenessLabel() != string(held) || gh.Priority != prio || gh.Status != status {
+			t.Errorf("%s then unknown: %s %s %s", held, gh.LivenessLabel(), gh.Priority, gh.Status)
+		}
+	}
+}

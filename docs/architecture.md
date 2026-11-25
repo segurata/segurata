@@ -1382,7 +1382,8 @@ checked in the liveness line, and is cached for a day, like live: a key can be r
   cache's version went up with the rules, so the first run after the upgrade asks every secret
   again.
 - **Unregistered** (lookups only) lowers the priority one step; see above.
-- **Unknown** changes nothing.
+- **Unknown** changes nothing: it never replaces a held live, dead or unregistered result, however
+  newer (a 429 after the live result's day would otherwise drop a P0).
 
 `rotations list` has a LIVE column (live, dead, unregistered, unknown, unchecked) and ends, like the
 status briefing after its coverage line, with "Liveness checked for N of M secrets: …", where M

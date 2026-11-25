@@ -24,22 +24,35 @@ import (
 //     and an item it closed opens again unless a current check finds the key dead;
 //   - unregistered (an SSH key the owner's GitHub keys, deploy keys and authorized_keys do not hold)
 //     lowers the priority one step, unless a connector reports it live: not proof it is dead;
-//   - unknown changes nothing.
+//   - unknown changes nothing, and never replaces a held live, dead or unregistered result.
 // See docs/architecture.md, "Liveness".
 
 // updateLiveness keeps the newest result among the sightings, so a run that did not check the
-// secret (or a cached result older than the one held) leaves the item's as it is. A dead verdict of
-// older rules is no result: held, it is dropped; seen, it is skipped.
+// secret (or a cached result older than the one held) leaves the item's as it is. Unknown never
+// replaces a held live or dead result: it tells nothing. A dead verdict of older rules is no
+// result: held, it is dropped; seen, it is skipped.
 func (s *Secret) updateLiveness(g []Sighting) {
 	if s.Liveness != nil && !s.Liveness.Trusted() {
 		s.Liveness = nil
 	}
 	for _, x := range g {
-		if l := x.Evidence.Liveness; l != nil && l.Trusted() && (s.Liveness == nil || l.CheckedAt.After(s.Liveness.CheckedAt)) {
+		if l := x.Evidence.Liveness; l != nil && l.Trusted() && supersedes(*l, s.Liveness) {
 			c := *l
 			s.Liveness = &c
 		}
 	}
+}
+
+// supersedes reports whether a new result replaces the held one: a newer one, unless it is unknown
+// and the held one says live or dead.
+func supersedes(l secretrisk.Liveness, held *secretrisk.Liveness) bool {
+	switch {
+	case held == nil:
+		return true
+	case l.State == secretrisk.Unknown && held.State != secretrisk.Unknown:
+		return false
+	}
+	return l.CheckedAt.After(held.CheckedAt)
 }
 
 // liveness is the latest check's result, nil when the item has no secret or it was never checked.
