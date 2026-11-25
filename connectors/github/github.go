@@ -61,6 +61,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "GitHub account 2FA, organization security settings, and the webhooks, deploy keys and code security of repositories you administer",
 		Needs:    []string{"cli:gh"},
+		Theme:    finding.ThemeGitHub,
 	}
 }
 

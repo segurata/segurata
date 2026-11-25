@@ -178,7 +178,9 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 			}
 			rl := ruleFor(f)
 			key, p := groupKey(f, rl, themeOf(f, r.theme.ID))
-			if held := holders[f.ID]; held != nil && held.Key != key && rl == defaultRule && f.Track == nil && legacyKey(held.Key) {
+			held := holders[f.ID]
+			legacy := held != nil && held.Key != key && rl == defaultRule && f.Track == nil && legacyKey(held.Key)
+			if legacy {
 				// A run written before its connector declared how to group it: its findings stay in the
 				// items that hold them, under the titles they have, until a run declares it.
 				key, p.rule = held.Key, &rule{kind: rl.kind, keep: true}
@@ -192,7 +194,11 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 					regroup[f.ID] = key
 				}
 			}
-			propose(key, p).add(f)
+			got := propose(key, p)
+			got.add(f)
+			if held != nil && f.Track == nil {
+				got.keepWhere(held)
+			}
 		}
 		for _, st := range r.statuses {
 			if st.State != finding.StateOK {

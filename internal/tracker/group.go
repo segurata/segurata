@@ -54,11 +54,6 @@ var rules = []rule{
 	// projects is one thing to fix, so it is one item listing the projects.
 	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
 	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-	{connectors: []string{"github"}, resource: "github_org_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
-	{connectors: []string{"github"}, resource: "github_repo_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
-	{connectors: []string{"github"}, resource: "github_repo", by: perAccount, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Repository security settings off in %s of %s", textfmt.Count(len(p.findings), "repository", "repositories"), p.account)
-	}},
 	{connectors: []string{"connected-apps"}, resource: "slack_app", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
 		return fmt.Sprintf("Review %s with %s permissions in %s", textfmt.Count(len(p.findings), "Slack app", "Slack apps"),
 			breadth(p.worst().Severity, "broad", "several", "few"), strings.TrimPrefix(p.account, "slack:"))
@@ -177,32 +172,6 @@ func breadth(s finding.Severity, high, medium, low string) string {
 
 func providerName(connector string) string {
 	return map[string]string{"openai": "OpenAI", "anthropic": "Anthropic", "openrouter": "OpenRouter"}[connector]
-}
-
-// githubChecks phrase each organization-level check the github connector reports.
-var githubChecks = map[string]string{
-	"org-2fa-not-required":                          "Two-factor authentication not required",
-	"org-members-without-2fa":                       "Members without two-factor authentication",
-	"org-outside-collaborators-without-2fa":         "Outside collaborators without two-factor authentication",
-	"org-default-repository-permission":             "Every member can write to every repository",
-	"org-default-workflow-permissions-write":        "Workflows get a read and write GITHUB_TOKEN by default",
-	"org-all-actions-allowed":                       "Workflows may use any action from any author",
-	"org-actions-can-approve-pull-requests":         "Workflows can create and approve pull requests",
-	"org-members-can-create-public-repos":           "Members can create public repositories",
-	"org-new-public-repos-without-secret-scanning":  "New public repositories get no secret scanning or push protection",
-	"org-new-private-repos-without-secret-scanning": "New private repositories get no secret scanning or push protection",
-	"dependabot-security-updates-disabled":          "Repositories without Dependabot security updates",
-	"fork-secret-scanning-disabled":                 "Forks without secret scanning or push protection",
-	"fork-workflow-write":                           "Forks whose workflows get a read and write GITHUB_TOKEN",
-	"private-secret-scanning-disabled":              "Private repositories without secret scanning or push protection",
-}
-
-func githubCheckTitle(p *proposal) string {
-	phrase, ok := githubChecks[p.check]
-	if !ok {
-		phrase = strings.ReplaceAll(strings.TrimPrefix(p.check, "org-"), "-", " ")
-	}
-	return phrase + " in " + textfmt.Count(len(p.accounts()), "GitHub org", "GitHub orgs")
 }
 
 // appNouns name what a connected-apps resource type is.
@@ -353,9 +322,6 @@ func refOf(f finding.Finding) FindingRef {
 			break
 		}
 	}
-	if f.Connector == "github" && strings.Count(f.Resource.Name, "/") == 1 {
-		r.Repo = f.Resource.Name
-	}
 	if f.Connector == "gcp" {
 		r.Project = str("project")
 	}
@@ -363,6 +329,17 @@ func refOf(f finding.Finding) FindingRef {
 		r.Repo, r.Project = cmp.Or(tr.Repo, r.Repo), cmp.Or(tr.Project, r.Project)
 	}
 	return r
+}
+
+// keepWhere gives the last ref added the repository and project its item's ref of the same
+// finding says, which only a declared Track carries.
+func (p *proposal) keepWhere(held *Item) {
+	r := &p.refs[len(p.refs)-1]
+	for _, old := range held.Findings {
+		if old.ID == r.ID {
+			r.Repo, r.Project = cmp.Or(r.Repo, old.Repo), cmp.Or(r.Project, old.Project)
+		}
+	}
 }
 
 // worst is the most severe finding (the first one on a tie).
