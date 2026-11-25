@@ -34,10 +34,11 @@ func okStatus(connector, account string) finding.Status {
 	return finding.Status{Type: "status", Connector: connector, Account: account, State: finding.StateOK}
 }
 
-// writeRun writes one connector instance's finished output under out/<date>/<file>.
+// writeRun writes one connector instance's finished output under out/<date>/<file>, with what its
+// connector declares (Declare).
 func writeRun(t *testing.T, out string, at time.Time, file string, recs ...any) {
 	t.Helper()
-	runtest.Write(t, filepath.Join(out, at.Format(time.DateOnly), file), recs...)
+	runtest.Write(t, filepath.Join(out, at.Format(time.DateOnly), file), Declare(recs)...)
 }
 
 func syncOrDie(t *testing.T, tr *Tracker, out string, now time.Time) SyncReport {

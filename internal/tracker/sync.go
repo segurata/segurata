@@ -62,6 +62,8 @@ type run struct {
 	failed   string           // the connector's own error, from run_end
 	// fingerprints are the secrets the core resolved for the instance, by name (run_end).
 	fingerprints map[string]string
+	theme        finding.Theme  // the theme the connector declared (run_end)
+	covers       []finding.Area // the plan areas the connector audits (run_end)
 }
 
 // statusesUnproven reports, with the reason, a run whose statuses do not prove an earlier status
@@ -77,6 +79,10 @@ func (r *run) statusesUnproven() (string, bool) {
 	}
 	return "", false
 }
+
+// legacy reports whether the run was written before connectors declared their theme and how their
+// findings group: its run_end names no theme.
+func (r *run) legacy() bool { return r.theme.ID == "" }
 
 // wholeInstance reports whether the run has a status of that state for no account in particular.
 func (r *run) wholeInstance(state finding.State) bool {
@@ -162,6 +168,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	// its own (see correlate.go).
 	claims, possible := t.correlate(folded)
 	regroup := map[string]string{} // finding id -> key of the group it moves to
+	holders := t.findingHolders()
 	for _, l := range rep.Runs {
 		r := folded[l]
 		for _, f := range r.findings {
@@ -175,7 +182,15 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 				continue
 			}
 			rl := ruleFor(f)
-			key, p := groupKey(f, rl)
+			key, p := groupKey(f, rl, themeOf(f, r.theme.ID))
+			held := holders[f.ID]
+			if r.legacy() && held != nil && ruleKey(held.Key) {
+				// A run written before connectors declared how to group: its findings stay in the items
+				// that hold them, under the titles they have, until a run that declares it.
+				kept := *rl
+				kept.keep = true
+				key, p.rule = held.Key, &kept
+			}
 			if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
 				if rl.by == perFinding || pin.keptApart() {
 					// An item already holds this finding on its own: it stays there, titled by the finding.
@@ -185,7 +200,11 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 					regroup[f.ID] = key
 				}
 			}
-			propose(key, p).add(f)
+			got := propose(key, p)
+			got.add(f)
+			if p.rule.keep {
+				got.keepWhere(held)
+			}
 		}
 		for _, st := range r.statuses {
 			if st.State != finding.StateOK {
@@ -260,6 +279,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	rep.Ruled = t.applyRules(now)
 	t.noteBlocked(now)
 	t.seed(now)
+	t.declareThemes(folded)
 	if t.Sources == nil {
 		t.Sources = map[string]time.Time{}
 	}
@@ -267,7 +287,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		t.Sources[l] = r.at
 	}
 	t.recordRuns(folded)
-	rep.Coverage = t.syncCoverage(folded, now)
+	rep.Coverage = t.syncCoverage(now)
 	at := now.UTC()
 	t.LastSyncAt = &at
 	return rep, nil
@@ -389,7 +409,7 @@ func readRunFile(file string) (*run, error) {
 	// A finished run's time is when it ended. A file without run_end falls back to its newest
 	// observed_at that is not in the future, then to its modification time.
 	if rf.End != nil {
-		r.at, r.failed, r.fingerprints = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints
+		r.at, r.failed, r.fingerprints, r.theme, r.covers = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints, rf.End.Theme, rf.End.Covers
 	} else {
 		limit := time.Now()
 		for _, f := range rf.Findings {
@@ -594,18 +614,27 @@ func (it *Item) derive() {
 }
 
 // withFinding returns the item (not a rotate item) that links the finding, or nil.
-func (t *Tracker) withFinding(id string) *Item {
+func (t *Tracker) withFinding(id string) *Item { return t.findingHolders()[id] }
+
+// findingHolders maps each finding id to the item, other than a rotate item, that holds it.
+func (t *Tracker) findingHolders() map[string]*Item {
+	out := map[string]*Item{}
 	for _, it := range t.Items {
 		if it.Kind == KindRotate {
 			continue
 		}
 		for _, r := range it.Findings {
-			if r.ID == id {
-				return it
+			if out[r.ID] == nil {
+				out[r.ID] = it
 			}
 		}
 	}
-	return nil
+	return out
+}
+
+// ruleKey reports whether an item key is one grouping rules make: a group's or a pinned finding's.
+func ruleKey(key string) bool {
+	return strings.HasPrefix(key, "group:") || strings.HasPrefix(key, "finding:")
 }
 
 // pinnedKey is the key of an item that holds one finding on its own (a finding grouped nowhere
@@ -620,6 +649,10 @@ func (t *Tracker) AcceptFinding(f finding.Finding, reason, until string, now tim
 		return nil, errors.New("accept needs --reason (why this risk is kept on purpose)")
 	}
 	it := t.withFinding(f.ID)
+	theme := themeOf(f, t.Runs[finding.Label(f.Connector, f.Instance)].Theme)
+	if it != nil {
+		theme = it.Theme
+	}
 	if it != nil && len(it.Findings) > 1 && it.Key != pinnedKey(f.ID) {
 		kept := it.Findings[:0]
 		for _, r := range it.Findings {
@@ -632,7 +665,7 @@ func (t *Tracker) AcceptFinding(f finding.Finding, reason, until string, now tim
 	}
 	if it == nil {
 		r := ruleFor(f)
-		it = t.newItem(r.kind, pinnedKey(f.ID), themeOf(f.Connector, f.Resource.Type), f.Title, now)
+		it = t.newItem(r.kind, pinnedKey(f.ID), theme, f.Title, now)
 		it.Findings = []FindingRef{refOf(f)}
 		it.Severity, it.Priority = f.Severity, priorityOf(f.Severity)
 		it.Log(now, EvFound, actFound, "accepted on its own")

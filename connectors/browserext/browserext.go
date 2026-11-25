@@ -48,7 +48,13 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Brave and Chrome extensions in every profile: capabilities, source, age and a remove/review/keep verdict",
 		Needs:    []string{"os:darwin|linux"},
+		Theme:    finding.ThemeBrowserExtensions,
 	}
+}
+
+// Track makes one review item of each extension: keep it or remove it.
+func (c *Connector) Track(finding.Finding) *finding.Track {
+	return &finding.Track{Group: finding.GroupFinding, Kind: finding.TrackReview}
 }
 
 // primaries reads config "primary": extension ids that win a duplicate check in their category

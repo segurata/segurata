@@ -166,7 +166,10 @@ relevance, 0 not applicable; APIs disabled (nothing to check there): dataproc, n
 | `severity` | Prowler's (critical, high, medium, low as they are, informational as `info`), weighed by [Relevance](#relevance) |
 | `title` | Prowler's result text, which names the resource (`Bucket x is publicly accessible.`). The check title states the passing condition, so it goes to the evidence |
 | `remediation` | Prowler's recommendation text; `url` its page on hub.prowler.com |
+| `track` | One tracker item per check across projects (`group` `check`, `key` the check id), titled `<check title> fails in 40 projects (Prowler <check id>)`, or the project's name when only one fails it |
 | `evidence` | `check_id`, `check_title`, `service`, `resource_uid`, `resource_type`, `region`, `project`, `compliance` (CIS benchmark versions and requirement ids), `categories`, `prowler_version`, `prowler_severity` (Prowler's severity before relevance), `profile` (the project's activity profile) and, when the severity was changed, `relevance` (why) |
+
+`describe` declares the `cloud` theme, so the tracker lists its items with the gcp connector's.
 
 Prowler's per-resource raw data (`resources[].data`) is never copied: it holds whole API objects.
 

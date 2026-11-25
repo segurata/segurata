@@ -15,19 +15,28 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
+// Legacy, among Write's records, writes a run_end without a theme, as segurata wrote them before
+// connectors declared themes and grouping.
+type Legacy struct{}
+
 // Fingerprints, among Write's records, are the secret fingerprints its run_end names.
 type Fingerprints map[string]string
 
 // Write writes one finished run to path. recs are finding.Finding and finding.Status records, plus
 // finding.Skipped for a scope the connector declared skipped, an error for a connector that
-// failed and Fingerprints for the secrets the core resolved. The run counts as having inspected something, so only statuses, skips and errors make
-// it incomplete. Its times are the newest observed_at among the findings.
+// failed, Fingerprints for the secrets the core resolved, and a finding.Theme and []finding.Area
+// for the theme and areas the connector declared. The theme is finding.ThemeOther when none is
+// given, as the core writes it for a connector that declares none, and none at all with Legacy, a
+// run written before connectors declared themes. The run counts as having inspected something, so only statuses, skips and
+// errors make it incomplete. Its times are the newest observed_at among the findings.
 func Write(t testing.TB, path string, recs ...any) {
 	t.Helper()
 	var tally finding.Tally
 	tally.Declare("", true, "")
 	var err error
 	var fps Fingerprints
+	theme := finding.ThemeOther
+	var covers []finding.Area
 	var lines []any
 	var at time.Time
 	connector, instance := strings.TrimSuffix(filepath.Base(path), ".jsonl"), ""
@@ -55,12 +64,18 @@ func Write(t testing.TB, path string, recs ...any) {
 			err = errors.Join(err, r)
 		case Fingerprints:
 			fps = r
+		case finding.Theme:
+			theme = r
+		case []finding.Area:
+			covers = r
+		case Legacy:
+			theme = finding.Theme{}
 		default:
 			lines = append(lines, r)
 		}
 	}
 	end := tally.End(connector, instance, at, at, err)
-	end.SecretFingerprints = fps
+	end.SecretFingerprints, end.Theme, end.Covers = fps, theme, covers
 	write(t, path, append(lines, end)...)
 }
 

@@ -205,11 +205,7 @@ type Item struct {
 }
 
 // Theme groups items for the briefing.
-type Theme struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-}
+type Theme = finding.Theme
 
 // Tracker is the whole file.
 type Tracker struct {
@@ -247,4 +243,12 @@ type RunInfo struct {
 	// Skipped are the first scopes it did not inspect, "scope: reason"; SkippedCount counts them all.
 	Skipped      []string `json:"skipped,omitempty"`
 	SkippedCount int      `json:"skipped_count,omitempty"`
+	// Theme is the theme id the run declared, "" for a run written before connectors declared
+	// themes (see Tracker.Sync).
+	Theme string `json:"theme,omitempty"`
+	// Areas are the plan areas the connector covers, each with whether this run audited it.
+	Areas map[string]bool `json:"areas,omitempty"`
 }
+
+// legacy reports whether the run was written before connectors declared themes and areas.
+func (i RunInfo) legacy() bool { return i.Theme == "" }
