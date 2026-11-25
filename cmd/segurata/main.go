@@ -92,13 +92,15 @@ func connectorsCmd([]string) int {
 
 // all is every connector, built-in and external. Discovery runs each plugin's describe, so it
 // happens once per process however many times a command asks.
-var all = sync.OnceValue(func() []connector.Connector {
+var all = sync.OnceValue(discover)
+
+func discover() []connector.Connector {
 	conns := connector.Builtins()
 	for _, e := range connector.Discover() {
 		conns = append(conns, e)
 	}
 	return conns
-})
+}
 
 func inventory(args []string) int {
 	fs := cliflag.New("inventory", os.Stderr)

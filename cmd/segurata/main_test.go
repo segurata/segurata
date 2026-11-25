@@ -6,9 +6,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/segurata/segurata/internal/connector/connectortest"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // Every verb asks for the connectors, some of them many times per command (status asks once per
@@ -64,5 +66,35 @@ func TestVerbsTableListsEveryCommand(t *testing.T) {
 	slices.Sort(dispatched)
 	if !slices.Equal(documented, dispatched) {
 		t.Errorf("docs/architecture.md lists %v, commands dispatches %v", documented, dispatched)
+	}
+}
+
+// inventory ends in a tracker sync: what it found is in tracker.json when it returns.
+func TestInventoryEndsInATrackerSync(t *testing.T) {
+	plugin := connectortest.Script(t, "stub", `case "$1" in
+describe) echo '{"name":"stub","protocol":2}';;
+inventory) cat >/dev/null
+  echo '{"type":"finding","account":"me","resource":{"type":"thing","id":"t1","name":"t1"},"kind":"setting","severity":"high","title":"Stub thing is off","remediation":{"summary":"Turn it on."}}'
+  echo '{"type":"status","account":"me","state":"ok"}';;
+esac
+`)
+	home := t.TempDir()
+	t.Setenv("PATH", filepath.Dir(plugin))
+	t.Setenv("HOME", home)
+	t.Setenv("SEGURATA_HOME", filepath.Join(home, "state"))
+	t.Setenv("SEGURATA_CONFIG", filepath.Join(home, "config.json"))
+	saved := all
+	all = sync.OnceValue(discover)
+	t.Cleanup(func() { all = saved })
+
+	if code := inventory([]string{"--out", filepath.Join(home, "out"), "stub"}); code != 0 {
+		t.Fatalf("inventory exit %d", code)
+	}
+	tr, err := tracker.Load(filepath.Join(home, "state", "tracker.json"))
+	if err != nil {
+		t.Fatalf("no tracker after inventory: %v", err)
+	}
+	if tr.LastSyncAt == nil || !slices.ContainsFunc(tr.Items, func(it *tracker.Item) bool { return it.Title == "Stub thing is off" }) {
+		t.Errorf("the sync did not fold the run: %d items", len(tr.Items))
 	}
 }
