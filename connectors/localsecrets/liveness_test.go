@@ -376,3 +376,71 @@ func TestLivenessLookupsAtScanTime(t *testing.T) {
 		t.Errorf("private key: %+v", keys)
 	}
 }
+
+// A secret key committed next to someone else's key id: the pair is never sent to STS, neither
+// when the scan read the values nor when the history is replayed from the cache and the values
+// would have to be recovered. The key id's own attribution gates the probe, not the secret key's.
+func TestLivenessNeverSendsAForeignKeyID(t *testing.T) {
+	r := newHistoryRepo(t)
+	theirs := testcorpus.AWSKeyID("AKIA", 999999999999, false, 1)
+	secret := fake("", 40)
+	if err := os.WriteFile(filepath.Join(r.dir, "creds.env"), []byte("AWS_ACCESS_KEY_ID="+theirs+"\naws_secret_access_key="+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.git("add", "creds.env")
+	r.git("commit", "-q", "-m", "creds")
+	commit := r.git("rev-parse", "HEAD")
+	gl := cli.RunnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "version" {
+			return []byte("v8.30.1\n"), nil
+		}
+		r.scans = append(r.scans, args)
+		return json.Marshal([]map[string]any{
+			{"RuleID": "aws-access-token", "File": "creds.env", "StartLine": 1, "Secret": theirs, "Commit": commit, "Date": "2026-11-01T00:00:00Z"},
+			{"RuleID": "aws-secret-key", "File": "creds.env", "StartLine": 2, "Secret": secret, "Commit": commit, "Date": "2026-11-01T00:00:00Z"},
+		})
+	})
+	f := newFakeProviders(t, theirs)
+	theirAccount := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
+	mine := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"999999999999"}}}
+	for _, tc := range []struct {
+		replay bool
+		known  *attribution.Known
+	}{{false, theirAccount}, {true, theirAccount}, {true, mine}} {
+		replay, known := tc.replay, tc.known
+		c := &Connector{Gitleaks: gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+			Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
+			NewChecker: func(home string, cfg liveness.Config) *liveness.Checker {
+				return &liveness.Checker{Config: cfg, Bases: map[string][]string{"aws": {f.URL}}, Interval: time.Millisecond}
+			}}
+		lc, err := liveness.ParseConfig(map[string]any{"enabled": true, "owners": []any{"mine", "unknown"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute, gitCache: true, liveness: lc}
+		r.scans = nil
+		s := newScan(context.Background(), c, r.home, cfg, fingerprint.FromBytes(bytes.Repeat([]byte{1}, 32)), &recorder{})
+		if err := s.gitleaks(r.dir); err != nil {
+			t.Fatal(err)
+		}
+		if replay != (len(r.scans) == 0) {
+			t.Fatalf("replay %v, scans %v", replay, r.scans)
+		}
+		fs, _ := s.findings()
+		line := s.checkLiveness(context.Background(), fs, known)
+		raw, _ := json.Marshal(fs)
+		if strings.Contains(string(raw)+line, secret) || strings.Contains(string(raw)+line, theirs) {
+			t.Fatal("a value reached the output")
+		}
+		if known == mine {
+			// The control: the same pair, the owner's, is recovered and tried.
+			if !f.askedAbout(theirs) || !strings.Contains(line, "1 asked") {
+				t.Errorf("the owner's pair was not tried: %s", line)
+			}
+			continue
+		}
+		if len(f.asked) != 0 || !strings.Contains(line, "0 asked") || strings.Contains(line, " 0 not allowed") {
+			t.Fatalf("replay %v: someone else's key id was sent (%v): %s", replay, f.asked, line)
+		}
+	}
+}

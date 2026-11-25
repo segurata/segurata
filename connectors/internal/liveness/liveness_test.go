@@ -199,7 +199,14 @@ func (f *fake) checker() *Checker {
 	for _, p := range providers {
 		bases[p.name] = []string{f.URL}
 	}
-	return &Checker{Config: Config{Enabled: true, Owners: []attribution.Owner{attribution.Mine}}, Bases: bases, Interval: time.Millisecond}
+	return mineOnly(&Checker{Bases: bases, Interval: time.Millisecond})
+}
+
+// mineOnly lets c try every probe: each fingerprint attributed mine, mine allowed.
+func mineOnly(c *Checker) *Checker {
+	c.Config.Enabled, c.Config.Owners = true, []attribution.Owner{attribution.Mine}
+	c.Attribution = func(string) (attribution.Owner, bool) { return attribution.Mine, true }
+	return c
 }
 
 func TestEveryProviderLiveAndDead(t *testing.T) {
@@ -278,7 +285,7 @@ func TestQuotaAndCreditsMeanAccepted(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
-	c := &Checker{Bases: map[string][]string{"openai": {srv.URL}, "openrouter": {srv.URL}}, Interval: time.Millisecond}
+	c := mineOnly(&Checker{Bases: map[string][]string{"openai": {srv.URL}, "openrouter": {srv.URL}}, Interval: time.Millisecond})
 	got, _ := c.Check(context.Background(), []Probe{
 		{Fingerprints: []string{"o"}, Type: "openai-project", Value: liveKey},
 		{Fingerprints: []string{"r"}, Type: "openrouter", Value: liveKey},
@@ -384,11 +391,14 @@ func TestUnsupportedAndAllowlist(t *testing.T) {
 		{Fingerprints: []string{"a"}, Type: "slack-webhook", Value: liveKey},   // trying it would post
 		{Fingerprints: []string{"b"}, Type: "npm-authtoken", Value: liveKey},   // any registry
 		{Fingerprints: []string{"c"}, Type: "aws-access-key-id", Value: keyID}, // a lookup, not in the allowlist
-		{Fingerprints: []string{"f"}, Type: "aws-secret-key", Value: liveKey},  // needs its key id, whatever the allowlist
+		{Fingerprints: []string{"f"}, Type: "aws-secret-key", Value: liveKey},  // not in the allowlist (and without its key id)
 		{Fingerprints: []string{"d"}, Type: "openai-project", Value: liveKey},  // not in the allowlist
 		{Fingerprints: []string{"e"}, Type: "github", Value: "ghp_" + liveKey}, // allowed
 	})
-	if st.Unsupported != 3 || st.NotAllowed != 2 || st.Asked != 1 || len(got) != 1 {
+	c.Config.Providers = nil // allowed, but unsupported without its key id
+	_, st2 := c.Check(context.Background(), []Probe{{Fingerprints: []string{"g"}, Type: "aws-secret-key", Value: liveKey}})
+	st.Unsupported += st2.Unsupported
+	if st.Unsupported != 3 || st.NotAllowed != 3 || st.Asked != 1 || len(got) != 1 {
 		t.Errorf("stats %+v, results %v", st, got)
 	}
 	if len(f.paths) != 1 {
@@ -515,7 +525,7 @@ func TestSupported(t *testing.T) {
 func TestGitHubForbiddenIsUnknown(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }))
 	defer srv.Close()
-	c := &Checker{Bases: map[string][]string{"github": {srv.URL}}, Interval: time.Millisecond}
+	c := mineOnly(&Checker{Bases: map[string][]string{"github": {srv.URL}}, Interval: time.Millisecond})
 	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"g"}, Type: "github", Value: "ghs_" + liveKey}})
 	if got["g"].State != secretrisk.Unknown {
 		t.Errorf("403: %+v", got["g"])
@@ -611,7 +621,7 @@ func TestBareStatusIsNeverDead(t *testing.T) {
 	for _, p := range providers {
 		bases[p.name] = []string{srv.URL}
 	}
-	c := &Checker{Bases: bases, Interval: time.Millisecond}
+	c := mineOnly(&Checker{Bases: bases, Interval: time.Millisecond})
 	var probes []Probe
 	for _, p := range providers {
 		probes = append(probes, Probe{Fingerprints: []string{p.name}, Type: p.types[0], Value: liveKey, KeyID: keyID})
@@ -652,5 +662,56 @@ func TestOlderCacheIsDiscarded(t *testing.T) {
 	now := time.Date(2026, 11, 25, 1, 0, 0, 0, time.UTC)
 	if _, ok := LoadCache(path).fresh([]string{"x"}, now); ok {
 		t.Error("a dead result of the old rules answered from the cache")
+	}
+}
+
+// The owner and provider gates apply to every fingerprint of a probe, inside Check, before the
+// cache and before a value is recovered: a pair whose key id is someone else's is never sent, nor
+// answered from the cache; a lookup (it sends nothing) runs for unknown whatever owners says, never
+// for not-mine; a fingerprint with no attribution is refused.
+func TestGatesEveryFingerprint(t *testing.T) {
+	f := newFake(t)
+	c := f.checker()
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	c.Cache, c.Now = LoadCache(filepath.Join(t.TempDir(), "l.json")), func() time.Time { return now }
+	owners := map[string]attribution.Owner{"mine": attribution.Mine, "mine-id": attribution.Mine, "their-id": attribution.NotMine,
+		"cached-theirs": attribution.NotMine, "unknown-id": attribution.Unknown, "their-lone-id": attribution.NotMine, "cached-openai": attribution.Mine}
+	c.Attribution = func(fp string) (attribution.Owner, bool) { o, ok := owners[fp]; return o, ok }
+	c.Config.Providers = []string{"aws", "aws-keys", "github"}
+	c.Cache.put([]string{"cached-theirs"}, secretrisk.Liveness{State: secretrisk.Live, CheckedAt: now, Account: "github:them"})
+	c.Cache.put([]string{"cached-openai"}, secretrisk.Liveness{State: secretrisk.Live, CheckedAt: now})
+	const theirSecret = "fake/secret/for/tests/only/9999999999999"
+	recovered := false
+	got, st := c.Check(context.Background(), []Probe{
+		{Fingerprints: []string{"mine", "their-id"}, Type: "aws-secret-key", Value: theirSecret, KeyID: keyID},
+		{Fingerprints: []string{"mine", "unattributed"}, Type: "aws-secret-key", Recover: func(context.Context) (string, string, bool) {
+			recovered = true
+			return theirSecret, keyID, true
+		}},
+		{Fingerprints: []string{"cached-theirs"}, Type: "github", Value: "ghp_" + liveKey},
+		{Fingerprints: []string{"cached-openai"}, Type: "openai-project", Value: liveKey},
+		{Fingerprints: []string{"their-lone-id"}, Type: "aws-access-key-id", Value: keyID},
+		{Fingerprints: []string{"unknown-id"}, Type: "aws-access-key-id", Value: keyID},
+	})
+	if len(f.paths) != 0 || recovered {
+		t.Errorf("someone else's key was sent (%v) or recovered (%v)", f.paths, recovered)
+	}
+	for _, fp := range []string{"mine", "their-id", "unattributed", "cached-theirs", "cached-openai", "their-lone-id"} {
+		if r, ok := got[fp]; ok {
+			t.Errorf("%s has a result: %+v", fp, r)
+		}
+	}
+	if _, ok := got["unknown-id"]; !ok {
+		t.Error("a lookup for an unknown key id did not run")
+	}
+	if st.NotAllowed != 5 || st.Cached != 0 || st.Recovered != 0 {
+		t.Errorf("stats %+v", st)
+	}
+	noLeak(t, got, st, theirSecret, liveKey)
+	if c.Attribution = nil; true {
+		got, st = c.Check(context.Background(), []Probe{{Fingerprints: []string{"mine"}, Type: "github", Value: "ghp_" + liveKey}})
+		if len(got) != 0 || st.NotAllowed != 1 || len(f.paths) != 0 {
+			t.Errorf("a checker without attribution tried a key: %+v %+v", got, st)
+		}
 	}
 }

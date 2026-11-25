@@ -79,7 +79,8 @@ func noLeak(t *testing.T, got map[string]secretrisk.Liveness, st Stats, values .
 
 func lookupChecker(o Owner, cfg Config) *Checker {
 	cfg.Enabled = true
-	return &Checker{Config: cfg, Owner: o, Interval: time.Hour} // a lookup never waits on the limiter
+	return &Checker{Config: cfg, Owner: o, Interval: time.Hour, // a lookup never waits on the limiter
+		Attribution: func(string) (attribution.Owner, bool) { return attribution.Mine, true }}
 }
 
 func TestLookupAWSKeys(t *testing.T) {

@@ -173,26 +173,23 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		}
 		candidates = append(candidates, p)
 	}
-	var probes []liveness.Probe
-	refused := 0
-	for _, p := range candidates {
-		fp := p.Fingerprints[0]
-		switch _, reported := claims[fp]; {
-		case !reported: // noise, or dropped after it was held
-		case !s.cfg.liveness.Allows(known.Of(fp, claims[fp]), p.Type):
-			refused++
-		default:
-			probes = append(probes, p)
-		}
-	}
+	// A probe of a secret no longer reported (noise, or dropped after it was held) is left out; the
+	// checker refuses any other whose fingerprints are not all attributed to an owner it allows.
+	probes := slices.DeleteFunc(candidates, func(p liveness.Probe) bool {
+		_, reported := claims[p.Fingerprints[0]]
+		return !reported
+	})
 	ch := s.c.checker(s.home, s.cfg.liveness)
 	if ch.Now == nil {
 		ch.Now = s.c.Now
 	}
+	ch.Attribution = func(fp string) (attribution.Owner, bool) {
+		c, reported := claims[fp]
+		return known.Of(fp, c), reported
+	}
 	lctx, cancel := context.WithTimeout(ctx, livenessTimeout)
 	defer cancel()
 	results, st := ch.Check(lctx, probes)
-	st.NotAllowed += refused
 	for i := range fs {
 		ev, ok := findingEvidence(fs[i])
 		if !ok {

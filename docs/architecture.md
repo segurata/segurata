@@ -1258,8 +1258,11 @@ with the one key id found in the same file (or commit and file); with none or se
 tried. A secret is tried when the run reports it (noise never is, which leaves copies in other
 people's repositories alone) and its attribution, computed as the next sync would (the tracker's
 facts plus this scan's claims, against the tracker's accounts and config `owned`, lent by the core
-in `connector.Request.Known`, never sent to an external connector), is one of `owners`. A run
-without a tracker gets no attribution and tries nothing.
+in `connector.Request.Known`, never sent to an external connector), is one of `owners`: for an AWS
+key pair, the key id's attribution as well as the secret key's. The checker applies the owner and
+provider gates to every fingerprint of a probe before it looks in the cache or recovers a value, so
+someone else's key is neither sent nor answered from the cache. A run without a tracker gets no
+attribution and tries nothing.
 
 Secrets seen only in history replayed from the git history cache have no value in memory. When the
 liveness cache has no fresh answer for one and the check still has time, its value is read again

@@ -186,13 +186,32 @@ type Checker struct {
 	Interval time.Duration
 	// Owner runs the lookups (lookup.go); its zero value leaves them without sources.
 	Owner Owner
+	// Attribution is the owner of a fingerprint, false when the run has none for it. Check tries a
+	// probe only when Config.Allows every one of its fingerprints; nil allows nothing.
+	Attribution func(fingerprint string) (attribution.Owner, bool)
+}
+
+// allows reports whether the owner and provider gates let the probe through: every fingerprint
+// attributed to an owner the config allows (someone else's key never rides along with the owner's),
+// and the provider in the allowlist.
+func (c *Checker) allows(p Probe, pv *provider) bool {
+	if c.Attribution == nil || len(p.Fingerprints) == 0 || pv != nil && !c.Config.allowsProvider(pv.name) {
+		return false
+	}
+	for _, fp := range p.Fingerprints {
+		if o, ok := c.Attribution(fp); !ok || !c.Config.Allows(o, p.Type) {
+			return false
+		}
+	}
+	return true
 }
 
 // DefaultInterval keeps the whole check under four calls a second.
 const DefaultInterval = 250 * time.Millisecond
 
 // Check tries each probe the config allows, one call per probe, and returns the result by
-// fingerprint. A probe whose fingerprints all have a fresh cached result is not asked again.
+// fingerprint. The gates come first: a probe they refuse is neither answered from the cache nor
+// recovered. A probe whose fingerprints all have a fresh cached result is not asked again.
 // Results of probes asked are cached; ctx ending stops the calls that have not started.
 func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretrisk.Liveness, Stats) {
 	now := c.now()
@@ -200,6 +219,11 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 	var st Stats
 	queues := map[*provider][]Probe{}
 	for _, p := range probes {
+		pv := forType(p.Type)
+		if !c.allows(p, pv) {
+			st.NotAllowed++
+			continue
+		}
 		if r, ok := c.Cache.fresh(p.Fingerprints, now); ok {
 			for _, fp := range p.Fingerprints {
 				out[fp] = r
@@ -207,14 +231,11 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 			st.Cached++
 			continue
 		}
-		pv := forType(p.Type)
 		switch {
 		case p.Value == "" && p.Recover == nil:
 			st.NoValue++
 		case pv == nil, p.Recover == nil && forProbe(p) == nil: // an AWS secret key without its key id
 			st.Unsupported++
-		case !c.Config.allowsProvider(pv.name):
-			st.NotAllowed++
 		default:
 			queues[pv] = append(queues[pv], p)
 		}
