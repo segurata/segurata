@@ -7,7 +7,7 @@
 //
 // Safety: every endpoint is a GET that reads who the caller is, or lists something; none changes
 // state, costs money or sends anything. Calls go one at a time per provider, with a pause between
-// any two, through httpx (credentials are dropped on a redirect to another host). Results hold
+// any two, through httpx, following no redirect (a 3xx is unknown). Results hold
 // no value and no provider message (which may echo part of the key), and are cached by
 // fingerprint so a secret is not tried again for a while.
 package liveness

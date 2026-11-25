@@ -771,3 +771,26 @@ func TestProviderTextNeverHoldsTheKey(t *testing.T) {
 		}
 	}
 }
+
+// The liveness client follows no redirect: the key goes only to the provider's own URL, and a 3xx
+// tells nothing.
+func TestRedirectIsUnknownAndNotFollowed(t *testing.T) {
+	reached := false
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		_, _ = w.Write([]byte(`{"login":"octocat"}`))
+	}))
+	defer other.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer api.Close()
+	c := mineOnly(&Checker{Bases: map[string][]string{"github": {api.URL}, "telegram": {api.URL}}, Interval: time.Millisecond})
+	got, _ := c.Check(context.Background(), []Probe{
+		{Fingerprints: []string{"g"}, Type: "github", Value: "ghp_" + liveKey},
+		{Fingerprints: []string{"t"}, Type: "telegram-bot", Value: "123:AA" + liveKey},
+	})
+	if reached || got["g"].State != secretrisk.Unknown || got["g"].Reason != "HTTP 302" || got["t"].State != secretrisk.Unknown {
+		t.Errorf("followed %v: %+v", reached, got)
+	}
+}

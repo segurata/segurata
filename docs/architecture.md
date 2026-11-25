@@ -1284,8 +1284,8 @@ sent without a body, and Linear's GraphQL endpoint, whose documentation shows on
 fixed query `{ viewer { id } }` (a query, never a mutation). None changes state, costs money or sends anything; slack webhooks (trying
 one posts), Twilio and Mailgun keys (they need a second credential or a region segurata cannot
 know) and npm `_authToken` lines (any registry) are not tried. One call at a time per provider and
-at most four a second overall, through `httpx` (credentials are dropped on a redirect to another
-host). Results are cached in `~/.cache/segurata/liveness.json` (0600) by fingerprint: live for 1
+at most four a second overall, through `httpx`, following no redirect: a 3xx is unknown, and the
+key goes nowhere but the provider's URL. Results are cached in `~/.cache/segurata/liveness.json` (0600) by fingerprint: live for 1
 day, dead for 7, unknown never; a result dated after now (a clock that jumped forward) is never
 fresh, and the tracker drops one too. A result holds the state, the date, the provider, the endpoint,
 segurata's own reason (`HTTP 401`, `invalid_auth`, `InvalidClientTokenId`) and the account the

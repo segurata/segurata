@@ -194,7 +194,9 @@ func send(ctx context.Context, method, base, path string, body []byte, header ht
 		host = u.Host
 	}
 	r := secretrisk.Liveness{Endpoint: method + " " + host + httpx.ShownPath(path)}
-	code, answer, err := httpx.New(base, header).Fetch(ctx, method, path, nil, body)
+	client := httpx.New(base, header)
+	client.HTTP.CheckRedirect = httpx.NoRedirect // the key goes to the provider's URL only; a 3xx is unknown
+	code, answer, err := client.Fetch(ctx, method, path, nil, body)
 	if err != nil {
 		r.State, r.Reason = secretrisk.Unknown, "no answer"
 		return r
