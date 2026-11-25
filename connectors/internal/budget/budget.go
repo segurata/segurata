@@ -95,9 +95,6 @@ type Container struct {
 	// summary when there are budgets. Connectors keep the one earlier versions used, so its id
 	// and any acceptance of it survive.
 	NoBudget finding.Resource
-	// Blast is what the container-level finding puts at stake beyond its severity (finding.Blast);
-	// every budget's finding is about money.
-	Blast finding.Blast
 }
 
 // Wording is what a provider supplies so the findings speak its terms.
@@ -164,9 +161,11 @@ type judge struct {
 }
 
 func (j judge) finding(res finding.Resource, sev finding.Severity, title string, ev map[string]any, rem finding.Remediation) finding.Finding {
+	// Having no budget at all is unbounded spend on every provider, so it is not discounted the way
+	// a budget that is merely weak is.
 	blast := finding.BlastMoney
 	if res == j.c.NoBudget {
-		blast = j.c.Blast
+		blast = ""
 	}
 	return finding.Finding{Resource: res, Kind: finding.KindSpend, Severity: sev, Title: title, Evidence: ev, Blast: blast, Remediation: rem}
 }

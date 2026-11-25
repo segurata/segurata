@@ -74,9 +74,8 @@ func TestNoAlertingBudgetIsOneHighFinding(t *testing.T) {
 	if fs[0].Resource.Type != "billing_account" || !strings.Contains(fs[0].Remediation.Summary, "stops billing") {
 		t.Errorf("no-budget finding keeps the container resource and says how to cap: %+v", fs[0])
 	}
-	c := container("shop")
-	c.Blast = finding.BlastMoney
-	if f := Evaluate(c, nil, wording)[0]; f.Blast != finding.BlastMoney {
+	// No budget at all weighs the same on every provider: not discounted as merely bounded money.
+	if f := Evaluate(container("shop"), nil, wording)[0]; f.Blast != "" {
 		t.Errorf("the container's blast: %q", f.Blast)
 	}
 }

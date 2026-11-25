@@ -55,7 +55,6 @@ func budgetFindings(subscriptionID, label string, budgets []azBudget, risks []bu
 		Label:    "subscription " + label,
 		Risks:    risks,
 		NoBudget: finding.Resource{Type: "azure_budget", ID: subscriptionID + "/none", Name: "budgets"},
-		Blast:    finding.BlastMoney,
 	}
 	return budget.Evaluate(c, nb, subscriptionWording)
 }
