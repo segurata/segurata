@@ -12,7 +12,8 @@ import (
 )
 
 // How long a result holds before the secret is tried again. A dead key rarely comes back; a live
-// one can be revoked any day, and the owner wants to see that soon. Unknown is never cached: the
+// one can be revoked any day, and the owner wants to see that soon; an unregistered SSH key can be
+// added to an account any day too. Unknown is never cached: the
 // next run asks again.
 const (
 	LiveTTL = 24 * time.Hour
@@ -95,7 +96,7 @@ func (c *Cache) put(fps []string, r secretrisk.Liveness) {
 // withinTTL reports whether a live or dead result is still young enough to stand for a new check.
 func withinTTL(r secretrisk.Liveness, now time.Time) bool {
 	switch r.State {
-	case secretrisk.Live:
+	case secretrisk.Live, secretrisk.Unregistered:
 		return now.Sub(r.CheckedAt) < LiveTTL
 	case secretrisk.Dead:
 		return now.Sub(r.CheckedAt) < DeadTTL

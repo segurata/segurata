@@ -192,7 +192,7 @@ func printLiveness(w io.Writer, l *secretrisk.Liveness) {
 		fmt.Fprintln(w, "liveness:    unchecked")
 		return
 	}
-	fmt.Fprintf(w, "liveness:    %s, checked %s: %s answered %s", l.State, l.CheckedAt.Format(time.DateOnly), l.Endpoint, l.Reason)
+	fmt.Fprintf(w, "liveness:    %s, checked %s: %s", l.State, l.CheckedAt.Format(time.DateOnly), l.Said())
 	if l.Account != "" {
 		fmt.Fprintf(w, " (signs in as %s)", l.Account)
 	}
