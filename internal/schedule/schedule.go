@@ -74,8 +74,7 @@ type Env struct {
 	Now    func() time.Time
 	// Connectors are the installed connectors: the default selection, and which drive the browser.
 	Connectors []connector.Connector
-	// Config is the owner's config: cdp_url, keep_runs_days, browser_stale_days, and the instances
-	// of a browser connector a run skips.
+	// Config is the owner's config: cdp_url, keep_runs_days and browser_stale_days.
 	Config config.Config
 	// Browser checks that Brave answers at a CDP address (cdp.Brave). It never starts a browser.
 	Browser func(ctx context.Context, cdpURL string) (cdp.Version, error)

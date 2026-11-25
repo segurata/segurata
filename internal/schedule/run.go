@@ -22,10 +22,9 @@ var confirmFunc = prompt.Confirm
 // found or reopened, then `segurata report --format md`. Both commands are this same binary, run
 // as separate processes so a scheduled run does exactly what the owner would type.
 //
-// Without --connectors every installed connector is selected. The browser connectors run only when
-// Brave answers at cdp_url (probeBrowser); otherwise each gets a run file saying it inspected
-// nothing and why, and a notification once they have been skipped for longer than
-// browser_stale_days.
+// Without --connectors every installed connector is selected. The inventory runs the browser
+// connectors only when Brave answers at cdp_url (run.Inventory); the schedule probes too, to log
+// a skip and to notify once they have been skipped for longer than browser_stale_days.
 //
 // The run ends before the next one is due, and the inventory early enough to leave time for the
 // report: launchd starts no run while one is still going, so one that hung would stop scheduled
@@ -48,24 +47,18 @@ func (e Env) Run(ctx context.Context, o Options) error {
 		connectors = e.names()
 	}
 	start := e.Now()
-	var skipped, stale string // why the browser connectors were skipped; the notification that is due
-	if browser, rest := e.splitBrowser(connectors); len(browser) > 0 {
+	var skipped, stale string // why the browser connectors are skipped; the notification that is due
+	if browser := e.browserSelected(connectors); len(browser) > 0 {
 		var why error
-		if skipped, why = e.probeBrowser(invCtx); skipped != "" {
+		if skipped, why = run.BrowserProblem(invCtx, e.Config.CDPURL, e.Browser); skipped != "" {
 			e.stamp(fmt.Sprintf("skipped %s: %s (%v)", strings.Join(browser, " "), skipped, why))
-			e.recordSkipped(invCtx, browser, skipped)
 			stale = e.browserSkipped(start)
-			connectors = rest
 		} else {
 			e.browserRan(start)
 		}
 	}
-	// Nothing left to inventory still folds the skipped runs into the tracker.
-	inv := []string{"track", "sync", "--out", p.Out}
-	if len(connectors) > 0 {
-		e.stamp("inventory " + strings.Join(connectors, " "))
-		inv = append([]string{"inventory", "--out", p.Out}, connectors...)
-	}
+	e.stamp("inventory " + strings.Join(connectors, " "))
+	inv := append([]string{"inventory", "--out", p.Out}, connectors...)
 	if err := e.Runner.Run(invCtx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("%s: %w", inv[0], err)
 	}

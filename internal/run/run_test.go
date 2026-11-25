@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/connector/connectortest"
@@ -749,5 +750,77 @@ esac
 	}
 	if !strings.Contains(verbose.String(), "using …6789(37)") {
 		t.Errorf("the log line must show the redacted form:\n%s", verbose.String())
+	}
+}
+
+// browserFake is a connector that drives the browser over CDP and counts its runs.
+type browserFake struct{ ran *int }
+
+func (browserFake) Describe() connector.Description {
+	return connector.Description{Name: "browserfake", Protocol: 1, Needs: []string{"cdp"}}
+}
+
+func (b browserFake) Inventory(context.Context, connector.Request, connector.Emitter) error {
+	*b.ran++
+	return nil
+}
+
+// setBraveCheck replaces the Brave probe for the test: no test reaches a real browser.
+func setBraveCheck(t *testing.T, check func(context.Context, string) (cdp.Version, error)) *int {
+	t.Helper()
+	calls := 0
+	old := BraveCheck
+	BraveCheck = func(ctx context.Context, url string) (cdp.Version, error) { calls++; return check(ctx, url) }
+	t.Cleanup(func() { BraveCheck = old })
+	return &calls
+}
+
+// Only Brave is driven, however the inventory was started: one probe before the run, and when
+// Brave does not answer, or another browser does, every browser connector's run ends at once with
+// the reason, inspecting nothing and resolving no secret, while the others run.
+func TestBrowserConnectorsRunOnlyAgainstBrave(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		err          error
+	}{
+		{"nothing answers", ReasonUnreachable, errors.New("cdp: browser not reachable at test")},
+		{"not brave", ReasonNotBrave, fmt.Errorf("cdp: the browser at test (Chrome/156) is %w", cdp.ErrNotBrave)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probes := setBraveCheck(t, func(context.Context, string) (cdp.Version, error) { return cdp.Version{}, tc.err })
+			ran := 0
+			other := &fake{}
+			cfg := config.Config{CDPURL: "http://cdp.invalid", Connectors: map[string]config.ConnectorConfig{
+				"browserfake:work": {Secrets: map[string]string{"X": "env:SEGURATA_TEST_SECRET"}}, "browserfake:home": {},
+			}}
+			t.Setenv("SEGURATA_TEST_SECRET", "never-resolved-value")
+			res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, browserFake{&ran}, other), t.TempDir(), nil, Lent{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ran != 0 || *probes != 1 || other.got.Protocol == 0 {
+				t.Fatalf("browser connector ran %d times, %d probes, other ran: %v", ran, *probes, other.got.Protocol != 0)
+			}
+			for _, r := range res {
+				if r.Name == "fake" {
+					continue
+				}
+				e := r.End
+				if r.Err == nil || e.Complete || !strings.HasPrefix(e.Error, tc.reason) || len(e.Scopes.Skipped) != 1 ||
+					e.Scopes.Skipped[0].Scope != finding.ScopeAll || e.SecretFingerprints != nil {
+					t.Fatalf("%s: err %v, run_end %+v", r.Name, r.Err, e)
+				}
+			}
+		})
+	}
+	probes := setBraveCheck(t, func(context.Context, string) (cdp.Version, error) { return cdp.Version{Browser: "Chrome/156"}, nil })
+	ran := 0
+	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, browserFake{&ran}), t.TempDir(), nil, Lent{})
+	if err != nil || res[0].Err != nil || ran != 1 || *probes != 1 {
+		t.Fatalf("with Brave: err %v %v, ran %d, probes %d", err, res[0].Err, ran, *probes)
+	}
+	*probes = 0
+	if _, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, &fake{}), t.TempDir(), nil, Lent{}); err != nil || *probes != 0 {
+		t.Fatalf("probed %d times without a browser connector (err %v)", *probes, err)
 	}
 }

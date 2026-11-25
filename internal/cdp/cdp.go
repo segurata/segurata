@@ -1,8 +1,8 @@
-// Package cdp is a minimal Chrome DevTools Protocol client for the user's own running browser
-// (Brave or Chrome started with --remote-debugging-port). Scan pages open as hidden targets: they
-// load with the browser's cookies but never appear in a window or the tab strip, so the user's
-// tabs and focus are never touched. OpenTab opens the one kind of page the user is meant to see.
-// Standard library only.
+// Package cdp is a minimal Chrome DevTools Protocol client for the user's own running Brave,
+// started with --remote-debugging-port; it drives no other browser (Connect). Scan pages open as
+// hidden targets: they load with the browser's cookies but never appear in a window or the tab
+// strip, so the user's tabs and focus are never touched. OpenTab opens the one kind of page the
+// user is meant to see. Standard library only.
 package cdp
 
 import (
@@ -95,21 +95,37 @@ var ErrNotBrave = errors.New("not Brave")
 const isBraveExpr = `(async () => !!(navigator.brave && await navigator.brave.isBrave()))()`
 
 // Brave checks that the browser at cdpURL answers over CDP and is Brave, without starting or
-// focusing anything: /json/version (bounded by versionTimeout), then isBraveExpr in a hidden
-// about:blank target that is closed at once. It returns what /json/version said; the error wraps
-// ErrNotBrave when the browser answered but is not Brave.
+// focusing anything (see Connect), and closes the connection. It returns what /json/version said;
+// the error wraps ErrNotBrave when the browser answered but is not Brave.
 func Brave(ctx context.Context, cdpURL string) (Version, error) {
+	c, v, err := connect(ctx, cdpURL)
+	if err == nil {
+		c.Close()
+	}
+	return v, err
+}
+
+// Connect opens the browser WebSocket at cdpURL once the browser there proved to be Brave: only
+// Brave is ever driven, whoever started it and however the run was started. The proof is
+// /json/version (bounded by versionTimeout), then isBraveExpr in a hidden about:blank target that
+// is closed at once; Brave reports itself as Chrome in both /json/version and its user agent. The
+// error wraps ErrNotBrave when the browser answered but is not Brave.
+func Connect(ctx context.Context, cdpURL string) (*Client, error) {
+	c, _, err := connect(ctx, cdpURL)
+	return c, err
+}
+
+func connect(ctx context.Context, cdpURL string) (*Client, Version, error) {
 	vctx, cancel := context.WithTimeout(ctx, versionTimeout)
 	v, err := ReadVersion(vctx, cdpURL)
 	cancel()
 	if err != nil {
-		return v, err
+		return nil, v, err
 	}
 	c, err := connectTo(ctx, v)
 	if err != nil {
-		return v, err
+		return nil, v, err
 	}
-	defer c.Close()
 	var brave bool
 	err = c.WithPage(ctx, "about:blank", func(p *Page) error {
 		raw, err := p.Evaluate(ctx, isBraveExpr)
@@ -120,15 +136,20 @@ func Brave(ctx context.Context, cdpURL string) (Version, error) {
 	})
 	switch {
 	case err != nil:
-		return v, fmt.Errorf("cdp: telling which browser answers at %s: %w", cdpURL, err)
+		err = fmt.Errorf("cdp: telling which browser answers at %s: %w", cdpURL, err)
 	case !brave:
-		return v, fmt.Errorf("cdp: the browser at %s (%s) is %w", cdpURL, v.Browser, ErrNotBrave)
+		err = fmt.Errorf("cdp: the browser at %s (%s) is %w", cdpURL, v.Browser, ErrNotBrave)
 	}
-	return v, nil
+	if err != nil {
+		c.Close()
+		return nil, v, err
+	}
+	return c, v, nil
 }
 
-// Connect reads <cdpURL>/json/version and opens its browser WebSocket.
-func Connect(ctx context.Context, cdpURL string) (*Client, error) {
+// dial opens the browser WebSocket at cdpURL without telling which browser it is: for this
+// package's tests of the protocol, which a fake browser answers.
+func dial(ctx context.Context, cdpURL string) (*Client, error) {
 	v, err := ReadVersion(ctx, cdpURL)
 	if err != nil {
 		return nil, err

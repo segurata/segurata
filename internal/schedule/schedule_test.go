@@ -289,7 +289,7 @@ func TestRunNotifiesTheP0AndP1ItemsItsSyncFoundOrReopened(t *testing.T) {
 	}
 	p := env.Paths()
 	inv := r.ran(env.Exe, "inventory")
-	if len(inv) != 1 || !slices.Equal(inv[0], []string{env.Exe, "inventory", "--out", p.Out, "hibp", "macos"}) {
+	if len(inv) != 1 || !slices.Equal(inv[0], []string{env.Exe, "inventory", "--out", p.Out, "connected-apps", "google-personal", "hibp", "macos"}) {
 		t.Fatalf("inventory calls %v", inv)
 	}
 	rep := r.ran(env.Exe, "report")

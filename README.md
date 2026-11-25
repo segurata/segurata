@@ -211,7 +211,7 @@ statuses.
   only those accounts; other accounts signed in to the browser (a shared mailbox, a colleague's)
   get no status and are declared skipped scopes, so their earlier findings are not taken as resolved.
 
-- Requires Brave or Chrome started with `--remote-debugging-port=9222` (another address via
+- Requires Brave started with `--remote-debugging-port=9222` (another address via
   `cdp_url` in the config or `SEGURATA_CDP`). Pages open as hidden targets, in no window and
   not in the tab strip, and always close: your tabs and focus are never touched.
 - To remove access: the finding's remediation URL. On Google, "Remove all access" there also
