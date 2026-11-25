@@ -112,8 +112,8 @@ when a skipped scope matches its scope or its account (`finding.Coverage`).
   over and named. When that run inspected nothing (its `run_end` skips `*`: the connector failed,
   or a scheduled run could not reach the browser), they also name the newest finished run that
   inspected something as its evidence. `run.Read` drops a half-written last line of such a file.
-- `report` lists a finding missing from the latest run as "not checked this run" with the reason,
-  never as resolved, when the run did not inspect its scope. Its "Run completeness" section names
+- `report` shows each instance's latest run and never calls a finding resolved; closing is the
+  tracker's job (below). Its "Run completeness" section names
   partial runs and their skipped scopes, runs without `run_end`, and newer runs that did not
   finish; the headline marks them `(partial)` or `(no run_end)`. A latest run that inspected
   nothing and reported no finding is passed over for its evidence run, whose findings the report
