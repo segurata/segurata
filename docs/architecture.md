@@ -1361,6 +1361,13 @@ and EC keys with explicit curve parameters (macOS's ssh-keygen writes them) by h
 format (RFC 4253 6.6, RFC 5656 3.1, RFC 8709 4) is built field by field and fingerprinted as
 ssh-keygen does. Tests compare it with ssh-keygen's output for every type and container.
 
+A PEM key (PKCS#1, PKCS#8, SEC 1; RSA, ECDSA or Ed25519) is looked up like an OpenSSH one, wherever
+it is found: a `.pem` in a project that matches a registered key is live, since the match proves the
+key works for SSH whatever else it signs. Only the miss differs: outside `~/.ssh` such a key may be
+a TLS or JWT signing key that no SSH registry holds, so it stays unknown and is never
+`unregistered`. Tests generate these keys with `ssh-keygen -m PEM`/`-m PKCS8` and `openssl` and
+match them against the public half `ssh-keygen -y` derives.
+
 Unregistered is not proof of death: the key may be authorized on a host segurata does not read. It
 lowers the item's priority one step (P0 to P1) unless a connector reports the key live, counts as
 checked in the liveness line, and is cached for a day, like live: a key can be registered any day.

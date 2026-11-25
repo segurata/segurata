@@ -2,14 +2,18 @@ package liveness
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -230,27 +234,41 @@ func opensshBody(pub sshkey.Public) string {
 }
 
 type testKey struct {
-	pkcs8, openssh, line string
+	pem, openssh, line string
 }
 
-func newTestKey(t *testing.T) testKey {
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		t.Fatal(err)
+// newTestKey makes a key of alg in the PEM container a TLS or JWT key would sit in, and the same
+// key in the OpenSSH one: ed25519 as PKCS#8, rsa as PKCS#1, ecdsa as SEC 1.
+func newTestKey(t *testing.T, alg string) testKey {
+	var der []byte
+	var err error
+	switch alg {
+	case "ed25519":
+		_, k, _ := ed25519.GenerateKey(rand.Reader)
+		der, err = x509.MarshalPKCS8PrivateKey(k)
+	case "rsa":
+		k := must(rsa.GenerateKey(rand.Reader, 1024))
+		der = x509.MarshalPKCS1PrivateKey(k)
+	case "ecdsa":
+		der, err = x509.MarshalECPrivateKey(must(ecdsa.GenerateKey(elliptic.P256(), rand.Reader)))
+	}
+	if err != nil || der == nil {
+		t.Fatal(alg, err)
 	}
 	body := base64.StdEncoding.EncodeToString(der)
 	pub, _, err := sshkey.FromPrivate(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return testKey{pkcs8: body, openssh: opensshBody(pub), line: pub.Type + " " + base64.StdEncoding.EncodeToString(pub.Blob)}
+	return testKey{pem: body, openssh: opensshBody(pub), line: pub.Type + " " + base64.StdEncoding.EncodeToString(pub.Blob)}
 }
+
+const pemUnknown = "not an OpenSSH key: it may sign TLS certificates or JWTs, which segurata cannot look up"
 
 func TestLookupSSHKeys(t *testing.T) {
 	keys := map[string]testKey{}
-	for _, n := range []string{"github", "signing", "deploy", "authorized", "host", "localpub", "nowhere", "pem"} {
-		keys[n] = newTestKey(t)
+	for i, n := range []string{"github", "signing", "deploy", "authorized", "host", "localpub", "nowhere", "pem"} {
+		keys[n] = newTestKey(t, []string{"ed25519", "rsa", "ecdsa"}[i%3])
 	}
 	home := t.TempDir()
 	ssh := filepath.Join(home, ".ssh")
@@ -301,10 +319,12 @@ func TestLookupSSHKeys(t *testing.T) {
 	for n, k := range keys {
 		p := Probe{Fingerprints: []string{n}, Type: "private-key", Value: k.openssh}
 		if n == "pem" {
-			p.Value = k.pkcs8
+			p.Value = k.pem
 		}
-		probes = append(probes, p, Probe{Fingerprints: []string{n + "/ssh"}, Type: "ssh-key", Value: k.pkcs8})
-		bodies = append(bodies, k.pkcs8, k.openssh)
+		// The same key in its PEM container, found in ~/.ssh and elsewhere (a .pem in a project).
+		probes = append(probes, p, Probe{Fingerprints: []string{n + "/ssh"}, Type: "ssh-key", Value: k.pem},
+			Probe{Fingerprints: []string{n + "/pem"}, Type: "private-key", Value: k.pem})
+		bodies = append(bodies, k.pem, k.openssh)
 	}
 	encrypted := base64.StdEncoding.EncodeToString(must(asn1.Marshal(struct {
 		Algo pkix.AlgorithmIdentifier
@@ -320,25 +340,29 @@ func TestLookupSSHKeys(t *testing.T) {
 		state           secretrisk.LiveState
 		reason, account string
 	}{
-		"github":     {secretrisk.Live, `GitHub SSH key "laptop"`, "github:octocat"},
-		"signing":    {secretrisk.Live, `GitHub signing key "signer"`, "github:octocat"},
-		"deploy":     {secretrisk.Live, `deploy key "ci" of octocat/shop`, "github:octocat"},
-		"authorized": {secretrisk.Live, "authorized on this machine (~/.ssh/authorized_keys)", ""},
-		"host":       {secretrisk.Live, "authorized on host build1", ""},
-		"localpub":   {secretrisk.Unknown, "the public half of ~/.ssh/work.pub on this machine, registered nowhere segurata can see", ""},
-		"nowhere":    {secretrisk.Unregistered, "registered nowhere segurata can see: your GitHub SSH and signing keys, the deploy keys of 1 repositories, authorized_keys here and on 1 hosts", ""},
-		"pem":        {secretrisk.Unknown, "not an OpenSSH key: it may sign TLS certificates or JWTs, which segurata cannot look up", ""},
-		"pem/ssh":    {secretrisk.Unregistered, "", ""}, // from ~/.ssh: an SSH key whatever its container
-		"encrypted":  {secretrisk.Unknown, "encrypted, and no passphrase is at hand", ""},
-		"cut":        {secretrisk.Unknown, "not a whole private key segurata can read", ""},
+		"github":      {secretrisk.Live, `GitHub SSH key "laptop"`, "github:octocat"},
+		"signing":     {secretrisk.Live, `GitHub signing key "signer"`, "github:octocat"},
+		"deploy":      {secretrisk.Live, `deploy key "ci" of octocat/shop`, "github:octocat"},
+		"authorized":  {secretrisk.Live, "authorized on this machine (~/.ssh/authorized_keys)", ""},
+		"host":        {secretrisk.Live, "authorized on host build1", ""},
+		"localpub":    {secretrisk.Unknown, "the public half of ~/.ssh/work.pub on this machine, registered nowhere segurata can see", ""},
+		"nowhere":     {secretrisk.Unregistered, "registered nowhere segurata can see: your GitHub SSH and signing keys, the deploy keys of 1 repositories, authorized_keys here and on 1 hosts", ""},
+		"pem":         {secretrisk.Unknown, pemUnknown, ""},
+		"nowhere/pem": {secretrisk.Unknown, pemUnknown, ""}, // never unregistered: it may be a TLS or JWT key
+		"pem/ssh":     {secretrisk.Unregistered, "", ""},    // from ~/.ssh: an SSH key whatever its container
+		"encrypted":   {secretrisk.Unknown, "encrypted, and no passphrase is at hand", ""},
+		"cut":         {secretrisk.Unknown, "not a whole private key segurata can read", ""},
 	}
 	for fp, w := range want {
 		r := got[fp]
 		if r.State != w.state || w.reason != "" && r.Reason != w.reason || r.Account != w.account || !r.ByOwner || r.Provider != "ssh-keys" {
 			t.Errorf("%s: %+v, want %s %q %s", fp, r, w.state, w.reason, w.account)
 		}
-		if w.state == secretrisk.Live && got[fp+"/ssh"].State != secretrisk.Live {
-			t.Errorf("%s: the same key in a PEM container: %+v", fp, got[fp+"/ssh"])
+		// A PEM key registered anywhere is live: the match proves it, whatever else it signs.
+		for _, twin := range []string{"/ssh", "/pem"} {
+			if r := got[fp+twin]; w.state == secretrisk.Live && (r.State != secretrisk.Live || r.Reason != w.reason || r.Account != w.account) {
+				t.Errorf("%s: the same key in a PEM container: %+v", fp+twin, r)
+			}
 		}
 	}
 	if !strings.Contains(st.String(), "ssh: deploy@down: authorized_keys not read") {
@@ -403,7 +427,7 @@ func TestLookupGuards(t *testing.T) {
 
 // A lookup's result is cached by fingerprint like a provider's; unregistered holds a day.
 func TestLookupCache(t *testing.T) {
-	k := newTestKey(t)
+	k := newTestKey(t, "ed25519")
 	home := t.TempDir()
 	cache := LoadCache(filepath.Join(home, "liveness.json"))
 	gh := &cliFake{answers: func(a []string) (string, error) {
@@ -427,7 +451,7 @@ func TestLookupCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(home, "liveness.json"))
-	if strings.Contains(string(raw), k.pkcs8[len(k.pkcs8)-24:]) || strings.Contains(string(raw), k.openssh[len(k.openssh)-24:]) || !strings.Contains(string(raw), `"by_owner": true`) {
+	if strings.Contains(string(raw), k.pem[len(k.pem)-24:]) || strings.Contains(string(raw), k.openssh[len(k.openssh)-24:]) || !strings.Contains(string(raw), `"by_owner": true`) {
 		t.Errorf("cache file: %s", raw)
 	}
 	c.Now = func() time.Time { return now.Add(LiveTTL + time.Minute) }
@@ -441,4 +465,96 @@ func must[T any](v T, err error) T {
 		panic(err)
 	}
 	return v
+}
+
+// TestLookupPEMKeysFromTools looks up PEM keys as ssh-keygen and openssl write them (PKCS#1, PKCS#8,
+// SEC 1), found outside ~/.ssh: the ones registered on GitHub are live, the others unknown, and
+// no part of a key reaches the results, the status or the cache file.
+func TestLookupPEMKeysFromTools(t *testing.T) {
+	dir := t.TempDir()
+	tools := []struct {
+		name string
+		argv []string // {} is the key file
+	}{
+		{"keygen-rsa-pkcs1", []string{"ssh-keygen", "-q", "-N", "", "-C", "t", "-t", "rsa", "-b", "2048", "-m", "PEM", "-f", "{}"}},
+		{"keygen-ecdsa-sec1", []string{"ssh-keygen", "-q", "-N", "", "-C", "t", "-t", "ecdsa", "-b", "256", "-m", "PEM", "-f", "{}"}},
+		{"keygen-rsa-pkcs8", []string{"ssh-keygen", "-q", "-N", "", "-C", "t", "-t", "rsa", "-b", "2048", "-m", "PKCS8", "-f", "{}"}},
+		{"openssl-ed25519-pkcs8", []string{"openssl", "genpkey", "-algorithm", "ed25519", "-out", "{}"}},
+		{"openssl-rsa-pkcs8", []string{"openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", "{}"}},
+		{"openssl-rsa-pkcs1", []string{"openssl", "genrsa", "-traditional", "-out", "{}", "2048"}},
+		{"openssl-ec-sec1", []string{"openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "{}"}},
+		{"openssl-ec-pkcs8", []string{"openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-384", "-out", "{}"}},
+	}
+	type made struct{ name, body, line string }
+	var keys []made
+	for _, tl := range tools {
+		f := filepath.Join(dir, tl.name)
+		argv := slices.Clone(tl.argv)
+		argv[slices.Index(argv, "{}")] = f
+		if out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
+			t.Logf("%s: not made (%v %s)", tl.name, err, out)
+			continue
+		}
+		raw, err := os.ReadFile(f)
+		block, _ := pem.Decode(raw)
+		if err != nil || block == nil {
+			t.Fatalf("%s: no PEM block", tl.name)
+		}
+		// The public half as ssh-keygen derives it, not as segurata does.
+		line, err := exec.Command("ssh-keygen", "-y", "-f", f).Output()
+		if err != nil {
+			t.Logf("%s: ssh-keygen -y cannot read it (%v)", tl.name, err)
+			continue
+		}
+		keys = append(keys, made{tl.name, base64.StdEncoding.EncodeToString(block.Bytes), strings.TrimSpace(string(line))})
+	}
+	if len(keys) < 2 {
+		t.Skip("neither ssh-keygen nor openssl made PEM keys")
+	}
+	registered := func(i int) bool { return i%2 == 0 }
+	gh := &cliFake{answers: func(a []string) (string, error) {
+		switch a[len(a)-1] {
+		case "user":
+			return `{"login":"octocat"}`, nil
+		case "user/keys":
+			var list []map[string]string
+			for i, k := range keys {
+				if registered(i) {
+					list = append(list, map[string]string{"key": k.line, "title": k.name})
+				}
+			}
+			return string(must(json.Marshal(list))), nil
+		}
+		return "[]", nil
+	}}
+	c := lookupChecker(Owner{GH: gh, Home: t.TempDir()}, Config{})
+	cachePath := filepath.Join(t.TempDir(), "liveness.json")
+	c.Cache = LoadCache(cachePath)
+	var probes []Probe
+	var bodies []string
+	for _, k := range keys {
+		probes = append(probes, Probe{Fingerprints: []string{k.name}, Type: "private-key", Value: k.body})
+		bodies = append(bodies, k.body)
+	}
+	got, st := c.Check(context.Background(), probes)
+	noLeak(t, got, st, bodies...)
+	for i, k := range keys {
+		r := got[k.name]
+		want := secretrisk.Liveness{State: secretrisk.Unknown, Reason: pemUnknown}
+		if registered(i) {
+			want = secretrisk.Liveness{State: secretrisk.Live, Reason: fmt.Sprintf("GitHub SSH key %q", k.name), Account: "github:octocat"}
+		}
+		if r.State != want.State || r.Reason != want.Reason || r.Account != want.Account {
+			t.Errorf("%s: %+v, want %s %q", k.name, r, want.State, want.Reason)
+		}
+	}
+	if err := c.Cache.Save(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(cachePath)
+	var cached Cache
+	if err := json.Unmarshal(raw, &cached); err != nil || len(cached.Results) != (len(keys)+1)/2 {
+		t.Errorf("cache holds %d results, want the live ones: %s", len(cached.Results), raw)
+	}
+	noLeak(t, cached.Results, Stats{}, bodies...)
 }
