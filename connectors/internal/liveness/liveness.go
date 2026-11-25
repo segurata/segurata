@@ -104,7 +104,8 @@ func (c Config) allowsProvider(name string) bool {
 }
 
 // Probe is one secret to try. Value never leaves this package except in the request to its
-// provider.
+// provider. A probe without a value (a secret replayed from the git history cache, whose value the
+// run never read) only looks in the cache.
 type Probe struct {
 	// Fingerprints get the result: the secret's own, and for an AWS key pair the key id's too.
 	Fingerprints []string
@@ -119,11 +120,12 @@ type Stats struct {
 	Unsupported                        int // no provider endpoint for the type, or a key without its pair
 	NotAllowed                         int // attributed to an owner the config leaves out, or a provider it leaves out
 	Interrupted                        int // not asked: the run's time ran out
+	NoValue                            int // not asked: the run did not read its value (cached git history)
 }
 
 func (s Stats) String() string {
-	return fmt.Sprintf("liveness: %d asked, %d from cache; %d live, %d dead, %d unknown; %d unsupported, %d not allowed, %d interrupted",
-		s.Asked, s.Cached, s.Live, s.Dead, s.Unknown, s.Unsupported, s.NotAllowed, s.Interrupted)
+	return fmt.Sprintf("liveness: %d asked, %d from cache; %d live, %d dead, %d unknown; %d unsupported, %d not allowed, %d without a value at hand, %d interrupted",
+		s.Asked, s.Cached, s.Live, s.Dead, s.Unknown, s.Unsupported, s.NotAllowed, s.NoValue, s.Interrupted)
 }
 
 // Checker runs the check. Zero values are the defaults: real endpoints, no cache, the real clock,
@@ -159,6 +161,8 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 		}
 		pv := forType(p)
 		switch {
+		case p.Value == "":
+			st.NoValue++
 		case pv == nil:
 			st.Unsupported++
 		case !c.Config.allowsProvider(pv.name):
@@ -229,9 +233,10 @@ func (c *Checker) ask(ctx context.Context, pv *provider, p Probe) secretrisk.Liv
 	var r secretrisk.Liveness
 	for _, base := range bases {
 		if r = pv.ask(ctx, base, p); r.State != secretrisk.Dead {
-			return r
+			break
 		}
 	}
+	r.Provider = pv.name
 	return r
 }
 

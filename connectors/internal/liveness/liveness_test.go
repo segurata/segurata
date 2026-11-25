@@ -171,7 +171,7 @@ func TestEveryProviderLiveAndDead(t *testing.T) {
 		}
 		got, st := c.Check(context.Background(), probes)
 		name := tc.typ + " " + tc.prefix
-		if r := got["live"]; r.State != secretrisk.Live || r.Account != tc.account || !strings.Contains(r.Reason, tc.liveReasonPart) || r.CheckedAt.IsZero() || r.Endpoint == "" {
+		if r := got["live"]; r.State != secretrisk.Live || r.Account != tc.account || !strings.Contains(r.Reason, tc.liveReasonPart) || r.CheckedAt.IsZero() || r.Endpoint == "" || r.Provider == "" {
 			t.Errorf("%s live: %+v", name, r)
 		}
 		if r := got["dead"]; r.State != tc.deadState {

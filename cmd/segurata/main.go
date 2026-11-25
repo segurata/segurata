@@ -122,9 +122,9 @@ func inventory(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	annotate, err := acceptedAnnotator()
+	l, err := lent(cfg.Owned)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "accepted risks:", err)
+		fmt.Fprintln(os.Stderr, "tracker:", err)
 		return 1
 	}
 
@@ -134,7 +134,7 @@ func inventory(args []string) int {
 	if *verbose {
 		logw = os.Stderr
 	}
-	results, err := run.Inventory(ctx, cfg, targets, *out, logw, annotate)
+	results, err := run.Inventory(ctx, cfg, targets, *out, logw, l)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

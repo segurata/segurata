@@ -26,11 +26,11 @@ func signinCmd(args []string) int {
 			return signin.CDP{Client: c}, func() { c.Close() }, nil
 		},
 		Inventory: func(ctx context.Context, cfg config.Config, targets []run.Target, out string) ([]*run.Result, error) {
-			annotate, err := acceptedAnnotator()
+			l, err := lent(cfg.Owned)
 			if err != nil {
 				return nil, err
 			}
-			return run.Inventory(ctx, cfg, targets, out, nil, annotate)
+			return run.Inventory(ctx, cfg, targets, out, nil, l)
 		},
 		Sync: func(out string) int { return trackerCLI().Track([]string{"sync", "--out", out}) },
 	}.Run(ctx, args)

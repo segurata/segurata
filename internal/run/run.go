@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -181,9 +182,16 @@ func (s *sink) Log(msg string) {
 	}
 }
 
-// Inventory runs the given targets concurrently and returns their results in input order. annotate,
-// when set, stamps each finding before it is written (accepted risks).
-func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer, annotate func(*finding.Finding)) ([]*Result, error) {
+// Lent is what the tracker lends an inventory; the zero value lends nothing.
+type Lent struct {
+	// Annotate stamps each finding before it is written (accepted risks).
+	Annotate func(*finding.Finding)
+	// Known says whose each secret is, for built-in connectors (connector.Request.Known).
+	Known *attribution.Known
+}
+
+// Inventory runs the given targets concurrently and returns their results in input order.
+func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer, lent Lent) ([]*Result, error) {
 	dir := filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -194,14 +202,14 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 		wg.Add(1)
 		go func(i int, t Target) {
 			defer wg.Done()
-			results[i] = runOne(ctx, cfg, t, dir, verbose, annotate)
+			results[i] = runOne(ctx, cfg, t, dir, verbose, lent)
 		}(i, t)
 	}
 	wg.Wait()
 	return results, nil
 }
 
-func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, annotate func(*finding.Finding)) *Result {
+func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, lent Lent) *Result {
 	name, label := t.Connector.Describe().Name, t.Label()
 	timeout := t.Timeout()
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timed out after %s (raise connectors.%s.timeout)", timeout, label))
@@ -219,9 +227,10 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		return res
 	}
 	partial := f.Name()
-	s := &sink{name: name, label: label, inst: t.Instance.Label, out: f, verbose: verbose, annotate: annotate, expect: cfg.Expect, res: res}
+	s := &sink{name: name, label: label, inst: t.Instance.Label, out: f, verbose: verbose, annotate: lent.Annotate, expect: cfg.Expect, res: res}
 
 	req, errs := NewRequest(ctx, cfg, t.Instance)
+	req.Known = lent.Known
 	if missing := unresolved(t.Connector, errs, s); !missing {
 		res.Err = t.Connector.Inventory(ctx, req, s)
 	}
