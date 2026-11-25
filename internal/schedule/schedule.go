@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/cdp"
+	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -70,11 +72,13 @@ type Env struct {
 	IO     connector.IO
 	TTY    bool
 	Now    func() time.Time
-	// Connectors are the installed connectors, to choose the default selection.
+	// Connectors are the installed connectors: the default selection, and which drive the browser.
 	Connectors []connector.Connector
-	// Keep is how old a run file may grow before a finished run prunes it (config keep_runs_days);
-	// 0 keeps everything.
-	Keep time.Duration
+	// Config is the owner's config: cdp_url, keep_runs_days, browser_stale_days, and the instances
+	// of a browser connector a run skips.
+	Config config.Config
+	// Browser checks that Brave answers at a CDP address (cdp.Brave). It never starts a browser.
+	Browser func(ctx context.Context, cdpURL string) (cdp.Version, error)
 	// Tracker is the tracker the inventory's sync writes, whose new items a run notifies; zero
 	// means tracker.DefaultPaths.
 	Tracker tracker.Paths
@@ -82,30 +86,33 @@ type Env struct {
 
 // Paths are the files the schedule uses, all under the owner's home.
 type Paths struct {
-	Plist     string // ~/Library/LaunchAgents/com.segurata.inventory.plist
-	Logs      string // ~/Library/Logs/segurata
-	State     string // ~/.segurata, the agent's working directory
-	Out       string // inventory output of scheduled runs, under State
-	Report    string // the last report, under State
-	SystemdTo string // ~/.config/systemd/user
+	Plist  string // ~/Library/LaunchAgents/com.segurata.inventory.plist
+	Logs   string // ~/Library/Logs/segurata
+	State  string // ~/.segurata, the agent's working directory
+	Out    string // inventory output of scheduled runs, under State
+	Report string // the last report, under State
+	// BrowserState is what runs remember about the browser connectors, under State.
+	BrowserState string
+	SystemdTo    string // ~/.config/systemd/user
 }
 
 func (e Env) Paths() Paths {
 	state := filepath.Join(e.Home, ".segurata")
 	return Paths{
-		Plist:     filepath.Join(e.Home, "Library", "LaunchAgents", Label+".plist"),
-		Logs:      filepath.Join(e.Home, "Library", "Logs", "segurata"),
-		State:     state,
-		Out:       filepath.Join(state, "out"),
-		Report:    filepath.Join(state, "last-report.md"),
-		SystemdTo: filepath.Join(e.Home, ".config", "systemd", "user"),
+		Plist:        filepath.Join(e.Home, "Library", "LaunchAgents", Label+".plist"),
+		Logs:         filepath.Join(e.Home, "Library", "Logs", "segurata"),
+		State:        state,
+		Out:          filepath.Join(state, "out"),
+		Report:       filepath.Join(state, "last-report.md"),
+		BrowserState: filepath.Join(state, "schedule-browser.json"),
+		SystemdTo:    filepath.Join(e.Home, ".config", "systemd", "user"),
 	}
 }
 
 // Options are the command-line choices of install and uninstall.
 type Options struct {
 	Every      time.Duration
-	Connectors []string // empty: every connector that does not need the browser
+	Connectors []string // empty: every installed connector
 	Apply      bool
 	Yes        bool
 }

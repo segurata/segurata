@@ -11,8 +11,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Third-party actions are pinned by full commit SHA, with the release in a comment. Bump them only
-# to releases published at least 4 days earlier (see .github/dependabot.yml).
+# Third-party actions are pinned by full commit SHA, with the release in a comment; tools by exact
+# version (Go tools through the checksum database, gitleaks by SHA-256). Bump them only to releases
+# published at least 4 days earlier (see .github/dependabot.yml). setup-go installs the toolchain
+# directive of go.mod.
 
 jobs:
   lint:
@@ -44,6 +46,58 @@ jobs:
             echo "$modules"
             exit 1
           fi
+
+  staticcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: staticcheck
+        # 2026.2.2 (module v0.8.2); checks in staticcheck.conf
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  leak-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate scans every commit
+          persist-credentials: false
+      - name: install gitleaks
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/${archive}"
+          echo "$SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      # Without the owner's identifiers file (kept off GitHub): gitleaks over the tracked files and
+      # the history.
+      - name: check-public
+        run: scripts/check-public.sh --history
 
   test:
     strategy:
@@ -99,7 +153,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        dir: [examples/hibp, plugins/prowler]
+        dir: [examples/hibp, plugins/prowler, scripts]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -17,24 +17,15 @@ import (
 
 var confirmFunc = prompt.Confirm
 
-// DefaultConnectors are the connectors a scheduled run selects when none are named: all of them
-// except those that drive the browser over CDP, since the browser is rarely running with its
-// debugging port open when the agent fires.
-func (e Env) DefaultConnectors() []string {
-	var out []string
-	for _, c := range e.Connectors {
-		if d := c.Describe(); !d.NeedsCDP() {
-			out = append(out, d.Name)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 // Run is one scheduled run, what the agent executes: `segurata inventory` over the selected
 // connectors (which ends in a tracker sync), a notification for the P0 and P1 items that sync
 // found or reopened, then `segurata report --format md`. Both commands are this same binary, run
 // as separate processes so a scheduled run does exactly what the owner would type.
+//
+// Without --connectors every installed connector is selected. The browser connectors run only when
+// Brave answers at cdp_url (probeBrowser); otherwise each gets a run file saying it inspected
+// nothing and why, and a notification once they have been skipped for longer than
+// browser_stale_days.
 //
 // The run ends before the next one is due, and the inventory early enough to leave time for the
 // report: launchd starts no run while one is still going, so one that hung would stop scheduled
@@ -54,13 +45,29 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	}
 	connectors := o.Connectors
 	if len(connectors) == 0 {
-		connectors = e.DefaultConnectors()
+		connectors = e.names()
 	}
 	start := e.Now()
-	e.stamp("inventory " + strings.Join(connectors, " "))
-	inv := append([]string{"inventory", "--out", p.Out}, connectors...)
+	var skipped, stale string // why the browser connectors were skipped; the notification that is due
+	if browser, rest := e.splitBrowser(connectors); len(browser) > 0 {
+		var why error
+		if skipped, why = e.probeBrowser(invCtx); skipped != "" {
+			e.stamp(fmt.Sprintf("skipped %s: %s (%v)", strings.Join(browser, " "), skipped, why))
+			e.recordSkipped(invCtx, browser, skipped)
+			stale = e.browserSkipped(start)
+			connectors = rest
+		} else {
+			e.browserRan(start)
+		}
+	}
+	// Nothing left to inventory still folds the skipped runs into the tracker.
+	inv := []string{"track", "sync", "--out", p.Out}
+	if len(connectors) > 0 {
+		e.stamp("inventory " + strings.Join(connectors, " "))
+		inv = append([]string{"inventory", "--out", p.Out}, connectors...)
+	}
 	if err := e.Runner.Run(invCtx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
-		return fmt.Errorf("inventory: %w", err)
+		return fmt.Errorf("%s: %w", inv[0], err)
 	}
 	fresh, err := e.news(start)
 	if err != nil {
@@ -71,11 +78,11 @@ func (e Env) Run(ctx context.Context, o Options) error {
 		for _, it := range fresh {
 			fmt.Fprintf(e.IO.Out, "  [%s] %s %s\n", it.EffectivePriority(), it.ID, it.Title)
 		}
-		if e.GOOS == "darwin" {
-			if err := e.Runner.Run(ctx, osascript, []string{"-e", notification(fresh)}, e.IO.Out, e.IO.Err); err != nil {
-				fmt.Fprintf(e.IO.Err, "notification failed: %v\n", err)
-			}
-		}
+		e.notify(ctx, notification(fresh))
+	}
+	if stale != "" {
+		e.stamp(stale)
+		e.notify(ctx, appleNotification(stale, skipped))
 	}
 	e.stamp("report " + p.Report)
 	rep := []string{"report", "--format", "md", "--out", p.Report, "--dir", p.Out}
@@ -86,20 +93,41 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	return nil
 }
 
+// names are every installed connector, sorted: the selection when none is named.
+func (e Env) names() []string {
+	out := make([]string, 0, len(e.Connectors))
+	for _, c := range e.Connectors {
+		out = append(out, c.Describe().Name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// notify posts a macOS notification; elsewhere the log line before it is all there is.
+func (e Env) notify(ctx context.Context, script string) {
+	if e.GOOS != "darwin" {
+		return
+	}
+	if err := e.Runner.Run(ctx, osascript, []string{"-e", script}, e.IO.Out, e.IO.Err); err != nil {
+		fmt.Fprintf(e.IO.Err, "notification failed: %v\n", err)
+	}
+}
+
 // stamp logs one step of the run with the time.
 func (e Env) stamp(msg string) {
 	fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg)
 }
 
-// prune removes run files older than Keep that no latest run needs (run.Prune). A failure is
+// prune removes run files older than the config's keep_runs_days that no latest run needs (run.Prune). A failure is
 // logged: the scan itself succeeded.
 func (e Env) prune(outDir string) {
-	if e.Keep <= 0 {
+	keep := e.Config.RunRetention()
+	if keep <= 0 {
 		return
 	}
-	removed, err := run.Prune(outDir, e.Now(), e.Now().Add(-e.Keep))
+	removed, err := run.Prune(outDir, e.Now(), e.Now().Add(-keep))
 	if len(removed) > 0 {
-		e.stamp(fmt.Sprintf("pruned %d run files older than %s", len(removed), e.Keep))
+		e.stamp(fmt.Sprintf("pruned %d run files older than %s", len(removed), keep))
 	}
 	if err != nil {
 		fmt.Fprintf(e.IO.Err, "pruning %s: %v\n", outDir, err)
@@ -146,9 +174,13 @@ func notification(fresh []*tracker.Item) string {
 			titles = append(titles, fmt.Sprintf("and %d more", len(fresh)-maxNotified))
 		}
 	}
-	head := textfmt.Count(len(fresh), "new "+what+" item", "new "+what+" items")
+	return appleNotification(strings.Join(titles, "; "), textfmt.Count(len(fresh), "new "+what+" item", "new "+what+" items"))
+}
+
+// appleNotification is the AppleScript that posts one notification titled segurata.
+func appleNotification(text, subtitle string) string {
 	return fmt.Sprintf("display notification %s with title %s subtitle %s",
-		appleString(strings.Join(titles, "; ")), appleString("segurata"), appleString(head))
+		appleString(text), appleString("segurata"), appleString(subtitle))
 }
 
 // appleString quotes s as an AppleScript string literal.

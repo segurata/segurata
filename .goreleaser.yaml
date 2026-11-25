@@ -56,13 +56,14 @@ signs:
       - "${artifact}"
       - "--yes"
 
+# A cask, not a formula: GoReleaser deprecated formulas for prebuilt binaries in v2.10.
 homebrew_casks:
   - name: segurata
     binaries: [segurata]
-    homepage: https://github.com/example-org/segurata # segurata/segurata after the move
+    homepage: https://github.com/segurata/segurata
     description: Inventories, assesses and cleans up a personal digital footprint
     repository:
-      owner: '{{ if isEnvSet "HOMEBREW_TAP_OWNER" }}{{ .Env.HOMEBREW_TAP_OWNER }}{{ else }}example-org{{ end }}'
+      owner: '{{ if isEnvSet "HOMEBREW_TAP_OWNER" }}{{ .Env.HOMEBREW_TAP_OWNER }}{{ else }}segurata{{ end }}'
       name: homebrew-tap
       token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
     # No tap token, no tap update; the rest of the release goes ahead.
@@ -80,5 +81,10 @@ changelog:
       - "^Merge "
 
 release:
+  # Fixed rather than taken from the git remote, so the cask's download URLs always name the public
+  # repository.
+  github:
+    owner: segurata
+    name: segurata
   # Tags with a pre-release suffix (v1.2.0-rc.1) become GitHub pre-releases.
   prerelease: auto

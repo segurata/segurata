@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -250,13 +251,15 @@ type fakeBrowser struct {
 	failFor  int              // the first failFor evaluations throw, as while a page loads
 	noHidden bool             // reject Target.createTarget with hidden, as a browser without hidden targets
 	creates  []map[string]any // Target.createTarget params, in order
+	browser  string           // the Browser field of /json/version
+	value    any              // when set, what every Runtime.evaluate returns
 }
 
 func (b *fakeBrowser) serve(t *testing.T) *httptest.Server {
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/json/version" {
-			json.NewEncoder(w).Encode(map[string]string{"webSocketDebuggerUrl": wsURL(srv) + "/devtools/browser/x"})
+			json.NewEncoder(w).Encode(map[string]string{"Browser": b.browser, "webSocketDebuggerUrl": wsURL(srv) + "/devtools/browser/x"})
 			return
 		}
 		s := upgrade(t, w, r, "")
@@ -315,6 +318,8 @@ func (b *fakeBrowser) answer(s *srvConn, id int64, method string, params map[str
 		switch {
 		case b.evalFail || b.evals <= b.failFor:
 			result = map[string]any{"result": map[string]any{}, "exceptionDetails": map[string]any{"text": "Uncaught boom"}}
+		case b.value != nil:
+			result = map[string]any{"result": map[string]any{"value": b.value}}
 		default:
 			result = map[string]any{"result": map[string]any{"value": map[string]any{"ready": b.evals >= b.readyAt, "n": b.evals}}}
 		}
@@ -599,5 +604,55 @@ func TestOpenTabIsAForegroundTabNeverClosed(t *testing.T) {
 	}
 	if s := strings.Join(b.methods, " "); s != "Target.createTarget Target.attachToTarget Runtime.evaluate" {
 		t.Fatalf("methods %s", s)
+	}
+}
+
+// --- Brave ---
+
+// Brave reports itself as Chrome in /json/version, so Brave asks the page: a hidden about:blank
+// target, closed afterwards, never a tab of the user's.
+func TestBraveAsksAHiddenPageAndClosesIt(t *testing.T) {
+	b := &fakeBrowser{browser: "Chrome/156.0.8078.74", value: true}
+	srv := b.serve(t)
+	v, err := Brave(context.Background(), srv.URL)
+	if err != nil || v.Browser != "Chrome/156.0.8078.74" {
+		t.Fatalf("Brave = %v, %v", v, err)
+	}
+	if len(b.creates) != 1 || b.creates[0]["hidden"] != true || b.creates[0]["background"] != true || len(b.closed) != 1 {
+		t.Fatalf("createTarget %v, closed %v", b.creates, b.closed)
+	}
+	if !slices.Contains(b.methods, "Runtime.evaluate") {
+		t.Fatalf("methods %v", b.methods)
+	}
+}
+
+func TestBraveRefusesAnotherBrowser(t *testing.T) {
+	b := &fakeBrowser{browser: "Chrome/156.0.8078.74", value: false}
+	_, err := Brave(context.Background(), b.serve(t).URL)
+	if !errors.Is(err, ErrNotBrave) || !strings.Contains(err.Error(), "Chrome/156") {
+		t.Fatalf("err %v", err)
+	}
+	if len(b.closed) != 1 {
+		t.Fatalf("the probe page was not closed: %v", b.closed)
+	}
+}
+
+func TestBraveFailsFastWhenNothingAnswers(t *testing.T) {
+	defer func(d time.Duration) { versionTimeout = d }(versionTimeout)
+	versionTimeout = 50 * time.Millisecond
+	hung := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-hung }))
+	defer srv.Close()
+	defer close(hung)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	for _, url := range []string{srv.URL, closed.URL} {
+		start := time.Now()
+		if _, err := Brave(context.Background(), url); err == nil || errors.Is(err, ErrNotBrave) {
+			t.Fatalf("%s: err %v", url, err)
+		}
+		if took := time.Since(start); took > 2*time.Second {
+			t.Fatalf("%s: took %s", url, took)
+		}
 	}
 }
