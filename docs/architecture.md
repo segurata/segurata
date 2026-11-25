@@ -650,8 +650,7 @@ so an agent installed before that runs with the 24h bound until it is installed 
 1. Runs `segurata inventory --out ~/.segurata/out <connectors>`, which ends in `track sync`.
    Without `--connectors`, every installed connector. The browser connectors (those whose
    `describe` needs `cdp`) run only when Brave answers at `cdp_url`; see "Browser connectors in a
-   scheduled run" below. When they were the only ones selected and were skipped, `segurata track
-   sync --out ~/.segurata/out` runs instead.
+   scheduled run" below.
 2. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three of
    the open P0 and P1 items that sync found or reopened (history `found` or `reopened` since the
    run started), by title: the tracker is the one place runs are compared. Titles never carry
