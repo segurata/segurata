@@ -143,17 +143,6 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		byKey[it.Key] = it
 		was[it] = it.EffectivePriority()
 	}
-	proposals := map[string]*proposal{}
-	var order []string
-	propose := func(key string, p proposal) *proposal {
-		if got, ok := proposals[key]; ok {
-			return got
-		}
-		p.key = key
-		proposals[key] = &p
-		order = append(order, key)
-		return &p
-	}
 	// The owner's accounts are known before secrets are folded, so a secret attributed mine counts in
 	// full from its first sync (see SyncSecrets).
 	t.discover(runs)
@@ -168,92 +157,8 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	// A connector's credential that is a rotate item's secret goes to that item, not to a group of
 	// its own (see correlate.go).
 	claims, possible := t.correlate(folded)
-	regroup := map[string]string{} // finding id -> key of the group it moves to
-	holders := t.findingHolders()
-	for _, l := range rep.Runs {
-		r := folded[l]
-		for _, f := range r.findings {
-			if ev, ok := secretEvidence(f); ok {
-				if trail[ev.Kind] && secretrisk.ImpactOf(ev) != secretrisk.Noise {
-					propose("transcripts:redact|"+r.label, transcriptsProposal()).add(f)
-				}
-				continue
-			}
-			if _, claimed := claims[f.ID]; claimed || f.Severity.Rank() < finding.SevLow.Rank() {
-				continue
-			}
-			rl := ruleFor(f)
-			key, p := groupKey(f, rl, themeOf(f, r.theme.ID))
-			held := holders[f.ID]
-			if r.legacy() && held != nil && ruleKey(held.Key) {
-				// A run written before connectors declared how to group: its findings stay in the items
-				// that hold them, under the titles they have, until a run that declares it.
-				kept := *rl
-				kept.keep = true
-				key, p.rule = held.Key, &kept
-			}
-			if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
-				if rl.by == perFinding || pin.keptApart() {
-					// An item already holds this finding on its own: it stays there, titled by the finding.
-					key, p.rule = pinnedKey(f.ID), &rule{kind: rl.kind}
-				} else {
-					// Its rule groups it now (data dumps per repository): it moves to the group.
-					regroup[f.ID] = key
-				}
-			}
-			got := propose(key, p)
-			got.add(f)
-			if p.rule.keep {
-				got.keepWhere(held)
-			}
-		}
-		for _, st := range r.statuses {
-			if st.State != finding.StateOK {
-				key, p := setupProposal(r.label, st)
-				propose(key, p).addStatus(st, r.at)
-			}
-		}
-	}
-
-	seen := map[*Item]map[string]bool{}
-	for _, key := range order {
-		p := proposals[key]
-		it, existed := byKey[key]
-		expected := p.expectedReasons()
-		if !existed {
-			it = t.newItem(p.kind, key, p.theme, "", now)
-			byKey[key] = it
-			it.Log(now, EvFound, actFound, textfmt.Count(len(p.refs), "finding", "findings"))
-			if expected == nil {
-				rep.Created++
-			}
-		} else if it.Status == Merged {
-			it.reopenMerged(now)
-			rep.Reopened++
-		}
-		seen[it] = map[string]bool{}
-		if added := it.upsert(p.refs, seen[it]); added > 0 && existed {
-			it.Log(now, EvSeen, actSeen, textfmt.Count(added, "new finding", "new findings"))
-		}
-		switch {
-		case strings.HasPrefix(key, "transcripts:"):
-			p.finishTranscripts()
-		case p.kind == KindSetup:
-			p.finishSetup(it.ID)
-		}
-		p.finish(it.ID)
-		if p.title != "" {
-			it.Title = p.title
-		}
-		if p.next != nil && it.Status != Accepted {
-			it.Next = p.next
-		}
-		it.Severity = p.severity()
-		it.Priority = priorityOf(it.Severity)
-		if p.kind == KindSetup && it.expectedMoves(expected, now) {
-			rep.Expected++
-		}
-	}
+	props, regroup := t.propose(rep.Runs, folded, claims, byKey)
+	seen := t.applyProposals(props, byKey, now, &rep)
 
 	t.attachLive(claims, possible, folded)
 	moved := claimedBy(claims)
@@ -293,6 +198,134 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	at := now.UTC()
 	t.LastSyncAt = &at
 	return rep, nil
+}
+
+// proposals are the items a sync proposes, by key, in the order first proposed.
+type proposals struct {
+	byKey map[string]*proposal
+	order []string
+}
+
+// at is the proposal for key, started from p when key is new.
+func (ps *proposals) at(key string, p proposal) *proposal {
+	if got, ok := ps.byKey[key]; ok {
+		return got
+	}
+	p.key = key
+	ps.byKey[key] = &p
+	ps.order = append(ps.order, key)
+	return &p
+}
+
+// propose groups every finding and every status other than ok of the folded runs (labels, in
+// order) into the item it belongs to: a secret's trail into the transcript redaction item, a
+// finding into the item its grouping rule names, a status into a setup item. Secrets themselves,
+// claimed credentials and info findings make no proposal. regroup maps the id of each finding
+// that moves from the item holding it alone to its group's key.
+func (t *Tracker) propose(labels []string, folded map[string]*run, claims map[string]claim, byKey map[string]*Item) (props *proposals, regroup map[string]string) {
+	props, regroup = &proposals{byKey: map[string]*proposal{}}, map[string]string{}
+	holders := t.findingHolders()
+	for _, l := range labels {
+		r := folded[l]
+		for _, f := range r.findings {
+			if ev, ok := secretEvidence(f); ok {
+				if trail[ev.Kind] && secretrisk.ImpactOf(ev) != secretrisk.Noise {
+					props.at("transcripts:redact|"+r.label, transcriptsProposal()).add(f)
+				}
+				continue
+			}
+			if _, claimed := claims[f.ID]; claimed || f.Severity.Rank() < finding.SevLow.Rank() {
+				continue
+			}
+			held := holders[f.ID]
+			key, p, moves := placeFinding(f, r, held, byKey)
+			if moves {
+				regroup[f.ID] = key
+			}
+			got := props.at(key, p)
+			got.add(f)
+			if p.rule.keep {
+				got.keepWhere(held)
+			}
+		}
+		for _, st := range r.statuses {
+			if st.State != finding.StateOK {
+				key, p := setupProposal(r.label, st)
+				props.at(key, p).addStatus(st, r.at)
+			}
+		}
+	}
+	return props, regroup
+}
+
+// placeFinding is the key and proposal of f's item, from run r: its grouping rule's, except that
+// a run from before declarations keeps f in the item that holds it (held), and a finding an item
+// holds on its own stays there unless its rule now groups it, when moves is true.
+func placeFinding(f finding.Finding, r *run, held *Item, byKey map[string]*Item) (key string, p proposal, moves bool) {
+	rl := ruleFor(f)
+	key, p = groupKey(f, rl, themeOf(f, r.theme.ID))
+	if r.legacy() && held != nil && ruleKey(held.Key) {
+		// A run written before connectors declared how to group: its findings stay in the items
+		// that hold them, under the titles they have, until a run that declares it.
+		kept := *rl
+		kept.keep = true
+		key, p.rule = held.Key, &kept
+	}
+	if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
+		if rl.by == perFinding || pin.keptApart() {
+			// An item already holds this finding on its own: it stays there, titled by the finding.
+			p.rule = &rule{kind: rl.kind}
+			return pinnedKey(f.ID), p, false
+		}
+		// Its rule groups it now (data dumps per repository): it moves to the group.
+		return key, p, true
+	}
+	return key, p, false
+}
+
+// applyProposals folds each proposal into its item, creating the item when new (added to byKey)
+// and reopening a merged one, and returns the refs each item saw.
+func (t *Tracker) applyProposals(props *proposals, byKey map[string]*Item, now time.Time, rep *SyncReport) map[*Item]map[string]bool {
+	seen := map[*Item]map[string]bool{}
+	for _, key := range props.order {
+		p := props.byKey[key]
+		it, existed := byKey[key]
+		expected := p.expectedReasons()
+		if !existed {
+			it = t.newItem(p.kind, key, p.theme, "", now)
+			byKey[key] = it
+			it.Log(now, EvFound, actFound, textfmt.Count(len(p.refs), "finding", "findings"))
+			if expected == nil {
+				rep.Created++
+			}
+		} else if it.Status == Merged {
+			it.reopenMerged(now)
+			rep.Reopened++
+		}
+		seen[it] = map[string]bool{}
+		if added := it.upsert(p.refs, seen[it]); added > 0 && existed {
+			it.Log(now, EvSeen, actSeen, textfmt.Count(added, "new finding", "new findings"))
+		}
+		switch {
+		case strings.HasPrefix(key, "transcripts:"):
+			p.finishTranscripts()
+		case p.kind == KindSetup:
+			p.finishSetup(it.ID)
+		}
+		p.finish(it.ID)
+		if p.title != "" {
+			it.Title = p.title
+		}
+		if p.next != nil && it.Status != Accepted {
+			it.Next = p.next
+		}
+		it.Severity = p.severity()
+		it.Priority = priorityOf(it.Severity)
+		if p.kind == KindSetup && it.expectedMoves(expected, now) {
+			rep.Expected++
+		}
+	}
+	return seen
 }
 
 // noteRaised logs each item the sync raised to P1 or P0, from the priority it had before (was), so
