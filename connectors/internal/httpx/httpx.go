@@ -47,12 +47,18 @@ func New(baseURL string, header http.Header) *Client {
 
 // keepOnSameHost follows up to 10 redirects, as Go does, and drops the credential headers from any
 // hop to a host (or port) other than the first request's. Go strips only Authorization and
-// cookies, and keeps them on another port of the same host.
+// cookies, and keeps them on another port of the same host. No hop carries a Referer: Go sets it
+// to the previous URL, path included, and a credential can ride in the path (Telegram's
+// /bot<token>/). A hop from https to anything else is refused before it is sent.
 func keepOnSameHost(credential http.Header) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
 		}
+		if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return errors.New("refused a redirect from https to " + req.URL.Scheme)
+		}
+		req.Header.Del("Referer")
 		if req.URL.Host != via[0].URL.Host {
 			for k := range credential {
 				req.Header.Del(k)
@@ -61,6 +67,10 @@ func keepOnSameHost(credential http.Header) func(*http.Request, []*http.Request)
 		return nil
 	}
 }
+
+// NoRedirect is a CheckRedirect for a client that follows none: the answer is the 3xx itself, so
+// a request and its credential go nowhere but the URL it was sent to.
+func NoRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // StatusError is a non-2xx answer. Message is the provider's error message, never a header value.
 type StatusError struct {

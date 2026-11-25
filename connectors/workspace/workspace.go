@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -66,7 +67,7 @@ type Connector struct {
 func New() *Connector {
 	home, _ := os.UserHomeDir()
 	c := &Connector{apiURL: defaultAPIURL, tokenInfoURL: defaultTokenInfoURL, home: home, now: time.Now,
-		http: &http.Client{Timeout: 60 * time.Second}}
+		http: &http.Client{Timeout: 60 * time.Second, CheckRedirect: httpx.NoRedirect}}
 	c.gcloud = func(configured string, env []string) (cli.Runner, error) {
 		path, err := cli.FindGcloud(configured, c.home, connectorName)
 		if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -459,5 +460,29 @@ func TestClassifyScope(t *testing.T) {
 	}
 	if assessScopes(nil).sev != finding.SevInfo {
 		t.Error("no scopes is sign-in only")
+	}
+}
+
+// tokeninfo gets the token in a POST body, which a 307 or 308 would send again to wherever it
+// points: the client follows no redirect, and the token reaches no other server.
+func TestTokenInfoRedirectIsNotFollowed(t *testing.T) {
+	var leaked bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		leaked = leaked || strings.Contains(string(body), fakeToken) || strings.Contains(r.URL.String(), fakeToken)
+		_, _ = w.Write([]byte(`{"scope":` + allScopes + `}`))
+	}))
+	t.Cleanup(other.Close)
+	info := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/tokeninfo", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(info.Close)
+	rec := inventory(t, newTest(credsHome(t), nil, info, &fakeGcloud{}), map[string]any{"domain": domain}, nil)
+	if leaked {
+		t.Fatal("the token was sent again to the redirect target")
+	}
+	st := onlyStatus(t, rec)
+	if st.State != finding.StateReauth || strings.Contains(st.Detail, fakeToken) {
+		t.Fatalf("got %s %q", st.State, st.Detail)
 	}
 }
