@@ -23,6 +23,8 @@ type provider struct {
 	// is rejected by the global host.
 	bases []string
 	ask   func(ctx context.Context, base string, p Probe) secretrisk.Liveness
+	// lookup, in place of ask, classifies the secret with the owner's credentials (lookup.go).
+	lookup func(ctx context.Context, l *lookups, p Probe) secretrisk.Liveness
 }
 
 var providers = []*provider{
@@ -46,6 +48,8 @@ var providers = []*provider{
 	{name: "digitalocean", types: []string{"digitalocean"}, bases: []string{"https://api.digitalocean.com"}, ask: bearer("/v2/account", byStatus(false), account("digitalocean", "account.uuid"))},
 	{name: "sentry", types: []string{"sentry-token"}, bases: []string{"https://sentry.io"}, ask: askSentry},
 	{name: "linear", types: []string{"linear"}, bases: []string{"https://api.linear.app"}, ask: askLinear},
+	{name: "aws-keys", types: []string{"aws-access-key-id"}, lookup: lookupAWSKey},
+	{name: "ssh-keys", types: []string{"private-key", "ssh-key"}, lookup: lookupSSHKey},
 }
 
 func byName(name string) *provider {

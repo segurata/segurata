@@ -31,11 +31,18 @@ type Config struct {
 	Enabled   bool
 	Owners    []attribution.Owner
 	Providers []string // nil: every provider the package knows
+	// AWSProfiles are the owner's aws CLI profiles lone key ids are looked up with; nil: every
+	// profile `aws configure list-profiles` names.
+	AWSProfiles []string
+	// SSHHosts are hosts whose ~/.ssh/authorized_keys private keys are looked up in (opt-in).
+	SSHHosts []string
 }
 
-// ParseConfig reads `{"enabled": true, "owners": ["mine", "unknown"], "providers": ["github"]}`.
+// ParseConfig reads `{"enabled": true, "owners": ["mine", "unknown"], "providers": ["github"],
+// "aws_profiles": ["prod"], "ssh_hosts": ["deploy@build1"]}`.
 func ParseConfig(raw any) (Config, error) {
 	c := Config{Owners: []attribution.Owner{attribution.Mine}}
+	var err error
 	if raw == nil {
 		return c, nil
 	}
@@ -74,6 +81,24 @@ func ParseConfig(raw any) (Config, error) {
 		}
 		c.Providers = list
 	}
+	if v, ok := m["aws_profiles"]; ok {
+		if c.AWSProfiles, err = stringList(v, "liveness.aws_profiles"); err != nil {
+			return c, err
+		}
+	}
+	if v, ok := m["ssh_hosts"]; ok {
+		if c.SSHHosts, err = stringList(v, "liveness.ssh_hosts"); err != nil {
+			return c, err
+		}
+		if len(c.SSHHosts) > maxSSHHosts {
+			return c, fmt.Errorf("liveness.ssh_hosts: at most %d hosts", maxSSHHosts)
+		}
+		for _, h := range c.SSHHosts {
+			if !sshHost.MatchString(h) {
+				return c, fmt.Errorf("liveness.ssh_hosts: %q is not a host name or user@host", h)
+			}
+		}
+	}
 	return c, nil
 }
 
@@ -93,9 +118,17 @@ func stringList(v any, key string) ([]string, error) {
 	return out, nil
 }
 
-// Allows reports whether the owner lets the check try a secret attributed to owner.
-func (c Config) Allows(owner attribution.Owner) bool {
-	return owner != attribution.NotMine && slices.Contains(c.Owners, owner)
+// Allows reports whether the owner lets the check try a secret of the type attributed to owner. A
+// lookup with the owner's credentials (a lone AWS key id, a private key) never sends the secret,
+// so it runs for mine and unknown whatever owners says; someone else's secret is never looked at.
+func (c Config) Allows(owner attribution.Owner, typ string) bool {
+	if owner == attribution.NotMine {
+		return false
+	}
+	if pv := forType(typ); pv != nil && pv.lookup != nil {
+		return true
+	}
+	return slices.Contains(c.Owners, owner)
 }
 
 // allowsProvider reports whether the config's provider allowlist names the provider.
@@ -127,11 +160,18 @@ type Stats struct {
 	Interrupted                        int // not asked: the run's time ran out
 	NoValue                            int // not asked: no value, read or recovered (cached git history)
 	Recovered                          int // values read again from git history at check time
+	Unregistered                       int // SSH keys registered nowhere the lookup can see
+	// Hints say what the owner can set up for the lookups to classify more: a permission, a scope.
+	Hints []string
 }
 
 func (s Stats) String() string {
-	return fmt.Sprintf("liveness: %d asked, %d from cache, %d values recovered from git history; %d live, %d dead, %d unknown; %d unsupported, %d not allowed, %d without a value at hand, %d interrupted",
-		s.Asked, s.Cached, s.Recovered, s.Live, s.Dead, s.Unknown, s.Unsupported, s.NotAllowed, s.NoValue, s.Interrupted)
+	line := fmt.Sprintf("liveness: %d asked, %d from cache, %d values recovered from git history; %d live, %d dead, %d unregistered, %d unknown; %d unsupported, %d not allowed, %d without a value at hand, %d interrupted",
+		s.Asked, s.Cached, s.Recovered, s.Live, s.Dead, s.Unregistered, s.Unknown, s.Unsupported, s.NotAllowed, s.NoValue, s.Interrupted)
+	for _, h := range s.Hints {
+		line += "; " + h
+	}
+	return line
 }
 
 // Checker runs the check. Zero values are the defaults: real endpoints, no cache, the real clock,
@@ -144,6 +184,8 @@ type Checker struct {
 	Now   func() time.Time
 	// Interval is the least time between two calls, across providers.
 	Interval time.Duration
+	// Owner runs the lookups (lookup.go); its zero value leaves them without sources.
+	Owner Owner
 }
 
 // DefaultInterval keeps the whole check under four calls a second.
@@ -177,6 +219,7 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 			queues[pv] = append(queues[pv], p)
 		}
 	}
+	lk := &lookups{owner: c.Owner, cfg: c.Config}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	lim := &limiter{every: c.interval()}
@@ -207,11 +250,11 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 					count(&st.Unsupported)
 					continue
 				}
-				if lim.wait(ctx) != nil {
+				if pv.lookup == nil && lim.wait(ctx) != nil {
 					count(&st.Interrupted)
 					continue
 				}
-				r := c.ask(ctx, pv, p)
+				r := c.ask(ctx, lk, pv, p)
 				r.CheckedAt = c.now().UTC()
 				mu.Lock()
 				st.Asked++
@@ -220,6 +263,8 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 					st.Live++
 				case secretrisk.Dead:
 					st.Dead++
+				case secretrisk.Unregistered:
+					st.Unregistered++
 				default:
 					st.Unknown++
 				}
@@ -232,6 +277,7 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 		}()
 	}
 	wg.Wait()
+	st.Hints = lk.hints()
 	return out, st
 }
 
@@ -250,8 +296,13 @@ func (c *Checker) interval() time.Duration {
 }
 
 // ask tries the probe on each of the provider's hosts while they say dead: dead only when every
-// host rejects it.
-func (c *Checker) ask(ctx context.Context, pv *provider, p Probe) secretrisk.Liveness {
+// host rejects it. A lookup runs once, with the owner's credentials.
+func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) secretrisk.Liveness {
+	if pv.lookup != nil {
+		r := pv.lookup(ctx, lk, p)
+		r.Provider, r.ByOwner = pv.name, true
+		return r
+	}
 	bases := pv.bases
 	if b, ok := c.Bases[pv.name]; ok {
 		bases = b

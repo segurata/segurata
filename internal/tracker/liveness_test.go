@@ -198,9 +198,10 @@ func TestLivenessCoverage(t *testing.T) {
 	writeSecrets(t, out, t0, append(ghLeak(t0, checked(secretrisk.Live, t0, "")),
 		localLeak("e9e9e9e9e9e9e9e9", checked(secretrisk.Dead, t0, "")),
 		localLeak("f0f0f0f0f0f0f0f0", checked(secretrisk.Unknown, t0, "")),
-		localLeak("a1a1a1a1a1a1a1a1", nil))...)
+		localLeak("a1a1a1a1a1a1a1a1", nil),
+		localLeak("b2b2b2b2b2b2b2b2", sshLookup(secretrisk.Unregistered, t0)))...)
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
-	want := "Liveness checked for 2 of 4 secrets: 1 live, 1 dead, 1 unknown, 1 unchecked."
+	want := "Liveness checked for 3 of 5 secrets: 1 live, 1 dead, 1 unregistered, 1 unknown, 1 unchecked."
 	if got := tr.LivenessLine(); got != want {
 		t.Errorf("line %q, want %q", got, want)
 	}
@@ -211,5 +212,60 @@ func TestLivenessCoverage(t *testing.T) {
 	}
 	if got := New(t0).LivenessLine(); got != "" {
 		t.Errorf("no secrets: %q", got)
+	}
+}
+
+// sshLookup is a private key looked up among the owner's registered SSH keys.
+func sshLookup(state secretrisk.LiveState, at time.Time) *secretrisk.Liveness {
+	reason := map[secretrisk.LiveState]string{secretrisk.Live: "GitHub SSH key 'laptop'", secretrisk.Dead: "Inactive in account 123456789012",
+		secretrisk.Unregistered: "registered nowhere segurata can see"}[state]
+	return &secretrisk.Liveness{State: state, CheckedAt: at, Provider: "ssh-keys", Endpoint: "GET api.github.com/user/keys", Reason: reason, ByOwner: true}
+}
+
+// sshLeak is a private key pushed to a repository's history: P0 as it is.
+func sshLeak(at time.Time, l *secretrisk.Liveness) secretrisk.Evidence {
+	return secretrisk.Evidence{Fingerprint: "d4d4d4d4d4d4d4d4", Type: "private-key", Redacted: "PEM", Path: "~/src/shop/deploy/id_ed25519", Repo: "~/src/shop",
+		Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2021-03-04", Liveness: l}
+}
+
+// A lookup with the owner's credentials reads as such: a registered key is live and P0 once
+// leaked, a key absent from the owner's inventory closes as dead, and one registered nowhere
+// segurata can see drops one priority, with a reason that says it is not proof of death.
+func TestLookupByOwner(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	tr := New(t0)
+	writeSecrets(t, out, t0, sshLeak(t0, nil))
+	syncOrDie(t, tr, out, t0.Add(time.Minute))
+	key := mustRotate(t, tr, "d4d4d4d4")
+	if key.Priority != secretrisk.P0 {
+		t.Fatalf("a pushed private key: %s", key.Priority)
+	}
+
+	day2 := t0.Add(24 * time.Hour)
+	writeSecrets(t, out, day2, sshLeak(day2, sshLookup(secretrisk.Unregistered, day2)))
+	syncOrDie(t, tr, out, day2.Add(time.Minute))
+	if key.Priority != secretrisk.P1 || key.Status != Open || key.LivenessLabel() != "unregistered" {
+		t.Fatalf("unregistered: %s %s %s", key.Priority, key.Status, key.LivenessLabel())
+	}
+	if r := strings.Join(key.Secret.Reasons, "; "); !strings.Contains(r, "unregistered: registered nowhere segurata can see (GET api.github.com/user/keys) on 2026-11-24; not proof it is dead") {
+		t.Errorf("reasons %q", key.Secret.Reasons)
+	}
+
+	day3 := day2.Add(24 * time.Hour)
+	writeSecrets(t, out, day3, sshLeak(day3, sshLookup(secretrisk.Live, day3)))
+	syncOrDie(t, tr, out, day3.Add(time.Minute))
+	if key.Priority != secretrisk.P0 || !key.LiveAndLeaked() {
+		t.Fatalf("registered: %s", key.Priority)
+	}
+	if r := strings.Join(key.Secret.Reasons, "; "); !strings.Contains(r, "live: GitHub SSH key 'laptop' (GET api.github.com/user/keys) on 2026-11-25") {
+		t.Errorf("reasons %q", key.Secret.Reasons)
+	}
+
+	day4 := day3.Add(24 * time.Hour)
+	writeSecrets(t, out, day4, sshLeak(day4, sshLookup(secretrisk.Dead, day4)))
+	syncOrDie(t, tr, out, day4.Add(time.Minute))
+	last := key.History[len(key.History)-1]
+	if key.Status != Done || last.Detail != "key no longer valid (checked 2026-11-26: Inactive in account 123456789012 (GET api.github.com/user/keys))" {
+		t.Errorf("dead by lookup: %s %+v", key.Status, last)
 	}
 }

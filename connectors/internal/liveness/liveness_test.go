@@ -355,12 +355,12 @@ func TestUnsupportedAndAllowlist(t *testing.T) {
 	got, st := c.Check(context.Background(), []Probe{
 		{Fingerprints: []string{"a"}, Type: "slack-webhook", Value: liveKey},   // trying it would post
 		{Fingerprints: []string{"b"}, Type: "npm-authtoken", Value: liveKey},   // any registry
-		{Fingerprints: []string{"c"}, Type: "aws-access-key-id", Value: keyID}, // needs its secret
+		{Fingerprints: []string{"c"}, Type: "aws-access-key-id", Value: keyID}, // a lookup, not in the allowlist
 		{Fingerprints: []string{"f"}, Type: "aws-secret-key", Value: liveKey},  // needs its key id, whatever the allowlist
 		{Fingerprints: []string{"d"}, Type: "openai-project", Value: liveKey},  // not in the allowlist
 		{Fingerprints: []string{"e"}, Type: "github", Value: "ghp_" + liveKey}, // allowed
 	})
-	if st.Unsupported != 4 || st.NotAllowed != 1 || st.Asked != 1 || len(got) != 1 {
+	if st.Unsupported != 3 || st.NotAllowed != 2 || st.Asked != 1 || len(got) != 1 {
 		t.Errorf("stats %+v, results %v", st, got)
 	}
 	if len(f.paths) != 1 {
@@ -449,7 +449,7 @@ func TestParseConfig(t *testing.T) {
 		t.Errorf("default: %+v %v", c, err)
 	}
 	c, err = ParseConfig(map[string]any{"enabled": true, "owners": []any{"mine", "unknown"}, "providers": []any{"github", "aws"}})
-	if err != nil || !c.Enabled || !c.Allows(attribution.Unknown) || c.Allows(attribution.NotMine) || !c.allowsProvider("aws") || c.allowsProvider("openai") {
+	if err != nil || !c.Enabled || !c.Allows(attribution.Unknown, "github") || c.Allows(attribution.NotMine, "github") || !c.allowsProvider("aws") || c.allowsProvider("openai") {
 		t.Errorf("full: %+v %v", c, err)
 	}
 	for _, bad := range []any{
@@ -458,6 +458,9 @@ func TestParseConfig(t *testing.T) {
 		map[string]any{"owners": []any{"not-mine"}},
 		map[string]any{"owners": []any{"mine", "not-mine"}},
 		map[string]any{"owners": "mine"},
+		map[string]any{"aws_profiles": "prod"},
+		map[string]any{"ssh_hosts": []any{"-oProxyCommand=sh"}},
+		map[string]any{"ssh_hosts": []any{"host with space"}},
 		map[string]any{"providers": []any{"twilio"}},
 	} {
 		if _, err := ParseConfig(bad); err == nil {
@@ -467,12 +470,12 @@ func TestParseConfig(t *testing.T) {
 }
 
 func TestSupported(t *testing.T) {
-	for _, typ := range []string{"github", "aws-secret-key", "google-api-key", "slack-token"} {
+	for _, typ := range []string{"github", "aws-secret-key", "google-api-key", "slack-token", "aws-access-key-id", "private-key", "ssh-key"} {
 		if !Supported(typ) {
 			t.Errorf("%s unsupported", typ)
 		}
 	}
-	for _, typ := range []string{"slack-webhook", "aws-access-key-id", "npm-authtoken", "private-key", "jwt"} {
+	for _, typ := range []string{"slack-webhook", "npm-authtoken", "jwt"} {
 		if Supported(typ) {
 			t.Errorf("%s supported", typ)
 		}
