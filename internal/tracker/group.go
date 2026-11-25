@@ -14,18 +14,20 @@ import (
 )
 
 // Grouping turns findings into items: one item per thing a person would do. Five GitHub orgs that
-// do not require 2FA are one item (one settings page, five times); each data dump is its own item;
-// thirty X apps that can post as you are one review. Info findings never make an item. Secrets are
-// grouped by fingerprint elsewhere (secret.go); connector statuses become setup items (sync.go).
+// do not require 2FA are one item (one settings page, five times); a repository's data dumps are
+// one item; thirty X apps that can post as you are one review. Each connector declares how its
+// findings group (finding.Track); the tracker applies it, and groups the findings of a connector
+// that declares nothing by title family. Info findings never make an item. Secrets are grouped by
+// fingerprint elsewhere (secret.go); connector statuses become setup items (sync.go).
 
 type groupBy int
 
 const (
 	perFinding         groupBy = iota // one item per finding
-	perCheck                          // one item per check (resource id) across accounts
+	perCheck                          // one item per check (declared key, or resource id) across accounts
 	perAccount                        // one item per account
 	perAccountSeverity                // one item per account and severity
-	perProject                        // one item per evidence.project
+	perProject                        // one item per project (declared key, or account)
 	perFamily                         // one item per account and title family (the title without the resource's name)
 	perRepo                           // one item per evidence.repo
 )
@@ -36,21 +38,18 @@ var groupsBy = map[string]groupBy{
 	finding.GroupAccountSeverity: perAccountSeverity, finding.GroupProject: perProject, finding.GroupFamily: perFamily,
 }
 
-// rule maps findings of a connector and resource type (and, optionally, some resource ids) to how
-// they group, the kind of item and its title. First match wins.
+// rule says how findings group, the kind of item and its title: what a finding declares
+// (finding.Track), or the tracker's own rule for local-secrets' data dumps.
 type rule struct {
-	connectors []string // empty: any
-	resource   string   // empty: any
-	by         groupBy
-	kind       Kind
-	title      func(p *proposal) string // nil: the finding's title, or the family with a count
-	next       func(p *proposal) *Next  // nil: the worst finding's remediation
-	keep       bool                     // keep the item's title (a finding no rule groups any more)
+	by    groupBy
+	kind  Kind
+	title func(p *proposal) string // nil: the finding's title, or the worst finding's with a count
+	next  func(p *proposal) *Next  // nil: the worst finding's remediation
+	keep  bool                     // keep the item's title (a run from before declarations)
 }
 
-var rules = []rule{
-	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-}
+// dumpsRule makes one item of a repository's data dumps, purged in one history rewrite.
+var dumpsRule = &rule{by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext}
 
 // defaultRule groups a finding that declares nothing.
 var defaultRule = &rule{by: perFamily, kind: KindFix}
@@ -150,20 +149,12 @@ func family(f finding.Finding) string {
 	return digits.ReplaceAllString(quoted.ReplaceAllString(stripName(f), `"…"`), "N")
 }
 
-func (r rule) matches(f finding.Finding) bool {
-	if r.resource != "" && r.resource != f.Resource.Type {
-		return false
-	}
-	return len(r.connectors) == 0 || slices.Contains(r.connectors, f.Connector)
-}
-
+// ruleFor is the rule a finding groups by.
 func ruleFor(f finding.Finding) *rule {
-	for i := range rules {
-		if rules[i].matches(f) {
-			return &rules[i]
-		}
-	}
-	if f.Track != nil {
+	switch {
+	case f.Connector == SecretsConnector && f.Resource.Type == "data_dump":
+		return dumpsRule
+	case f.Track != nil:
 		return declared(f.Track)
 	}
 	return defaultRule
@@ -171,41 +162,36 @@ func ruleFor(f finding.Finding) *rule {
 
 // proposal is what one sync says an item should hold.
 type proposal struct {
-	key, theme, connector, instance, resource string
-	account, project, check, repo             string
-	kind                                      Kind
-	rule                                      *rule
-	findings                                  []finding.Finding
-	refs                                      []FindingRef
-	maxSeverity                               finding.Severity // "" for no cap
-	title                                     string           // set for proposals not made of findings by a rule
-	next                                      *Next
-	statuses                                  []finding.Status // setup proposals: one per ref
+	key, theme, connector, instance, account string
+	repo                                     string // perRepo: the repository the dumps are in
+	kind                                     Kind
+	rule                                     *rule
+	findings                                 []finding.Finding
+	refs                                     []FindingRef
+	maxSeverity                              finding.Severity // "" for no cap
+	title                                    string           // set for proposals not made of findings by a rule
+	next                                     *Next
+	statuses                                 []finding.Status // setup proposals: one per ref
 }
 
 // groupKey is the item key of a finding under its rule.
 func groupKey(f finding.Finding, r *rule, theme string) (key string, p proposal) {
 	lbl := finding.Label(f.Connector, f.Instance)
-	p = proposal{theme: theme, connector: f.Connector, instance: f.Instance,
-		resource: f.Resource.Type, account: f.Account, kind: r.kind, rule: r}
+	p = proposal{theme: theme, connector: f.Connector, instance: f.Instance, account: f.Account, kind: r.kind, rule: r}
 	base := "group:" + lbl + "|" + f.Resource.Type
+	var declaredKey string
+	if f.Track != nil {
+		declaredKey = f.Track.Key
+	}
 	switch r.by {
 	case perCheck:
-		p.check = f.Resource.ID
-		if f.Track != nil && f.Track.Key != "" {
-			p.check = f.Track.Key
-		}
-		key = base + "|check:" + p.check
+		key = base + "|check:" + cmp.Or(declaredKey, f.Resource.ID)
 	case perAccount:
 		key = base + "|account:" + f.Account
 	case perAccountSeverity:
 		key = base + "|account:" + f.Account + "|severity:" + string(f.Severity)
 	case perProject:
-		p.project = f.Account
-		if f.Track != nil && f.Track.Key != "" {
-			p.project = f.Track.Key
-		}
-		key = base + "|project:" + p.project
+		key = base + "|project:" + cmp.Or(declaredKey, f.Account)
 	case perFamily:
 		key = base + "|account:" + f.Account + "|family:" + family(f)
 	case perRepo:
