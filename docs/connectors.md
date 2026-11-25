@@ -306,6 +306,10 @@ Reads one request:
 and writes JSON Lines to stdout: `finding`, `status`, `scope` and `log` records as described
 above.
 
+Built-in connectors also get `Request.Known` in Go: what the tracker knows about whose each secret
+is (`attribution.Known`), so a connector that would act on a secret (local-secrets' liveness check)
+can refuse someone else's. It is never part of an external connector's request.
+
 - Exit 0 when it finished, even if some accounts reported error statuses. Non-zero only when the
   connector could not start at all.
 - stderr is for human diagnostics; the core shows it with `--verbose`. More than 1 MiB of it fails
