@@ -10,6 +10,7 @@ import (
 
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
@@ -116,14 +117,14 @@ func (e Env) stamp(msg string) {
 	fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg)
 }
 
-// prune removes run files older than the config's keep_runs_days that no latest run needs (run.Prune). A failure is
+// prune removes run files older than the config's keep_runs_days that no latest run needs (runfile.Prune). A failure is
 // logged: the scan itself succeeded.
 func (e Env) prune(outDir string) {
 	keep := e.Config.RunRetention()
 	if keep <= 0 {
 		return
 	}
-	removed, err := run.Prune(outDir, e.Now(), e.Now().Add(-keep))
+	removed, err := runfile.Prune(outDir, e.Now(), e.Now().Add(-keep))
 	if len(removed) > 0 {
 		e.stamp(fmt.Sprintf("pruned %d run files older than %s", len(removed), keep))
 	}

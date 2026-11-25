@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
-	runfile "github.com/segurata/segurata/internal/run" // tracker has a type run of its own
+	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -366,21 +365,6 @@ func (p *proposal) finishTranscripts() {
 	p.title = fmt.Sprintf("Redact secrets from %s (agent transcripts, shell histories, logs)", textfmt.Count(len(files), "trail file", "trail files"))
 }
 
-// RunLabel names a connector instance from its records, which carry the exact connector name and
-// instance label; a run with none falls back to the file name.
-func RunLabel(file string, rf runfile.Output) string {
-	switch {
-	case rf.End != nil:
-		return finding.Label(rf.End.Connector, rf.End.Instance)
-	case len(rf.Findings) > 0:
-		return finding.Label(rf.Findings[0].Connector, rf.Findings[0].Instance)
-	case len(rf.Statuses) > 0:
-		return finding.Label(rf.Statuses[0].Connector, rf.Statuses[0].Instance)
-	}
-	base := filepath.Base(file)
-	return base[:len(base)-len(filepath.Ext(base))]
-}
-
 // readRuns reads the latest run of every connector instance as of now, and opt.From. A latest run that
 // cannot be read is left out and returned with its error in unreadable: one torn file must not
 // stop the sync of every other connector, and an instance with no run folded closes nothing.
@@ -419,7 +403,7 @@ func readRunFile(file string) (*run, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &run{label: RunLabel(file, rf), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
+	r := &run{label: rf.Label(file), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
 	// A finished run's time is when it ended. A file without run_end falls back to its newest
 	// observed_at that is not in the future, then to its modification time.
 	if rf.End != nil {

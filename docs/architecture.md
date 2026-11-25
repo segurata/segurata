@@ -107,11 +107,11 @@ when a skipped scope matches its scope or its account (`finding.Coverage`).
 
 **Consumers.**
 
-- `run.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
+- `runfile.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
   and the newest such run before it as the previous one; a newer file without `run_end` is passed
   over and named. When that run inspected nothing (its `run_end` skips `*`: the connector failed,
   or a scheduled run could not reach the browser), they also name the newest finished run that
-  inspected something as its evidence. `run.Read` drops a half-written last line of such a file.
+  inspected something as its evidence. `runfile.Read` drops a half-written last line of such a file.
 - `report` shows each instance's latest run and never calls a finding resolved; closing is the
   tracker's job (below). Its "Run completeness" section names
   partial runs and their skipped scopes, runs without `run_end`, and newer runs that did not
@@ -343,7 +343,7 @@ owner's after all. Ignoring it by hand afterwards sticks.
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory`, as `rotations sync`, or by hand. It reads the latest
-finished run of every connector instance (`run.LatestFiles`) and:
+finished run of every connector instance (`runfile.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
    syncing two output folders (interactive and scheduled) never makes items flap. A run's time is
@@ -534,7 +534,7 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   actions and protocol 2), and only `cmd/segurata` imports it; a test enforces that. Connectors
   build on the contract in `internal/connector` (`Plan`, `Allowlist`, `Executor`,
   `ActionChmod600`), other commands confirm through `internal/prompt`, and the latest-run reader
-  is `internal/run`.
+  is `internal/runfile`.
 - HTTP writes (`plan.calls`: method, URL and the name of the credential) go through
   `connectors/internal/httpw`, a client separate from the GET-only `httpx` (which follows
   redirects but drops the credential headers on a hop to another host or port): it sends bodiless
@@ -594,7 +594,7 @@ opens the item again.
 `segurata report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
 changes:
 
-- the latest finished run of every connector instance, through `run.LatestRuns` and `run.Read`
+- the latest finished run of every connector instance, through `runfile.LatestRuns` and `runfile.Read`
   (findings, statuses and `run_end`);
 - the tracker's acceptances, which annotate every finding as `inventory` does, so an acceptance
   made after the run counts and an expired one shows again;
@@ -657,7 +657,7 @@ so an agent installed before that runs with the 24h bound until it is installed 
    secrets; evidence is never shown. Each is also written to the log.
 3. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
-4. Once the report is written, prunes `~/.segurata/out` (`run.Prune`): it removes the
+4. Once the report is written, prunes `~/.segurata/out` (`runfile.Prune`): it removes the
    `<date>/*.jsonl` files and leftover `*.partial` files of days older than `keep_runs_days` in
    the config (default 30; a negative value keeps everything), except the latest finished run of
    each instance and a newer unfinished one, which the tracker, `report` and `remediate` read,
