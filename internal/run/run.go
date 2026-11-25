@@ -241,7 +241,9 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	req, errs := NewRequest(ctx, cfg, t.Instance)
 	req.Known = lent.Known
 	if missing := unresolved(t.Connector, errs, s); !missing {
-		res.Err = t.Connector.Inventory(ctx, req, s)
+		// What the connector prints never carries a secret value the core handed it.
+		scrub := connector.NewScrubEmitter(s, req.Secrets)
+		res.Err = scrub.Err(t.Connector.Inventory(ctx, req, scrub))
 	}
 	ended, werr := s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
 	res.Err = errors.Join(res.Err, werr)

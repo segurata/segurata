@@ -251,3 +251,49 @@ esac
 		t.Fatal("a non-zero exit is a failed apply")
 	}
 }
+
+// plan and apply get the instance's secrets too: what they print reaches the owner's terminal,
+// so a value echoed in a log line, on stderr or in the run's error shows redacted, and a plan
+// that carries one is refused, since it cannot be shown.
+func TestPlanAndApplyNeverShowTheSecretsTheyGot(t *testing.T) {
+	const value = "sk-synthetic-remediation-0123456789"
+	e := connectortest.Plugin(t, "s", `v=$(sed 's/.*"K":"\([^"]*\)".*/\1/')
+case "$1" in
+describe) echo '{"name":"s","protocol":2,"remediates":["s.fix"]}';;
+plan) echo "plan saw $v" >&2; echo '{"action":"s.fix","summary":"Rotate '"$v"'."}';;
+apply) echo '{"type":"log","msg":"rotating '"$v"'"}'; printf 'half %s' "$v" >&2; printf ' line\nwarn %s\n' "$v" >&2; echo "fail $v" >&2; exit 2;;
+esac
+`)
+	p := connector.Plan{Action: "s.fix", Summary: "Fix."}
+	req := connector.RemediationRequest{Request: connector.Request{Secrets: map[string]string{"K": value}}, Finding: finding.Finding{ID: "f"}, Plan: &p}
+	_, err := e.RequestPlan(context.Background(), req)
+	if err == nil || strings.Contains(err.Error(), value) {
+		t.Fatalf("a plan carrying the secret: err = %v", err)
+	}
+	var out, errw bytes.Buffer
+	err = e.RequestApply(context.Background(), req, &out, &errw)
+	if err == nil {
+		t.Fatal("exit 2 is a failed apply")
+	}
+	for where, text := range map[string]string{"stdout": out.String(), "stderr": errw.String(), "error": err.Error()} {
+		if strings.Contains(text, value) {
+			t.Errorf("the secret reached %s: %q", where, text)
+		}
+	}
+	if want := "half …6789(35) line\nwarn …6789(35)\nfail …6789(35)\n"; errw.String() != want {
+		t.Errorf("stderr = %q, want %q", errw.String(), want)
+	}
+	if !strings.Contains(out.String(), "s: rotating …6789(35)") {
+		t.Errorf("stdout = %q", out.String())
+	}
+
+	failing := connectortest.Plugin(t, "f", `v=$(sed 's/.*"K":"\([^"]*\)".*/\1/')
+case "$1" in
+describe) echo '{"name":"f","protocol":2,"remediates":["f.fix"]}';;
+plan) echo "cannot plan $v" >&2; exit 3;;
+esac
+`)
+	if _, err := failing.RequestPlan(context.Background(), req); err == nil || strings.Contains(err.Error(), value) || !strings.Contains(err.Error(), "cannot plan …6789(35)") {
+		t.Fatalf("plan error = %v", err)
+	}
+}

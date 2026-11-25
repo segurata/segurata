@@ -19,6 +19,7 @@ import (
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/proc"
@@ -700,5 +701,53 @@ func TestLentReachesTheConnector(t *testing.T) {
 	raw, _ := json.Marshal(connector.Request{Known: known})
 	if strings.Contains(string(raw), "012345678901") {
 		t.Error("Known would reach an external connector")
+	}
+}
+
+// A plugin that echoes the credential the core handed it is a bug, and nothing it prints may
+// carry the value anywhere segurata shows or keeps it: the run file, the verbose log, the run's
+// error. A finding or status that carries it is dropped and fails the run; a log line, a scope
+// and stderr show the redacted form.
+func TestAPluginEchoingItsSecretLeaksNothing(t *testing.T) {
+	const value = "sk-synthetic-plugin-secret-0123456789"
+	t.Setenv("SEGURATA_TEST_PLUGIN_SECRET", value)
+	e := connectortest.Plugin(t, "echo", `case "$1" in
+describe) echo '{"name":"echo","protocol":2}';;
+inventory) req=$(cat); v=$(printf '%s' "$req" | sed 's/.*"K":"\([^"]*\)".*/\1/')
+  echo '{"type":"status","account":"a","state":"ok"}'
+  echo '{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"kind":"grant","severity":"high","title":"key '"$v"'"}'
+  echo '{"type":"status","account":"b","state":"error","detail":"bad '"$v"'"}'
+  echo '{"type":"finding","account":"a","resource":{"type":"t","id":"y"},"kind":"grant","severity":"high","title":"clean","evidence":{"k":"'"$v"'"}}'
+  echo '{"type":"finding","account":"a","resource":{"type":"t","id":"z"},"kind":"grant","severity":"low","title":"clean"}'
+  echo '{"type":"scope","scope":"repo:'"$v"'","inspected":false,"reason":"saw '"$v"'"}'
+  echo '{"type":"log","msg":"using '"$v"'"}'
+  echo "stderr has $v" >&2
+  exit 1;;
+esac
+`)
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"echo": {Secrets: map[string]string{"K": "env:SEGURATA_TEST_PLUGIN_SECRET"}}}}
+	var verbose bytes.Buffer
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, e), t.TempDir(), &verbose, Lent{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := res[0]
+	raw, _ := os.ReadFile(r.File)
+	for where, text := range map[string]string{"run file": string(raw), "verbose log": verbose.String(), "error": fmt.Sprint(r.Err)} {
+		if strings.Contains(text, value) {
+			t.Errorf("the secret reached the %s:\n%s", where, text)
+		}
+	}
+	if r.Err == nil || !strings.Contains(r.Err.Error(), "3 records carried a secret") {
+		t.Fatalf("the run must fail on the echoed secret, err = %v", r.Err)
+	}
+	if !strings.Contains(r.Err.Error(), "stderr has …6789(37)") {
+		t.Errorf("stderr must show the redacted form: %v", r.Err)
+	}
+	if r.End.Complete || len(r.Findings) != 1 || r.Findings[0].Resource.ID != "z" {
+		t.Fatalf("complete %v, findings %+v: only the clean finding may arrive", r.End.Complete, r.Findings)
+	}
+	if !strings.Contains(verbose.String(), "using …6789(37)") {
+		t.Errorf("the log line must show the redacted form:\n%s", verbose.String())
 	}
 }

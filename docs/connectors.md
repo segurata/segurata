@@ -298,7 +298,9 @@ subscriber kinds need one call per notification and are not read).
   the connector's job.
 - Ask for the narrowest credential that can read what you need. Read-only keys first.
 - Never write a secret to stdout, stderr, a file or a log, not even in debug output. Never put one
-  in a URL query when the API accepts a header.
+  in a URL query when the API accepts a header. The core checks: a value of 6 characters or more
+  that it handed the connector is redacted wherever it appears in a log record, a scope, stderr or
+  the error, and a finding, status or plan that carries one is dropped and fails the run.
 - Never log a request or a response verbatim: responses may echo the key or hold tokens. Decode
   into typed fields and drop what you do not use.
 - Tests use synthetic values that look fake (`sk-TEST-not-a-real-key`) and assert they do not
