@@ -107,11 +107,10 @@ func TestLivenessAtScanTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	all, _ := json.Marshal(rec)
 	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
 	for _, s := range fx.secrets {
 		if len(s) >= 6 && strings.Contains(string(raw), s) {
-			t.Fatalf("a raw secret reached the output (%d bytes of records)", len(all))
+			t.Fatal("a raw secret reached the output")
 		}
 	}
 	if f.askedAbout(theirs) || f.askedAbout(theirSecret) {
