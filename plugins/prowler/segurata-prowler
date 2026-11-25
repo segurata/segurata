@@ -684,6 +684,26 @@ def prowler_args(prowler, project, outdir, config):
     return args
 
 
+# What a SIGTERM must clean up: the process groups of the Prowler runs under way, which run in
+# sessions of their own and so miss the signal segurata sends the plugin's group, and their output
+# directories. Set operations are atomic under the GIL; the handler only reads a copy.
+RUNNING = set()
+OUTDIRS = set()
+
+
+def on_sigterm(signum, _frame):
+    """segurata cancelled the run (timeout, Ctrl-C): stop every Prowler, which holds a live token,
+    remove the output directories and exit at once, without waiting for the worker threads."""
+    for pgid in list(RUNNING):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    for d in list(OUTDIRS):
+        shutil.rmtree(d, ignore_errors=True)
+    os._exit(128 + signum)
+
+
 def run_prowler(args, token, project, timeout):
     """Run Prowler with the token in its environment. Returns (exit code, stderr + log text)."""
     env = {k: v for k, v in os.environ.items()
@@ -693,6 +713,7 @@ def run_prowler(args, token, project, timeout):
     env.update(CLOUDSDK_AUTH_ACCESS_TOKEN=token, GOOGLE_CLOUD_PROJECT=project, CLOUDSDK_CORE_DISABLE_PROMPTS="1")
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             text=True, env=env, start_new_session=True)
+    RUNNING.add(proc.pid)
     try:
         _, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -702,6 +723,8 @@ def run_prowler(args, token, project, timeout):
             pass
         proc.communicate()
         raise Timeout()
+    finally:
+        RUNNING.discard(proc.pid)
     return proc.returncode, err or ""
 
 
@@ -720,6 +743,7 @@ def inspect_project(project, candidates, ctx):
             continue
         emit.add_secret(token)
         outdir = tempfile.mkdtemp(prefix="segurata-prowler-")  # mkdtemp makes it 0700
+        OUTDIRS.add(outdir)
         try:
             try:
                 code, text = run_prowler(prowler_args(ctx["prowler"], project, outdir, config), token, project, config.timeout)
@@ -749,6 +773,7 @@ def inspect_project(project, candidates, ctx):
                 return
         finally:
             shutil.rmtree(outdir, ignore_errors=True)
+            OUTDIRS.discard(outdir)
         profile = profile_project(gcloud, account, project, ctx["in_org"].get(project), emit.log)
         findings, counts = summarize(records, config, owner, project, profile)
         for f in findings:
@@ -873,6 +898,7 @@ def main(argv, stdin=sys.stdin, stdout=sys.stdout):
         if req.get("protocol") != PROTOCOL:
             sys.stderr.write("segurata-prowler: unsupported protocol %r\n" % req.get("protocol"))
             return 2
+        signal.signal(signal.SIGTERM, on_sigterm)
         inventory(req, Emitter(stdout))
         return 0
     sys.stderr.write("segurata-prowler: unknown subcommand %r\n" % argv[1])

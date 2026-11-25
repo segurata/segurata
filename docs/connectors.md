@@ -366,6 +366,9 @@ can refuse someone else's. It is never part of an external connector's request.
   connector could not start at all.
 - stderr is for human diagnostics; the core shows it with `--verbose`. More than 1 MiB of it fails
   the run.
+- On a timeout or Ctrl-C the core sends SIGTERM to the connector's process group, and SIGKILL 3
+  seconds later. Clean up on SIGTERM, and stop anything you started in a session of its own: it
+  is outside the group. On Windows only the connector process is killed.
 - The core takes the connector name from `describe`, never from the records, and computes ids.
 - Every stdout line must be a `finding`, `status`, `scope` or `log` record whose fields have the
   documented types, and every finding needs one of the five severities, in lowercase. The core
