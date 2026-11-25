@@ -84,7 +84,6 @@ var rules = []rule{
 		}
 		return s
 	}},
-	{connectors: []string{"browser-extensions"}, by: perFinding, kind: KindReview},
 }
 
 // defaultRule groups a finding that declares nothing.
