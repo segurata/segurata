@@ -110,7 +110,7 @@ func TestGroupingRules(t *testing.T) {
 		f.Evidence = map[string]any{"project": project}
 		return f
 	}
-	writeRun(t, out, t0, "gcp.jsonl", gcp("example", "k1"), gcp("example", "k2"), gcp("example", "k3"),
+	writeRun(t, out, t0, "gcp.jsonl", gcp("example", "k1"), gcp("example", "k2"), gcp("demo-proj-omega", "k3"),
 		finding.Status{Type: "status", Connector: "gcp", Account: "admin@x.com", State: finding.StateReauth, Detail: "run gcloud auth login admin@x.com"})
 
 	writeRun(t, out, t0, "macos.jsonl",
@@ -155,7 +155,7 @@ func TestGroupingRules(t *testing.T) {
 	byTitle(t, tr, "Crunchbase can read your account")
 	byTitle(t, tr, "Review 2 Slack apps with broad permissions in ws.slack.com")
 	byTitle(t, tr, "Restrict 2 API keys in GCP project example")
-	byTitle(t, tr, "Restrict 1 API key in GCP project example")
+	byTitle(t, tr, "Restrict 1 API key in GCP project demo-proj-omega")
 	backup := byTitle(t, tr, "No Time Machine backup is configured")
 	if backup.Theme != "mac" || backup.Key != pinnedKey(backup.Findings[0].ID) || backup.Next.URL != "https://example.com/backup-none" {
 		t.Errorf("mac item %+v", backup)
