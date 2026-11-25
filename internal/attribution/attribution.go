@@ -26,6 +26,7 @@ type Claims struct {
 	AWSAccount  string `json:"aws_account,omitempty"`  // decoded from an access key id
 	SlackTeam   string `json:"slack_team,omitempty"`   // T… from a webhook URL
 	GCPProject  string `json:"gcp_project,omitempty"`  // project id or number
+	GitHubLogin string `json:"github_login,omitempty"` // the login a token signs in as (liveness check)
 	AuthorEmail string `json:"author_email,omitempty"` // git history: the commit's author
 }
 
@@ -111,22 +112,30 @@ type Facts struct {
 	AWSAccounts  []string `json:"aws_accounts,omitempty"`
 	GCPProjects  []string `json:"gcp_projects,omitempty"`
 	SlackTeams   []string `json:"slack_teams,omitempty"`
+	GitHubLogins []string `json:"github_logins,omitempty"`
 	AuthorEmails []string `json:"author_emails,omitempty"`
 	RepoOwners   []string `json:"repo_owners,omitempty"`
 }
 
 // Add folds one sighting's claims in.
 func (f *Facts) Add(c Claims) {
-	add := func(list *[]string, v string) {
-		if v != "" && !slices.Contains(*list, v) {
+	add := func(list *[]string, v string, fold bool) {
+		if v != "" && !contains(*list, v, fold) {
 			*list = append(*list, v)
 			sort.Strings(*list)
 		}
 	}
-	add(&f.AWSAccounts, c.AWSAccount)
-	add(&f.GCPProjects, c.GCPProject)
-	add(&f.SlackTeams, c.SlackTeam)
-	add(&f.AuthorEmails, lower(c.AuthorEmail))
+	add(&f.AWSAccounts, c.AWSAccount, false)
+	add(&f.GCPProjects, c.GCPProject, false)
+	add(&f.SlackTeams, c.SlackTeam, false)
+	add(&f.GitHubLogins, c.GitHubLogin, true)
+	add(&f.AuthorEmails, lower(c.AuthorEmail), false)
+}
+
+// Clone is a deep copy, so adding to it leaves f alone.
+func (f Facts) Clone() Facts {
+	return Facts{AWSAccounts: slices.Clone(f.AWSAccounts), GCPProjects: slices.Clone(f.GCPProjects), SlackTeams: slices.Clone(f.SlackTeams),
+		GitHubLogins: slices.Clone(f.GitHubLogins), AuthorEmails: slices.Clone(f.AuthorEmails), RepoOwners: slices.Clone(f.RepoOwners)}
 }
 
 // AddRepoOwner records the GitHub owner of a repository that holds the secret.
@@ -163,6 +172,7 @@ func Attribute(f Facts, o Owned) Result {
 		{"AWS account", "aws_accounts", f.AWSAccounts, o.AWSAccounts, false},
 		{"GCP project", "gcp_projects", f.GCPProjects, o.GCPProjects, false},
 		{"Slack workspace", "slack_teams", f.SlackTeams, o.SlackTeams, false},
+		{"GitHub account", "github", f.GitHubLogins, o.GitHub, true},
 	}
 	var mine, foreign, blind []string
 	for _, k := range kinds {
@@ -195,6 +205,27 @@ func Attribute(f Facts, o Owned) Result {
 	}
 	r.Reasons = append(r.Reasons, hints(f, o)...)
 	return r
+}
+
+// Known is what the tracker knew when a scan started: the owner's accounts and, by fingerprint, the
+// facts earlier syncs gathered about each secret. A connector that must not act on someone else's
+// secret (the liveness check of local-secrets) asks it for a verdict at scan time.
+type Known struct {
+	Owned Owned
+	Facts map[string]Facts
+}
+
+// Of is the verdict on the secret with fingerprint fp: the facts known before, plus the claims this
+// scan's sightings of it make, against the owner's accounts. Unknown without a Known.
+func (k *Known) Of(fp string, claims []Claims) Owner {
+	if k == nil {
+		return Unknown
+	}
+	f := k.Facts[fp].Clone()
+	for _, c := range claims {
+		f.Add(c)
+	}
+	return Attribute(f, k.Owned).Owner
 }
 
 // hints are what authorship and repository ownership suggest.

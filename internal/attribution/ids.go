@@ -145,13 +145,31 @@ func (c Claims) Or(o Claims) Claims {
 		return b
 	}
 	return Claims{AWSAccount: pick(c.AWSAccount, o.AWSAccount), SlackTeam: pick(c.SlackTeam, o.SlackTeam),
-		GCPProject: pick(c.GCPProject, o.GCPProject), AuthorEmail: pick(c.AuthorEmail, o.AuthorEmail)}
+		GCPProject: pick(c.GCPProject, o.GCPProject), GitHubLogin: pick(c.GitHubLogin, o.GitHubLogin), AuthorEmail: pick(c.AuthorEmail, o.AuthorEmail)}
 }
 
 // NamesAccount reports whether a claim names an account, project or workspace: what can make a
 // verdict, unlike the commit author, which is only a hint.
 func (c Claims) NamesAccount() bool {
-	return c.AWSAccount != "" || c.SlackTeam != "" || c.GCPProject != ""
+	return c.AWSAccount != "" || c.SlackTeam != "" || c.GCPProject != "" || c.GitHubLogin != ""
+}
+
+// FromAccount reads the claims of the account a provider says a secret signs in as, in the
+// "<provider>:<id>" form the liveness check records: an AWS account id, a Slack workspace id, a
+// GitHub login. Other providers' accounts (a Hugging Face or npm user) name no account attribution
+// knows, and claim nothing.
+func FromAccount(account string) Claims {
+	kind, id, _ := strings.Cut(account, ":")
+	switch {
+	case id == "":
+	case kind == "aws" && awsAccountID.MatchString(id):
+		return Claims{AWSAccount: id}
+	case kind == "slack":
+		return Claims{SlackTeam: id}
+	case kind == "github":
+		return Claims{GitHubLogin: id}
+	}
+	return Claims{}
 }
 
 // Empty reports whether no claim is set.

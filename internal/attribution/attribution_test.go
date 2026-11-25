@@ -99,6 +99,8 @@ func TestAttribute(t *testing.T) {
 		{"foreign AWS but project kind unknown", Facts{AWSAccounts: []string{"999999999999"}, SlackTeams: []string{"T9"}}, Owned{AWSAccounts: owned.AWSAccounts}, Unknown, Low, "none of yours is known"},
 		{"authorship is a hint", Facts{AuthorEmails: []string{"ME@x.com"}, RepoOwners: []string{"example-org"}}, owned, Unknown, Low, "hint: committed by you"},
 		{"third-party repository is a hint", Facts{AuthorEmails: []string{"them@y.com"}, RepoOwners: []string{"instructure"}}, owned, Unknown, Low, "hint: in a repository of instructure"},
+		{"token of the owner's GitHub login", Facts{GitHubLogins: []string{"OctoCat"}}, owned, Mine, High, "GitHub account OctoCat is yours"},
+		{"token of another GitHub login", Facts{GitHubLogins: []string{"mallory"}}, owned, NotMine, Medium, "GitHub account mallory is none"},
 	}
 	for _, c := range cases {
 		r := Attribute(c.facts, c.owned)
@@ -182,5 +184,52 @@ func TestDiscover(t *testing.T) {
 		if !slices.Equal(p[0], p[1]) {
 			t.Errorf("%v, want %v", p[0], p[1])
 		}
+	}
+}
+
+func TestFromAccount(t *testing.T) {
+	cases := map[string]Claims{
+		"aws:012345678901":  {AWSAccount: "012345678901"},
+		"slack:T0123":       {SlackTeam: "T0123"},
+		"github:octocat":    {GitHubLogin: "octocat"},
+		"huggingface:alice": {},
+		"aws:not-an-id":     {},
+		"":                  {},
+	}
+	for account, want := range cases {
+		if got := FromAccount(account); got != want {
+			t.Errorf("%q: %+v, want %+v", account, got, want)
+		}
+	}
+	if !(Claims{GitHubLogin: "x"}).NamesAccount() {
+		t.Error("a GitHub login names an account")
+	}
+	var f Facts
+	f.Add(Claims{GitHubLogin: "OctoCat"})
+	f.Add(Claims{GitHubLogin: "octocat"})
+	if len(f.GitHubLogins) != 1 {
+		t.Errorf("logins folded without case: %v", f.GitHubLogins)
+	}
+}
+
+func TestKnownOf(t *testing.T) {
+	owned := Owned{AWSAccounts: []string{"012345678901"}}
+	k := &Known{Owned: owned, Facts: map[string]Facts{"fp-old": {AWSAccounts: []string{"012345678901"}}}}
+	if got := k.Of("fp-old", nil); got != Mine {
+		t.Errorf("facts an earlier sync gathered: %s", got)
+	}
+	if got := k.Of("fp-new", []Claims{{AWSAccount: "999999999999"}}); got != NotMine {
+		t.Errorf("claims of this scan: %s", got)
+	}
+	if got := k.Of("fp-none", nil); got != Unknown {
+		t.Errorf("nothing known: %s", got)
+	}
+	k.Of("fp-old", []Claims{{AWSAccount: "999999999999"}})
+	if len(k.Facts["fp-old"].AWSAccounts) != 1 {
+		t.Error("Of changed the facts it was lent")
+	}
+	var none *Known
+	if got := none.Of("fp", []Claims{{AWSAccount: "012345678901"}}); got != Unknown {
+		t.Errorf("no Known: %s", got)
 	}
 }

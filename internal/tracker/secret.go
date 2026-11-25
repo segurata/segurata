@@ -223,10 +223,7 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 	var facts attribution.Facts
 	if it != nil && it.Secret != nil && it.Secret.Attribution != nil {
-		facts = it.Secret.Attribution.Facts
-		facts.AWSAccounts = append([]string(nil), facts.AWSAccounts...)
-		facts.GCPProjects = append([]string(nil), facts.GCPProjects...)
-		facts.SlackTeams = append([]string(nil), facts.SlackTeams...)
+		facts = it.Secret.Attribution.Facts.Clone()
 	}
 	upstream := false
 	for _, s := range g {
