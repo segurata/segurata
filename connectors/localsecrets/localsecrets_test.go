@@ -166,15 +166,6 @@ func TestPEMBodyIsTheSameInEveryForm(t *testing.T) {
 	}
 }
 
-func specificByType(typ string) *pattern {
-	for i := range specific {
-		if specific[i].typ == typ {
-			return &specific[i]
-		}
-	}
-	return nil
-}
-
 func TestPEMEncrypted(t *testing.T) {
 	_, plain := fakePEM("OPENSSH", opensshBlob("none"))
 	_, locked := fakePEM("OPENSSH", opensshBlob("aes256-ctr"))

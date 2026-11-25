@@ -25,12 +25,14 @@ import (
 // earlier scan saw. That is only valid while every old tip is still reachable from a current one;
 // when a ref was rewritten or deleted, the commits it held may be gone, their leaks with them, and
 // the run falls back to a full scan. So does a change of cache format, gitleaks version, gitleaks
-// configuration or fingerprint key.
+// configuration or fingerprint key, or of how this connector reads gitleaks' leaks.
 //
 // The cache holds evidence only (fingerprints, redacted hints, paths, commits), never a value: it
 // stores the evidence after prepare, which has already refused any that would contain the value.
 
-const historyCacheVersion = 1
+// historyCacheVersion goes up when the cached evidence of the same leaks would differ: version 2
+// reads AWS secret access keys out of gitleaks' generic-api-key leaks (markAWSSecretLeaks).
+const historyCacheVersion = 2
 
 // maxLogOpts bounds the commit list passed to gitleaks, well under any OS argument limit.
 var maxLogOpts = 256 << 10

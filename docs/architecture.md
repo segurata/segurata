@@ -1088,6 +1088,15 @@ every run without a new scan.
   day) or file modification time is older is expired (`public`, note "expired"). Pre-signed URLs
   (`X-Amz-Credential=` or `AWSAccessKeyId=` before the key id) are their own type, low impact, and
   the temporary keys and pre-signed URLs of one file collapse into one finding counting them all.
+- AWS secret access keys (`aws-secret-key`) are 40 characters of base64 and nothing in them names
+  AWS, so the key name decides. One that holds `secret_access_key` (`aws_secret_access_key`, an
+  Ansible `app_secret_access_key`, the SDKs' `secretAccessKey`) makes the value one anywhere; a
+  weaker secret-ish name (`secret_key`, `app_secret`) only within five lines of a long-term (AKIA)
+  key id in the same file, or file and commit, outside trails. Without that, the value stays a
+  generic match. gitleaks has no rule for these keys and reports them as `generic-api-key`, which
+  is noise; the same rule reads them from the key name gitleaks matched (`markAWSSecretLeaks`). 40
+  hex digits (a git commit hash) never are one. The history cache's format went to version 2 with
+  this, so cached history is scanned in full once more.
 - URL credentials (`url-credentials`, `url-token-param`) are judged by host, written into the
   note (`postgresql://…@host`, `https://host/…?access_token=…`): localhost, loopback, `example.*`,
   `.local`, `.test`, `.invalid` are noise; private, CGNAT and link-local addresses, single-label
@@ -1259,14 +1268,20 @@ its provider's cheapest read-only identity endpoint and records live, dead or un
 end of the scan, before the findings are emitted, for at most 10 minutes and ending a minute before
 the run's deadline. The findings are emitted whatever happens to the check: a run cancelled or out
 of time while it probes still reports the scan, and is marked interrupted. The
-values of secrets of a supported type stay in memory for the run; an AWS secret access key is tried
-with the one long-term (AKIA) key id found in the same file (or commit and file); with none or
-several it is not tried. A temporary (ASIA) key id never pairs: it needs its session token. One key
-id goes with one secret key, the first by fingerprint; other secret keys beside it are not tried. A secret is tried when the run reports it (noise never is, which leaves copies in other
+values of secrets of a supported type stay in memory for the run. An AWS secret access key is tried
+with the long-term (AKIA) key id written nearest it in the same file (or file and commit), at most
+five lines away (`awsPairLines`: a credentials file, an `.env` or an Ansible vars block puts the two
+on consecutive lines, sometimes a region or bucket between), on the side the file writes its key
+ids (above the secret key when the file's first key id comes before its first secret key), one key
+id to one secret key, nearest first (`awsPlace.pair`). A file of several pairs so tries each secret
+key with its own key id. A secret key with no key id that close takes the file's only key id,
+however far; with none, or with several all further away, it is tried alone (unsupported). A
+temporary (ASIA) key id never pairs: it needs its session token. A secret is tried when the run reports it (noise never is, which leaves copies in other
 people's repositories alone) and its attribution, computed as the next sync would (the tracker's
 facts plus this scan's claims, against the tracker's accounts and config `owned`, lent by the core
 in `connector.Request.Known`, never sent to an external connector), is one of `owners`: for an AWS
-key pair, the key id's attribution as well as the secret key's. The checker applies the owner and
+key pair, the key id's attribution as well as the secret key's, which counts the key id's claims as
+its own (in a file of two accounts it names none by itself). The checker applies the owner and
 provider gates to every fingerprint of a probe before it looks in the cache or recovers a value, so
 someone else's key is neither sent nor answered from the cache. A run without a tracker gets no
 attribution and tries nothing.
@@ -1277,7 +1292,7 @@ at check time: `git cat-file -s` and `git cat-file blob <commit>:<path>` (files 
 the file as committed, and on the line gitleaks reported, or the one before or after, the window
 that fits the redacted hint and has the secret's fingerprint is the value
 (`fingerprint.Key.Find`, the search `rotations replace` uses to locate an old value). An AWS secret
-key brings the one key id committed in the same file and commit. The value lives in the probe for
+key brings the key id it pairs with, by the same rule, in the same file and commit. The value lives in the probe for
 that one call. One that cannot be read (a commit gone, a file too big, a hint without a length)
 stays unchecked, counted as "without a value at hand".
 
