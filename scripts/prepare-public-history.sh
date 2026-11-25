@@ -3,8 +3,9 @@
 # its history, rewritten with git filter-repo so the owner's private identifiers (scripts/identifiers.py
 # describes the file) are replaced in file contents and commit and tag messages. Then it gates the
 # result (identifiers, gitleaks, the branch tip unchanged, only that branch and tags) and writes a
-# report. The source repository is only cloned from, never changed. This script never pushes: what
-# the owner runs afterwards is in docs/releasing.md, "Going public".
+# report. Everything it prints, the report included, goes through identifiers.py's mask, so no
+# identifier is ever shown. The source repository is only cloned from, never changed. This script
+# never pushes: what the owner runs afterwards is in docs/releasing.md, "Going public".
 #
 # Usage: scripts/prepare-public-history.sh [options]
 #   --source URL|PATH      repository to copy; default: this repository's origin
@@ -29,6 +30,7 @@ identifiers="${SEGURATA_PUBLIC_GATE:-$HOME/.config/segurata/public-gate.txt}"
 mailmap=""
 workdir=""
 drop=()
+self=("$0" "$@")
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
   case "$1" in
@@ -50,6 +52,10 @@ done
 [ -f "$identifiers" ] || die "no identifiers file at $identifiers (--identifiers or SEGURATA_PUBLIC_GATE)"
 python3 "$here/identifiers.py" check "$identifiers" "$repo" || exit 2
 if [ -d "$source" ]; then python3 "$here/identifiers.py" check "$identifiers" "$source" || exit 2; fi
+# From here on everything printed goes through the mask: this script runs again under it.
+if [ -z "${SEGURATA_GATE_MASKED:-}" ]; then
+  SEGURATA_GATE_MASKED=1 exec python3 "$here/identifiers.py" run-masked "$identifiers" "$BASH" "${self[@]}"
+fi
 [ -z "$mailmap" ] || [ -f "$mailmap" ] || die "no mailmap at $mailmap"
 if [ -n "$workdir" ]; then
   [ ! -e "$workdir" ] || die "$workdir already exists; pick a new folder"
@@ -137,6 +143,7 @@ gates() {
   fi
 }
 
-gates >"$report" 2>&1
+gates >"$secret_dir/report" 2>&1
+python3 "$here/identifiers.py" mask "$identifiers" <"$secret_dir/report" >"$report"
 cat "$report"
 exit "$status"

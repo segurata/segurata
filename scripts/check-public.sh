@@ -3,7 +3,8 @@
 # and the owner's private identifiers (client names, internal hosts, project ids...) over their
 # content and paths. The identifiers file lives outside the repository, because it would leak what
 # it lists; its format is in scripts/identifiers.py. Reports name locations only, never a secret
-# value or an identifier. CI runs it without identifiers; locally it runs as a pre-push hook
+# value or an identifier: with an identifiers file, every line this script and its tools print goes
+# through identifiers.py's mask. CI runs it without identifiers; locally it runs as a pre-push hook
 # (CONTRIBUTING.md).
 #
 # Usage: scripts/check-public.sh [--identifiers FILE] [--require-identifiers] [--history]
@@ -19,6 +20,7 @@ usage() { sed -n '/^# Usage:/,/^# Exit/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 
 identifiers="${SEGURATA_PUBLIC_GATE:-$HOME/.config/segurata/public-gate.txt}"
 require_identifiers=false
 history=false
+self=("$0" "$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --identifiers) [ $# -ge 2 ] || usage; identifiers="$2"; shift 2 ;;
@@ -33,6 +35,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 command -v gitleaks >/dev/null || { echo "check-public: gitleaks is not on PATH" >&2; exit 2; }
 if [ -f "$identifiers" ]; then
   python3 "$here/identifiers.py" check "$identifiers" "$repo" || exit 2
+  # From here on everything printed goes through the mask: this script runs again under it.
+  if [ -z "${SEGURATA_GATE_MASKED:-}" ]; then
+    SEGURATA_GATE_MASKED=1 exec python3 "$here/identifiers.py" run-masked "$identifiers" "$BASH" "${self[@]}"
+  fi
 elif $require_identifiers; then
   echo "check-public: no identifiers file at $identifiers (--identifiers or SEGURATA_PUBLIC_GATE)" >&2
   exit 2
