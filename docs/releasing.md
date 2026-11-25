@@ -50,7 +50,10 @@ Actions are pinned by commit SHA and tools by exact version, each a release publ
 days before it was pinned. Dependabot proposes action updates
 ([`.github/dependabot.yml`](../.github/dependabot.yml)); reviewers hold them until the release is 4
 days old. The tool versions inside `release.yml` (`cosign-release`, `syft-version`, the goreleaser
-`version`) are bumped by hand under the same rule.
+`version`) are bumped by hand under the same rule, and so are the tool versions inside `ci.yml`
+(staticcheck, govulncheck, gitleaks and its SHA-256). The Go toolchain that tests and builds a
+release is the `toolchain` line of `go.mod`: bump it to each Go patch release once it is 4 days old,
+since govulncheck fails CI on standard library vulnerabilities the older patch still has.
 
 ## Verifying a release
 
