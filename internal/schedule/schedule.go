@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -74,8 +75,7 @@ type Env struct {
 	Now    func() time.Time
 	// Connectors are the installed connectors: the default selection, and which drive the browser.
 	Connectors []connector.Connector
-	// Config is the owner's config: cdp_url, keep_runs_days, browser_stale_days, and the instances
-	// of a browser connector a run skips.
+	// Config is the owner's config: cdp_url, keep_runs_days and browser_stale_days.
 	Config config.Config
 	// Browser checks that Brave answers at a CDP address (cdp.Brave). It never starts a browser.
 	Browser func(ctx context.Context, cdpURL string) (cdp.Version, error)
@@ -399,7 +399,7 @@ func (e Env) printSystemd(o Options) error {
 }
 
 func (e Env) confirm(o Options) (bool, error) {
-	ok, err := confirmFunc(e.IO.In, e.IO.Out, o.Yes, e.TTY)
+	ok, err := prompt.Confirm(e.IO.In, e.IO.Out, o.Yes, e.TTY)
 	if err == nil && !ok {
 		fmt.Fprintln(e.IO.Out, "Not applied.")
 	}

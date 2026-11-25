@@ -6,9 +6,11 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -328,6 +330,37 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual([s["state"] for s in alpha], ["error"])
         self.assertIn("within 1 s", alpha[0]["detail"])
         self.assertEqual([s["state"] for s in of(records, "status") if s.get("scope") == BETA], ["ok"])
+
+    def test_sigterm_stops_prowler_and_removes_its_output(self):
+        """segurata ends a cancelled plugin with SIGTERM to its process group. Prowler runs in a
+        session of its own, so the plugin kills it and removes its output directory itself."""
+        self.fake.flag("slow", ALPHA)
+        env = dict(os.environ, FAKE_DIR=self.fake.dir, PATH=FAKEBIN + os.pathsep + "/usr/bin:/bin")
+        plugin = subprocess.Popen([sys.executable, "-I", SCRIPT, "inventory"], stdin=subprocess.PIPE,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True, env=env)
+        plugin.stdin.write(json.dumps({"protocol": 1, "config": {"projects": [ALPHA]}}))
+        plugin.stdin.close()
+        pid_file = os.path.join(self.fake.dir, "slow", ALPHA + ".pid")
+        deadline = time.monotonic() + 20
+        while not os.path.exists(pid_file) or not os.path.getsize(pid_file):
+            self.assertLess(time.monotonic(), deadline, "Prowler never started")
+            time.sleep(0.05)
+        with open(pid_file) as f:
+            pgid = int(f.read())
+        outdir = self.fake.prowler_runs()[0][1]["outdir"]
+        plugin.send_signal(signal.SIGTERM)
+        self.assertNotEqual(plugin.wait(timeout=10), 0)
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                break
+            if time.monotonic() > deadline:
+                os.killpg(pgid, signal.SIGKILL)
+                self.fail("Prowler outlived the plugin")
+            time.sleep(0.05)
+        self.assertFalse(os.path.exists(outdir), "the output directory is left behind")
 
     def test_crash_is_an_error_with_prowlers_reason(self):
         self.fake.flag("crash", GAMMA)

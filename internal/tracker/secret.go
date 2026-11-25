@@ -118,16 +118,12 @@ func Sightings(fs []finding.Finding) []Sighting {
 	return out
 }
 
+// secretEvidence is the evidence of a local-secrets finding.
 func secretEvidence(f finding.Finding) (secretrisk.Evidence, bool) {
-	if f.Connector != SecretsConnector || f.Evidence == nil {
+	if f.Connector != SecretsConnector {
 		return secretrisk.Evidence{}, false
 	}
-	raw, _ := json.Marshal(f.Evidence)
-	var ev secretrisk.Evidence
-	if json.Unmarshal(raw, &ev) != nil || ev.Fingerprint == "" {
-		return secretrisk.Evidence{}, false
-	}
-	return ev, true
+	return secretrisk.EvidenceOf(f)
 }
 
 // SecretReport counts what folding secret sightings changed.

@@ -14,7 +14,7 @@ import (
 
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
-	runfile "github.com/segurata/segurata/internal/run" // a report names its runs run
+	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -149,7 +149,7 @@ func readRun(l runfile.Latest, annotate func(*finding.Finding)) (*Run, error) {
 		file, skipped = l.Evidence, dateOf(l.File)
 	}
 	run := &Run{File: file, Date: dateOf(file), InspectedNothing: skipped, InspectedWhy: why, Coverage: rf.Coverage(), Findings: rf.Findings, Statuses: rf.Statuses}
-	run.Label = tracker.RunLabel(file, rf)
+	run.Label = rf.Label(file)
 	if l.Unfinished != "" {
 		run.Unfinished = dateOf(l.Unfinished)
 	}

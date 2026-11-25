@@ -589,9 +589,6 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 		}
 		summary = fmt.Sprintf("Add a passphrase (ssh-keygen -p -f %s) or replace the key with one that has it; see %s.", ev.Path, ev.Fix)
 	}
-	var evidence map[string]any
-	raw, _ := json.Marshal(ev)
-	_ = json.Unmarshal(raw, &evidence)
 	return finding.Finding{
 		Account:     localAccount,
 		Scope:       secretScope(ev),
@@ -599,7 +596,7 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 		Kind:        kind,
 		Severity:    secretrisk.SeverityOf(prio),
 		Title:       title,
-		Evidence:    evidence,
+		Evidence:    ev.Map(),
 		Remediation: remedy(summary, t.RotateURL, ev),
 	}
 }

@@ -58,3 +58,29 @@ func TestBackupsInTheSameSecondDoNotCollide(t *testing.T) {
 		t.Fatalf("second backup in the same second: %q %q %v", a, b, err)
 	}
 }
+
+// ReadJSON is the one reader of segurata's own JSON state: a missing file is not an error, a
+// file that cannot be read or decoded is, and each caller decides what that costs it.
+func TestReadJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.json")
+	var v struct{ A int }
+	if found, err := ReadJSON(path, &v); found || err != nil {
+		t.Fatalf("missing: found %v, err %v", found, err)
+	}
+	if err := WriteJSON(path, map[string]int{"A": 7}); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := ReadJSON(path, &v); !found || err != nil || v.A != 7 {
+		t.Fatalf("written: found %v, err %v, v %+v", found, err, v)
+	}
+	if err := os.WriteFile(path, []byte("{torn"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := ReadJSON(path, &v); !found || err == nil {
+		t.Fatalf("torn: found %v, err %v", found, err)
+	}
+	if found, err := ReadJSON(dir, &v); found || err == nil {
+		t.Fatalf("a directory: found %v, err %v", found, err)
+	}
+}

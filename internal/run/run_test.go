@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/proc"
@@ -700,5 +702,125 @@ func TestLentReachesTheConnector(t *testing.T) {
 	raw, _ := json.Marshal(connector.Request{Known: known})
 	if strings.Contains(string(raw), "012345678901") {
 		t.Error("Known would reach an external connector")
+	}
+}
+
+// A plugin that echoes the credential the core handed it is a bug, and nothing it prints may
+// carry the value anywhere segurata shows or keeps it: the run file, the verbose log, the run's
+// error. A finding or status that carries it is dropped and fails the run; a log line, a scope
+// and stderr show the redacted form.
+func TestAPluginEchoingItsSecretLeaksNothing(t *testing.T) {
+	const value = "sk-synthetic-plugin-secret-0123456789"
+	t.Setenv("SEGURATA_TEST_PLUGIN_SECRET", value)
+	e := connectortest.Plugin(t, "echo", `case "$1" in
+describe) echo '{"name":"echo","protocol":2}';;
+inventory) req=$(cat); v=$(printf '%s' "$req" | sed 's/.*"K":"\([^"]*\)".*/\1/')
+  echo '{"type":"status","account":"a","state":"ok"}'
+  echo '{"type":"finding","account":"a","resource":{"type":"t","id":"x"},"kind":"grant","severity":"high","title":"key '"$v"'"}'
+  echo '{"type":"status","account":"b","state":"error","detail":"bad '"$v"'"}'
+  echo '{"type":"finding","account":"a","resource":{"type":"t","id":"y"},"kind":"grant","severity":"high","title":"clean","evidence":{"k":"'"$v"'"}}'
+  echo '{"type":"finding","account":"a","resource":{"type":"t","id":"z"},"kind":"grant","severity":"low","title":"clean"}'
+  echo '{"type":"scope","scope":"repo:'"$v"'","inspected":false,"reason":"saw '"$v"'"}'
+  echo '{"type":"log","msg":"using '"$v"'"}'
+  echo "stderr has $v" >&2
+  exit 1;;
+esac
+`)
+	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"echo": {Secrets: map[string]string{"K": "env:SEGURATA_TEST_PLUGIN_SECRET"}}}}
+	var verbose bytes.Buffer
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, e), t.TempDir(), &verbose, Lent{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := res[0]
+	raw, _ := os.ReadFile(r.File)
+	for where, text := range map[string]string{"run file": string(raw), "verbose log": verbose.String(), "error": fmt.Sprint(r.Err)} {
+		if strings.Contains(text, value) {
+			t.Errorf("the secret reached the %s:\n%s", where, text)
+		}
+	}
+	if r.Err == nil || !strings.Contains(r.Err.Error(), "3 records carried a secret") {
+		t.Fatalf("the run must fail on the echoed secret, err = %v", r.Err)
+	}
+	if !strings.Contains(r.Err.Error(), "stderr has …6789(37)") {
+		t.Errorf("stderr must show the redacted form: %v", r.Err)
+	}
+	if r.End.Complete || len(r.Findings) != 1 || r.Findings[0].Resource.ID != "z" {
+		t.Fatalf("complete %v, findings %+v: only the clean finding may arrive", r.End.Complete, r.Findings)
+	}
+	if !strings.Contains(verbose.String(), "using …6789(37)") {
+		t.Errorf("the log line must show the redacted form:\n%s", verbose.String())
+	}
+}
+
+// browserFake is a connector that drives the browser over CDP and counts its runs.
+type browserFake struct{ ran *int }
+
+func (browserFake) Describe() connector.Description {
+	return connector.Description{Name: "browserfake", Protocol: 1, Needs: []string{"cdp"}}
+}
+
+func (b browserFake) Inventory(context.Context, connector.Request, connector.Emitter) error {
+	*b.ran++
+	return nil
+}
+
+// setBraveCheck replaces the Brave probe for the test: no test reaches a real browser.
+func setBraveCheck(t *testing.T, check func(context.Context, string) (cdp.Version, error)) *int {
+	t.Helper()
+	calls := 0
+	old := BraveCheck
+	BraveCheck = func(ctx context.Context, url string) (cdp.Version, error) { calls++; return check(ctx, url) }
+	t.Cleanup(func() { BraveCheck = old })
+	return &calls
+}
+
+// Only Brave is driven, however the inventory was started: one probe before the run, and when
+// Brave does not answer, or another browser does, every browser connector's run ends at once with
+// the reason, inspecting nothing and resolving no secret, while the others run.
+func TestBrowserConnectorsRunOnlyAgainstBrave(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		err          error
+	}{
+		{"nothing answers", ReasonUnreachable, errors.New("cdp: browser not reachable at test")},
+		{"not brave", ReasonNotBrave, fmt.Errorf("cdp: the browser at test (Chrome/156) is %w", cdp.ErrNotBrave)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probes := setBraveCheck(t, func(context.Context, string) (cdp.Version, error) { return cdp.Version{}, tc.err })
+			ran := 0
+			other := &fake{}
+			cfg := config.Config{CDPURL: "http://cdp.invalid", Connectors: map[string]config.ConnectorConfig{
+				"browserfake:work": {Secrets: map[string]string{"X": "env:SEGURATA_TEST_SECRET"}}, "browserfake:home": {},
+			}}
+			t.Setenv("SEGURATA_TEST_SECRET", "never-resolved-value")
+			res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, browserFake{&ran}, other), t.TempDir(), nil, Lent{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ran != 0 || *probes != 1 || other.got.Protocol == 0 {
+				t.Fatalf("browser connector ran %d times, %d probes, other ran: %v", ran, *probes, other.got.Protocol != 0)
+			}
+			for _, r := range res {
+				if r.Name == "fake" {
+					continue
+				}
+				e := r.End
+				if r.Err == nil || e.Complete || !strings.HasPrefix(e.Error, tc.reason) || len(e.Scopes.Skipped) != 1 ||
+					e.Scopes.Skipped[0].Scope != finding.ScopeAll || e.SecretFingerprints != nil {
+					t.Fatalf("%s: err %v, run_end %+v", r.Name, r.Err, e)
+				}
+			}
+		})
+	}
+	probes := setBraveCheck(t, func(context.Context, string) (cdp.Version, error) { return cdp.Version{Browser: "Chrome/156"}, nil })
+	ran := 0
+	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, browserFake{&ran}), t.TempDir(), nil, Lent{})
+	if err != nil || res[0].Err != nil || ran != 1 || *probes != 1 {
+		t.Fatalf("with Brave: err %v %v, ran %d, probes %d", err, res[0].Err, ran, *probes)
+	}
+	*probes = 0
+	if _, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, &fake{}), t.TempDir(), nil, Lent{}); err != nil || *probes != 0 {
+		t.Fatalf("probed %d times without a browser connector (err %v)", *probes, err)
 	}
 }

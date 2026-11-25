@@ -351,7 +351,7 @@ func connectT(t *testing.T, b *fakeBrowser) *Client {
 	t.Helper()
 	pollInterval = time.Millisecond
 	srv := b.serve(t)
-	c, err := Connect(context.Background(), srv.URL+"/")
+	c, err := dial(context.Background(), srv.URL+"/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,5 +654,27 @@ func TestBraveFailsFastWhenNothingAnswers(t *testing.T) {
 		if took := time.Since(start); took > 2*time.Second {
 			t.Fatalf("%s: took %s", url, took)
 		}
+	}
+}
+
+// Connect is the only way into the browser from outside this package, and it drives only Brave:
+// another browser on the port gets the one hidden probe page, closed at once, and nothing else.
+func TestConnectRefusesABrowserThatIsNotBrave(t *testing.T) {
+	b := &fakeBrowser{browser: "Chrome/156.0.8078.74", value: false}
+	c, err := Connect(context.Background(), b.serve(t).URL)
+	if !errors.Is(err, ErrNotBrave) || c != nil {
+		t.Fatalf("Connect = %v, %v", c, err)
+	}
+	if len(b.creates) != 1 || b.creates[0]["hidden"] != true || len(b.closed) != 1 {
+		t.Fatalf("createTarget %v, closed %v", b.creates, b.closed)
+	}
+	brave := &fakeBrowser{browser: "Chrome/156.0.8078.74", value: true}
+	c, err = Connect(context.Background(), brave.serve(t).URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Send(context.Background(), "Bogus.method", nil, ""); err == nil {
+		t.Fatal("the connection Connect returned does not work")
 	}
 }

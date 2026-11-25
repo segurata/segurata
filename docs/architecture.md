@@ -107,11 +107,11 @@ when a skipped scope matches its scope or its account (`finding.Coverage`).
 
 **Consumers.**
 
-- `run.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
+- `runfile.LatestRuns` (and `LatestFiles`) take, per instance, the newest run with `run_end`,
   and the newest such run before it as the previous one; a newer file without `run_end` is passed
   over and named. When that run inspected nothing (its `run_end` skips `*`: the connector failed,
   or a scheduled run could not reach the browser), they also name the newest finished run that
-  inspected something as its evidence. `run.Read` drops a half-written last line of such a file.
+  inspected something as its evidence. `runfile.Read` drops a half-written last line of such a file.
 - `report` shows each instance's latest run and never calls a finding resolved; closing is the
   tracker's job (below). Its "Run completeness" section names
   partial runs and their skipped scopes, runs without `run_end`, and newer runs that did not
@@ -343,7 +343,7 @@ owner's after all. Ignoring it by hand afterwards sticks.
 ### Lifecycle: `segurata track sync`
 
 `track sync` runs at the end of `inventory`, as `rotations sync`, or by hand. It reads the latest
-finished run of every connector instance (`run.LatestFiles`) and:
+finished run of every connector instance (`runfile.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
    syncing two output folders (interactive and scheduled) never makes items flap. A run's time is
@@ -534,7 +534,7 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   actions and protocol 2), and only `cmd/segurata` imports it; a test enforces that. Connectors
   build on the contract in `internal/connector` (`Plan`, `Allowlist`, `Executor`,
   `ActionChmod600`), other commands confirm through `internal/prompt`, and the latest-run reader
-  is `internal/run`.
+  is `internal/runfile`.
 - HTTP writes (`plan.calls`: method, URL and the name of the credential) go through
   `connectors/internal/httpw`, a client separate from the GET-only `httpx` (which follows
   redirects but drops the credential headers on a hop to another host or port): it sends bodiless
@@ -594,7 +594,7 @@ opens the item again.
 `segurata report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
 changes:
 
-- the latest finished run of every connector instance, through `run.LatestRuns` and `run.Read`
+- the latest finished run of every connector instance, through `runfile.LatestRuns` and `runfile.Read`
   (findings, statuses and `run_end`);
 - the tracker's acceptances, which annotate every finding as `inventory` does, so an acceptance
   made after the run counts and an expired one shows again;
@@ -650,15 +650,14 @@ so an agent installed before that runs with the 24h bound until it is installed 
 1. Runs `segurata inventory --out ~/.segurata/out <connectors>`, which ends in `track sync`.
    Without `--connectors`, every installed connector. The browser connectors (those whose
    `describe` needs `cdp`) run only when Brave answers at `cdp_url`; see "Browser connectors in a
-   scheduled run" below. When they were the only ones selected and were skipped, `segurata track
-   sync --out ~/.segurata/out` runs instead.
+   scheduled run" below.
 2. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three of
-   the open P0 and P1 items that sync found or reopened (history `found` or `reopened` since the
-   run started), by title: the tracker is the one place runs are compared. Titles never carry
+   the open P0 and P1 items that sync found, reopened or raised to P1 or P0 (history `found`,
+   `reopened`, or `priority` with action `raised`, since the run started), by title: the tracker is the one place runs are compared. Titles never carry
    secrets; evidence is never shown. Each is also written to the log.
 3. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
-4. Once the report is written, prunes `~/.segurata/out` (`run.Prune`): it removes the
+4. Once the report is written, prunes `~/.segurata/out` (`runfile.Prune`): it removes the
    `<date>/*.jsonl` files and leftover `*.partial` files of days older than `keep_runs_days` in
    the config (default 30; a negative value keeps everything), except the latest finished run of
    each instance and a newer unfinished one, which the tracker, `report` and `remediate` read,
@@ -669,24 +668,27 @@ so an agent installed before that runs with the 24h bound until it is installed 
 
 ### Browser connectors in a scheduled run
 
-Before the inventory, `cdp.Brave` checks `cdp_url` (from the config, default
-`http://127.0.0.1:9222`, or `SEGURATA_CDP`) under a 15-second bound inside the inventory's
-deadline: `/json/version` with a 3-second timeout, then `navigator.brave.isBrave()` in a hidden
-`about:blank` target that is closed at once. Brave reports itself as `Chrome/…` in the `Browser`
-field and in its user agent (Brave 156, 2026-11-25), so that field cannot tell it from Chrome.
+Only Brave is driven, however a run was started. `cdp.Connect`, the one way into the browser,
+first proves the browser at `cdp_url` (from the config, default `http://127.0.0.1:9222`, or
+`SEGURATA_CDP`) is Brave: `/json/version` with a 3-second timeout, then
+`navigator.brave.isBrave()` in a hidden `about:blank` target that is closed at once. Brave reports
+itself as `Chrome/…` in the `Browser` field and in its user agent (Brave 156, 2026-11-25), so that
+field cannot tell it from Chrome. `run.Inventory` makes the same check once (`cdp.Brave`, under a
+15-second bound) before any connector that needs `cdp`, built-in or external, so a plugin that
+connects by itself never reaches another browser either.
 
-- Brave answers: the browser connectors join the one inventory and scan as they do interactively,
-  in hidden targets (see "Browser connectors"). Each instance keeps its own timeout. A signed-out
-  account or a "verify it's you" wall is a `signedout` or `reauth` status; nothing waits for the
-  owner and `signin` never runs unattended.
+- Brave answers: the browser connectors join the inventory and scan in hidden targets (see
+  "Browser connectors"). Each instance keeps its own timeout. A signed-out account or a "verify
+  it's you" wall is a `signedout` or `reauth` status; nothing waits for the owner and `signin`
+  never runs unattended.
 - Nothing answers, or the browser is not Brave: nothing is started in its place (no other browser,
-  no `open`). Each configured instance of each browser connector gets a run file written through
-  `run.Inventory` by a stand-in that inspects nothing and fails with "browser not reachable over
-  CDP" (or "the browser on the debugging port is not Brave"): its `run_end` skips `*` with that
-  reason and carries it as `error`, so `track sync` closes neither its findings nor its statuses,
-  and the report shows the newest run that inspected something with a line naming the skipped one;
-  pruning always keeps that run. Secrets are not resolved for it. The log has one
-  line, `skipped <connectors>: <reason> (<the probe's error>)`.
+  no `open`). Each instance of each browser connector does not run; its run ends at once with
+  "browser not reachable over CDP" (or "the browser on the debugging port is not Brave") and the
+  probe's error as `error`, and its `run_end` skips `*`, so `track sync` closes neither its
+  findings nor its statuses, and the report shows the newest run that inspected something with a
+  line naming the skipped one; pruning always keeps that run. Secrets are not resolved for it. A
+  scheduled run probes too and logs one line, `skipped <connectors>: <reason> (<the probe's
+  error>)`.
 - `~/.segurata/schedule-browser.json` holds `not_run_since`, when the browser connectors last ran
   on schedule (or first were skipped), and `notified`. When a skipped run finds them idle for more
   than `browser_stale_days` (config, default 7, negative for never), it posts one notification,
@@ -823,8 +825,8 @@ Every connector is written in Go. The Node prototypes (`google/`, `connected-app
 
 ## Browser connectors
 
-`google-personal` and `connected-apps` read the browser the owner already uses (Brave or Chrome
-with `--remote-debugging-port`, address `cdp_url`) through `internal/cdp`, a standard-library CDP
+`google-personal` and `connected-apps` read the browser the owner already uses (Brave, and only
+Brave, with `--remote-debugging-port`, address `cdp_url`) through `internal/cdp`, a standard-library CDP
 client. They never start a browser and never call the system's `open`; a source test
 (`internal/signin/nobrowser_test.go`) keeps `internal/cdp`, `internal/signin` and `cmd/segurata`
 from naming a launcher or a browser binary.

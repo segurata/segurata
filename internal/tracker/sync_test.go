@@ -604,3 +604,30 @@ func TestSyncAndSaveFoldsAgainIntoATrackerChangedMeanwhile(t *testing.T) {
 	}
 	byTitle(t, got, "No Time Machine backup")
 }
+
+// An open item whose priority a sync raises to P1 or P0 is news, like a found or reopened one:
+// the schedule notifies it. A lower priority, or one that stays, is not.
+func TestASyncThatRaisesAnItemToP0IsNews(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	day1, day2, day3 := t0, t0.AddDate(0, 0, 1), t0.AddDate(0, 0, 2)
+	at := func(sev finding.Severity, day time.Time) finding.Finding {
+		return fnd("macos", "", "Mac", "macos_setting", "share", "share", sev, "Share open to guests", day)
+	}
+	writeRun(t, out, day1, "macos.jsonl", at(finding.SevMedium, day1), okStatus("macos", "Mac"))
+	tr := &Tracker{}
+	syncOrDie(t, tr, out, day1)
+	it := tr.withFinding(at(finding.SevMedium, day1).ID)
+	if it.EffectivePriority() != secretrisk.P2 || !it.NewsSince(day1) || it.NewsSince(day2) {
+		t.Fatalf("found at P2: news since day1 %v, since day2 %v", it.NewsSince(day1), it.NewsSince(day2))
+	}
+	writeRun(t, out, day2, "macos.jsonl", at(finding.SevCritical, day2), okStatus("macos", "Mac"))
+	syncOrDie(t, tr, out, day2)
+	if it.EffectivePriority() != secretrisk.P0 || !it.NewsSince(day2) {
+		t.Fatalf("raised to %s: news %v, history %+v", it.EffectivePriority(), it.NewsSince(day2), it.History)
+	}
+	writeRun(t, out, day3, "macos.jsonl", at(finding.SevCritical, day3), okStatus("macos", "Mac"))
+	syncOrDie(t, tr, out, day3)
+	if it.NewsSince(day3) {
+		t.Fatal("a priority that stayed P0 is news again")
+	}
+}

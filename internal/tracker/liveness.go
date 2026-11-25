@@ -75,11 +75,15 @@ func (it *Item) checkedLive() bool { return it.livenessIs(secretrisk.Live) }
 // provenLive reports whether a connector reports the secret or the liveness check accepted it.
 func (it *Item) provenLive() bool { return len(it.live()) > 0 || it.checkedLive() }
 
-// LivenessLabel is the latest check's state for listings: live, dead, unknown, or unchecked.
+// unchecked is the liveness label of a secret no check has tried.
+const unchecked secretrisk.LiveState = "unchecked"
+
+// LivenessLabel is the latest check's state for listings: one of secretrisk.LiveStates, or
+// unchecked.
 func (it *Item) LivenessLabel() string {
 	l := it.liveness()
 	if l == nil {
-		return "unchecked"
+		return string(unchecked)
 	}
 	return string(l.State)
 }
@@ -181,10 +185,14 @@ func (t *Tracker) LivenessLine() string {
 		return ""
 	}
 	var parts []string
-	for _, st := range []string{"live", "dead", "unregistered", "unknown", "unchecked"} {
-		if counts[st] > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", counts[st], st))
+	settled := 0
+	for _, st := range append(slices.Clone(secretrisk.LiveStates), unchecked) {
+		if counts[string(st)] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[string(st)], st))
+		}
+		if st != secretrisk.Unknown && st != unchecked {
+			settled += counts[string(st)]
 		}
 	}
-	return fmt.Sprintf("Liveness checked for %d of %d secrets: %s.", counts["live"]+counts["dead"]+counts["unregistered"], total, strings.Join(parts, ", "))
+	return fmt.Sprintf("Liveness checked for %d of %d secrets: %s.", settled, total, strings.Join(parts, ", "))
 }

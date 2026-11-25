@@ -92,7 +92,7 @@ func livenessOf(t *testing.T, rec *recorder, typ string) map[string]*secretrisk.
 	t.Helper()
 	out := map[string]*secretrisk.Liveness{}
 	for _, f := range rec.findings {
-		ev, ok := findingEvidence(f)
+		ev, ok := secretrisk.EvidenceOf(f)
 		if ok && ev.Type == typ {
 			out[ev.Source+":"+ev.Path] = ev.Liveness
 		}
@@ -240,10 +240,8 @@ func TestLivenessRecoversCachedHistoryValues(t *testing.T) {
 		line := s.checkLiveness(context.Background(), fs, known)
 		out := map[string]*secretrisk.Liveness{}
 		for _, fd := range fs {
-			if ev, ok := findingEvidence(fd); ok {
-				if l, ok := fd.Evidence["liveness"].(secretrisk.Liveness); ok {
-					out[ev.Path] = &l
-				}
+			if ev, ok := secretrisk.EvidenceOf(fd); ok && ev.Liveness != nil {
+				out[ev.Path] = ev.Liveness
 			}
 		}
 		raw, _ := json.Marshal(fs)

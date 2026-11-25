@@ -289,7 +289,7 @@ func TestRunNotifiesTheP0AndP1ItemsItsSyncFoundOrReopened(t *testing.T) {
 	}
 	p := env.Paths()
 	inv := r.ran(env.Exe, "inventory")
-	if len(inv) != 1 || !slices.Equal(inv[0], []string{env.Exe, "inventory", "--out", p.Out, "hibp", "macos"}) {
+	if len(inv) != 1 || !slices.Equal(inv[0], []string{env.Exe, "inventory", "--out", p.Out, "connected-apps", "google-personal", "hibp", "macos"}) {
 		t.Fatalf("inventory calls %v", inv)
 	}
 	rep := r.ran(env.Exe, "report")
@@ -320,6 +320,19 @@ func TestRunNotifiesTheP0AndP1ItemsItsSyncFoundOrReopened(t *testing.T) {
 		t.Fatalf("notifications %v", notes)
 	}
 
+	// A known P2 item raised to P0 by the next run: news.
+	for i := range r.inventory {
+		if r.inventory[i].ID == "m" {
+			r.inventory[i].Severity = finding.SevCritical
+		}
+	}
+	if err := env.Run(context.Background(), Options{Connectors: []string{"macos"}}); err != nil {
+		t.Fatal(err)
+	}
+	if notes = r.ran(osascript, "-e"); len(notes) != 3 || !strings.Contains(notes[2][2], `"medium one"`) || !strings.Contains(notes[2][2], `"1 new P0 item"`) {
+		t.Fatalf("notifications %v", notes)
+	}
+
 	// Marked done, still reported: reopened, so news again.
 	if err := tracker.Update(env.Tracker.Tracker, env.Now(), func(tr *tracker.Tracker) error {
 		for _, it := range tr.Items {
@@ -334,7 +347,7 @@ func TestRunNotifiesTheP0AndP1ItemsItsSyncFoundOrReopened(t *testing.T) {
 	if err := env.Run(context.Background(), Options{Connectors: []string{"macos"}}); err != nil {
 		t.Fatal(err)
 	}
-	if notes = r.ran(osascript, "-e"); len(notes) != 3 || !strings.Contains(notes[2][2], `"Firewall is off"`) {
+	if notes = r.ran(osascript, "-e"); len(notes) != 4 || !strings.Contains(notes[3][2], `"Firewall is off"`) {
 		t.Fatalf("notifications %v", notes)
 	}
 }

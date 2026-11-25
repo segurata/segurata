@@ -14,6 +14,9 @@ const (
 	Unregistered LiveState = "unregistered"
 )
 
+// LiveStates are every state a check can end in, in the order listings show them.
+var LiveStates = []LiveState{Live, Dead, Unregistered, Unknown}
+
 // Liveness is the result of local-secrets' liveness check of one secret: one call to the
 // provider's read-only identity endpoint with the secret, or, for a secret that cannot be tried by
 // itself (a lone AWS key id, a private key), a lookup with the owner's own credentials (see
