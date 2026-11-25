@@ -224,6 +224,7 @@ func (t *Tracker) applyRules(now time.Time) int {
 	for _, it := range t.Items {
 		t.reopenReattributed(it, now)
 		it.reopenProvenLive(now)
+		it.reopenUndead(now)
 		it.closeDead(now)
 		if it.Status != Open && it.Status != InProgress && it.Status != Snoozed {
 			continue

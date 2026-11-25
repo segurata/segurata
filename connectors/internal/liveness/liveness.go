@@ -255,7 +255,7 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 					continue
 				}
 				r := c.ask(ctx, lk, pv, p)
-				r.CheckedAt = c.now().UTC()
+				r.CheckedAt, r.Rules = c.now().UTC(), secretrisk.LivenessRules
 				mu.Lock()
 				st.Asked++
 				switch r.State {
@@ -295,8 +295,8 @@ func (c *Checker) interval() time.Duration {
 	return c.Interval
 }
 
-// ask tries the probe on each of the provider's hosts while they say dead: dead only when every
-// host rejects it. A lookup runs once, with the owner's credentials.
+// ask tries the probe on each of the provider's hosts until one accepts it: dead only when every
+// host says dead, else the first other answer. A lookup runs once, with the owner's credentials.
 func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) secretrisk.Liveness {
 	if pv.lookup != nil {
 		r := pv.lookup(ctx, lk, p)
@@ -308,9 +308,14 @@ func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) s
 		bases = b
 	}
 	var r secretrisk.Liveness
-	for _, base := range bases {
-		if r = pv.ask(ctx, base, p); r.State != secretrisk.Dead {
+	for i, base := range bases {
+		got := pv.ask(ctx, base, p)
+		if got.State == secretrisk.Live {
+			r = got
 			break
+		}
+		if i == 0 || r.State == secretrisk.Dead {
+			r = got
 		}
 	}
 	r.Provider = pv.name

@@ -15,9 +15,9 @@ import (
 )
 
 // AWS: sts:GetCallerIdentity, which needs no IAM permission and cannot be denied, through the
-// Query API as a GET signed with Signature Version 4 by hand (standard library only). An unknown or
-// deleted key id is 403 InvalidClientTokenId: dead. A key id that exists with a secret that does
-// not match it is 403 SignatureDoesNotMatch: the pair found in the file is not a pair, unknown.
+// Query API as a GET signed with Signature Version 4 by hand (standard library only). Only 200
+// tells: 403 InvalidClientTokenId is also the global endpoint's answer to a key of the GovCloud or
+// China partitions, and SignatureDoesNotMatch says the pair found in the file is not a pair.
 
 const (
 	stsQuery   = "Action=GetCallerIdentity&Version=2011-06-15"
@@ -36,17 +36,10 @@ func askAWS(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 		return secretrisk.Liveness{State: secretrisk.Unknown, Reason: "bad endpoint"}
 	}
 	j := func(code int, body []byte) (secretrisk.LiveState, string) {
-		if code == http.StatusOK {
-			return secretrisk.Live, "HTTP 200"
-		}
-		switch c := firstGroup(awsErrorCode, body); c {
-		case "InvalidClientTokenId":
-			return secretrisk.Dead, c
-		case "":
-			return byStatus(false)(code, body)
-		default:
+		if c := firstGroup(awsErrorCode, body); code != http.StatusOK && c != "" {
 			return secretrisk.Unknown, c
 		}
+		return byStatus(false)(code, body)
 	}
 	acct := func(body []byte) string {
 		if a := firstGroup(awsAccount, body); a != "" {

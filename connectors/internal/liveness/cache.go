@@ -20,7 +20,9 @@ const (
 	DeadTTL = 7 * 24 * time.Hour
 )
 
-const cacheVersion = 1
+// cacheVersion 2 came with secretrisk.LivenessRules 2: a version-1 file's dead results may be a
+// bare 401, so it is discarded and every secret asked again.
+const cacheVersion = 2
 
 // DefaultCachePath is ~/.cache/segurata/liveness.json.
 func DefaultCachePath(home string) string {

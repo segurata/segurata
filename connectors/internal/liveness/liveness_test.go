@@ -104,6 +104,20 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	live := cred == liveKey || strings.HasSuffix(cred, liveKey)
+	if !live {
+		// The documented invalid-key answers (docs/architecture.md, "Liveness").
+		switch {
+		case r.Header.Get("X-Api-Key") != "":
+			reply(http.StatusUnauthorized, `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`)
+			return
+		case r.URL.Path == "/api/v1/key":
+			reply(http.StatusUnauthorized, `{"error":{"code":401,"message":"User not found."}}`)
+			return
+		case r.URL.Path == "/v1/balance":
+			reply(http.StatusUnauthorized, `{"error":{"code":"api_key_expired","type":"invalid_request_error","message":"Expired API Key provided: `+cred+`"}}`)
+			return
+		}
+	}
 	switch r.URL.Path {
 	case "/v1/api-key": // xAI: a disabled key still answers 200
 		switch {
@@ -197,29 +211,31 @@ func TestEveryProviderLiveAndDead(t *testing.T) {
 		deadState      secretrisk.LiveState
 		liveReasonPart string
 	}{
-		{"openai-project", "sk-proj-", "", secretrisk.Dead, "HTTP 200"},
-		{"openai-service", "sk-admin-", "", secretrisk.Dead, "HTTP 200"},
+		// Dead only where the provider documents a body signal for an invalid key; a bare 401 (or
+		// one whose cause the provider lists as several things) is unknown.
+		{"openai-project", "sk-proj-", "", secretrisk.Unknown, "HTTP 200"},
+		{"openai-service", "sk-admin-", "", secretrisk.Unknown, "HTTP 200"},
 		{"anthropic", "sk-ant-api03-", "", secretrisk.Dead, "HTTP 200"},
 		{"anthropic", "sk-ant-admin01-", "", secretrisk.Dead, "HTTP 200"},
 		{"openrouter", "sk-or-v1-", "", secretrisk.Dead, "HTTP 200"},
-		{"github", "ghp_", "github:octocat", secretrisk.Dead, "HTTP 200"},
-		{"github-pat", "github_pat_", "github:octocat", secretrisk.Dead, "HTTP 200"},
+		{"github", "ghp_", "github:octocat", secretrisk.Unknown, "HTTP 200"},
+		{"github-pat", "github_pat_", "github:octocat", secretrisk.Unknown, "HTTP 200"},
 		{"gitlab", "glpat-", "gitlab:gitlab-me", secretrisk.Unknown, "HTTP 200"},
 		{"google-api-key", "AIza", "", secretrisk.Dead, "SERVICE_DISABLED"},
 		{"slack-token", "xoxb-", "slack:T0FAKE", secretrisk.Dead, "ok"},
 		{"stripe-live", "sk_live_", "", secretrisk.Dead, "HTTP 200"},
 		{"stripe-test", "rk_test_", "", secretrisk.Dead, "HTTP 200"},
-		{"sendgrid", "SG.", "", secretrisk.Dead, "HTTP 200"},
-		{"telegram-bot", "123456789:AA", "telegram:@fake_bot", secretrisk.Dead, "HTTP 200"},
-		{"huggingface", "hf_", "huggingface:hf-me", secretrisk.Dead, "HTTP 200"},
-		{"npm-token", "npm_", "npm:npm-me", secretrisk.Dead, "HTTP 200"},
-		{"xai", "xai-", "", secretrisk.Dead, "HTTP 200"},
-		{"groq", "gsk_", "", secretrisk.Dead, "HTTP 200"},
+		{"sendgrid", "SG.", "", secretrisk.Unknown, "HTTP 200"},
+		{"telegram-bot", "123456789:AA", "telegram:@fake_bot", secretrisk.Unknown, "HTTP 200"},
+		{"huggingface", "hf_", "huggingface:hf-me", secretrisk.Unknown, "HTTP 200"},
+		{"npm-token", "npm_", "npm:npm-me", secretrisk.Unknown, "HTTP 200"},
+		{"xai", "xai-", "", secretrisk.Unknown, "HTTP 200"},
+		{"groq", "gsk_", "", secretrisk.Unknown, "HTTP 200"},
 		{"notion", "ntn_", "notion:ws-1", secretrisk.Dead, "HTTP 200"},
 		{"cloudflare-token", "", "", secretrisk.Unknown, "active"},
 		{"digitalocean", "dop_v1_", "digitalocean:do-uuid-1", secretrisk.Dead, "HTTP 200"},
 		{"sentry-token", "sntryu_", "", secretrisk.Unknown, "HTTP 200"},
-		{"linear", "lin_api_", "linear:lin-user-1", secretrisk.Dead, "HTTP 200"},
+		{"linear", "lin_api_", "linear:lin-user-1", secretrisk.Unknown, "HTTP 200"},
 	}
 	for _, tc := range cases {
 		probes := []Probe{
@@ -275,17 +291,28 @@ func TestQuotaAndCreditsMeanAccepted(t *testing.T) {
 func TestDeadOnlyWhenEveryRegionSaysSo(t *testing.T) {
 	global, eu := newFake(t), newFake(t)
 	c := global.checker()
-	c.Bases["sendgrid"] = []string{global.URL, eu.URL}
-	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"d"}, Type: "sendgrid", Value: "SG." + deadKey}})
+	c.Bases["stripe"] = []string{global.URL, eu.URL}
+	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"d"}, Type: "stripe-live", Value: deadKey}})
 	if got["d"].State != secretrisk.Dead || len(eu.paths) != 1 {
 		t.Errorf("a key both hosts reject: %+v, EU asked %d times", got["d"], len(eu.paths))
 	}
 	euOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"scopes":[]}`)) }))
 	defer euOnly.Close()
-	c.Bases["sendgrid"] = []string{global.URL, euOnly.URL}
-	got, _ = c.Check(context.Background(), []Probe{{Fingerprints: []string{"e"}, Type: "sendgrid", Value: "SG." + deadKey}})
-	if got["e"].State != secretrisk.Live {
-		t.Errorf("an EU key the global host rejects: %+v", got["e"])
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer flaky.Close()
+	for _, bases := range [][]string{{global.URL, euOnly.URL}, {flaky.URL, euOnly.URL}} {
+		c.Bases["stripe"] = bases
+		got, _ = c.Check(context.Background(), []Probe{{Fingerprints: []string{"e"}, Type: "stripe-live", Value: deadKey}})
+		if got["e"].State != secretrisk.Live {
+			t.Errorf("a key the second host accepts: %+v", got["e"])
+		}
+	}
+	for _, bases := range [][]string{{global.URL, flaky.URL}, {flaky.URL, global.URL}} {
+		c.Bases["stripe"] = bases
+		got, _ = c.Check(context.Background(), []Probe{{Fingerprints: []string{"u"}, Type: "stripe-live", Value: deadKey}})
+		if got["u"].State != secretrisk.Unknown {
+			t.Errorf("one host dead, one without an answer: %+v", got["u"])
+		}
 	}
 	if p := byName("sendgrid"); len(p.bases) != 2 || !strings.Contains(p.bases[1], "api.eu.sendgrid.com") {
 		t.Errorf("sendgrid hosts %v", p.bases)
@@ -324,8 +351,9 @@ func TestAWSPair(t *testing.T) {
 	if r := got["secret"]; r.State != secretrisk.Live || r.Account != "aws:012345678901" || got["id"] != r {
 		t.Errorf("pair: %+v / %+v", r, got["id"])
 	}
-	if r := got["gone"]; r.State != secretrisk.Dead || r.Reason != "InvalidClientTokenId" {
-		t.Errorf("deleted key id: %+v", r)
+	// The global STS endpoint also rejects keys of the GovCloud and China partitions this way.
+	if r := got["gone"]; r.State != secretrisk.Unknown || r.Reason != "InvalidClientTokenId" {
+		t.Errorf("a key id STS does not know: %+v", r)
 	}
 	if r := got["mismatch"]; r.State != secretrisk.Unknown || r.Reason != "SignatureDoesNotMatch" {
 		t.Errorf("secret that is not the key id's: %+v", r)
@@ -376,7 +404,7 @@ func TestCache(t *testing.T) {
 	c.Cache, c.Now = LoadCache(path), func() time.Time { return now }
 	probes := []Probe{
 		{Fingerprints: []string{"live"}, Type: "github", Value: "ghp_" + liveKey},
-		{Fingerprints: []string{"dead"}, Type: "github", Value: "ghp_" + deadKey},
+		{Fingerprints: []string{"dead"}, Type: "anthropic", Value: deadKey},
 		{Fingerprints: []string{"flaky"}, Type: "github", Value: flakyKey},
 	}
 	c.Check(context.Background(), probes)
@@ -556,5 +584,73 @@ func TestDisabledOrExpiredIsDead(t *testing.T) {
 	}
 	if got["c"].State != secretrisk.Dead || got["c"].Reason != "token expired" {
 		t.Errorf("Cloudflare expired token: %+v", got["c"])
+	}
+}
+
+// A status alone never says dead: every provider answering 401 (or Slack's ok:false) without its
+// documented invalid-key signal is unknown, and the item it would have closed stays open.
+func TestBareStatusIsNeverDead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/auth.test":
+			_, _ = w.Write([]byte(`{"ok":false,"error":"not_authed"}`))
+		case r.URL.Path == "/client/v4/user/tokens/verify":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"success":false,"result":{"status":"expired"}}`))
+		case r.URL.Path == "/v1beta/models":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID"}]}}`))
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Bad credentials","error":{"code":"other","type":"other"},"code":"other","id":"other"}`))
+		}
+	}))
+	defer srv.Close()
+	bases := map[string][]string{}
+	for _, p := range providers {
+		bases[p.name] = []string{srv.URL}
+	}
+	c := &Checker{Bases: bases, Interval: time.Millisecond}
+	var probes []Probe
+	for _, p := range providers {
+		probes = append(probes, Probe{Fingerprints: []string{p.name}, Type: p.types[0], Value: liveKey, KeyID: keyID})
+	}
+	got, st := c.Check(context.Background(), probes)
+	for _, p := range providers {
+		if r := got[p.name]; r.State != secretrisk.Unknown {
+			t.Errorf("%s: a bare 401 judged %+v", p.name, r)
+		}
+	}
+	if st.Dead != 0 || st.Asked != len(providers) {
+		t.Errorf("stats %+v", st)
+	}
+}
+
+// Every result says which verdict rules judged it, so a tracker can drop a dead verdict of older,
+// looser rules.
+func TestResultsCarryTheRules(t *testing.T) {
+	f := newFake(t)
+	got, _ := f.checker().Check(context.Background(), []Probe{
+		{Fingerprints: []string{"a"}, Type: "anthropic", Value: deadKey},
+		{Fingerprints: []string{"b"}, Type: "github", Value: flakyKey},
+	})
+	for fp, r := range got {
+		if r.Rules != secretrisk.LivenessRules {
+			t.Errorf("%s: rules %d, want %d", fp, r.Rules, secretrisk.LivenessRules)
+		}
+	}
+}
+
+// A cache written under older verdict rules is discarded: its dead results may be a bare 401.
+func TestOlderCacheIsDiscarded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "liveness.json")
+	old := `{"version":1,"results":{"x":{"state":"dead","checked_at":"2026-11-25T00:00:00Z","provider":"github","reason":"HTTP 401"}}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 25, 1, 0, 0, 0, time.UTC)
+	if _, ok := LoadCache(path).fresh([]string{"x"}, now); ok {
+		t.Error("a dead result of the old rules answered from the cache")
 	}
 }

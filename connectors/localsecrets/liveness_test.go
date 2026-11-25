@@ -43,8 +43,9 @@ func newFakeProviders(t *testing.T, liveKeyIDs ...string) *fakeProviders {
 		f.asked = append(f.asked, auth)
 		f.mu.Unlock()
 		switch {
-		case r.Header.Get("X-Api-Key") != "":
+		case r.Header.Get("X-Api-Key") != "": // the documented invalid-key answer
 			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`))
 		case strings.HasPrefix(auth, "AWS4-HMAC-SHA256"):
 			for _, id := range liveKeyIDs {
 				if strings.Contains(auth, "Credential="+id+"/") {
