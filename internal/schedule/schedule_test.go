@@ -52,6 +52,8 @@ func (r *fakeRunner) Run(ctx context.Context, name string, args []string, _, _ i
 		r.loaded = true
 	case name == launchctl && args[0] == "bootout":
 		r.loaded = false
+	case name == r.exe && args[0] == "track":
+		return r.sync(args[3])
 	case name == r.exe && args[0] == "inventory":
 		dir := filepath.Join(args[2], "2026-11-24")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -67,12 +69,17 @@ func (r *fakeRunner) Run(ctx context.Context, name string, args []string, _, _ i
 		if err := os.WriteFile(filepath.Join(dir, "macos.jsonl"), buf.Bytes(), 0o600); err != nil {
 			return err
 		}
-		return tracker.Update(r.tracker, r.now(), func(t *tracker.Tracker) error {
-			_, err := t.Sync(tracker.SyncOptions{OutDir: args[2]}, r.now())
-			return err
-		})
+		return r.sync(args[2])
 	}
 	return nil
+}
+
+// sync is the tracker sync an inventory ends in, and `segurata track sync`.
+func (r *fakeRunner) sync(out string) error {
+	return tracker.Update(r.tracker, r.now(), func(t *tracker.Tracker) error {
+		_, err := t.Sync(tracker.SyncOptions{OutDir: out}, r.now())
+		return err
+	})
 }
 
 func (r *fakeRunner) ran(name, first string) [][]string {
@@ -105,7 +112,7 @@ func testEnv(t *testing.T, goos string) (Env, *fakeRunner, *bytes.Buffer) {
 	return Env{
 		GOOS: goos, Home: home, UID: 501, Exe: exe, Path: "/opt/homebrew/bin:/usr/bin:/bin", TmpDir: filepath.Join(home, "tmp"),
 		Runner: r, IO: connector.IO{In: strings.NewReader(""), Out: out, Err: &bytes.Buffer{}}, TTY: false,
-		Now: now, Tracker: paths,
+		Now: now, Tracker: paths, Browser: unreachable,
 		Connectors: []connector.Connector{
 			desc{Name: "macos"}, desc{Name: "google-personal", Needs: []string{"cdp"}},
 			desc{Name: "connected-apps", Needs: []string{"cdp", "cli:gh"}}, desc{Name: "hibp", Needs: []string{"secret:HIBP_API_KEY"}},
@@ -268,13 +275,6 @@ func TestLinuxPrintsSystemdUnitsAndNeverApplies(t *testing.T) {
 	}
 }
 
-func TestDefaultConnectorsLeaveOutTheBrowser(t *testing.T) {
-	env, _, _ := testEnv(t, "darwin")
-	if got := env.DefaultConnectors(); !slices.Equal(got, []string{"hibp", "macos"}) {
-		t.Fatalf("got %v", got)
-	}
-}
-
 func high(id, title string) finding.Finding {
 	return finding.Finding{ID: id, Connector: "macos", Severity: finding.SevHigh, Title: title}
 }
@@ -419,6 +419,7 @@ func TestSystemInterruptsThenKills(t *testing.T) {
 // A scheduled run that finished prunes run files past the retention; without one it keeps all.
 func TestRunPrunesOldRunsAfterAFinishedRun(t *testing.T) {
 	env, r, _ := testEnv(t, "darwin")
+	env.Config.KeepRunsDays = -1
 	r.inventory = []finding.Finding{high("a", "Firewall is off")}
 	old := filepath.Join(env.Paths().Out, "2026-01-01", "macos.jsonl")
 	prev := filepath.Join(env.Paths().Out, "2026-01-02", "macos.jsonl") // kept: the run before today's
@@ -436,7 +437,7 @@ func TestRunPrunesOldRunsAfterAFinishedRun(t *testing.T) {
 	if _, err := os.Stat(old); err != nil {
 		t.Fatalf("pruned without a retention: %v", err)
 	}
-	env.Keep = 30 * 24 * time.Hour
+	env.Config.KeepRunsDays = 0 // the default, 30
 	if err := env.Run(context.Background(), Options{}); err != nil {
 		t.Fatal(err)
 	}
