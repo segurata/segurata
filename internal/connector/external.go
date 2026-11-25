@@ -214,7 +214,7 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &limitedWriter{w: &stderr, n: maxStderrBytes}
-	scrub := NewScrubber(req.Secrets)
+	scrub := newScrubber(req.Secrets)
 	if err := cmd.Run(); err != nil {
 		return PlanReply{}, fmt.Errorf("%s plan: %w: %s", e.desc.Name, err, scrub.String(strings.TrimSpace(stderr.String())))
 	}
@@ -244,7 +244,7 @@ func (e *External) RequestApply(ctx context.Context, req RemediationRequest, out
 		return errors.New("apply needs the confirmed plan")
 	}
 	req.Protocol = e.desc.Protocol
-	scrub := NewScrubber(req.Secrets)
+	scrub := newScrubber(req.Secrets)
 	stderr := &lineScrubber{w: errw, s: scrub}
 	err := e.stream(ctx, "apply", req, stderr, func(line []byte) {
 		var rec struct {

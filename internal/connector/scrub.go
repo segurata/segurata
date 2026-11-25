@@ -19,17 +19,17 @@ import (
 // ordinary text.
 const minScrubbed = 6
 
-// Scrubber finds the secret values the core handed a connector in what the connector prints, and
+// scrubber finds the secret values the core handed a connector in what the connector prints, and
 // replaces each with its redacted form. A connector echoing its credential is a bug; the scrubber
 // makes sure the bug never puts the value where segurata shows or keeps text.
-type Scrubber struct {
+type scrubber struct {
 	values   []string // longest first, so a value inside another is never replaced first
 	replacer *strings.Replacer
 }
 
-// NewScrubber looks for the values of secrets that are at least minScrubbed long.
-func NewScrubber(secrets map[string]string) Scrubber {
-	var s Scrubber
+// newScrubber looks for the values of secrets that are at least minScrubbed long.
+func newScrubber(secrets map[string]string) scrubber {
+	var s scrubber
 	for _, v := range secrets {
 		if len(v) >= minScrubbed {
 			s.values = append(s.values, v)
@@ -45,7 +45,7 @@ func NewScrubber(secrets map[string]string) Scrubber {
 }
 
 // String is text with every secret value replaced by its redacted form.
-func (s Scrubber) String(text string) string {
+func (s scrubber) String(text string) string {
 	if len(s.values) == 0 {
 		return text
 	}
@@ -53,7 +53,7 @@ func (s Scrubber) String(text string) string {
 }
 
 // Error is err, or an error with its text scrubbed when it carries a secret value.
-func (s Scrubber) Error(err error) error {
+func (s scrubber) Error(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -64,7 +64,7 @@ func (s Scrubber) Error(err error) error {
 }
 
 // Carries reports whether v, as JSON, holds a secret value anywhere: a field, a key, evidence.
-func (s Scrubber) Carries(v any) bool {
+func (s scrubber) Carries(v any) bool {
 	if len(s.values) == 0 {
 		return false
 	}
@@ -88,14 +88,14 @@ func (s Scrubber) Carries(v any) bool {
 // reported look resolved. A scope and a log line keep their place with the value redacted.
 type ScrubEmitter struct {
 	emit    Emitter
-	s       Scrubber
+	s       scrubber
 	mu      sync.Mutex
 	dropped int
 }
 
 // NewScrubEmitter wraps emit with the scrubber of secrets.
 func NewScrubEmitter(emit Emitter, secrets map[string]string) *ScrubEmitter {
-	return &ScrubEmitter{emit: emit, s: NewScrubber(secrets)}
+	return &ScrubEmitter{emit: emit, s: newScrubber(secrets)}
 }
 
 func (e *ScrubEmitter) Finding(f finding.Finding) {
@@ -146,7 +146,7 @@ func (e *ScrubEmitter) Err(err error) error {
 // writes what is left after the last newline.
 type lineScrubber struct {
 	w   io.Writer
-	s   Scrubber
+	s   scrubber
 	buf []byte
 }
 
