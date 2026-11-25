@@ -15,8 +15,9 @@ import (
 )
 
 // provider is one provider's check: the secret types it takes and the call that tries one. Every
-// call is a GET to a read-only endpoint that says who the caller is or lists something; see the
-// table in docs/architecture.md, "Liveness", for each endpoint's documentation.
+// call goes to a read-only endpoint that says who the caller is or lists something (a GET, except
+// Slack's and Linear's POSTs); see the table in docs/architecture.md, "Liveness", for each
+// endpoint's documentation.
 type provider struct {
 	name  string
 	types []string

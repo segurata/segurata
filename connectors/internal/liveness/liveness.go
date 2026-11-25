@@ -5,8 +5,9 @@
 // when the owner turned it on for secrets attributed to owners they chose: see
 // docs/architecture.md, "Liveness".
 //
-// Safety: every endpoint is a GET that reads who the caller is, or lists something; none changes
-// state, costs money or sends anything. Calls go one at a time per provider, with a pause between
+// Safety: every endpoint reads who the caller is, or lists something; none changes state, costs
+// money or sends anything. Every call is a GET except two POSTs: Slack's auth.test, without a body,
+// and Linear's GraphQL endpoint, with one fixed query. Calls go one at a time per provider, with a pause between
 // any two, through httpx, following no redirect (a 3xx is unknown). Results hold
 // no value and no provider message (which may echo part of the key), and are cached by
 // fingerprint so a secret is not tried again for a while.
