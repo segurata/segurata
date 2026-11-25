@@ -1,0 +1,27 @@
+name: Connector or check request
+description: A service, provider or check segurata should cover.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read docs/connectors.md first: a connector is read-only, and it can be a built-in Go
+        connector or an external `segurata-<name>` executable you publish yourself.
+  - type: input
+    id: service
+    attributes:
+      label: Service or provider
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: What should it find
+      description: The risk, and how a person fixes it by hand today.
+    validations:
+      required: true
+  - type: textarea
+    id: access
+    attributes:
+      label: How to read it
+      description: The official CLI, API or settings page that exposes it, read-only, with a link to its documentation.
