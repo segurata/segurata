@@ -395,3 +395,41 @@ func TestFutureLivenessNeverSticks(t *testing.T) {
 		t.Errorf("a held future result beat a real check: %s %s", gh.Status, gh.LivenessLabel())
 	}
 }
+
+// A key raised to P0 by a live check is news once: an unknown answer after it (a 429 past the live
+// result's day) keeps it P0, so live → unknown → live raises, and notifies, only the first time.
+func TestLiveUnknownLiveRaisesOnce(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	tr := New(t0)
+	pushed := func(at time.Time, l *secretrisk.Liveness) secretrisk.Evidence {
+		e := localLeak("b5b5b5b5b5b5b5b5", l)
+		e.Path, e.Repo, e.Source, e.Kind, e.Mode, e.Bucket, e.Tracked, e.Remote, e.Date = "~/src/shop/app.py", "~/src/shop", "gitleaks", "repo", "", "0-git", true, true, "2021-03-04"
+		return e
+	}
+	writeSecrets(t, out, t0, pushed(t0, nil))
+	syncOrDie(t, tr, out, t0.Add(time.Minute))
+	key := mustRotate(t, tr, "b5b5b5b5")
+	if key.Priority == secretrisk.P0 {
+		t.Fatalf("an unchecked medium key is P0 already: the test needs one a live check raises")
+	}
+	raised := func() int {
+		n := 0
+		for _, e := range key.History {
+			if e.Action == actRaised {
+				n++
+			}
+		}
+		return n
+	}
+	for i, st := range []secretrisk.LiveState{secretrisk.Live, secretrisk.Unknown, secretrisk.Live} {
+		day := t0.Add(time.Duration(i+1) * 48 * time.Hour)
+		writeSecrets(t, out, day, pushed(day, checked(st, day, "")))
+		syncOrDie(t, tr, out, day.Add(time.Minute))
+		if key.Priority != secretrisk.P0 || raised() != 1 {
+			t.Fatalf("after %s: %s, %d raises", st, key.Priority, raised())
+		}
+		if i > 0 && key.NewsSince(day) {
+			t.Errorf("after %s: news again", st)
+		}
+	}
+}
