@@ -140,6 +140,15 @@ var (
 	defaultPassword = regexp.MustCompile(`(?i)^(pass(word)?|postgres|secret|root|admin|test|user|changeme|mysql|redis|guest)$`)
 )
 
+// minEntropyOf is the least entropy a typed secret's body of n characters must score. Entropy
+// measured on few characters runs low even for random data: under a flat 3.2, 3 in 100 random
+// 16-character AWS key id bodies failed. Bodies shorter than 28 characters get log2(n) - 1.5
+// (2.5 for 16), which no body in 10,000 random base32 ones fails, and which still rejects four
+// letters repeated four times (entropy 2).
+func minEntropyOf(n int) float64 {
+	return math.Min(3.2, math.Log2(float64(n))-1.5)
+}
+
 func entropy(s string) float64 {
 	if s == "" {
 		return 0
@@ -171,7 +180,7 @@ type verdict struct {
 // low-entropy strings and, for the generic patterns, values that are clearly not secrets.
 func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
 	body := strings.TrimPrefix(secret, secretrisk.KnownPrefix(p.prefix, secret))
-	minEntropy := 3.2
+	minEntropy := minEntropyOf(len(body))
 	if p.typ == "assignment" {
 		minEntropy = 3.0
 	}
