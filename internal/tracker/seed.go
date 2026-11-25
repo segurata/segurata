@@ -34,7 +34,7 @@ const otherTheme = "other"
 var connectorThemes = map[string]string{
 	"github": "github-orgs",
 	"connected-apps": "connected-apps", "google-personal": "google", "workspace": "google",
-	"gcp": "cloud", "prowler": "cloud", "azure": "cloud", "cloudflare": "cloud", "vercel": "cloud", "supabase": "cloud",
+	"gcp": "cloud", "prowler": "cloud", "cloudflare": "cloud", "vercel": "cloud", "supabase": "cloud",
 	"openai": "ai-spend", "anthropic": "ai-spend", "openrouter": "ai-spend",
 }
 

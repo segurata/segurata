@@ -50,6 +50,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Budgets per subscription, app registration client secrets that never expire or expire soon",
 		Needs:    []string{"cli:az"},
+		Theme:    finding.ThemeCloud,
 	}
 }
 
