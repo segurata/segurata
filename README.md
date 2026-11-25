@@ -553,7 +553,9 @@ Most old leaked keys no longer work. With the liveness check on, `local-secrets`
 distinct secret once, at scan time, against its provider's read-only identity endpoint (OpenAI and
 Anthropic models, OpenRouter key, GitHub and GitLab user, AWS `sts:GetCallerIdentity`, Google
 Gemini models, Slack `auth.test`, Stripe balance, SendGrid scopes, Telegram `getMe`, Hugging Face
-and npm whoami), none of which changes, charges or sends anything:
+and npm whoami, xAI key info, Groq models, Notion bot user, Cloudflare token verify, DigitalOcean
+account, Sentry organizations, Linear viewer), none of which changes, charges or sends anything.
+Secrets seen only in cached git history are read again from their commit when needed:
 
 ```json
 {"connectors": {"local-secrets": {"config": {"liveness": {"enabled": true, "owners": ["mine", "unknown"]}}}}}
