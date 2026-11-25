@@ -3,6 +3,7 @@ package tracker
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ const (
 	actDecide      = "decide"
 	actReanswer    = "reanswer"
 	actPrioritize  = "prioritize"
+	actRaised      = "raised" // a sync raised the computed priority to P1 or P0
 	actHistory     = "history-only"
 	actRedacted    = "redacted"
 	actReclassify  = "reclassified"
@@ -304,6 +306,15 @@ func (it *Item) RotationStatus() string {
 func (it *Item) snoozeOver(today time.Time) bool {
 	d, err := time.ParseInLocation(time.DateOnly, it.SnoozedUntil, today.Location())
 	return err != nil || !today.Before(d)
+}
+
+// NewsSince reports whether a sync at or after since found the item, reopened it or raised its
+// priority to P1 or P0: what a scheduled run notifies.
+func (it *Item) NewsSince(since time.Time) bool {
+	return slices.ContainsFunc(it.History, func(ev Event) bool {
+		news := ev.Event == EvFound || ev.Event == EvReopened || ev.Event == EvPriority && ev.Action == actRaised
+		return news && !ev.At.Before(since.UTC())
+	})
 }
 
 // EffectivePriority is the override when there is one, else the computed priority.

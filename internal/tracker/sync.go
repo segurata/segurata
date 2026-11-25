@@ -139,8 +139,10 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	sort.Strings(rep.Runs)
 
 	byKey := map[string]*Item{}
+	was := map[*Item]secretrisk.Priority{}
 	for _, it := range t.Items {
 		byKey[it.Key] = it
+		was[it] = it.EffectivePriority()
 	}
 	proposals := map[string]*proposal{}
 	var order []string
@@ -288,9 +290,21 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	}
 	t.recordRuns(folded)
 	rep.Coverage = t.syncCoverage(now)
+	noteRaised(was, now)
 	at := now.UTC()
 	t.LastSyncAt = &at
 	return rep, nil
+}
+
+// noteRaised logs each item the sync raised to P1 or P0, from the priority it had before (was), so
+// the raise is news (Item.NewsSince). An item the sync created has no earlier priority: it is news
+// as found.
+func noteRaised(was map[*Item]secretrisk.Priority, now time.Time) {
+	for it, before := range was {
+		if p := it.EffectivePriority(); p.Rank() <= secretrisk.P1.Rank() && p.Rank() < before.Rank() {
+			it.Log(now, EvPriority, actRaised, "raised to "+string(p)+" from "+textfmt.OrDash(string(before)))
+		}
+	}
 }
 
 // FoldedSecrets reports whether a local-secrets run was folded in.

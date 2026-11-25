@@ -19,7 +19,7 @@ var confirmFunc = prompt.Confirm
 
 // Run is one scheduled run, what the agent executes: `segurata inventory` over the selected
 // connectors (which ends in a tracker sync), a notification for the P0 and P1 items that sync
-// found or reopened, then `segurata report --format md`. Both commands are this same binary, run
+// found, reopened or raised, then `segurata report --format md`. Both commands are this same binary, run
 // as separate processes so a scheduled run does exactly what the owner would type.
 //
 // Without --connectors every installed connector is selected. The inventory runs the browser
@@ -132,8 +132,8 @@ func (e Env) prune(outDir string) {
 	}
 }
 
-// news are the open P0 and P1 items that a sync found or reopened at or after start, most urgent
-// first: what the inventory's sync recorded.
+// news are the open P0 and P1 items that a sync found, reopened or raised to P1 or P0 at or after
+// start (tracker.Item.NewsSince), most urgent first: what the inventory's sync recorded.
 func (e Env) news(start time.Time) ([]*tracker.Item, error) {
 	t, err := tracker.LoadOrNew(e.Tracker, e.Now())
 	if err != nil {
@@ -144,9 +144,7 @@ func (e Env) news(start time.Time) ([]*tracker.Item, error) {
 		if p := it.EffectivePriority(); !it.Active(e.Now()) || p != secretrisk.P0 && p != secretrisk.P1 {
 			continue
 		}
-		if slices.ContainsFunc(it.History, func(ev tracker.Event) bool {
-			return (ev.Event == tracker.EvFound || ev.Event == tracker.EvReopened) && !ev.At.Before(start.UTC())
-		}) {
+		if it.NewsSince(start) {
 			out = append(out, it)
 		}
 	}

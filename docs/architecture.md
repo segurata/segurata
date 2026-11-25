@@ -652,8 +652,8 @@ so an agent installed before that runs with the 24h bound until it is installed 
    `describe` needs `cdp`) run only when Brave answers at `cdp_url`; see "Browser connectors in a
    scheduled run" below.
 2. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three of
-   the open P0 and P1 items that sync found or reopened (history `found` or `reopened` since the
-   run started), by title: the tracker is the one place runs are compared. Titles never carry
+   the open P0 and P1 items that sync found, reopened or raised to P1 or P0 (history `found`,
+   `reopened`, or `priority` with action `raised`, since the run started), by title: the tracker is the one place runs are compared. Titles never carry
    secrets; evidence is never shown. Each is also written to the log.
 3. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
