@@ -97,7 +97,7 @@ func TestAttribute(t *testing.T) {
 		{"other workspace", Facts{SlackTeams: []string{"T9"}}, owned, NotMine, Medium, "Slack workspace T9"},
 		{"no AWS account known", Facts{AWSAccounts: []string{"999999999999"}}, Owned{}, Unknown, Low, "none of yours is known"},
 		{"foreign AWS but project kind unknown", Facts{AWSAccounts: []string{"999999999999"}, SlackTeams: []string{"T9"}}, Owned{AWSAccounts: owned.AWSAccounts}, Unknown, Low, "none of yours is known"},
-		{"authorship is a hint", Facts{AuthorEmails: []string{"ME@x.com"}, RepoOwners: []string{"example-org"}}, owned, Unknown, Low, "hint: committed by you"},
+		{"authorship is a hint", Facts{AuthorEmails: []string{"ME@x.com"}, RepoOwners: []string{"acme"}}, owned, Unknown, Low, "hint: committed by you"},
 		{"third-party repository is a hint", Facts{AuthorEmails: []string{"them@y.com"}, RepoOwners: []string{"instructure"}}, owned, Unknown, Low, "hint: in a repository of instructure"},
 		{"token of the owner's GitHub login", Facts{GitHubLogins: []string{"OctoCat"}}, owned, Mine, High, "GitHub account OctoCat is yours"},
 		{"token of another GitHub login", Facts{GitHubLogins: []string{"mallory"}}, owned, NotMine, Medium, "GitHub account mallory is none"},

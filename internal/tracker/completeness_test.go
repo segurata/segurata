@@ -191,7 +191,7 @@ func TestStaleSetupItemsCloseOnAFinishedRun(t *testing.T) {
 	const acct = "012345678901"
 	first := []any{
 		status("aws", acct, "", finding.StateError, "root user: AccessDenied"),
-		status("aws", "profile r2-example", "", finding.StateReauth, "InvalidClientTokenId"),
+		status("aws", "profile r2-bucket", "", finding.StateReauth, "InvalidClientTokenId"),
 	}
 	cases := []struct {
 		name   string
@@ -217,7 +217,7 @@ func TestStaleSetupItemsCloseOnAFinishedRun(t *testing.T) {
 			tr := &Tracker{}
 			syncOrDie(t, tr, out, day1)
 			errItem := byTitle(t, tr, "aws · "+acct+": failed")
-			r2 := byTitle(t, tr, "aws · profile r2-example")
+			r2 := byTitle(t, tr, "aws · profile r2-bucket")
 			c.second(t, out)
 			syncOrDie(t, tr, out, day2.Add(time.Hour))
 			for _, it := range []*Item{errItem, r2} {
