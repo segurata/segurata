@@ -35,6 +35,9 @@ const historyCacheVersion = 1
 // maxLogOpts bounds the commit list passed to gitleaks, well under any OS argument limit.
 var maxLogOpts = 256 << 10
 
+// cacheRoot holds the connector's caches: the gitleaks history caches' parent, ~/.cache/segurata.
+func (c *Connector) cacheRoot(home string) string { return filepath.Dir(c.CacheDir(home)) }
+
 // DefaultCacheDir is ~/.cache/segurata/gitleaks.
 func DefaultCacheDir(home string) string {
 	return filepath.Join(home, ".cache", "segurata", "gitleaks")

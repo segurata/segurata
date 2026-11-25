@@ -293,7 +293,7 @@ func (s *scan) findDumps(repo string) ([]dumpHit, error) {
 
 // dumpCacheDir sits beside the gitleaks history cache: ~/.cache/segurata/datadumps.
 func (s *scan) dumpCacheDir() string {
-	return filepath.Join(filepath.Dir(s.c.CacheDir(s.home)), "datadumps")
+	return filepath.Join(s.c.cacheRoot(s.home), "datadumps")
 }
 
 func (s *scan) loadDumpCache(path, repo string) *dumpCache {

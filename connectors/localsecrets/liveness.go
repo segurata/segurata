@@ -303,12 +303,12 @@ func (s *scan) recoverValue(ctx context.Context, ev secretrisk.Evidence) (string
 	return "", false
 }
 
-// checker is the real checker unless a test gives one: the providers' hosts, the cache under
-// ~/.cache/segurata, and the owner's gh, aws and ssh for the lookups.
+// checker is the real checker unless a test gives one: the providers' hosts, the cache beside the
+// other caches (~/.cache/segurata/liveness.json), and the owner's gh, aws and ssh for the lookups.
 func (c *Connector) checker(home string, cfg liveness.Config) *liveness.Checker {
 	if c.NewChecker != nil {
 		return c.NewChecker(home, cfg)
 	}
-	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(liveness.DefaultCachePath(home)),
+	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(filepath.Join(c.cacheRoot(home), "liveness.json")),
 		Owner: liveness.Owner{AWS: c.AWS, GH: c.GH, SSH: c.SSH, Home: home}}
 }

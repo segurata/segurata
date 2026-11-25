@@ -1,9 +1,6 @@
 package liveness
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -24,11 +21,6 @@ const (
 // bare 401, so it is discarded and every secret asked again.
 const cacheVersion = 2
 
-// DefaultCachePath is ~/.cache/segurata/liveness.json.
-func DefaultCachePath(home string) string {
-	return filepath.Join(home, ".cache", "segurata", "liveness.json")
-}
-
 // Cache keeps results by fingerprint in a 0600 file: fingerprint, state, when, provider and the
 // account, never a value.
 type Cache struct {
@@ -41,8 +33,7 @@ type Cache struct {
 // LoadCache reads the cache at path; a missing, unreadable or older-format file is an empty cache.
 func LoadCache(path string) *Cache {
 	c := &Cache{path: path}
-	raw, err := os.ReadFile(path)
-	if err == nil && json.Unmarshal(raw, c) == nil && c.Version == cacheVersion && c.Results != nil {
+	if found, err := statefile.ReadJSON(path, c); found && err == nil && c.Version == cacheVersion && c.Results != nil {
 		return c
 	}
 	return &Cache{path: path, Results: map[string]secretrisk.Liveness{}}

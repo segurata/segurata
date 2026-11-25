@@ -588,3 +588,19 @@ func TestLivenessNeverDiscardsTheScan(t *testing.T) {
 		}
 	}
 }
+
+// The liveness cache sits beside the other caches, under the connector's CacheDir root.
+func TestLivenessCacheFollowsCacheDir(t *testing.T) {
+	home := t.TempDir()
+	c := &Connector{CacheDir: func(h string) string { return filepath.Join(h, "state", "gitleaks") }}
+	ch := c.checker(home, liveness.Config{})
+	if err := ch.Cache.Save(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "state", "liveness.json")); err != nil {
+		t.Errorf("cache not under CacheDir's root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cache")); err == nil {
+		t.Error("a cache was written under ~/.cache")
+	}
+}
