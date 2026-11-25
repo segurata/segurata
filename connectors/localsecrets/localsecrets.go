@@ -52,6 +52,10 @@ type Connector struct {
 	// visibility, both for the data-dump check (dumpscan.go). Either may be nil: no peek, no gh.
 	GitHead, GH cli.Runner
 
+	// AWS and SSH are the owner's aws CLI and ssh, which the liveness lookups run with (as GH) to
+	// classify lone AWS key ids and private keys. Nil leaves that source out.
+	AWS, SSH cli.Runner
+
 	// NewChecker builds the liveness checker (liveness.go); nil is the real one. Tests point it at
 	// fake providers.
 	NewChecker func(home string, cfg liveness.Config) *liveness.Checker
@@ -65,6 +69,8 @@ func New() *Connector {
 		SSHKeygen: cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
 		GitHead:   headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second, Env: gitEnv},
 		GH:        cli.Exec{Path: "gh", Timeout: 30 * time.Second, Env: []string{"GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1"}},
+		AWS:       cli.Exec{Path: "aws", Timeout: 2 * time.Minute, Env: []string{"AWS_PAGER="}},
+		SSH:       cli.Exec{Path: "ssh", Timeout: 30 * time.Second},
 		LookPath:  exec.LookPath,
 		Home:      os.UserHomeDir,
 		KeyPath:   fingerprint.DefaultPath,
@@ -81,7 +87,7 @@ func (c *Connector) Describe() connector.Description {
 		Version:  "0.1.0",
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Plaintext secrets in config, .env files, histories, logs, agent transcripts, git history; database dumps committed to git; SSH keys without a passphrase",
-		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen", "cli:gh (optional)"},
+		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen", "cli:gh (optional)", "cli:aws (optional)", "cli:ssh (optional)"},
 		// Each rg pass may take an hour and the history scan gitleaks_timeout per repository.
 		Timeout: "6h",
 	}

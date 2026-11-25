@@ -3,6 +3,10 @@ package localsecrets
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +19,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/liveness"
+	"github.com/segurata/segurata/connectors/internal/sshkey"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fingerprint"
@@ -146,17 +151,19 @@ func TestLivenessAtScanTime(t *testing.T) {
 		}
 	}
 	detail := rec.statuses[0].Detail
-	if !strings.Contains(detail, "liveness: 3 asked, 0 from cache, 0 values recovered from git history; 2 live, 1 dead") || !strings.Contains(detail, "1 not allowed") {
+	// The fixture's private keys are looked up too; with no gh and no ~/.ssh they stay unknown.
+	if !strings.Contains(detail, "liveness: 6 asked, 0 from cache, 0 values recovered from git history; 2 live, 1 dead, 0 unregistered, 3 unknown") || !strings.Contains(detail, "1 not allowed") {
 		t.Errorf("status detail: %s", detail)
 	}
 
-	// A second run finds everything in the cache and asks nothing.
+	// A second run finds every provider's answer in the cache and asks no provider; the unknown
+	// lookups, never cached, run again.
 	before := len(f.asked)
 	rec2 := &recorder{}
 	if err := c.Inventory(context.Background(), req, rec2); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.asked) != before || !strings.Contains(rec2.statuses[0].Detail, "0 asked, 3 from cache,") {
+	if len(f.asked) != before || !strings.Contains(rec2.statuses[0].Detail, "3 asked, 3 from cache,") {
 		t.Errorf("second run asked %d more; %s", len(f.asked)-before, rec2.statuses[0].Detail)
 	}
 }
@@ -171,7 +178,8 @@ func TestLivenessGates(t *testing.T) {
 		{"off by default", &attribution.Known{}, nil, ""},
 		{"off", &attribution.Known{}, map[string]any{"enabled": false}, ""},
 		{"no attribution lent", nil, map[string]any{"enabled": true, "owners": []any{"unknown"}}, "liveness: not run"},
-		{"mine only: the unknown keys stay untried", &attribution.Known{}, map[string]any{"enabled": true}, "0 asked"},
+		// Only the lookups run, which send nothing: the private keys.
+		{"mine only: the unknown keys stay untried", &attribution.Known{}, map[string]any{"enabled": true}, "3 asked"},
 		{"provider allowlist", &attribution.Known{}, map[string]any{"enabled": true, "owners": []any{"unknown"}, "providers": []any{"github"}}, "0 asked"},
 	}
 	for _, tc := range cases {
@@ -281,5 +289,89 @@ func TestOnlyKeyID(t *testing.T) {
 	}
 	if _, ok := onlyKeyID(nil); ok {
 		t.Error("no key id")
+	}
+}
+
+// A lone AWS key id and a private key are looked up with the owner's credentials (fake aws and gh
+// here): the key id among the owner's IAM keys, the private key's public half among their GitHub
+// keys. Neither value reaches a finding, a status, or a command other than the read-only ones.
+func TestLivenessLookupsAtScanTime(t *testing.T) {
+	fx := newFixture(t)
+	keyID := testcorpus.AWSKeyID("AKIA", 12345678901, false, 7)
+	_, edKey, _ := ed25519.GenerateKey(rand.Reader)
+	der, err := x509.MarshalPKCS8PrivateKey(edKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, body := fakePEM("", der)
+	pub, _, err := sshkey.FromPrivate(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.secrets = append(fx.secrets, keyID, keyPEM)
+	fx.write(t, "src/shop/config/.env", "AWS_ACCESS_KEY_ID="+keyID+"\n", 0o600)
+	fx.write(t, "src/shop/deploy2.pem", keyPEM, 0o600)
+
+	var commands []string
+	var mu sync.Mutex
+	runner := func(answer func(args []string) string) cli.Runner {
+		return cli.RunnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
+			mu.Lock()
+			commands = append(commands, strings.Join(args, " "))
+			mu.Unlock()
+			return []byte(answer(args)), nil
+		})
+	}
+	aws := runner(func(a []string) string {
+		switch strings.Join(a[:2], " ") {
+		case "configure list-profiles":
+			return "prod\n"
+		case "sts get-caller-identity":
+			return `{"Account":"012345678901"}`
+		case "iam list-users":
+			return `{"Users":[{"UserName":"ci"}]}`
+		case "iam list-access-keys":
+			return `{"AccessKeyMetadata":[{"AccessKeyId":"` + keyID + `","Status":"Active"}]}`
+		}
+		return `{"SummaryMap":{"AccountAccessKeysPresent":0}}`
+	})
+	gh := runner(func(a []string) string {
+		switch a[len(a)-1] {
+		case "user":
+			return `{"login":"octocat"}`
+		case "user/keys":
+			return `[{"key":"` + pub.Type + " " + base64.StdEncoding.EncodeToString(pub.Blob) + `","title":"deploy box"}]`
+		}
+		return "[]"
+	})
+	c := fx.connector(t, fx.gitleaksReport())
+	c.NewChecker = func(home string, cfg liveness.Config) *liveness.Checker {
+		return &liveness.Checker{Config: cfg, Owner: liveness.Owner{AWS: aws, GH: gh, Home: home}}
+	}
+	known := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
+	req := connector.Request{Known: known, Config: map[string]any{"liveness": map[string]any{"enabled": true}}}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), req, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	for _, s := range append(fx.secrets, body) {
+		if len(s) >= 6 && strings.Contains(string(raw), s) {
+			t.Fatal("a raw secret reached the output")
+		}
+	}
+	for _, cmd := range commands {
+		if strings.Contains(cmd, keyID) || strings.Contains(cmd, body[:16]) {
+			t.Errorf("a command was given the secret: %s", cmd)
+		}
+	}
+	ids := livenessOf(t, rec, "aws-access-key-id")
+	if l := ids["scan:~/src/shop/config/.env"]; l == nil || l.State != secretrisk.Live || !l.ByOwner || l.Account != "aws:012345678901" || l.Reason != "Active, IAM user ci of account 012345678901" {
+		t.Errorf("lone key id: %+v", l)
+	}
+	keys := livenessOf(t, rec, "private-key")
+	if l := keys["scan:~/src/shop/deploy2.pem"]; l == nil || l.State != secretrisk.Live || l.Reason != `GitHub SSH key "deploy box"` || l.Account != "github:octocat" {
+		t.Errorf("private key: %+v", keys)
 	}
 }
