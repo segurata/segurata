@@ -118,7 +118,7 @@ func TestCoverageItems(t *testing.T) {
 func TestGithubOwner2FAFromDeclaredRuns(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	noScope := finding.Status{Type: "status", Connector: "github", Account: "github:me", Scope: "user:me", State: finding.StateNoScope, Detail: "gh lacks read:user"}
-	runtest.Write(t, filepath.Join(out, t0.Format(time.DateOnly), "github.jsonl"), okStatus("github", "github:org"), noScope)
+	runtest.Write(t, filepath.Join(out, t0.Format(time.DateOnly), "github.jsonl"), okStatus("github", "github:org"), noScope, runtest.Legacy{})
 	tr := New(t0)
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
 	if it := tr.ByKey("coverage:github-owner-2fa"); it != nil {

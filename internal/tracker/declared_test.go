@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/runtest"
 )
 
 // A connector the tracker knows nothing about groups, kinds and titles its items as its findings
@@ -53,14 +54,14 @@ func TestUndeclaredFindingsStayInTheirItems(t *testing.T) {
 		Findings: []FindingRef{refOf(a), refOf(b)}}
 	tr.Items = append(tr.Items, old)
 	out := filepath.Join(t.TempDir(), "out")
-	writeRun(t, out, now, "scanner.jsonl", a, b)
+	writeRun(t, out, now, "scanner.jsonl", a, b, runtest.Legacy{})
 	if rep := syncOrDie(t, tr, out, now); rep.Created != 0 || old.Title != "Checks that failed" || old.Status != Open {
 		t.Fatalf("created %d, item %+v", rep.Created, old)
 	}
 	later := now.Add(time.Hour)
 	a.Track, b.Track = &finding.Track{Group: finding.GroupFinding}, &finding.Track{Group: finding.GroupFinding}
 	a.ObservedAt, b.ObservedAt = later, later
-	writeRun(t, out, later, "scanner.jsonl", a, b, finding.ThemeOther)
+	writeRun(t, out, later, "scanner.jsonl", a, b)
 	if rep := syncOrDie(t, tr, out, later); rep.Created != 2 || old.Status != Done {
 		t.Fatalf("created %d, old item %s", rep.Created, old.Status)
 	}

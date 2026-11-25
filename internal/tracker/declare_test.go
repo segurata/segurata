@@ -10,10 +10,11 @@ import (
 
 // Declare does to a run's records what the connectors and the core do before writing them: each
 // finding gets the Track its built-in connector declares, and the run the theme and areas its
-// connector declares (internal/run). The prowler plugin's declarations are in its findings already and its
-// theme in pluginThemes. Records of other connectors are left as they are.
+// connector declares (internal/run). Plugins write their findings' Track themselves; their
+// descriptions are in plugins. Records of other connectors are left as they are, as in a run
+// written before connectors declared anything.
 func Declare(recs []any) []any {
-	out := make([]any, 0, len(recs)+1)
+	out := make([]any, 0, len(recs)+2)
 	name, themed := "", false
 	for _, r := range recs {
 		switch r := r.(type) {
@@ -31,11 +32,13 @@ func Declare(recs []any) []any {
 		}
 		out = append(out, r)
 	}
-	if th := declaredTheme(name); !themed && th.ID != "" {
-		out = append(out, th)
+	d, ok := describe(name)
+	if !ok || themed {
+		return out
 	}
-	if c := builtin(name); c != nil && len(c.Describe().Covers) > 0 {
-		out = append(out, c.Describe().Covers)
+	out = append(out, finding.ThemeFor(d.Theme))
+	if len(d.Covers) > 0 {
+		out = append(out, d.Covers)
 	}
 	return out
 }
@@ -50,17 +53,17 @@ func builtin(name string) connector.Connector {
 	return nil
 }
 
-// declaredTheme is the theme the core writes in a connector's run_end.
-func declaredTheme(name string) finding.Theme {
+// describe is what the connector of that name declares: a built-in one, or one of plugins.
+func describe(name string) (connector.Description, bool) {
 	if c := builtin(name); c != nil {
-		return finding.ThemeFor(c.Describe().Theme)
+		return c.Describe(), true
 	}
-	if th, ok := pluginThemes[name]; ok {
-		return finding.ThemeFor(th)
-	}
-	return finding.Theme{}
+	d, ok := plugins[name]
+	return d, ok
 }
 
-// pluginThemes are the themes the external connectors of the tests declare; a connector not listed
-// gets none, as in a run written before connectors declared themes.
-var pluginThemes = map[string]finding.Theme{"hibp": {}, "prowler": {ID: finding.ThemeCloud.ID}}
+// plugins are what the external connectors of the tests declare (plugins/prowler, examples/hibp).
+var plugins = map[string]connector.Description{
+	"prowler": {Theme: finding.Theme{ID: finding.ThemeCloud.ID}},
+	"hibp":    {Covers: []finding.Area{{ID: "hibp"}}},
+}

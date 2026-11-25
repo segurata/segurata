@@ -187,6 +187,8 @@ func writeGoldenRuns(t *testing.T, out string, declared bool) {
 		}
 		if declared {
 			recs = tracker.Declare(recs)
+		} else {
+			recs = append(recs, runtest.Legacy{})
 		}
 		runtest.Write(t, filepath.Join(out, goldenNow.Format(time.DateOnly), n), recs...)
 	}
