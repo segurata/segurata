@@ -32,7 +32,7 @@ const otherTheme = "other"
 
 // connectorThemes maps a connector that does not declare its theme yet to it.
 var connectorThemes = map[string]string{
-	"macos": "mac", "browser-extensions": "browser-extensions", "github": "github-orgs",
+	"browser-extensions": "browser-extensions", "github": "github-orgs",
 	"connected-apps": "connected-apps", "google-personal": "google", "workspace": "google",
 	"gcp": "cloud", "prowler": "cloud", "aws": "cloud", "azure": "cloud", "cloudflare": "cloud", "vercel": "cloud", "supabase": "cloud",
 	"openai": "ai-spend", "anthropic": "ai-spend", "openrouter": "ai-spend",
