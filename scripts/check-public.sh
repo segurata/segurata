@@ -31,6 +31,12 @@ done
 repo="$(git rev-parse --show-toplevel)"
 here="$(cd "$(dirname "$0")" && pwd)"
 command -v gitleaks >/dev/null || { echo "check-public: gitleaks is not on PATH" >&2; exit 2; }
+if [ -f "$identifiers" ]; then
+  python3 "$here/identifiers.py" check "$identifiers" "$repo" || exit 2
+elif $require_identifiers; then
+  echo "check-public: no identifiers file at $identifiers (--identifiers or SEGURATA_PUBLIC_GATE)" >&2
+  exit 2
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -46,26 +52,20 @@ mkdir "$tmp/tree"
 (cd "$repo" && tar --null -T "$tmp/files" -cf -) | (cd "$tmp/tree" && tar -xf -)
 
 echo "== gitleaks: tracked files"
-scan gitleaks dir --no-banner --redact --log-level warn -c "$repo/.gitleaks.toml" "$tmp/tree"
+scan gitleaks dir --no-banner --no-color --redact --log-level warn -c "$repo/.gitleaks.toml" "$tmp/tree"
 
 if $history; then
   echo "== gitleaks: history ($(git -C "$repo" rev-list --all | wc -l | tr -d ' ') commits)"
-  scan gitleaks git --no-banner --redact --log-level warn --log-opts=--all -c "$repo/.gitleaks.toml" "$repo"
+  scan gitleaks git --no-banner --no-color --redact --log-level warn --log-opts=--all -c "$repo/.gitleaks.toml" "$repo"
 fi
 
 if [ -f "$identifiers" ]; then
-  case "$(cd "$(dirname "$identifiers")" && pwd -P)/" in
-    "$(cd "$repo" && pwd -P)"/*) echo "check-public: keep the identifiers file outside the repository" >&2; exit 2 ;;
-  esac
   echo "== private identifiers: tracked files"
   scan python3 "$here/identifiers.py" scan-tree "$repo" "$identifiers"
   if $history; then
     echo "== private identifiers: history"
     scan python3 "$here/identifiers.py" scan-history "$repo" "$identifiers"
   fi
-elif $require_identifiers; then
-  echo "check-public: no identifiers file at $identifiers (--identifiers or SEGURATA_PUBLIC_GATE)" >&2
-  exit 2
 else
   echo "== private identifiers: skipped, no file at $identifiers"
 fi

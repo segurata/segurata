@@ -129,12 +129,70 @@ install -m 0755 segurata ~/.local/bin/
 While the repository is private, release downloads (and so the cask) need a GitHub token with read
 access to it, for example `gh release download v0.1.0 --repo segurata/segurata`.
 
-## Moving to segurata/segurata
+## Going public
 
-When the repository moves, change in one go:
+The code goes public as a new history in `github.com/segurata/segurata`, a repository that exists
+today, private and empty. The private `example-org/segurata` repository is only read from: its
+history is never rewritten in place and never force-pushed. Its clones cannot pull from the public
+repository afterwards (every commit id changes), so open branches move over by `git format-patch`
+and `git am` or by cherry-pick.
 
-- `docs/releasing.md` and `README.md`: the cosign identity, the tap owner and the download
-  examples.
-- `.goreleaser.yaml`: `homepage`.
-- The `HOMEBREW_TAP_OWNER` variable, if the tap moves too.
-- `SECURITY.md`: enable private vulnerability reporting and set the security contact.
+### 1. Clean the tip
+
+List the private identifiers in `~/.config/segurata/public-gate.txt`, outside any repository:
+client and employer names, internal hosts and domains, cloud project and account ids, people's
+names and emails, private repository names. Format: [`scripts/identifiers.py`](../scripts/identifiers.py).
+Then, on `main`:
+
+```bash
+scripts/check-public.sh --require-identifiers --history
+grep -rn 'TODO (owner)[:]' --exclude-dir=.git .   # the contacts still to fill in
+```
+
+Every hit in the tracked files is fixed on `main` by an ordinary commit, and so is every
+`TODO (owner)` (the security and conduct contacts). Hits in the history are what the next step
+rewrites.
+
+### 2. Build the public history
+
+```bash
+scripts/prepare-public-history.sh --workdir ~/segurata-public --drop-path-glob '*.pyc'
+```
+
+It clones `main` and its tags from `origin` into `~/segurata-public/public.git`, replaces every
+identifier in file contents and commit and tag messages, and writes `~/segurata-public/report.txt`.
+Its gates: no identifier left anywhere in the new history (paths, binary files and authors
+included, which the replacement does not touch: `--drop-path-glob` removes such files, `--mailmap`
+rewrites authors), gitleaks clean, the tip's files identical to `main`'s, and no ref but `main` and
+tags. `--drop-path-glob '*.pyc'` drops the Python bytecode an early commit added, which holds local
+paths. Run it again with a new `--workdir` until the report ends in `ALL GATES PASSED`, then read
+the result once by eye: `git -C ~/segurata-public/public.git log --stat`.
+
+### 3. Publish
+
+```bash
+cd ~/segurata-public/public.git
+git push git@github.com:segurata/segurata.git 'refs/heads/main:refs/heads/main' 'refs/tags/*:refs/tags/*'
+```
+
+An ordinary push into an empty repository: nothing is overwritten. Then, with the repository still
+private:
+
+1. Wait for CI on `main` to pass. GitHub-hosted runners are free for public repositories; while
+   private, the `segurata` organization's plan pays for them.
+2. Contacts: the address that replaced `TODO (owner)` in `SECURITY.md` and `CODE_OF_CONDUCT.md`
+   must receive mail.
+3. Tap: `gh repo create segurata/homebrew-tap --public --add-readme`, then a fine-grained token as
+   in [Repository settings](#repository-settings), stored with
+   `gh secret set HOMEBREW_TAP_GITHUB_TOKEN --repo segurata/segurata`.
+4. Go public, then turn on private vulnerability reporting:
+
+   ```bash
+   gh repo edit segurata/segurata --visibility public --accept-visibility-change-consequences
+   gh api -X PUT repos/segurata/segurata/private-vulnerability-reporting
+   ```
+
+5. Check `go install github.com/segurata/segurata/cmd/segurata@main` from a machine without a
+   clone, then cut `v0.1.0` as in [Cutting a release](#cutting-a-release).
+6. Archive the private repository (`gh repo archive example-org/segurata`) once nothing is left
+   to move over.

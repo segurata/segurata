@@ -80,6 +80,22 @@ class LoadTest(Base):
             identifiers.load(os.path.join(self.tmp.name, "absent.txt"))
 
 
+class CheckOutsideTest(Base):
+    def test_inside_the_repository(self):
+        repo = self.repo()
+        inside = os.path.join(repo.path, "sub", "ids.txt")
+        with self.assertRaisesRegex(identifiers.InputError, "outside the repository"):
+            identifiers.check_outside(inside, repo.path)
+        link = os.path.join(self.tmp.name, "link")
+        os.symlink(repo.path, link)
+        with self.assertRaisesRegex(identifiers.InputError, "outside the repository"):
+            identifiers.check_outside(os.path.join(link, "ids.txt"), repo.path)
+
+    def test_outside(self):
+        repo = self.repo()
+        identifiers.check_outside(self.ids("acme-corp\n"), repo.path)
+
+
 class ReplaceFileTest(Base):
     def test_case_insensitive_literal_regexes(self):
         out = os.path.join(self.tmp.name, "expressions.txt")
@@ -156,6 +172,8 @@ class MainTest(Base):
             self.assertEqual(identifiers.main(["x", "scan-tree", repo.path, self.ids("other-name\n")]), 0)
             self.assertEqual(identifiers.main(["x", "scan-tree", repo.path, self.ids("ab\n")]), 2)
             self.assertEqual(identifiers.main(["x", "unknown", "y"]), 2)
+            self.assertEqual(identifiers.main(["x", "check", self.ids("acme-corp\n"), repo.path]), 0)
+            self.assertEqual(identifiers.main(["x", "check", os.path.join(repo.path, "a.txt"), repo.path]), 2)
         self.assertEqual(out.getvalue(), "identifier on line 1: a.txt:1\n")
         self.assertNotIn("acme-corp", out.getvalue() + err.getvalue())
 

@@ -14,7 +14,7 @@ Reports name an identifier by its line number in the file, never by its text, so
 pasted anywhere.
 
 Commands:
-    identifiers.py check FILE                 validate the file
+    identifiers.py check FILE REPO            validate the file, and that it is outside REPO
     identifiers.py replace-file FILE OUT      write git filter-repo --replace-text expressions
     identifiers.py scan-tree REPO FILE        tracked files of the working tree: content and paths
     identifiers.py scan-history REPO FILE     every object reachable from any ref, and ref names
@@ -60,6 +60,13 @@ def load(path):
     if not entries:
         raise InputError(f"no identifiers in {path}")
     return entries
+
+
+def check_outside(path, repo):
+    """The list must not live in the repository it guards: one commit would publish it."""
+    real, top = os.path.realpath(path), os.path.realpath(repo)
+    if os.path.commonpath([real, top]) == top:
+        raise InputError(f"keep the identifiers file outside the repository: {path}")
 
 
 def matcher(entries):
@@ -157,7 +164,8 @@ def main(argv):
         return 2
     command = argv[1]
     try:
-        if command == "check" and len(argv) == 3:
+        if command == "check" and len(argv) == 4:
+            check_outside(argv[2], argv[3])
             load(argv[2])
             return 0
         if command == "replace-file" and len(argv) == 4:
