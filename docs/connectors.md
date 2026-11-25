@@ -189,6 +189,13 @@ larger one the worst finding's title and "and N more like it". An unknown `group
 `count` counts as the default. The tracker adds the severity split ("(1 medium, 39 low)") and
 the next step (the worst finding's remediation) itself.
 
+**Coverage of the plan.** The tracker lists the areas of the plan ([plan.md](plan.md)) that
+nothing audits on this machine. A connector that audits one declares it in `describe`:
+`"covers": [{"id": "github-owner-2fa", "scope": "user:"}]` (Go: `Description.Covers`). After each
+run the area counts as audited when a status whose scope starts with `scope` (any status, without
+one) says ok, or none says otherwise; the core writes the declaration into `run_end`. The ids are
+the tracker's gap slugs: `github-owner-2fa`, `workspace`, `hibp`.
+
 The item key is made of the connector instance, the resource type, the group and its key. It is
 persisted in the tracker with the item's history, so keep `group` and `key` stable across
 versions: a changed one opens a new item and leaves the old one behind. Findings of a run written
@@ -313,7 +320,7 @@ Prints one JSON object:
 ```json
 {"name": "example", "version": "0.1.0", "protocol": 2,
  "summary": "What it inventories", "needs": ["cdp", "cli:gcloud", "secret:EXAMPLE_API_KEY"],
- "remediates": ["example.token.revoke"]}
+ "remediates": ["example.token.revoke"], "theme": {"id": "cloud"}}
 ```
 
 - `needs`: `cdp` (drives the browser over the DevTools protocol), `cli:<tool>`, `secret:<NAME>`.
@@ -326,8 +333,9 @@ Prints one JSON object:
   name (a stray `segurata-example.orig`), nor one whose name a built-in connector already has.
 - `describe` runs on every command that lists connectors, once per command: it must answer within
   10 seconds and print less than 1 MiB.
-- `theme` (optional): the tracker theme of the connector's items (see "Theme and grouping").
-  A theme id that is not lowercase letters, digits and dashes makes the description ignored.
+- `theme` and `covers` (optional): the tracker theme of the connector's items and the plan areas
+  it audits (see "Theme and grouping"). An id that is not lowercase letters, digits and dashes
+  makes the description ignored.
 - `timeout` (optional): how long one `inventory` may take by default, as a Go duration (`"6h"`),
   for a connector that routinely needs longer than the core's one hour. The owner's config
   `timeout` for the instance overrides it. At the deadline the core kills the process and the run
@@ -431,7 +439,7 @@ external connector on `PATH` is trusting it with them.
 | 1 | `describe`, `inventory` | Speaks it |
 | 2 | `remediates` in `describe`, `plan`, `apply`; `inventory` unchanged | Speaks it |
 
-`theme` in `describe` and `track` in findings are optional fields of both versions: a core that
+`theme` and `covers` in `describe` and `track` in findings are optional fields of both versions: a core that
 does not know them ignores them, and a connector that leaves them out gets the defaults, so
 declaring them needs no new protocol version.
 
