@@ -50,6 +50,9 @@ type Evidence struct {
 	// Sample marks a value that reads like test data ("test", "fake", "1234", a run of one
 	// character). It lowers the impact to noise only in a test, example or documentation path.
 	Sample bool `json:"sample,omitempty"`
+	// Liveness is what the provider said when the secret was tried against it, when the liveness
+	// check is on and allowed to try it.
+	Liveness *Liveness `json:"liveness,omitempty"`
 }
 
 // Impact is how much damage the secret can do in the wrong hands.

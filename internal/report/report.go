@@ -26,9 +26,13 @@ type Run struct {
 	Date  string // YYYY-MM-DD of the run
 	// Unfinished is the date of a newer run without run_end that was passed over, or "".
 	Unfinished string
-	Coverage   finding.Coverage
-	Findings   []finding.Finding
-	Statuses   []finding.Status
+	// InspectedNothing is the date of the latest run when it inspected nothing and reported no
+	// finding, so this older run, the newest that inspected something, is shown instead; or "".
+	// InspectedWhy is why it inspected nothing.
+	InspectedNothing, InspectedWhy string
+	Coverage                       finding.Coverage
+	Findings                       []finding.Finding
+	Statuses                       []finding.Status
 }
 
 // Accepted is one accepted risk and where it stands today.
@@ -129,14 +133,23 @@ func Build(in Inputs) (*Report, error) {
 
 func dateOf(file string) string { return filepath.Base(filepath.Dir(file)) }
 
-// readRun reads a latest run.
+// readRun reads a latest run, or the newest run that inspected something when the latest inspected
+// nothing and found nothing (runfile.Latest.Evidence).
 func readRun(l runfile.Latest, annotate func(*finding.Finding)) (*Run, error) {
 	rf, err := runfile.Read(l.File)
 	if err != nil {
 		return nil, err
 	}
-	run := &Run{File: l.File, Date: dateOf(l.File), Coverage: rf.Coverage(), Findings: rf.Findings, Statuses: rf.Statuses}
-	run.Label = tracker.RunLabel(l.File, rf)
+	file, skipped, why := l.File, "", ""
+	if l.Evidence != "" && len(rf.Findings) == 0 {
+		why, _ = rf.Coverage().NoneChecked()
+		if rf, err = runfile.Read(l.Evidence); err != nil {
+			return nil, err
+		}
+		file, skipped = l.Evidence, dateOf(l.File)
+	}
+	run := &Run{File: file, Date: dateOf(file), InspectedNothing: skipped, InspectedWhy: why, Coverage: rf.Coverage(), Findings: rf.Findings, Statuses: rf.Statuses}
+	run.Label = tracker.RunLabel(file, rf)
 	if l.Unfinished != "" {
 		run.Unfinished = dateOf(l.Unfinished)
 	}

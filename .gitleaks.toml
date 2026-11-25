@@ -1,0 +1,22 @@
+# gitleaks rules for this repository: the default rule set, minus the fake and published example
+# values that tests, fixtures and docs contain on purpose. Allow a value only when it is provably
+# not a credential, by its exact text and never by path, so a real secret added to the same file
+# is still caught. Used by scripts/check-public.sh and scripts/prepare-public-history.sh.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fake and published example values in tests, fixtures and docs"
+regexTarget = "secret"
+regexes = [
+  '''^AKIAEXAMPLEEXAMPWXYZ$''',  # made up, internal/secretrisk tests
+  '''^AKIASP2TPHJSQH3FJXYZ$''',  # published example of the aws_account_id_from_key_id crate
+  '''^KEY_ALG_RSA_2048$''',      # a GCP key algorithm name in a fixture
+  '''^abcdefghijklmnopqrst/k3$''',
+  '''^https://hooks\.slack\.com/services/T0ABC1234/B0DEF5678/abcdefghijklmnopqrstuvwx$''',
+  '''^sk-test-0123456789abcdef$''',
+  '''^sk_live_abcdefghijklmnopqrstuvwx$''',
+  '''^xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx$''',
+  '''^-----BEGIN PRIVATE KEY-----", "AGE-SECRET-KEY-1" \+ strings\.ToUpper''',  # Go source of the test corpus
+]

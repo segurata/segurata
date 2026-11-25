@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -65,7 +66,7 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 		"fake": {Secrets: map[string]string{"OK": "env:SEGURATA_TEST_SECRET", "BAD": "env:SEGURATA_TEST_UNSET"}},
 	}}
 	fk := &fake{}
-	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, fk), t.TempDir(), nil, nil)
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, fk), t.TempDir(), nil, Lent{})
 	if err != nil || len(res) != 1 || res[0].Err != nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
@@ -136,7 +137,7 @@ esac
 	if ext == nil {
 		t.Fatal("external connector not discovered")
 	}
-	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, ext), t.TempDir(), nil, nil)
+	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, ext), t.TempDir(), nil, Lent{})
 	if err != nil || res[0].Err != nil {
 		t.Fatalf("err=%v resErr=%v", err, res[0].Err)
 	}
@@ -184,7 +185,7 @@ func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
 	if err != nil || len(ts) != 2 || ts[0].Label() != "fake:personal" || ts[1].Label() != "fake:work" {
 		t.Fatalf("targets %v, %v", ts, err)
 	}
-	res, err := Inventory(context.Background(), cfg, ts, t.TempDir(), nil, nil)
+	res, err := Inventory(context.Background(), cfg, ts, t.TempDir(), nil, Lent{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func TestConcurrentRunsOfOneInstanceNeverTearTheFile(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i], _ = Inventory(context.Background(), cfg, mustTargets(t, cfg, inv), out, nil, nil)
+			results[i], _ = Inventory(context.Background(), cfg, mustTargets(t, cfg, inv), out, nil, Lent{})
 		}()
 	}
 	wg.Wait()
@@ -326,7 +327,7 @@ func TestRunEndRecordsCoverage(t *testing.T) {
 			if c.cancel {
 				cancel()
 			}
-			res, _ := Inventory(ctx, config.Config{}, mustTargets(t, config.Config{}, c.inv), t.TempDir(), nil, nil)
+			res, _ := Inventory(ctx, config.Config{}, mustTargets(t, config.Config{}, c.inv), t.TempDir(), nil, Lent{})
 			end := res[0].End
 			lines := readLines(t, res[0].File)
 			if last := lines[len(lines)-1]; last["type"] != "run_end" || last["complete"] != c.complete {
@@ -356,7 +357,7 @@ func TestRunEndCapsLists(t *testing.T) {
 		}
 		return nil
 	})
-	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, inv), t.TempDir(), nil, nil)
+	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, inv), t.TempDir(), nil, Lent{})
 	sc := res[0].End.Scopes
 	if len(sc.Inspected) != 50 || sc.InspectedCount != 300 || len(sc.Skipped) != 200 || sc.SkippedCount != 300 {
 		t.Fatalf("caps: %d/%d inspected, %d/%d skipped", len(sc.Inspected), sc.InspectedCount, len(sc.Skipped), sc.SkippedCount)
@@ -372,7 +373,7 @@ func TestRunEndCapsLists(t *testing.T) {
 func TestUnfinishedRunKeepsTheEarlierFile(t *testing.T) {
 	out := t.TempDir()
 	cfg := config.Config{}
-	first, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, &fake{}), out, nil, nil)
+	first, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, &fake{}), out, nil, Lent{})
 	if err != nil || first[0].Err != nil {
 		t.Fatalf("first run: %v %v", err, first[0].Err)
 	}
@@ -380,7 +381,7 @@ func TestUnfinishedRunKeepsTheEarlierFile(t *testing.T) {
 
 	var during []byte
 	probe := probingFake{check: func() { during, _ = os.ReadFile(first[0].File) }}
-	second, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, probe), out, nil, nil)
+	second, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, probe), out, nil, Lent{})
 	if err != nil || second[0].Err != nil {
 		t.Fatalf("second run: %v %v", err, second[0].Err)
 	}
@@ -437,7 +438,7 @@ func TestAnUnresolvedRequiredSecretIsOneCoreStatusWithTheConnectorsHint(t *testi
 		"needy:personal": {Secrets: map[string]string{"NEEDY_KEY": "env:SEGURATA_TEST_UNSET_NEEDY"}},
 	}}
 	n := &needy{}
-	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, n), t.TempDir(), nil, nil)
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, n), t.TempDir(), nil, Lent{})
 	if err != nil || res[0].Err != nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
@@ -463,7 +464,7 @@ func TestAnUnresolvedRequiredSecretIsOneCoreStatusWithTheConnectorsHint(t *testi
 func TestAMissingSecretReferenceIsLeftToTheConnector(t *testing.T) {
 	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"needy": {}}}
 	n := &needy{}
-	res, _ := Inventory(context.Background(), cfg, mustTargets(t, cfg, n), t.TempDir(), nil, nil)
+	res, _ := Inventory(context.Background(), cfg, mustTargets(t, cfg, n), t.TempDir(), nil, Lent{})
 	if !n.called || len(res[0].Statuses) != 1 || res[0].Statuses[0].Detail != "set NEEDY_KEY" {
 		t.Errorf("called=%v statuses=%v", n.called, res[0].Statuses)
 	}
@@ -476,7 +477,7 @@ func TestExpectedStatusesAreMarkedAndStayUninspected(t *testing.T) {
 		"needy:personal": {Secrets: map[string]string{"NEEDY_KEY": "env:SEGURATA_TEST_UNSET_NEEDY"},
 			Expected: []config.Expected{{State: finding.StateMissingCredentials, Reason: "ephemeral key on purpose"}}},
 	}}
-	res, _ := Inventory(context.Background(), cfg, mustTargets(t, cfg, &needy{}), t.TempDir(), nil, nil)
+	res, _ := Inventory(context.Background(), cfg, mustTargets(t, cfg, &needy{}), t.TempDir(), nil, Lent{})
 	lines := readLines(t, res[0].File)
 	st := lines[0]
 	if st["state"] != "expected" || st["was"] != "missing_credentials" || st["expected"] != "ephemeral key on purpose" {
@@ -571,7 +572,7 @@ func TestAHungInstanceTimesOutAndClosesNothing(t *testing.T) {
 		return nil
 	})
 	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"fake": {Timeout: "50ms"}}}
-	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, hang), t.TempDir(), nil, nil)
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, hang), t.TempDir(), nil, Lent{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +621,7 @@ func TestAHungExternalConnectorTimesOut(t *testing.T) {
 	}
 	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"hang": {Timeout: "200ms"}}}
 	start := time.Now()
-	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, conns...), t.TempDir(), nil, nil)
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, conns...), t.TempDir(), nil, Lent{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +657,7 @@ func TestTheCoreStampsTrackAndTheme(t *testing.T) {
 			Track: &finding.Track{Group: finding.GroupFinding}})
 		return nil
 	}}
-	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, c), t.TempDir(), nil, nil)
+	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, c), t.TempDir(), nil, Lent{})
 	fs := res[0].Findings
 	if fs[0].Track == nil || fs[0].Track.Key != "acct/" || fs[1].Track.Group != finding.GroupFinding {
 		t.Fatalf("tracks: %+v %+v", fs[0].Track, fs[1].Track)
@@ -678,8 +679,26 @@ func TestTheCoreStampsObservedAt(t *testing.T) {
 		return nil
 	})
 	before := time.Now()
-	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, inv), t.TempDir(), nil, nil)
+	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, inv), t.TempDir(), nil, Lent{})
 	if got := res[0].Findings[0].ObservedAt; got.Before(before.Add(-time.Second)) || got.After(time.Now()) {
 		t.Fatalf("observed_at %v", got)
+	}
+}
+
+func TestLentReachesTheConnector(t *testing.T) {
+	known := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
+	var got *attribution.Known
+	annotated := 0
+	rec := recordingFake{onReq: func(req connector.Request) { got = req.Known }}
+	lent := Lent{Known: known, Annotate: func(*finding.Finding) { annotated++ }}
+	if _, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, rec), t.TempDir(), nil, lent); err != nil {
+		t.Fatal(err)
+	}
+	if got != known || annotated != 1 {
+		t.Errorf("known %v, annotated %d", got, annotated)
+	}
+	raw, _ := json.Marshal(connector.Request{Known: known})
+	if strings.Contains(string(raw), "012345678901") {
+		t.Error("Known would reach an external connector")
 	}
 }

@@ -82,12 +82,62 @@ func ReadVersion(ctx context.Context, cdpURL string) (Version, error) {
 	return v, nil
 }
 
+// versionTimeout bounds Brave's /json/version request: a browser listening on the port answers at
+// once, and nothing listening fails at once too. A variable so tests run fast.
+var versionTimeout = 3 * time.Second
+
+// ErrNotBrave is the error of Brave when the endpoint answers but its browser is not Brave.
+var ErrNotBrave = errors.New("not Brave")
+
+// isBraveExpr is true only in Brave: navigator.brave.isBrave() is Brave's own API. Brave reports
+// itself as Chrome in /json/version ("Browser": "Chrome/156…", checked on Brave 156) and in its
+// user agent, so neither tells it from Chrome.
+const isBraveExpr = `(async () => !!(navigator.brave && await navigator.brave.isBrave()))()`
+
+// Brave checks that the browser at cdpURL answers over CDP and is Brave, without starting or
+// focusing anything: /json/version (bounded by versionTimeout), then isBraveExpr in a hidden
+// about:blank target that is closed at once. It returns what /json/version said; the error wraps
+// ErrNotBrave when the browser answered but is not Brave.
+func Brave(ctx context.Context, cdpURL string) (Version, error) {
+	vctx, cancel := context.WithTimeout(ctx, versionTimeout)
+	v, err := ReadVersion(vctx, cdpURL)
+	cancel()
+	if err != nil {
+		return v, err
+	}
+	c, err := connectTo(ctx, v)
+	if err != nil {
+		return v, err
+	}
+	defer c.Close()
+	var brave bool
+	err = c.WithPage(ctx, "about:blank", func(p *Page) error {
+		raw, err := p.Evaluate(ctx, isBraveExpr)
+		if err == nil {
+			err = json.Unmarshal(raw, &brave)
+		}
+		return err
+	})
+	switch {
+	case err != nil:
+		return v, fmt.Errorf("cdp: telling which browser answers at %s: %w", cdpURL, err)
+	case !brave:
+		return v, fmt.Errorf("cdp: the browser at %s (%s) is %w", cdpURL, v.Browser, ErrNotBrave)
+	}
+	return v, nil
+}
+
 // Connect reads <cdpURL>/json/version and opens its browser WebSocket.
 func Connect(ctx context.Context, cdpURL string) (*Client, error) {
 	v, err := ReadVersion(ctx, cdpURL)
 	if err != nil {
 		return nil, err
 	}
+	return connectTo(ctx, v)
+}
+
+// connectTo opens the browser WebSocket /json/version named.
+func connectTo(ctx context.Context, v Version) (*Client, error) {
 	ws, err := dialWS(ctx, v.WebSocketDebuggerURL)
 	if err != nil {
 		return nil, err

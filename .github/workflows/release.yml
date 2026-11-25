@@ -17,6 +17,8 @@ concurrency:
 
 jobs:
   release:
+    # Only the public repository: the cosign identity, the cask and go install name it.
+    if: github.repository == 'segurata/segurata'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

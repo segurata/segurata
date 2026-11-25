@@ -1,5 +1,8 @@
 # Contributing
 
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Vulnerabilities go
+through [SECURITY.md](SECURITY.md), never a public issue.
+
 ## Build and test
 
 ```bash
@@ -9,6 +12,18 @@ go vet ./...
 go test ./...
 (cd examples/hibp && python3 -m unittest)   # the example external connector
 (cd plugins/prowler && python3 -m unittest) # the Prowler wrapper
+(cd scripts && python3 -m unittest)         # the leak gate
+scripts/check-public.sh                     # gitleaks and private identifiers over tracked files
+```
+
+`scripts/check-public.sh` needs [gitleaks](https://github.com/gitleaks/gitleaks). Maintainers keep
+a list of private identifiers (client names, internal hosts, project ids) outside the repository,
+at `~/.config/segurata/public-gate.txt` or `$SEGURATA_PUBLIC_GATE` (format in
+[`scripts/identifiers.py`](scripts/identifiers.py)), and run the gate before every push:
+
+```bash
+printf '#!/bin/sh\nexec scripts/check-public.sh --require-identifiers\n' > "$(git rev-parse --git-path hooks)/pre-push"
+chmod +x "$(git rev-parse --git-path hooks)/pre-push"
 ```
 
 ## Rules

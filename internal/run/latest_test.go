@@ -151,3 +151,58 @@ func TestLatestFilesTakeEachConnectorsNewestRun(t *testing.T) {
 		t.Fatal("empty out dir should explain how to run an inventory")
 	}
 }
+
+// A run that inspected nothing (the browser was not reachable, the connector failed) is still the
+// latest, but Evidence names the newest finished run that inspected something; nothing when the
+// latest is that run, or when no finished run did.
+func TestLatestRunsNameTheNewestRunThatInspectedSomething(t *testing.T) {
+	out := t.TempDir()
+	path := func(day, name string) string { return filepath.Join(out, day, name) }
+	skip := errors.New("browser not reachable over CDP")
+	f := finding.Finding{Type: "finding", Connector: "google-personal", ID: "a"}
+	runtest.Write(t, path("2026-11-01", "google-personal.jsonl"), f)
+	runtest.Write(t, path("2026-11-20", "google-personal.jsonl"), skip)
+	runtest.Write(t, path("2026-11-21", "google-personal.jsonl"), skip)
+	runtest.Write(t, path("2026-11-21", "macos.jsonl"), finding.Finding{Type: "finding", Connector: "macos", ID: "m"})
+	runtest.Write(t, path("2026-11-21", "hibp.jsonl"), skip) // never inspected anything
+	runtest.WriteUnfinished(t, path("2026-11-21", "aws.jsonl"), finding.Finding{Type: "finding", Connector: "aws", ID: "k"})
+
+	runs, err := LatestRuns(out, time.Date(2026, 11, 24, 0, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Latest{}
+	for _, l := range runs {
+		got[filepath.Base(l.File)] = l
+	}
+	if g := got["google-personal.jsonl"]; g.File != path("2026-11-21", "google-personal.jsonl") ||
+		g.Prev != path("2026-11-20", "google-personal.jsonl") || g.Evidence != path("2026-11-01", "google-personal.jsonl") {
+		t.Fatalf("google-personal: %+v", g)
+	}
+	for _, name := range []string{"macos.jsonl", "hibp.jsonl", "aws.jsonl"} {
+		if e := got[name].Evidence; e != "" {
+			t.Errorf("%s: evidence %s", name, e)
+		}
+	}
+}
+
+// Weeks of skipped runs never prune the last run that inspected something.
+func TestPruneKeepsTheLastRunThatInspectedSomething(t *testing.T) {
+	out := t.TempDir()
+	path := func(day string) string { return filepath.Join(out, day, "google-personal.jsonl") }
+	skip := errors.New("browser not reachable over CDP")
+	runtest.Write(t, path("2026-01-01"), finding.Finding{Type: "finding", Connector: "google-personal", ID: "a"})
+	for _, day := range []string{"2026-01-02", "2026-01-03", "2026-11-20", "2026-11-21"} {
+		runtest.Write(t, path(day), skip)
+	}
+	removed, err := Prune(out, time.Date(2026, 11, 24, 0, 0, 0, 0, time.Local), time.Date(2026, 11, 1, 0, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{path("2026-01-02"), path("2026-01-03")}; !slices.Equal(removed, want) {
+		t.Fatalf("removed %v, want %v", removed, want)
+	}
+	if _, err := os.Stat(path("2026-01-01")); err != nil {
+		t.Fatalf("pruned the last run that inspected something: %v", err)
+	}
+}

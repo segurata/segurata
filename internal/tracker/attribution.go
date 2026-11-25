@@ -47,6 +47,18 @@ func (t *Tracker) OwnedAll(extra attribution.Owned) attribution.Owned {
 	return t.Owned.Merge(extra)
 }
 
+// Known is what attribution knows now, for a scan to ask before it acts on a secret: the
+// accounts discovered so far merged with extra (config owned), and the facts of every rotate item.
+func (t *Tracker) Known(extra attribution.Owned) *attribution.Known {
+	k := &attribution.Known{Owned: t.OwnedAll(extra), Facts: map[string]attribution.Facts{}}
+	for _, it := range t.Items {
+		if it.Kind == KindRotate && it.Secret != nil && it.Secret.Attribution != nil {
+			k.Facts[it.Fingerprint] = it.Secret.Attribution.Facts
+		}
+	}
+	return k
+}
+
 // discover adds the owner's accounts found in runs to the ones kept in the tracker.
 func (t *Tracker) discover(runs []*run) {
 	var fs []finding.Finding
@@ -72,6 +84,12 @@ func (t *Tracker) collectClaims(folded map[string]*run) {
 			if it := by[s.Evidence.Fingerprint]; it != nil && !s.Evidence.Claims.Empty() {
 				it.attributionResult().Facts.Add(s.Evidence.Claims)
 			}
+		}
+	}
+	// The account the provider says the secret signs in as (liveness check) is a claim too.
+	for _, it := range by {
+		if c := it.livenessClaims(); !c.Empty() {
+			it.attributionResult().Facts.Add(c)
 		}
 	}
 }

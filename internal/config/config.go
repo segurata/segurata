@@ -46,21 +46,37 @@ type Config struct {
 	// KeepRunsDays is how many days of run files a scheduled run keeps under out/ (0: the default,
 	// DefaultKeepRunsDays; negative: keep everything). See RunRetention.
 	KeepRunsDays int `json:"keep_runs_days,omitempty"`
+	// BrowserStaleDays is how many days scheduled runs may skip the browser connectors (the browser
+	// was not reachable over CDP) before one notification says so (0: the default,
+	// DefaultBrowserStaleDays; negative: never). See BrowserStaleAfter.
+	BrowserStaleDays int `json:"browser_stale_days,omitempty"`
 }
 
-// DefaultKeepRunsDays is the retention of run files when the config names none.
-const DefaultKeepRunsDays = 30
+const (
+	// DefaultKeepRunsDays is the retention of run files when the config names none.
+	DefaultKeepRunsDays = 30
+	// DefaultBrowserStaleDays is BrowserStaleDays when the config names none.
+	DefaultBrowserStaleDays = 7
+)
 
 // RunRetention is how old a run file may grow before a scheduled run prunes it, 0 for never.
-func (c Config) RunRetention() time.Duration {
-	days := c.KeepRunsDays
+func (c Config) RunRetention() time.Duration { return days(c.KeepRunsDays, DefaultKeepRunsDays) }
+
+// BrowserStaleAfter is how long scheduled runs may skip the browser connectors before the owner is
+// notified, 0 for never.
+func (c Config) BrowserStaleAfter() time.Duration {
+	return days(c.BrowserStaleDays, DefaultBrowserStaleDays)
+}
+
+// days is a config count of days as a duration: 0 is def, negative is 0 (never).
+func days(n, def int) time.Duration {
 	switch {
-	case days < 0:
+	case n < 0:
 		return 0
-	case days == 0:
-		days = DefaultKeepRunsDays
+	case n == 0:
+		n = def
 	}
-	return time.Duration(days) * 24 * time.Hour
+	return time.Duration(n) * 24 * time.Hour
 }
 
 // DefaultPath is ~/.config/segurata/config.json on every OS, like most CLIs, unless

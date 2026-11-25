@@ -11,8 +11,6 @@ Report privately. Do not open a public issue, discussion or pull request for a v
 
 - **GitHub private vulnerability reporting** (preferred): on the repository's Security tab,
   "Report a vulnerability".
-  **TODO (owner):** enable it under Settings > Code security > Private vulnerability reporting
-  when the repository goes public.
 - **Email**: `security@<domain>`.
   **TODO (owner):** replace with a real, monitored address before publishing.
 

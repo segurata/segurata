@@ -324,7 +324,8 @@ Prints one JSON object:
 ```
 
 - `needs`: `cdp` (drives the browser over the DevTools protocol), `cli:<tool>`, `secret:<NAME>`.
-  `segurata schedule` leaves out connectors that need `cdp` unless asked for them.
+  `segurata schedule run` runs connectors that need `cdp` only when Brave answers at `cdp_url`,
+  and records them as skipped otherwise.
 - `remediates` (protocol 2 only): the remediation actions this connector plans and applies. A
   finding whose `remediation.action` is not in this list cannot be remediated through it. An action
   the core owns (`file.chmod600`) is always handled by the core.
@@ -354,6 +355,10 @@ Reads one request:
 
 and writes JSON Lines to stdout: `finding`, `status`, `scope` and `log` records as described
 above.
+
+Built-in connectors also get `Request.Known` in Go: what the tracker knows about whose each secret
+is (`attribution.Known`), so a connector that would act on a secret (local-secrets' liveness check)
+can refuse someone else's. It is never part of an external connector's request.
 
 - Exit 0 when it finished, even if some accounts reported error statuses. Non-zero only when the
   connector could not start at all.

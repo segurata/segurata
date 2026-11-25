@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/liveness"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
@@ -50,6 +51,10 @@ type Connector struct {
 	// GitHead reads the first bytes of a blob (headExec) and GH asks GitHub a repository's
 	// visibility, both for the data-dump check (dumpscan.go). Either may be nil: no peek, no gh.
 	GitHead, GH cli.Runner
+
+	// NewChecker builds the liveness checker (liveness.go); nil is the real one. Tests point it at
+	// fake providers.
+	NewChecker func(home string, cfg liveness.Config) *liveness.Checker
 }
 
 func New() *Connector {
@@ -84,14 +89,15 @@ func (c *Connector) Describe() connector.Description {
 
 // settings is the connector's config block.
 type settings struct {
-	reposRoot   string        // repos_root, default ~/src
-	skipHistory bool          // skip_git_history
-	workers     int           // gitleaks_workers
-	timeout     time.Duration // gitleaks_timeout, per repository
-	gitCache    bool          // git_cache: scan only commits added since the last run
-	dumps       dumpMode      // data_dumps: true, false or "only"
-	emitNoise   bool          // emit_noise: emit noise findings too, not only their counts
-	ownedOwners []string      // owned_owners: GitHub users and organizations that are the owner's
+	reposRoot   string          // repos_root, default ~/src
+	skipHistory bool            // skip_git_history
+	workers     int             // gitleaks_workers
+	timeout     time.Duration   // gitleaks_timeout, per repository
+	gitCache    bool            // git_cache: scan only commits added since the last run
+	dumps       dumpMode        // data_dumps: true, false or "only"
+	emitNoise   bool            // emit_noise: emit noise findings too, not only their counts
+	ownedOwners []string        // owned_owners: GitHub users and organizations that are the owner's
+	liveness    liveness.Config // liveness: try each secret against its provider (off by default)
 }
 
 func parseSettings(cfg map[string]any, home string) (settings, error) {
@@ -123,6 +129,9 @@ func parseSettings(cfg map[string]any, home string) (settings, error) {
 		}
 	}
 	var err error
+	if s.liveness, err = liveness.ParseConfig(cfg["liveness"]); err != nil {
+		return s, err
+	}
 	if s.dumps, err = parseDumpMode(cfg["data_dumps"]); err != nil {
 		return s, err
 	}
@@ -222,6 +231,10 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 
 	findings, noise := s.findings()
+	live := s.checkLiveness(ctx, findings, req.Known)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	for _, f := range findings {
 		emit.Finding(f)
 	}
@@ -243,7 +256,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if s.selfSkipped > 0 {
 		detail += fmt.Sprintf("; %d in segurata's own repositories skipped (test corpus)", s.selfSkipped)
 	}
-	detail += noise.String()
+	detail += noise.String() + live
 	if cfg.dumps == dumpsOff {
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
 		return nil
@@ -269,6 +282,8 @@ type scan struct {
 	rows        map[string]*row
 	omitted     int
 	selfSkipped int
+
+	held heldValues // values the liveness check may try (liveness.go)
 
 	git   gitCache
 	own   ownership
@@ -472,6 +487,9 @@ func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secret
 			return ev, false
 		}
 	}
+	s.mu.Lock()
+	s.hold(abs, ev, value)
+	s.mu.Unlock()
 	return ev, true
 }
 

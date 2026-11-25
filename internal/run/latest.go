@@ -26,6 +26,10 @@ type Latest struct {
 	Prev string
 	// Unfinished is a newer file without run_end that was passed over for File, or "".
 	Unfinished string
+	// Evidence is the newest finished run that inspected something, when File did not (the browser
+	// was not reachable, the connector failed), or "". The report shows it in File's place and
+	// Prune keeps it, so runs that inspected nothing never hide or delete the last real one.
+	Evidence string
 }
 
 // LatestRuns picks, for every connector instance, the newest out/<YYYY-MM-DD> run that finished
@@ -87,7 +91,7 @@ func History(outDir string, now time.Time) (map[string][]string, error) {
 }
 
 // Prune removes the run files of days before cutoff that no LatestRuns entry as of now needs (its
-// File, Prev or Unfinished), and partial files a killed run left in those days, then the days left
+// File, Prev, Unfinished or Evidence), and partial files a killed run left in those days, then the days left
 // empty. It touches nothing else under outDir, and nothing at all when the runs cannot be read. It
 // returns what it removed.
 func Prune(outDir string, now, cutoff time.Time) ([]string, error) {
@@ -97,7 +101,7 @@ func Prune(outDir string, now, cutoff time.Time) ([]string, error) {
 	}
 	keep := map[string]bool{}
 	for _, l := range runs {
-		keep[l.File], keep[l.Prev], keep[l.Unfinished] = true, true, true
+		keep[l.File], keep[l.Prev], keep[l.Unfinished], keep[l.Evidence] = true, true, true, true
 	}
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
@@ -152,9 +156,22 @@ func pick(paths []string) (Latest, error) {
 	if last := paths[len(paths)-1]; last != file {
 		l.Unfinished = last
 	}
-	if i := slices.Index(paths, file); i > 0 {
+	i := slices.Index(paths, file)
+	if i > 0 {
 		if l.Prev, err = newest(paths[:i]); err != nil {
 			return Latest{}, err
+		}
+	}
+	for j := i; j >= 0; j-- {
+		end, err := endOf(paths[j])
+		if err != nil {
+			return Latest{}, err
+		}
+		if _, none := finding.CoverageOf(end).NoneChecked(); end != nil && !none {
+			if j < i {
+				l.Evidence = paths[j]
+			}
+			break
 		}
 	}
 	return l, nil
@@ -178,24 +195,33 @@ const maxTail = 1 << 20
 
 // Finished reports whether a run's output ends with a run_end record.
 func Finished(name string) (bool, error) {
+	end, err := endOf(name)
+	return end != nil, err
+}
+
+// endOf reads the run_end record a run's output ends with, nil when it ends with another record.
+func endOf(name string) (*finding.RunEnd, error) {
 	f, err := os.Open(name)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	n := min(st.Size(), maxTail)
 	buf := make([]byte, n)
 	if _, err := f.ReadAt(buf, st.Size()-n); err != nil && !errors.Is(err, io.EOF) {
-		return false, err
+		return nil, err
 	}
 	buf = bytes.TrimRight(buf, "\n")
 	last := buf[bytes.LastIndexByte(buf, '\n')+1:]
-	var head struct{ Type string }
-	return json.Unmarshal(last, &head) == nil && head.Type == "run_end", nil
+	var end finding.RunEnd
+	if json.Unmarshal(last, &end) != nil || end.Type != "run_end" {
+		return nil, nil
+	}
+	return &end, nil
 }
 
 // Load reads every finding in the given files, skipping status and log records.

@@ -27,6 +27,11 @@ func withClaims(e secretrisk.Evidence, awsAccount string) secretrisk.Evidence {
 	return e
 }
 
+func withLiveness(e secretrisk.Evidence) secretrisk.Evidence {
+	e.Liveness = &secretrisk.Liveness{State: secretrisk.Live, CheckedAt: t0, Provider: "stripe", Endpoint: "GET api.stripe.com/v1/balance", Reason: "HTTP 200"}
+	return e
+}
+
 func writeFindings(t *testing.T, path string, evs ...secretrisk.Evidence) {
 	t.Helper()
 	var recs []any
@@ -48,7 +53,7 @@ func TestCommands(t *testing.T) {
 		ev("1111111111111111", "anthropic", "~/old", "scan", "config", "600", false, false))
 	writeFindings(t, filepath.Join(out, "2026-11-23", "local-secrets.jsonl"),
 		ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/src/shop/.env", "scan", "repo", "600", false, false),
-		ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/src/shop/x.env", "gitleaks", "repo", "", true, true),
+		withLiveness(ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/src/shop/x.env", "gitleaks", "repo", "", true, true)),
 		ev("bbbbbbbbbbbbbbbb", "sentry-dsn", "~/src/blog/.env", "scan", "repo", "600", false, false),
 		withClaims(ev("cccccccccccccccc", "aws-access-key-id", "~/src/legacy/.env", "scan", "repo", "600", false, false), "123456789012"))
 	state := filepath.Join(dir, "state", "tracker.json")
@@ -66,7 +71,8 @@ func TestCommands(t *testing.T) {
 		t.Fatalf("state file: %v", err)
 	}
 	o, _, _ = run("list", "--priority", "P0,P1")
-	if !strings.Contains(o, "aaaaaaaa") || strings.Contains(o, "bbbbbbbb") || !strings.Contains(o, "git+remote") || !strings.Contains(o, "1 items") {
+	if !strings.Contains(o, "aaaaaaaa") || strings.Contains(o, "bbbbbbbb") || !strings.Contains(o, "git+remote") || !strings.Contains(o, "1 items") ||
+		!strings.Contains(o, "LIVE") || !strings.Contains(o, "unknown  live") || !strings.Contains(o, "Liveness checked for 1 of 3 secrets: 1 live, 2 unchecked.") {
 		t.Errorf("list P0,P1:\n%s", o)
 	}
 	o, _, _ = run("list", "--service", "sentry")
@@ -74,7 +80,8 @@ func TestCommands(t *testing.T) {
 		t.Errorf("list --service:\n%s", o)
 	}
 	o, _, code = run("show", "aaaa")
-	for _, want := range []string{"rotate at:   https://dashboard.stripe.com/apikeys", "~/src/shop/.env", "committed to a git repository with a remote", "found"} {
+	for _, want := range []string{"rotate at:   https://dashboard.stripe.com/apikeys", "~/src/shop/.env", "committed to a git repository with a remote", "found",
+		"liveness:    live, checked 2026-11-23: GET api.stripe.com/v1/balance answered HTTP 200", "live: GET api.stripe.com/v1/balance accepted it on 2026-11-23"} {
 		if code != 0 || !strings.Contains(o, want) {
 			t.Errorf("show lacks %q:\n%s", want, o)
 		}

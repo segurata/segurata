@@ -364,6 +364,7 @@ func (it *Item) reopenMerged(now time.Time) {
 func (it *Item) reopenProvenLive(now time.Time) {
 	var proof []FindingRef
 	var was string
+	checked := it.checkedLive()
 	switch it.Status {
 	case Ignored:
 		if it.ignoredAfterProof() {
@@ -376,12 +377,15 @@ func (it *Item) reopenProvenLive(now time.Time) {
 				proof = append(proof, r)
 			}
 		}
+		checked = checked && it.Secret.Liveness.CheckedAt.After(it.StatusAt)
 		was = "after it was marked rotated"
 		if note := it.lastDetail(actDone); note != "" {
 			was += ": " + note
 		}
-	}
-	if len(proof) == 0 {
+		if it.closedDead() {
+			was = "after it was closed: " + it.lastDetail(actDead)
+		}
+	default:
 		return
 	}
 	var labels []string
@@ -389,6 +393,12 @@ func (it *Item) reopenProvenLive(now time.Time) {
 		if !slices.Contains(labels, r.Label()) {
 			labels = append(labels, r.Label())
 		}
+	}
+	if checked {
+		labels = append(labels, "the liveness check of "+it.Secret.Liveness.CheckedAt.Format(time.DateOnly))
+	}
+	if len(labels) == 0 {
+		return
 	}
 	it.setStatus(now, Open, EvReopened, actProvenLive, "proven live by "+strings.Join(labels, ", ")+"; "+was)
 }
@@ -422,8 +432,9 @@ func (it *Item) live() []FindingRef {
 	return out
 }
 
-// LiveAndLeaked reports whether a connector shows the secret is live and a copy of it left the
-// machine (pushed git history, an agent transcript): the most urgent kind of secret.
+// LiveAndLeaked reports whether a connector or the liveness check shows the secret is live and a
+// copy of it left the machine (pushed git history, an agent transcript): the most urgent kind of
+// secret.
 func (it *Item) LiveAndLeaked() bool {
-	return len(it.live()) > 0 && it.worst().Level == secretrisk.Remote
+	return it.provenLive() && it.worst().Level == secretrisk.Remote
 }
