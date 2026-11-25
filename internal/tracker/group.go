@@ -54,14 +54,9 @@ var rules = []rule{
 	// projects is one thing to fix, so it is one item listing the projects.
 	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
 	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-	{connectors: []string{"connected-apps"}, resource: "slack_app", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
-		return fmt.Sprintf("Review %s with %s permissions in %s", textfmt.Count(len(p.findings), "Slack app", "Slack apps"),
-			breadth(p.worst().Severity, "broad", "several", "few"), strings.TrimPrefix(p.account, "slack:"))
-	}},
-	{connectors: []string{"connected-apps"}, by: perFamily, kind: KindReview, title: appsTitle},
 	{connectors: []string{"google-personal"}, resource: "oauth_grant", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
 		return fmt.Sprintf("Review %s with %s access to %s", textfmt.Count(len(p.findings), "app", "apps"),
-			breadth(p.worst().Severity, "high-risk", "broad", "limited"), p.account)
+			p.worst().Severity.Pick("high-risk", "broad", "limited"), p.account)
 	}},
 	{connectors: []string{"gcp"}, resource: "api_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
 		return fmt.Sprintf("Restrict %s in GCP project %s", textfmt.Count(len(p.findings), "API key", "API keys"), p.project)
@@ -159,56 +154,8 @@ func dumpsNext(p *proposal) *Next {
 	return &Next{Who: You, Action: b.String(), URL: secretrisk.DumpFixDoc}
 }
 
-// breadth words a group's worst severity: high and critical, medium, or lower.
-func breadth(s finding.Severity, high, medium, low string) string {
-	switch {
-	case s.Rank() >= finding.SevHigh.Rank():
-		return high
-	case s == finding.SevMedium:
-		return medium
-	}
-	return low
-}
-
 func providerName(connector string) string {
 	return map[string]string{"openai": "OpenAI", "anthropic": "Anthropic", "openrouter": "OpenRouter"}[connector]
-}
-
-// appNouns name what a connected-apps resource type is.
-var appNouns = map[string][2]string{
-	"x_app":                 {"X app", "X apps"},
-	"github_oauth_app":      {"GitHub OAuth app", "GitHub OAuth apps"},
-	"github_app_installed":  {"GitHub App", "GitHub Apps"},
-	"github_app_authorized": {"authorized GitHub App", "authorized GitHub Apps"},
-	"github_ssh_key":        {"GitHub SSH key", "GitHub SSH keys"},
-	"notion_integration":    {"Notion integration", "Notion integrations"},
-	"facebook_app":          {"Facebook app", "Facebook apps"},
-	"dropbox_app":           {"Dropbox app", "Dropbox apps"},
-	"microsoft_work_app":    {"work account app", "work account apps"},
-}
-
-// appsTitle puts the count and noun in front of what the findings' titles say about one app, with
-// the predicate made plural: "7 Notion integrations can read and change the Notion pages shared
-// with them (your own integrations)".
-func appsTitle(p *proposal) string {
-	if len(p.findings) == 1 {
-		return p.findings[0].Title
-	}
-	noun, ok := appNouns[p.resource]
-	if !ok {
-		noun = [2]string{"app", "apps"}
-	}
-	n := len(p.findings)
-	rest := textfmt.PluralPredicate(n, stripName(p.findings[0]))
-	one, many := lastWord(noun[0]), lastWord(noun[1])
-	rest = strings.ReplaceAll(rest, "(your own "+one+")", "(your own "+many+")")
-	return textfmt.Count(n, noun[0], noun[1]) + " " + rest
-}
-
-// lastWord is the head noun of an app noun: "integration" for "Notion integration".
-func lastWord(s string) string {
-	f := strings.Fields(s)
-	return f[len(f)-1]
 }
 
 var (

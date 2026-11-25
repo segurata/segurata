@@ -47,6 +47,17 @@ func (s Severity) Rank() int {
 	return 0
 }
 
+// Pick words a severity: high for high and critical, medium for medium, low for the rest.
+func (s Severity) Pick(high, medium, low string) string {
+	switch {
+	case s.Rank() >= SevHigh.Rank():
+		return high
+	case s == SevMedium:
+		return medium
+	}
+	return low
+}
+
 // Blast names what a finding puts at stake beyond its severity: the reach of what a connector
 // found, which ranks the tracker's "Do next" (docs/architecture.md). The connector says which
 // applies, the tracker weighs it; "" (and a value not listed here) is none.

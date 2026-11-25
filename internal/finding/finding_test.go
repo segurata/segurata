@@ -81,3 +81,13 @@ func TestLabel(t *testing.T) {
 		t.Errorf("selector %q", f.Selector())
 	}
 }
+
+func TestSeverityPick(t *testing.T) {
+	var got []string
+	for _, s := range []Severity{SevCritical, SevHigh, SevMedium, SevLow, SevInfo} {
+		got = append(got, s.Pick("h", "m", "l"))
+	}
+	if strings.Join(got, "") != "hhmll" {
+		t.Fatalf("%q", got)
+	}
+}

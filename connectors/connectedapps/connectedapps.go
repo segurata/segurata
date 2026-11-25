@@ -47,6 +47,7 @@ func (*Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Apps connected to GitHub, X, Slack, Notion, Microsoft (personal and work), Dropbox, Facebook, Instagram and LinkedIn, read from the signed-in browser",
 		Needs:    []string{"cdp", "cli:gh"},
+		Theme:    finding.ThemeConnectedApps,
 	}
 }
 
