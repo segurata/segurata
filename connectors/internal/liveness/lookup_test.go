@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/sshkey"
 	"github.com/segurata/segurata/internal/attribution"
@@ -199,6 +200,45 @@ func TestLookupAWSKeys(t *testing.T) {
 	}
 	if len(root.called("configure list-profiles")) != 0 {
 		t.Error("configured profiles were not used")
+	}
+}
+
+// A profile whose key Cloudflare R2 or another S3-compatible service issued is not an AWS
+// identity: the lookup never signs in with it and gives no setup hint for it.
+func TestLookupAWSSkipsNonAWSProfiles(t *testing.T) {
+	id := testcorpus.AWSKeyID("AKIA", 111111111111, false, 1)
+	probe := []Probe{{Fingerprints: []string{"k"}, Type: "aws-access-key-id", Value: id}}
+	aws := &cliFake{answers: func(a []string) (string, error) {
+		switch strings.Join(a[:2], " ") {
+		case "configure list-profiles":
+			return "prod\nr2-bucket\nbackblaze\n", nil
+		case "sts get-caller-identity":
+			if a[slices.Index(a, "--profile")+1] != "prod" {
+				return "", errors.New("An error occurred (InvalidClientTokenId) when calling the GetCallerIdentity operation")
+			}
+			return `{"Account":"111111111111"}`, nil
+		case "iam list-users":
+			return `{"Users":[]}`, nil
+		case "iam get-account-summary":
+			return `{"SummaryMap":{"AccountAccessKeysPresent":0}}`, nil
+		}
+		return "", errors.New("unexpected")
+	}}
+	issuers := func() map[string]awsfiles.Provider {
+		return map[string]awsfiles.Provider{"prod": awsfiles.AWS, "r2-bucket": awsfiles.R2, "backblaze": awsfiles.S3Compatible}
+	}
+	for name, cfg := range map[string]Config{"listed": {}, "configured": {AWSProfiles: []string{"prod", "r2-bucket", "backblaze"}}} {
+		aws.calls = nil
+		got, st := lookupChecker(Owner{AWS: aws, AWSIssuers: issuers}, cfg).Check(context.Background(), probe)
+		if r := got["k"]; r.State != secretrisk.Dead {
+			t.Errorf("%s: %+v", name, r)
+		}
+		if calls := append(aws.called("r2-bucket"), aws.called("backblaze")...); len(calls) != 0 {
+			t.Errorf("%s: signed in with a non-AWS profile: %v", name, calls)
+		}
+		if line := st.String(); strings.Contains(line, "does not sign in") {
+			t.Errorf("%s: hint for a non-AWS profile: %s", name, line)
+		}
 	}
 }
 

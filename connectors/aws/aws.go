@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/attribution"
@@ -61,8 +62,8 @@ type Connector struct {
 }
 
 func New() *Connector {
-	return &Connector{Run: cli.Exec{Path: "aws", Timeout: 2 * time.Minute}, Now: time.Now, CredentialsFile: defaultCredentialsFile,
-		ConfigFile: defaultConfigFile, Fingerprint: fingerprint.OpenDefault}
+	return &Connector{Run: cli.Exec{Path: "aws", Timeout: 2 * time.Minute}, Now: time.Now, CredentialsFile: awsfiles.CredentialsPath,
+		ConfigFile: awsfiles.ConfigPath, Fingerprint: fingerprint.OpenDefault}
 }
 
 func init() { connector.Register(New()) }
@@ -128,7 +129,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	costExplorer, _ := req.Config["cost_explorer"].(bool)
 	seen := map[string]bool{}
 	for _, p := range profiles {
-		if by := issuers[p]; by != providerAWS {
+		if by := issuers[p]; by != awsfiles.AWS {
 			emit.Log(fmt.Sprintf("profile %s holds %s, not an AWS key: skipped", p, by))
 			continue
 		}

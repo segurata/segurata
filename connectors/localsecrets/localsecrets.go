@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/liveness"
 	"github.com/segurata/segurata/internal/connector"
@@ -55,6 +56,8 @@ type Connector struct {
 	// AWS and SSH are the owner's aws CLI and ssh, which the liveness lookups run with (as GH) to
 	// classify lone AWS key ids and private keys. Nil leaves that source out.
 	AWS, SSH cli.Runner
+	// AWSIssuers says which aws profiles hold an R2 or other non-AWS key, so the lookups skip them.
+	AWSIssuers func() map[string]awsfiles.Provider
 
 	// NewChecker builds the liveness checker (liveness.go); nil is the real one. Tests point it at
 	// fake providers.
@@ -63,19 +66,20 @@ type Connector struct {
 
 func New() *Connector {
 	return &Connector{
-		RG:        cli.Exec{Path: "rg", Timeout: time.Hour},
-		Gitleaks:  cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour, Env: gitEnv, StderrCheck: gitleaksStderr}, // bounded per repo by the context
-		Git:       cli.Exec{Path: "git", Timeout: 2 * time.Minute, Env: gitEnv},
-		SSHKeygen: cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
-		GitHead:   headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second, Env: gitEnv},
-		GH:        cli.Exec{Path: "gh", Timeout: 30 * time.Second, Env: []string{"GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1"}},
-		AWS:       cli.Exec{Path: "aws", Timeout: 2 * time.Minute, Env: []string{"AWS_PAGER="}},
-		SSH:       cli.Exec{Path: "ssh", Timeout: 30 * time.Second},
-		LookPath:  exec.LookPath,
-		Home:      os.UserHomeDir,
-		KeyPath:   fingerprint.DefaultPath,
-		CacheDir:  DefaultCacheDir,
-		Now:       time.Now,
+		RG:         cli.Exec{Path: "rg", Timeout: time.Hour},
+		Gitleaks:   cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour, Env: gitEnv, StderrCheck: gitleaksStderr}, // bounded per repo by the context
+		Git:        cli.Exec{Path: "git", Timeout: 2 * time.Minute, Env: gitEnv},
+		SSHKeygen:  cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
+		GitHead:    headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second, Env: gitEnv},
+		GH:         cli.Exec{Path: "gh", Timeout: 30 * time.Second, Env: []string{"GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1"}},
+		AWS:        cli.Exec{Path: "aws", Timeout: 2 * time.Minute, Env: []string{"AWS_PAGER="}},
+		AWSIssuers: awsfiles.Issuers,
+		SSH:        cli.Exec{Path: "ssh", Timeout: 30 * time.Second},
+		LookPath:   exec.LookPath,
+		Home:       os.UserHomeDir,
+		KeyPath:    fingerprint.DefaultPath,
+		CacheDir:   DefaultCacheDir,
+		Now:        time.Now,
 	}
 }
 

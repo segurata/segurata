@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -100,10 +101,17 @@ func (l *lookups) readAWS(ctx context.Context) *awsInventory {
 	if len(profiles) == 0 {
 		l.hint("aws: no AWS CLI profile: lone AWS key ids stay unknown (aws configure sso, or liveness.aws_profiles)")
 	}
+	var issuers map[string]awsfiles.Provider
+	if l.owner.AWSIssuers != nil {
+		issuers = l.owner.AWSIssuers()
+	}
 	for _, p := range profiles {
+		if issuers[p] != awsfiles.AWS { // an R2 token or another S3-compatible key: no IAM inventory
+			continue
+		}
 		var id struct{ Account string }
 		if err := l.awsCall(ctx, p, &id, "sts", "get-caller-identity"); err != nil || id.Account == "" {
-			l.hint(fmt.Sprintf("aws: profile %s does not sign in (%s): run aws sso login --profile %s, or leave it out of liveness.aws_profiles", p, cliErrorOr(err, "no account"), p))
+			l.hint(fmt.Sprintf("aws: profile %s does not sign in (%s): renew its credentials, or leave it out of liveness.aws_profiles", p, cliErrorOr(err, "no account")))
 			continue
 		}
 		if inv.infoProfile == "" {

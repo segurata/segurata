@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
@@ -22,10 +23,13 @@ import (
 
 // Owner is what the lookups run with. A nil runner leaves its lookup without that source.
 type Owner struct {
-	AWS  cli.Runner // the aws CLI
-	GH   cli.Runner // the gh CLI, logged in as the owner
-	SSH  cli.Runner // ssh, for config ssh_hosts
-	Home string     // ~/.ssh is read here
+	AWS cli.Runner // the aws CLI
+	// AWSIssuers says who issued each profile's key (awsfiles.Issuers); a profile it names as not
+	// AWS is never signed in with. Nil: every profile is AWS.
+	AWSIssuers func() map[string]awsfiles.Provider
+	GH         cli.Runner // the gh CLI, logged in as the owner
+	SSH        cli.Runner // ssh, for config ssh_hosts
+	Home       string     // ~/.ssh is read here
 }
 
 // lookups is one Check's state: what each lookup read once for every probe, and the setup hints

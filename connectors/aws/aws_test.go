@@ -226,29 +226,6 @@ func TestPolicyHintAllowsCostExplorerByName(t *testing.T) {
 	}
 }
 
-func TestProviderOf(t *testing.T) {
-	r2ID := "ab2665aaaabbbbccccddddeeeeffff00"
-	cases := []struct {
-		name string
-		key  string
-		cfg  profileConfig
-		want provider
-	}{
-		{"aws long-lived", "AKIAIOSFODNN7EXAMPLE", profileConfig{Region: "eu-west-1"}, providerAWS},
-		{"aws temporary", "ASIAIOSFODNN7EXAMPLE", profileConfig{}, providerAWS},
-		{"sso profile without key", "", profileConfig{}, providerAWS},
-		{"r2 by key id shape", r2ID, profileConfig{}, providerR2},
-		{"r2 by region auto", "SOMEKEY", profileConfig{Region: "auto"}, providerR2},
-		{"r2 by endpoint", "AKIAIOSFODNN7EXAMPLE", profileConfig{Endpoint: "https://0123.r2.cloudflarestorage.com"}, providerR2},
-		{"other s3-compatible", "0025a1b2c3d4e5f60000000001", profileConfig{Endpoint: "https://s3.eu-central-003.backblazeb2.com"}, providerS3Compatible},
-	}
-	for _, tc := range cases {
-		if got := providerOf(credentialProfile{Name: "p", KeyID: tc.key}, tc.cfg); got != tc.want {
-			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
 func TestR2ProfileIsReportedAsR2AndSkipsSTS(t *testing.T) {
 	dir := t.TempDir()
 	cred := filepath.Join(dir, "credentials")
@@ -283,6 +260,17 @@ func TestR2ProfileIsReportedAsR2AndSkipsSTS(t *testing.T) {
 	}
 	if stsCalls != 1 || len(rec.Statuses) != 1 || strings.Contains(rec.Statuses[0].Account, "r2") {
 		t.Fatalf("the R2 profile must not reach STS or get a status: calls %v statuses %+v", fr.calls, rec.Statuses)
+	}
+
+	// doctor does not sign in with it either, nor tell the owner to.
+	fr.calls = nil
+	checks := c.Doctor(context.Background(), connector.Request{})
+	if len(checks) != 2 || checks[1].What != "profile r2" || checks[1].Level != connector.OK || checks[1].Fix != "" ||
+		!strings.Contains(checks[1].Detail, "Cloudflare R2 token, not an AWS identity") {
+		t.Fatalf("doctor: %+v", checks)
+	}
+	if len(fr.calls) != 2 { // list-profiles, and STS for default only
+		t.Fatalf("doctor calls: %v", fr.calls)
 	}
 }
 

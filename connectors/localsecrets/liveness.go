@@ -310,5 +310,5 @@ func (c *Connector) checker(home string, cfg liveness.Config) *liveness.Checker 
 		return c.NewChecker(home, cfg)
 	}
 	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(filepath.Join(c.cacheRoot(home), "liveness.json")),
-		Owner: liveness.Owner{AWS: c.AWS, GH: c.GH, SSH: c.SSH, Home: home}}
+		Owner: liveness.Owner{AWS: c.AWS, AWSIssuers: c.AWSIssuers, GH: c.GH, SSH: c.SSH, Home: home}}
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/segurata/segurata/internal/secretrisk"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -22,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // Every secret in these tests is generated at run time from a fixed seed: no real or real-looking

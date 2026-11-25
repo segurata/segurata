@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -18,8 +19,13 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 		return []connector.Check{{Level: connector.Fail, What: "aws profiles", Detail: "no AWS CLI profiles",
 			Fix: "aws configure sso, or set connectors.aws.config.profiles"}}
 	}
+	issuers := awsfiles.IssuersAt(c.CredentialsFile(), c.ConfigFile())
 	var checks []connector.Check
 	for _, p := range profiles {
+		if by := issuers[p]; by != awsfiles.AWS {
+			checks = append(checks, connector.Check{Level: connector.OK, What: "profile " + p, Detail: fmt.Sprintf("holds %s, not an AWS identity: not checked", by)})
+			continue
+		}
 		var id struct{ Account, Arn string }
 		if err := c.call(ctx, p, &id, "sts", "get-caller-identity"); err != nil {
 			checks = append(checks, failure("profile "+p, p, err))
