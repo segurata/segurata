@@ -297,3 +297,22 @@ esac
 		t.Fatalf("plan error = %v", err)
 	}
 }
+
+// A plugin whose child keeps stdout open must not outlive its context: the scanner reading that
+// stdout would otherwise wait for the child, however short the timeout.
+func TestInventoryReturnsWhenAChildHoldsStdout(t *testing.T) {
+	e := connectortest.Plugin(t, "held", `case "$1" in
+describe) echo '{"name":"held","protocol":2}';;
+inventory) cat >/dev/null; sleep 20 & wait;;
+esac
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := e.Inventory(ctx, connector.Request{}, &recorder{}); err == nil {
+		t.Fatal("a plugin killed by its timeout succeeded")
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("Inventory blocked for %s on the child holding stdout", took)
+	}
+}

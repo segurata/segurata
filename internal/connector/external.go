@@ -272,14 +272,28 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	}
 	cmd := command(ctx, e.Path, sub)
 	cmd.Stdin = bytes.NewReader(raw)
-	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	errPipe, err := cmd.StderrPipe()
 	if err != nil {
 		return err
 	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	// A child the plugin left behind can hold its pipes open after the plugin is killed, and the
+	// reads below would wait for that child however short ctx was: WaitDelay bounds only Wait.
+	// Closing both pipes when ctx ends releases them at once.
+	stop := context.AfterFunc(ctx, func() { _ = stdout.Close(); _ = errPipe.Close() })
+	defer stop()
+	copied := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(stderr, errPipe)
+		_ = errPipe.Close() // a writer that failed (too much output) ends the plugin's writes too
+		copied <- err
+	}()
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
@@ -289,8 +303,12 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	if scanErr != nil {
 		_, _ = io.Copy(io.Discard, stdout) // let the process finish writing before Wait
 	}
+	copyErr := <-copied
 	if err := cmd.Wait(); err != nil {
 		return err
+	}
+	if ctx.Err() == nil && copyErr != nil {
+		return copyErr
 	}
 	return scanErr
 }
