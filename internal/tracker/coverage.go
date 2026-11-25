@@ -3,6 +3,7 @@ package tracker
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -52,6 +53,12 @@ func (t *Tracker) recordRuns(folded map[string]*run) {
 		}
 		info.Complete = r.cov.Known && r.failed == "" && len(sk) == 0 && (r.cov.Complete() || info.Expected > 0)
 		info.SkippedCount = len(sk)
+		for _, a := range r.covers {
+			if info.Areas == nil {
+				info.Areas = map[string]bool{}
+			}
+			info.Areas[a.ID] = a.Audited(r.statuses)
+		}
 		for _, s := range sk[:min(len(sk), maxSkippedKept)] {
 			info.Skipped = append(info.Skipped, s.Scope+": "+oneLine(s.Reason))
 		}
@@ -128,20 +135,26 @@ func firstSentence(s string) string {
 	return head
 }
 
-// gap is one area of the plan (docs/plan.md) that may go unaudited on this machine: whether it is
-// covered, judged from the runs, and the step that would cover it.
+// gap is one area of the plan (docs/plan.md) that may go unaudited on this machine, and the step
+// that would cover it. Whether it is covered comes from the runs of the connectors that declare
+// they cover it (finding.Area), by its slug.
 type gap struct {
 	slug, title string
-	// covered says whether the area is audited, and how; known is false when the runs folded now
-	// say nothing about it (the item is left as it is). nil: no connector audits it.
-	covered       func(t *Tracker, folded map[string]*run) (covered bool, how string, known bool)
+	// covered says whether the area is audited, and how; known is false when the runs say nothing
+	// about it (the item is left as it is). nil: audited; no connector audits it.
+	covered func(t *Tracker, folded map[string]*run) (covered bool, how string, known bool)
+	// audited says connectors audit the area: they declare it among the areas they cover.
+	audited bool
+	// unreported, for an audited area, is whether the gap is open while no run reports it (the
+	// connector that would cover it is not set up), rather than unknown.
+	unreported    bool
 	step, command string
 	url           string
 }
 
 var gaps = []gap{
 	{slug: "github-owner-2fa", title: "Two-factor authentication of your own GitHub account is not audited",
-		covered: githubOwner2FA,
+		audited: true,
 		step:    "Give gh the read:user scope so the github connector can read whether 2FA is on, then run it again.",
 		command: "gh auth refresh -h github.com -s read:user && segurata inventory github", url: "https://github.com/settings/security"},
 	{slug: "google-recovery", title: "Google recovery options and passkeys are not audited by any connector",
@@ -165,26 +178,21 @@ var gaps = []gap{
 		command: "segurata inventory workspace"},
 }
 
-// githubOwner2FA is covered when the github run read the owner's own account: no status other
-// than ok for a user:<login> scope or naming the read:user scope (runs before scopes existed). A
-// sync that folds no github run goes by the open setup items.
-func githubOwner2FA(t *Tracker, folded map[string]*run) (bool, string, bool) {
-	blocked := func(scope, detail string) bool {
-		return strings.HasPrefix(scope, "user:") || strings.Contains(detail, "read:user")
-	}
-	r := folded["github"]
-	if r == nil {
-		if t.openSetup("setup:github|", func(ref FindingRef) bool { return blocked(ref.Scope, ref.Title) }) {
-			return false, "", true
+// audited is what the runs of the connectors that cover the gap's area say of it: covered when one
+// audited it, open when one could not, and otherwise unknown, or open for an unreported gap. While
+// a run from before connectors declared their areas is kept, it may cover the area: unknown.
+func (t *Tracker) audited(g gap) (covered bool, how string, known bool) {
+	reported, legacy := false, false
+	for _, l := range slices.Sorted(maps.Keys(t.Runs)) {
+		info := t.Runs[l]
+		legacy = legacy || info.Theme == ""
+		a, ok := info.Areas[g.slug]
+		if a {
+			return true, l + " audited it", true
 		}
-		return false, "", false
+		reported = reported || ok
 	}
-	for _, st := range r.statuses {
-		if st.State != finding.StateOK && blocked(st.Scope, st.Detail) {
-			return false, "", true
-		}
-	}
-	return true, "the github run read your account", true
+	return false, "", reported || g.unreported && !legacy
 }
 
 // openSetup reports whether an active setup item whose key starts with prefix has a reported
@@ -243,7 +251,10 @@ func (t *Tracker) syncCoverage(folded map[string]*run, now time.Time) CoverageRe
 	var rep CoverageReport
 	for _, g := range gaps {
 		covered, how, known := false, "", true
-		if g.covered != nil {
+		switch {
+		case g.audited:
+			covered, how, known = t.audited(g)
+		case g.covered != nil:
 			covered, how, known = g.covered(t, folded)
 		}
 		it := t.ByKey("coverage:" + g.slug)

@@ -638,7 +638,8 @@ func TestAHungExternalConnectorTimesOut(t *testing.T) {
 type tracked struct{ emitting }
 
 func (tracked) Describe() connector.Description {
-	return connector.Description{Name: "fake", Version: "0", Protocol: 1, Theme: finding.Theme{ID: finding.ThemeCloud.ID}}
+	return connector.Description{Name: "fake", Version: "0", Protocol: 1, Theme: finding.Theme{ID: finding.ThemeCloud.ID},
+		Covers: []finding.Area{{ID: "breaches"}}}
 }
 
 func (tracked) Track(f finding.Finding) *finding.Track {
@@ -646,7 +647,7 @@ func (tracked) Track(f finding.Finding) *finding.Track {
 }
 
 // The core sets Track on each finding of a built-in connector that declares it, unless the finding
-// carries its own, and writes the declared theme, resolved, in run_end.
+// carries its own, and writes the declared theme, resolved, and covered areas in run_end.
 func TestTheCoreStampsTrackAndTheme(t *testing.T) {
 	c := tracked{func(_ context.Context, e connector.Emitter) error {
 		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
@@ -660,8 +661,8 @@ func TestTheCoreStampsTrackAndTheme(t *testing.T) {
 	if fs[0].Track == nil || fs[0].Track.Key != "acct/" || fs[1].Track.Group != finding.GroupFinding {
 		t.Fatalf("tracks: %+v %+v", fs[0].Track, fs[1].Track)
 	}
-	if res[0].End.Theme != finding.ThemeCloud {
-		t.Fatalf("theme %+v", res[0].End.Theme)
+	if res[0].End.Theme != finding.ThemeCloud || len(res[0].End.Covers) != 1 || res[0].End.Covers[0].ID != "breaches" {
+		t.Fatalf("theme %+v, covers %+v", res[0].End.Theme, res[0].End.Covers)
 	}
 	lines := readLines(t, res[0].File)
 	if end := lines[len(lines)-1]; end["theme"].(map[string]any)["title"] != finding.ThemeCloud.Title {

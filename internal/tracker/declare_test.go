@@ -9,8 +9,8 @@ import (
 )
 
 // Declare does to a run's records what the connectors and the core do before writing them: each
-// finding gets the Track its built-in connector declares, and the run the theme its connector
-// declares (internal/run). The prowler plugin's declarations are in its findings already and its
+// finding gets the Track its built-in connector declares, and the run the theme and areas its
+// connector declares (internal/run). The prowler plugin's declarations are in its findings already and its
 // theme in pluginThemes. Records of other connectors are left as they are.
 func Declare(recs []any) []any {
 	out := make([]any, 0, len(recs)+1)
@@ -33,6 +33,9 @@ func Declare(recs []any) []any {
 	}
 	if th := declaredTheme(name); !themed && th.ID != "" {
 		out = append(out, th)
+	}
+	if c := builtin(name); c != nil && len(c.Describe().Covers) > 0 {
+		out = append(out, c.Describe().Covers)
 	}
 	return out
 }

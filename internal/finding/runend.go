@@ -63,6 +63,8 @@ type RunEnd struct {
 	// Theme is the theme the connector declared, resolved by ThemeFor; zero in runs written before
 	// connectors declared themes and grouping.
 	Theme Theme `json:"theme,omitzero"`
+	// Covers are the plan areas the connector declared it audits.
+	Covers []Area `json:"covers,omitempty"`
 }
 
 // Tally collects a run's coverage as records arrive. It is not safe for concurrent use.

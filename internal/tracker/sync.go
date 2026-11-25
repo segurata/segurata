@@ -62,7 +62,8 @@ type run struct {
 	failed   string           // the connector's own error, from run_end
 	// fingerprints are the secrets the core resolved for the instance, by name (run_end).
 	fingerprints map[string]string
-	theme        finding.Theme // the theme the connector declared (run_end)
+	theme        finding.Theme  // the theme the connector declared (run_end)
+	covers       []finding.Area // the plan areas the connector audits (run_end)
 }
 
 // statusesUnproven reports, with the reason, a run whose statuses do not prove an earlier status
@@ -408,7 +409,7 @@ func readRunFile(file string) (*run, error) {
 	// A finished run's time is when it ended. A file without run_end falls back to its newest
 	// observed_at that is not in the future, then to its modification time.
 	if rf.End != nil {
-		r.at, r.failed, r.fingerprints, r.theme = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints, rf.End.Theme
+		r.at, r.failed, r.fingerprints, r.theme, r.covers = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints, rf.End.Theme, rf.End.Covers
 	} else {
 		limit := time.Now()
 		for _, f := range rf.Findings {

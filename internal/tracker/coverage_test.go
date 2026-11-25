@@ -9,6 +9,7 @@ import (
 
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/runtest"
 )
 
 // The coverage line names every configured instance: when it last ran and whether it saw
@@ -111,22 +112,30 @@ func TestCoverageItems(t *testing.T) {
 	}
 }
 
-// Runs from before scopes existed say read:user in the detail; with no github run folded, the open
-// setup item says the same.
-func TestGithubOwner2FAFromOlderRunsAndSetupItems(t *testing.T) {
+// A github run from before connectors declared their areas says nothing of the owner's account
+// (the item is left as it is); a declared one that could not read it opens the gap, and its report
+// stands while no github run is folded.
+func TestGithubOwner2FAFromDeclaredRuns(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
-	writeRun(t, out, t0, "github.jsonl", okStatus("github", "github:org"),
-		finding.Status{Type: "status", Connector: "github", Account: "github:me", State: finding.StateNoScope, Detail: "two-factor authentication not checked: gh's token lacks read:user"})
+	noScope := finding.Status{Type: "status", Connector: "github", Account: "github:me", Scope: "user:me", State: finding.StateNoScope, Detail: "gh lacks read:user"}
+	runtest.Write(t, filepath.Join(out, t0.Format(time.DateOnly), "github.jsonl"), okStatus("github", "github:org"), noScope)
 	tr := New(t0)
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
-	it := tr.ByKey("coverage:github-owner-2fa")
-	if it == nil || it.Status != Open {
-		t.Fatalf("from the detail: %+v", it)
+	if it := tr.ByKey("coverage:github-owner-2fa"); it != nil {
+		t.Fatalf("from a run before declarations: %+v", it)
 	}
-	if covered, _, known := githubOwner2FA(tr, map[string]*run{}); covered || !known {
-		t.Errorf("from the setup item: covered %v known %v", covered, known)
+	writeRun(t, out, t0.Add(time.Hour), "github.jsonl", okStatus("github", "github:org"), noScope)
+	syncOrDie(t, tr, out, t0.Add(time.Hour+time.Minute))
+	if it := tr.ByKey("coverage:github-owner-2fa"); it == nil || it.Status != Open {
+		t.Fatalf("from a declared run: %+v", it)
 	}
-	if line := tr.coverageLine(nil, t0.Add(time.Hour)); !strings.Contains(line, "github: ") {
+	other := filepath.Join(t.TempDir(), "other")
+	writeRun(t, other, t0.Add(2*time.Hour), "macos.jsonl", okStatus("macos", "Mac"))
+	syncOrDie(t, tr, other, t0.Add(2*time.Hour))
+	if it := tr.ByKey("coverage:github-owner-2fa"); it.Status != Open {
+		t.Errorf("with no github run folded: %s", it.Status)
+	}
+	if line := tr.coverageLine(nil, t0.Add(3*time.Hour)); !strings.Contains(line, "github: ") {
 		t.Errorf("line %q", line)
 	}
 }

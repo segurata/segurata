@@ -243,6 +243,9 @@ type RunInfo struct {
 	// Skipped are the first scopes it did not inspect, "scope: reason"; SkippedCount counts them all.
 	Skipped      []string `json:"skipped,omitempty"`
 	SkippedCount int      `json:"skipped_count,omitempty"`
-	// Theme is the theme id the run declared, "" for none.
+	// Theme is the theme id the run declared, "" for a run written before connectors declared
+	// themes (see Tracker.Sync).
 	Theme string `json:"theme,omitempty"`
+	// Areas are the plan areas the connector covers, each with whether this run audited it.
+	Areas map[string]bool `json:"areas,omitempty"`
 }

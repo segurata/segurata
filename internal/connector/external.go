@@ -136,6 +136,11 @@ func (d Description) validate() error {
 	if d.Theme.ID != "" && !validName.MatchString(d.Theme.ID) {
 		return fmt.Errorf("theme id %q is not lowercase letters, digits and dashes", d.Theme.ID)
 	}
+	for _, a := range d.Covers {
+		if !validName.MatchString(a.ID) {
+			return fmt.Errorf("covered area %q is not lowercase letters, digits and dashes", a.ID)
+		}
+	}
 	for _, a := range d.Remediates {
 		if strings.TrimSpace(a) == "" {
 			return errors.New("declares an empty remediation action")

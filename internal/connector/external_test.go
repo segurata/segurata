@@ -26,6 +26,7 @@ func TestLoadExternalChecksTheDescription(t *testing.T) {
 		"not json":                 `nope`,
 		"another file's name":      `{"name":"openai","protocol":2}`,
 		"theme id not a word":      `{"name":"x","protocol":2,"theme":{"id":"My Theme"}}`,
+		"area id not a word":       `{"name":"x","protocol":2,"covers":[{"id":""}]}`,
 	}
 	for why, js := range refused {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err == nil {
@@ -33,7 +34,7 @@ func TestLoadExternalChecksTheDescription(t *testing.T) {
 		}
 	}
 	for _, js := range []string{`{"name":"x","protocol":1}`, `{"name":"x","protocol":2,"remediates":["x.fix"]}`,
-		`{"name":"x","protocol":1,"theme":{"id":"cloud"}}`} {
+		`{"name":"x","protocol":1,"theme":{"id":"cloud"},"covers":[{"id":"hibp"}]}`} {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err != nil {
 			t.Errorf("%s: %v", js, err)
 		}

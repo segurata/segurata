@@ -35,6 +35,9 @@ type Description struct {
 	// Theme is the part of the tracker's briefing the connector's items go to: one of
 	// finding.Themes by id, or a theme of its own with a title and description. Zero: "other".
 	Theme finding.Theme `json:"theme,omitzero"`
+	// Covers are the plan areas (docs/plan.md) the connector audits, which close the tracker's
+	// "not audited" items for them once a run audited them.
+	Covers []finding.Area `json:"covers,omitempty"`
 }
 
 // RunTimeout is Timeout parsed, 0 when it is empty or not a positive duration.
