@@ -60,8 +60,8 @@ type RunEnd struct {
 	// for this instance, by name (OPENAI_ADMIN_KEY): never the values. The tracker matches them with
 	// leaked copies, which the run proves are in use.
 	SecretFingerprints map[string]string `json:"secret_fingerprints,omitempty"`
-	// Theme is the theme the connector declared, resolved by ThemeFor; zero for none (and in runs
-	// written before connectors declared one).
+	// Theme is the theme the connector declared, resolved by ThemeFor; zero in runs written before
+	// connectors declared themes and grouping.
 	Theme Theme `json:"theme,omitzero"`
 }
 

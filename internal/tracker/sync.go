@@ -79,6 +79,10 @@ func (r *run) statusesUnproven() (string, bool) {
 	return "", false
 }
 
+// legacy reports whether the run was written before connectors declared their theme and how their
+// findings group: its run_end names no theme.
+func (r *run) legacy() bool { return r.theme.ID == "" }
+
 // wholeInstance reports whether the run has a status of that state for no account in particular.
 func (r *run) wholeInstance(state finding.State) bool {
 	return slices.ContainsFunc(r.statuses, func(st finding.Status) bool {
@@ -179,11 +183,12 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 			rl := ruleFor(f)
 			key, p := groupKey(f, rl, themeOf(f, r.theme.ID))
 			held := holders[f.ID]
-			legacy := held != nil && held.Key != key && rl == defaultRule && f.Track == nil && legacyKey(held.Key)
-			if legacy {
-				// A run written before its connector declared how to group it: its findings stay in the
-				// items that hold them, under the titles they have, until a run declares it.
-				key, p.rule = held.Key, &rule{kind: rl.kind, keep: true}
+			if r.legacy() && held != nil && legacyKey(held.Key) {
+				// A run written before connectors declared how to group: its findings stay in the items
+				// that hold them, under the titles they have, until a run that declares it.
+				kept := *rl
+				kept.keep = true
+				key, p.rule = held.Key, &kept
 			}
 			if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
 				if rl.by == perFinding || pin.keptApart() {
@@ -196,7 +201,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 			}
 			got := propose(key, p)
 			got.add(f)
-			if held != nil && f.Track == nil {
+			if p.rule.keep {
 				got.keepWhere(held)
 			}
 		}

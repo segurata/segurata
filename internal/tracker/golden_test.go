@@ -214,7 +214,7 @@ func compareGolden(t *testing.T, name string, got []byte) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, want) {
-		gotPath := filepath.Join(t.TempDir(), name)
+		gotPath := filepath.Join(os.TempDir(), "segurata-golden-"+t.Name()+"-"+name) // kept after the test, to diff
 		_ = os.WriteFile(gotPath, got, 0o644)
 		t.Fatalf("%s differs from the golden file; diff %s %s", name, path, gotPath)
 	}

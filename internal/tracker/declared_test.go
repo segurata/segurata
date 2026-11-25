@@ -42,8 +42,8 @@ func TestDeclaredGroupingThemeAndTitles(t *testing.T) {
 	}
 }
 
-// Findings of a run written before their connector declared how to group them stay in the items
-// that hold them, under the titles they have; a run that declares it regroups them.
+// Findings of a run written before connectors declared how to group (no theme in run_end) stay in
+// the items that hold them, under the titles they have; a later run regroups them.
 func TestUndeclaredFindingsStayInTheirItems(t *testing.T) {
 	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 	a := fnd("scanner", "", "acct", "scan_check", "a", "a", finding.SevHigh, "Check one failed on a", now)
@@ -60,7 +60,7 @@ func TestUndeclaredFindingsStayInTheirItems(t *testing.T) {
 	later := now.Add(time.Hour)
 	a.Track, b.Track = &finding.Track{Group: finding.GroupFinding}, &finding.Track{Group: finding.GroupFinding}
 	a.ObservedAt, b.ObservedAt = later, later
-	writeRun(t, out, later, "scanner.jsonl", a, b)
+	writeRun(t, out, later, "scanner.jsonl", a, b, finding.ThemeOther)
 	if rep := syncOrDie(t, tr, out, later); rep.Created != 2 || old.Status != Done {
 		t.Fatalf("created %d, old item %s", rep.Created, old.Status)
 	}

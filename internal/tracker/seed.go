@@ -20,15 +20,12 @@ var themes = slices.Concat([]Theme{
 	{ID: coverageTheme, Title: "Not audited here", Description: "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."},
 	{ID: "setup", Title: "Setup", Description: "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."},
 	{ID: "decisions", Title: "Decisions", Description: "Questions only you can answer before the related work can go ahead."},
-	{ID: otherTheme, Title: "Other", Description: "Findings of connectors without a theme of their own, and items added by hand."},
+	finding.ThemeOther,
 })
 
 // coverageTheme holds the review items for what no connector audits on this machine (coverage.go);
 // status lists them apart from what is failing.
 const coverageTheme = "coverage"
-
-// otherTheme holds the items of connectors that declare no theme.
-const otherTheme = "other"
 
 // connectorThemes maps a connector that does not declare its theme yet to it.
 var connectorThemes = map[string]string{
@@ -46,13 +43,13 @@ func themeOf(f finding.Finding, declared string) string {
 		}
 		return "rotations"
 	}
-	if declared != "" {
+	if declared != "" && declared != finding.ThemeOther.ID {
 		return declared
 	}
 	if th, ok := connectorThemes[f.Connector]; ok {
 		return th
 	}
-	return otherTheme
+	return finding.ThemeOther.ID
 }
 
 // declareThemes adds, or renames, the themes of their own that the folded runs declare. A theme

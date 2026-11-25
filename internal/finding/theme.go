@@ -3,7 +3,8 @@ package finding
 // Theme is the part of the tracker's briefing a connector's items go to. A connector declares one
 // in its description (docs/connectors.md, "Theme and grouping"); the core writes it, resolved by
 // ThemeFor, into every run_end record, and the tracker files the run's items under it. A connector
-// that declares none goes to "other".
+// that declares none goes to ThemeOther. A run_end without a theme was written before connectors
+// declared themes and grouping.
 type Theme struct {
 	ID          string `json:"id"`
 	Title       string `json:"title,omitempty"`
@@ -22,15 +23,18 @@ var (
 	ThemeAISpend           = Theme{"ai-spend", "AI providers", "OpenAI, Anthropic and OpenRouter keys, limits and spend."}
 )
 
+// ThemeOther is the theme of a connector that declares none.
+var ThemeOther = Theme{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."}
+
 // Themes are the shared themes in briefing order.
 var Themes = []Theme{ThemeMac, ThemeBrowserExtensions, ThemeGitHub, ThemeConnectedApps, ThemeGoogle, ThemeCloud, ThemeAISpend}
 
 // ThemeFor is the theme a declaration stands for: a shared theme's own title and description when
-// it names one by id, otherwise the declaration with its id as the title when it gives none. A
-// declaration without an id is no theme.
+// it names one by id (ThemeOther for no id), otherwise the declaration with its id as the title
+// when it gives none.
 func ThemeFor(declared Theme) Theme {
-	if declared.ID == "" {
-		return Theme{}
+	if declared.ID == "" || declared.ID == ThemeOther.ID {
+		return ThemeOther
 	}
 	for _, th := range Themes {
 		if th.ID == declared.ID {

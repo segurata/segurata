@@ -6,7 +6,8 @@ import "testing"
 // given, titled by its id when it has no title.
 func TestThemeFor(t *testing.T) {
 	for _, c := range []struct{ in, want Theme }{
-		{Theme{}, Theme{}},
+		{Theme{}, ThemeOther},
+		{Theme{ID: "other", Title: "Mine"}, ThemeOther},
 		{Theme{ID: "cloud", Title: "Mine"}, ThemeCloud},
 		{Theme{ID: "breaches"}, Theme{ID: "breaches", Title: "breaches"}},
 		{Theme{ID: "breaches", Title: "Breaches", Description: "d"}, Theme{ID: "breaches", Title: "Breaches", Description: "d"}},

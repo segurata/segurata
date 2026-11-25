@@ -52,8 +52,12 @@ func declaredTheme(name string) finding.Theme {
 	if c := builtin(name); c != nil {
 		return finding.ThemeFor(c.Describe().Theme)
 	}
-	return finding.ThemeFor(pluginThemes[name])
+	if th, ok := pluginThemes[name]; ok {
+		return finding.ThemeFor(th)
+	}
+	return finding.Theme{}
 }
 
-// pluginThemes are the themes the external connectors of the tests declare.
-var pluginThemes = map[string]finding.Theme{}
+// pluginThemes are the themes the external connectors of the tests declare; a connector not listed
+// gets none, as in a run written before connectors declared themes.
+var pluginThemes = map[string]finding.Theme{"hibp": {}, "prowler": {}}
