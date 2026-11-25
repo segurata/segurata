@@ -3,6 +3,7 @@
 package httpx
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -89,7 +90,7 @@ func State(err error) finding.State {
 
 // Get fetches path (relative to BaseURL) with the query q and decodes the JSON body into out.
 func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) error {
-	code, body, err := c.Fetch(ctx, http.MethodGet, path, q)
+	code, body, err := c.Fetch(ctx, http.MethodGet, path, q, nil)
 	if err != nil {
 		return err
 	}
@@ -102,31 +103,38 @@ func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) er
 	return nil
 }
 
-// Fetch sends a request without a body to path (relative to BaseURL) with the query q and returns
-// the HTTP status and the body, whatever the status, for callers that judge the answer
-// themselves. method is GET, or POST for an API that documents only POST for a read-only call
-// (Slack's auth.test).
-func (c *Client) Fetch(ctx context.Context, method, path string, q url.Values) (int, []byte, error) {
+// Fetch sends a request to path (relative to BaseURL) with the query q and returns the HTTP status
+// and the body, whatever the status, for callers that judge the answer themselves. method is GET,
+// or POST for an API that documents only POST for a read-only call: Slack's auth.test without a
+// body, a GraphQL query with body as JSON.
+func (c *Client) Fetch(ctx context.Context, method, path string, q url.Values, body []byte) (int, []byte, error) {
 	u := c.BaseURL + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
 		return 0, nil, err
 	}
 	req.Header = c.Header.Clone()
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		// url.Error carries the URL: no credential for the connectors that put theirs in headers.
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return 0, nil, err
 	}
-	return resp.StatusCode, body, nil
+	return resp.StatusCode, answer, nil
 }
 
 // ErrorMessage pulls the message out of the JSON error envelope OpenAI, Anthropic and

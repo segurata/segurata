@@ -39,6 +39,13 @@ var providers = []*provider{
 	{name: "telegram", types: []string{"telegram-bot"}, bases: []string{"https://api.telegram.org"}, ask: askTelegram},
 	{name: "huggingface", types: []string{"huggingface"}, bases: []string{"https://huggingface.co"}, ask: bearer("/api/whoami-v2", byStatus(false), account("huggingface", "name"))},
 	{name: "npm", types: []string{"npm-token"}, bases: []string{"https://registry.npmjs.org"}, ask: bearer("/-/whoami", byStatus(false), account("npm", "username"))},
+	{name: "xai", types: []string{"xai"}, bases: []string{"https://api.x.ai"}, ask: askXAI},
+	{name: "groq", types: []string{"groq"}, bases: []string{"https://api.groq.com"}, ask: bearer("/openai/v1/models", byStatus(false), nil)},
+	{name: "notion", types: []string{"notion"}, bases: []string{"https://api.notion.com"}, ask: askNotion},
+	{name: "cloudflare", types: []string{"cloudflare-token"}, bases: []string{"https://api.cloudflare.com"}, ask: askCloudflare},
+	{name: "digitalocean", types: []string{"digitalocean"}, bases: []string{"https://api.digitalocean.com"}, ask: bearer("/v2/account", byStatus(false), account("digitalocean", "account.uuid"))},
+	{name: "sentry", types: []string{"sentry-token"}, bases: []string{"https://sentry.io"}, ask: askSentry},
+	{name: "linear", types: []string{"linear"}, bases: []string{"https://api.linear.app"}, ask: askLinear},
 }
 
 func byName(name string) *provider {
@@ -104,15 +111,20 @@ func accepted(j judge, codes ...int) judge {
 	}
 }
 
-// account reads the account a 2xx body names, "<provider>:<value of field>".
+// account reads the account a 2xx body names, "<provider>:<value of field>"; field may be a
+// dotted path into nested objects ("bot.workspace_id").
 func account(provider, field string) func([]byte) string {
 	return func(body []byte) string {
-		var m map[string]any
-		if json.Unmarshal(body, &m) != nil {
+		var v any
+		if json.Unmarshal(body, &v) != nil {
 			return ""
 		}
-		if v, ok := m[field].(string); ok && v != "" {
-			return provider + ":" + v
+		for _, k := range strings.Split(field, ".") {
+			m, _ := v.(map[string]any)
+			v = m[k]
+		}
+		if s, ok := v.(string); ok && s != "" {
+			return provider + ":" + s
 		}
 		return ""
 	}
@@ -120,26 +132,26 @@ func account(provider, field string) func([]byte) string {
 
 // call GETs base+path with header and judges the answer.
 func call(ctx context.Context, base, path string, header http.Header, j judge, acct func([]byte) string) secretrisk.Liveness {
-	return send(ctx, http.MethodGet, base, path, header, j, acct)
+	return send(ctx, http.MethodGet, base, path, nil, header, j, acct)
 }
 
 // send makes the request and judges the answer. A failed call (network, timeout) is unknown, its
 // error never kept: it may carry the URL.
-func send(ctx context.Context, method, base, path string, header http.Header, j judge, acct func([]byte) string) secretrisk.Liveness {
+func send(ctx context.Context, method, base, path string, body []byte, header http.Header, j judge, acct func([]byte) string) secretrisk.Liveness {
 	u, _ := url.Parse(base)
 	host := base
 	if u != nil {
 		host = u.Host
 	}
 	r := secretrisk.Liveness{Endpoint: method + " " + host + endpointPath(path)}
-	code, body, err := httpx.New(base, header).Fetch(ctx, method, path, nil)
+	code, answer, err := httpx.New(base, header).Fetch(ctx, method, path, nil, body)
 	if err != nil {
 		r.State, r.Reason = secretrisk.Unknown, "no answer"
 		return r
 	}
-	r.State, r.Reason = j(code, body)
+	r.State, r.Reason = j(code, answer)
 	if r.State == secretrisk.Live && code >= 200 && code <= 299 && acct != nil {
-		r.Account = acct(body)
+		r.Account = acct(answer)
 	}
 	return r
 }
@@ -271,7 +283,7 @@ func askSlack(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 		}
 		return secretrisk.Unknown, safeCode(r.Error)
 	}
-	res := send(ctx, http.MethodPost, base, "/api/auth.test", bearerAuth(p.Value), j, nil)
+	res := send(ctx, http.MethodPost, base, "/api/auth.test", nil, bearerAuth(p.Value), j, nil)
 	if res.State == secretrisk.Live && team != "" {
 		res.Account = "slack:" + team
 	}
@@ -307,4 +319,102 @@ func safeCode(s string) string {
 		}
 	}
 	return s
+}
+
+// askXAI reads the key's own record. A key that still authenticates but is blocked or disabled,
+// or whose team is blocked, answers 200 with a flag set: dead, by the first flag set.
+func askXAI(ctx context.Context, base string, p Probe) secretrisk.Liveness {
+	j := func(code int, body []byte) (secretrisk.LiveState, string) {
+		var k map[string]any
+		if code == http.StatusOK && json.Unmarshal(body, &k) == nil {
+			for _, flag := range []string{"api_key_blocked", "api_key_disabled", "team_blocked"} {
+				if k[flag] == true {
+					return secretrisk.Dead, flag
+				}
+			}
+		}
+		return byStatus(true)(code, body)
+	}
+	return call(ctx, base, "/v1/api-key", bearerAuth(p.Value), j, nil)
+}
+
+// notionVersion is the API version Notion's reference for GET /v1/users/me lists.
+const notionVersion = "2026-03-11"
+
+// askNotion reads the integration's bot user; 403 restricted_resource is a token without the
+// capability, still valid.
+func askNotion(ctx context.Context, base string, p Probe) secretrisk.Liveness {
+	h := bearerAuth(p.Value)
+	h.Set("Notion-Version", notionVersion)
+	return call(ctx, base, "/v1/users/me", h, byStatus(true), account("notion", "bot.workspace_id"))
+}
+
+// askCloudflare verifies a user API token. Only the token's status decides: active is live,
+// disabled or expired dead. A failure tells nothing: an account-owned token is verified on an
+// endpoint that needs the account id, and a legacy Global API Key needs the account's email.
+func askCloudflare(ctx context.Context, base string, p Probe) secretrisk.Liveness {
+	j := func(code int, body []byte) (secretrisk.LiveState, string) {
+		var r struct {
+			Result struct {
+				Status string `json:"status"`
+			} `json:"result"`
+		}
+		if code != http.StatusOK || json.Unmarshal(body, &r) != nil {
+			return secretrisk.Unknown, "HTTP " + strconv.Itoa(code)
+		}
+		switch r.Result.Status {
+		case "active":
+			return secretrisk.Live, "active"
+		case "disabled", "expired":
+			return secretrisk.Dead, "token " + r.Result.Status
+		}
+		return secretrisk.Unknown, "status " + safeCode(r.Result.Status)
+	}
+	return call(ctx, base, "/client/v4/user/tokens/verify", bearerAuth(p.Value), j, nil)
+}
+
+// askSentry lists the organizations a token reaches. Only a 2xx tells: a token of a self-hosted
+// Sentry, or of an organization stored in another region, may be refused by sentry.io.
+func askSentry(ctx context.Context, base string, p Probe) secretrisk.Liveness {
+	j := func(code int, body []byte) (secretrisk.LiveState, string) {
+		if code >= 200 && code <= 299 {
+			return secretrisk.Live, "HTTP " + strconv.Itoa(code)
+		}
+		return secretrisk.Unknown, "HTTP " + strconv.Itoa(code) + " on sentry.io (it may belong to a self-hosted Sentry or another region)"
+	}
+	return call(ctx, base, "/api/0/organizations/", bearerAuth(p.Value), j, nil)
+}
+
+// linearQuery is the only body sent to Linear: a GraphQL query, which cannot change anything.
+var linearQuery = []byte(`{"query":"{ viewer { id } }"}`)
+
+// graphQLError is one entry of a GraphQL answer's errors.
+type graphQLError struct {
+	Extensions struct {
+		Code string `json:"code"`
+	} `json:"extensions"`
+}
+
+// askLinear asks Linear's GraphQL API who the viewer is. A personal API key goes in Authorization
+// as it is, without Bearer. An authentication error is dead.
+func askLinear(ctx context.Context, base string, p Probe) secretrisk.Liveness {
+	j := func(code int, body []byte) (secretrisk.LiveState, string) {
+		var r struct {
+			Data struct {
+				Viewer struct {
+					ID string `json:"id"`
+				} `json:"viewer"`
+			} `json:"data"`
+			Errors []graphQLError `json:"errors"`
+		}
+		_ = json.Unmarshal(body, &r)
+		switch {
+		case code == http.StatusOK && r.Data.Viewer.ID != "":
+			return secretrisk.Live, "HTTP 200"
+		case slices.ContainsFunc(r.Errors, func(e graphQLError) bool { return e.Extensions.Code == "AUTHENTICATION_ERROR" }):
+			return secretrisk.Dead, "AUTHENTICATION_ERROR"
+		}
+		return byStatus(false)(code, body)
+	}
+	return send(ctx, http.MethodPost, base, "/graphql", linearQuery, http.Header{"Authorization": {p.Value}}, j, account("linear", "data.viewer.id"))
 }
