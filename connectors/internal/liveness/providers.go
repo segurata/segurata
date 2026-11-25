@@ -176,11 +176,11 @@ func askAnthropic(ctx context.Context, base string, p Probe) secretrisk.Liveness
 	return call(ctx, base, path, h, byStatus(true), nil)
 }
 
-// askGitHub reads the user a token signs in as. An installation token (ghs_) has no user: GitHub
-// answers 403, which still proves it valid.
+// askGitHub reads the user a token signs in as. A 403 tells nothing: an installation token (ghs_)
+// cannot call /user, and GitHub may answer 403 to any credential after many invalid ones.
 func askGitHub(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	h := http.Header{"Authorization": {"Bearer " + p.Value}, "X-Github-Api-Version": {"2022-11-28"}}
-	return call(ctx, base, "/user", h, byStatus(true), account("github", "login"))
+	return call(ctx, base, "/user", h, byStatus(false), account("github", "login"))
 }
 
 // askGitLab reads the user on gitlab.com. A 401 there is not dead: the token may belong to a

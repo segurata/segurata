@@ -412,3 +412,15 @@ func TestSupported(t *testing.T) {
 		}
 	}
 }
+
+// A 403 from GitHub may be an installation token on /user or a block after many invalid tokens:
+// neither says whether this one works.
+func TestGitHubForbiddenIsUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	defer srv.Close()
+	c := &Checker{Bases: map[string][]string{"github": {srv.URL}}, Interval: time.Millisecond}
+	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"g"}, Type: "github", Value: "ghs_" + liveKey}})
+	if got["g"].State != secretrisk.Unknown {
+		t.Errorf("403: %+v", got["g"])
+	}
+}
