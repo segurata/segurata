@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
+	"github.com/segurata/segurata/connectors/internal/keytrack"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -55,6 +56,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Anthropic API keys, owners, recent use, workspaces and 30-day cost",
 		Needs:    []string{"secret:" + secretName},
+		Theme:    finding.ThemeAISpend,
 	}
 }
 
@@ -440,3 +442,6 @@ func (s *scan) emitSpend(workspaces []workspace, costs map[string]float64) {
 		})
 	}
 }
+
+// Track groups the account's API keys by severity (keytrack).
+func (c *Connector) Track(f finding.Finding) *finding.Track { return keytrack.Track("Anthropic", f) }
