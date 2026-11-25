@@ -254,7 +254,7 @@ type proposal struct {
 
 // groupKey is the item key of a finding under its rule.
 func groupKey(f finding.Finding, r *rule) (key string, p proposal) {
-	lbl := label(f.Connector, f.Instance)
+	lbl := finding.Label(f.Connector, f.Instance)
 	p = proposal{theme: themeOf(f.Connector, f.Resource.Type), connector: f.Connector, instance: f.Instance,
 		resource: f.Resource.Type, account: f.Account, kind: r.kind, rule: r}
 	base := "group:" + lbl + "|" + f.Resource.Type

@@ -142,14 +142,17 @@ func (f Finding) DisplayTitle() string {
 	return f.Title
 }
 
-// Selector is the connector instance that produced f, spelled as on the command line: "name" or
-// "name:label".
-func (f Finding) Selector() string {
-	if f.Instance == "" {
-		return f.Connector
+// Label spells a connector instance as the command line and the config key do: "name", or
+// "name:label" for a labelled instance.
+func Label(connector, instance string) string {
+	if instance == "" {
+		return connector
 	}
-	return f.Connector + ":" + f.Instance
+	return connector + ":" + instance
 }
+
+// Selector is the connector instance that produced f, spelled as Label does.
+func (f Finding) Selector() string { return Label(f.Connector, f.Instance) }
 
 // HiddenNote is the line printed under a list that left out accepted findings, or "" for none.
 func HiddenNote(n int) string {

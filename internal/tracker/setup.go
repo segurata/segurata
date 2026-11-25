@@ -283,7 +283,7 @@ func (it *Item) BrowserSignIn(browser func(connector string) bool, now time.Time
 }
 
 // StatusLabel is the connector instance a status is about, as the command line names it.
-func StatusLabel(st finding.Status) string { return label(st.Connector, st.Instance) }
+func StatusLabel(st finding.Status) string { return finding.Label(st.Connector, st.Instance) }
 
 // setupState is the state a setup item's key names: the last field of setupKey.
 func (it *Item) setupState() finding.State {

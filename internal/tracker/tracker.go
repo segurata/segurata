@@ -140,14 +140,7 @@ type KeyFacts struct {
 }
 
 // Label is the connector instance as the command line names it: name or name:label.
-func (r FindingRef) Label() string { return label(r.Connector, r.Instance) }
-
-func label(connector, instance string) string {
-	if instance == "" {
-		return connector
-	}
-	return connector + ":" + instance
-}
+func (r FindingRef) Label() string { return finding.Label(r.Connector, r.Instance) }
 
 // Next is the next step: who takes it, what it is, and the command or page that does it.
 type Next struct {

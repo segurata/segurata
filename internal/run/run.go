@@ -45,13 +45,7 @@ func (t Target) Timeout() time.Duration {
 }
 
 // Label is "name" or "name:label", the same spelling as the config key.
-func (t Target) Label() string {
-	name := t.Connector.Describe().Name
-	if t.Instance.Label == "" {
-		return name
-	}
-	return name + ":" + t.Instance.Label
-}
+func (t Target) Label() string { return finding.Label(t.Connector.Describe().Name, t.Instance.Label) }
 
 // FileName is the name of the run file of the connector instance label (see Target.Label) in its
 // day's directory: "name.jsonl" or "name-label.jsonl".
