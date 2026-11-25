@@ -98,3 +98,19 @@ func (k Key) Of(secret string) string {
 	m.Write([]byte(secret))
 	return hex.EncodeToString(m.Sum(nil))[:16]
 }
+
+// Find returns the substring of line, n bytes long, whose fingerprint is fp, or "". Only windows
+// that fits accepts (a redacted hint's prefix, tail and length) are fingerprinted, so a value can
+// be located again without ever having been stored: `rotations replace` finds the old value in a
+// file, the liveness check finds a value in a line of git history.
+func (k Key) Find(line string, n int, fp string, fits func(string) bool) string {
+	if n <= 0 {
+		return ""
+	}
+	for i := 0; i+n <= len(line); i++ {
+		if w := line[i : i+n]; fits(w) && k.Of(w) == fp {
+			return w
+		}
+	}
+	return ""
+}

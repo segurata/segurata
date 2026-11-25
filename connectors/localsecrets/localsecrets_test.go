@@ -184,6 +184,10 @@ func TestGuards(t *testing.T) {
 	if refused(gitList, "--git-dir=/r/.git", "--work-tree=/r", "ls-files", "-z") || !refused(gitList, "--git-dir=/r/.git", "config", "x") {
 		t.Error("git check")
 	}
+	if refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-s", "0123456789:a/b.env") || refused(gitCheck, "--git-dir=/r/.git", "cat-file", "blob", "0123456789:a/b.env") ||
+		!refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-p", "0123456789:a/b.env") || !refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-s", "HEAD:x") {
+		t.Error("git cat-file: the size and content of a file as committed, nothing else")
+	}
 	if refused(sshKeygenCheck, "-y", "-P", "", "-f", "k") || refused(sshKeygenCheck, "-l", "-f", "k.pub") {
 		t.Error("ssh-keygen read-only shapes refused")
 	}

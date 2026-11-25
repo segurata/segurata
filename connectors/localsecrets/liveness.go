@@ -1,9 +1,14 @@
 package localsecrets
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -114,14 +119,27 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	}
 	claims := map[string][]attribution.Claims{}
 	types := map[string]string{}
+	history := map[string]secretrisk.Evidence{}      // fingerprint -> a sighting in git history
+	historyIDs := map[string][]secretrisk.Evidence{} // place -> AWS key ids committed there
 	for _, f := range fs {
-		if ev, ok := findingEvidence(f); ok && !isNoise(f) {
-			claims[ev.Fingerprint] = append(claims[ev.Fingerprint], ev.Claims)
-			types[ev.Fingerprint] = ev.Type
+		ev, ok := findingEvidence(f)
+		if !ok || isNoise(f) {
+			continue
+		}
+		claims[ev.Fingerprint] = append(claims[ev.Fingerprint], ev.Claims)
+		types[ev.Fingerprint] = ev.Type
+		if ev.Source == "gitleaks" && ev.Commit != "" && ev.Line > 0 {
+			if _, seen := history[ev.Fingerprint]; !seen {
+				history[ev.Fingerprint] = ev
+			}
+			if ev.Type == "aws-access-key-id" {
+				historyIDs[historyPlace(ev)] = append(historyIDs[historyPlace(ev)], ev)
+			}
 		}
 	}
-	// Every reported secret a provider could judge: with its value when the run read it, else
-	// (git history replayed from the cache) only to look in the liveness cache.
+	// Every reported secret a provider could judge: with its value when the run read it, else (git
+	// history replayed from the cache) with a way to read it again from the commit, or only to
+	// look in the liveness cache. AWS secret keys go first, so their key ids ride along with them.
 	candidates := s.held.probes()
 	covered := map[string]bool{}
 	for _, p := range candidates {
@@ -129,10 +147,37 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 			covered[fp] = true
 		}
 	}
-	for fp, typ := range types {
-		if !covered[fp] && (liveness.Supported(typ) || typ == "aws-access-key-id") {
-			candidates = append(candidates, liveness.Probe{Fingerprints: []string{fp}, Type: typ})
+	secretKeysFirst := func(fp string) int {
+		if types[fp] == "aws-secret-key" {
+			return 0
 		}
+		return 1
+	}
+	unread := slices.SortedFunc(maps.Keys(types), func(a, b string) int {
+		return cmp.Or(cmp.Compare(secretKeysFirst(a), secretKeysFirst(b)), cmp.Compare(a, b))
+	})
+	for _, fp := range unread {
+		typ := types[fp]
+		if covered[fp] || !liveness.Supported(typ) && typ != "aws-access-key-id" {
+			continue
+		}
+		covered[fp] = true
+		p := liveness.Probe{Fingerprints: []string{fp}, Type: typ}
+		if ev, ok := history[fp]; ok {
+			p.Recover = s.recoverer(ev, nil)
+			if typ == "aws-secret-key" {
+				p.Recover = nil
+				if id, ok := onlyKeyID(historyIDs[historyPlace(ev)]); ok && !covered[id.Fingerprint] {
+					covered[id.Fingerprint] = true
+					p.Fingerprints = append(p.Fingerprints, id.Fingerprint)
+					p.Recover = s.recoverer(ev, &id)
+				}
+			}
+			if typ == "aws-access-key-id" {
+				p.Recover = nil // tried only with its secret key
+			}
+		}
+		candidates = append(candidates, p)
 	}
 	var probes []liveness.Probe
 	refused := 0
@@ -168,6 +213,69 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		line += fmt.Sprintf("; liveness cache not saved: %v", err)
 	}
 	return line
+}
+
+// historyPlace is where a history leak sits: repository, file and commit.
+func historyPlace(ev secretrisk.Evidence) string {
+	return ev.Repo + "\x00" + ev.Path + "\x00" + ev.Commit
+}
+
+// onlyKeyID is the one AWS key id among ids (by fingerprint), if there is exactly one.
+func onlyKeyID(ids []secretrisk.Evidence) (secretrisk.Evidence, bool) {
+	var one secretrisk.Evidence
+	for _, id := range ids {
+		if one.Fingerprint != "" && id.Fingerprint != one.Fingerprint {
+			return secretrisk.Evidence{}, false
+		}
+		one = id
+	}
+	return one, one.Fingerprint != ""
+}
+
+// maxRecoverBlob is the largest committed file read to recover a value: a secret in a bigger one
+// (a database dump) stays unchecked.
+const maxRecoverBlob = 8 << 20
+
+// recoverer reads a history leak's value again at check time, and the key id's when one is given:
+// the line gitleaks reported (and its neighbours) in the file as committed, searched for the
+// window whose fingerprint is the secret's (fingerprint.Key.Find, as `rotations replace` locates
+// an old value). The value lives only in the probe for the length of the check.
+func (s *scan) recoverer(ev secretrisk.Evidence, id *secretrisk.Evidence) func(context.Context) (string, string, bool) {
+	return func(ctx context.Context) (string, string, bool) {
+		value, ok := s.recoverValue(ctx, ev)
+		if !ok || id == nil {
+			return value, "", ok
+		}
+		keyID, ok := s.recoverValue(ctx, *id)
+		return value, keyID, ok
+	}
+}
+
+func (s *scan) recoverValue(ctx context.Context, ev secretrisk.Evidence) (string, bool) {
+	h, ok := secretrisk.ParseHint(ev.Redacted)
+	if !ok || h.Len == 0 || ev.Repo == "" {
+		return "", false
+	}
+	repo := expandHome(ev.Repo, s.home)
+	object := ev.Commit + ":" + filepath.ToSlash(strings.TrimPrefix(ev.Path, ev.Repo+"/"))
+	git := guardGit(s.c.Git)
+	size, err := git.Run(ctx, gitDirArg(repo), "cat-file", "-s", object)
+	if n, perr := strconv.Atoi(strings.TrimSpace(string(size))); err != nil || perr != nil || n > maxRecoverBlob {
+		return "", false
+	}
+	blob, err := git.Run(ctx, gitDirArg(repo), "cat-file", "blob", object)
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(string(blob), "\n")
+	for _, n := range []int{ev.Line, ev.Line - 1, ev.Line + 1} {
+		if n >= 1 && n <= len(lines) {
+			if v := s.fp.Find(lines[n-1], h.Len, ev.Fingerprint, h.Fits); v != "" {
+				return v, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (c *Connector) checker(home string, cfg liveness.Config) *liveness.Checker {

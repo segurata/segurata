@@ -431,3 +431,48 @@ func TestGitHubForbiddenIsUnknown(t *testing.T) {
 		t.Errorf("403: %+v", got["g"])
 	}
 }
+
+// A probe without its value (git history replayed from the cache) recovers it only when the cache
+// has no fresh answer and only within the run's time; one that cannot is counted, never asked.
+func TestRecoverValueAtCheckTime(t *testing.T) {
+	f := newFake(t)
+	c := f.checker()
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	c.Cache, c.Now = LoadCache(filepath.Join(t.TempDir(), "l.json")), func() time.Time { return now }
+	c.Cache.put([]string{"cached"}, secretrisk.Liveness{State: secretrisk.Dead, CheckedAt: now})
+	calls := map[string]int{}
+	recov := func(name, value, keyID string) func(context.Context) (string, string, bool) {
+		return func(context.Context) (string, string, bool) {
+			calls[name]++
+			return value, keyID, value != ""
+		}
+	}
+	got, st := c.Check(context.Background(), []Probe{
+		{Fingerprints: []string{"cached"}, Type: "github", Recover: recov("cached", "ghp_"+liveKey, "")},
+		{Fingerprints: []string{"gh"}, Type: "github", Recover: recov("gh", "ghp_"+liveKey, "")},
+		{Fingerprints: []string{"aws", "aws-id"}, Type: "aws-secret-key", Recover: recov("aws", "fake/secret/for/tests/only/0000000000000", keyID)},
+		{Fingerprints: []string{"lost"}, Type: "github", Recover: recov("lost", "", "")},
+		{Fingerprints: []string{"aws-alone"}, Type: "aws-secret-key", Recover: recov("aws-alone", "fake/secret/for/tests/only/4444444444444", "")},
+		{Fingerprints: []string{"none"}, Type: "github"},
+	})
+	if calls["cached"] != 0 || got["cached"].State != secretrisk.Dead {
+		t.Errorf("a fresh cached answer needs no value: %d recoveries, %+v", calls["cached"], got["cached"])
+	}
+	if got["gh"].State != secretrisk.Live || got["aws"].State != secretrisk.Live || got["aws-id"] != got["aws"] {
+		t.Errorf("recovered: %+v %+v %+v", got["gh"], got["aws"], got["aws-id"])
+	}
+	if _, ok := got["lost"]; ok {
+		t.Errorf("a value not recovered was asked: %+v", got["lost"])
+	}
+	if st.Recovered != 3 || st.NoValue != 2 || st.Unsupported != 1 || st.Asked != 2 || st.Cached != 1 {
+		t.Errorf("stats %+v", st)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	n := 0
+	_, st = c.Check(ctx, []Probe{{Fingerprints: []string{"late"}, Type: "github", Recover: func(context.Context) (string, string, bool) { n++; return "ghp_" + liveKey, "", true }}})
+	if n != 0 || st.Interrupted != 1 {
+		t.Errorf("out of time: %d recoveries, %+v", n, st)
+	}
+}

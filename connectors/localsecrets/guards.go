@@ -99,8 +99,9 @@ var gitList = cli.Allowlist{"ls-files", "rev-list"}
 var gitLogFlags = []string{"--all", "--remotes", "--full-history", "--no-renames", "--name-only", "--raw", "--no-abbrev", "-z", "--diff-filter=", "--format="}
 
 // gitCheck is gitList plus the data-dump check's reads (dumpscan.go), `git log` with gitLogFlags
-// and `git cat-file -s <object>` (a size), and the notebook check's (notebook.go), `git cat-file
-// blob <commit>:<path>` (a file as committed; cat-file runs no textconv without --textconv).
+// and `git cat-file -s <object>` (a size), and the notebook check's (notebook.go) and the liveness
+// check's (liveness.go) `git cat-file blob <commit>:<path>` (a file as committed; cat-file runs no
+// textconv without --textconv), with `git cat-file -s <commit>:<path>` before it.
 // Options before the subcommand must be --git-dir= or --work-tree=.
 var gitCheck = cli.CheckFunc(func(args []string) error {
 	i := 0
@@ -122,7 +123,7 @@ var gitCheck = cli.CheckFunc(func(args []string) error {
 		}
 		return nil
 	case rest[0] == "cat-file":
-		if len(rest) == 3 && rest[1] == "-s" && hexID.MatchString(rest[2]) {
+		if len(rest) == 3 && rest[1] == "-s" && (hexID.MatchString(rest[2]) || commitPath.MatchString(rest[2])) {
 			return nil
 		}
 		if len(rest) == 3 && rest[1] == "blob" && commitPath.MatchString(rest[2]) {

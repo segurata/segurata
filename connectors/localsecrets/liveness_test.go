@@ -1,19 +1,23 @@
 package localsecrets
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/liveness"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/testcorpus"
 )
@@ -142,7 +146,7 @@ func TestLivenessAtScanTime(t *testing.T) {
 		}
 	}
 	detail := rec.statuses[0].Detail
-	if !strings.Contains(detail, "liveness: 3 asked, 0 from cache; 2 live, 1 dead") || !strings.Contains(detail, "1 not allowed") {
+	if !strings.Contains(detail, "liveness: 3 asked, 0 from cache, 0 values recovered from git history; 2 live, 1 dead") || !strings.Contains(detail, "1 not allowed") {
 		t.Errorf("status detail: %s", detail)
 	}
 
@@ -152,7 +156,7 @@ func TestLivenessAtScanTime(t *testing.T) {
 	if err := c.Inventory(context.Background(), req, rec2); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.asked) != before || !strings.Contains(rec2.statuses[0].Detail, "0 asked, 3 from cache") {
+	if len(f.asked) != before || !strings.Contains(rec2.statuses[0].Detail, "0 asked, 3 from cache,") {
 		t.Errorf("second run asked %d more; %s", len(f.asked)-before, rec2.statuses[0].Detail)
 	}
 }
@@ -192,5 +196,90 @@ func TestLivenessGates(t *testing.T) {
 	}
 	if _, err := parseSettings(map[string]any{"liveness": map[string]any{"enabled": true, "owners": []any{"not-mine"}}}, "/h"); err == nil {
 		t.Error("liveness for not-mine accepted")
+	}
+}
+
+// A secret seen only in git history replayed from the gitleaks cache has no value in memory: the
+// check reads it again from the commit, by its fingerprint, only when the liveness cache has no
+// answer, and keeps it nowhere.
+func TestLivenessRecoversCachedHistoryValues(t *testing.T) {
+	r := newHistoryRepo(t)
+	_, secret := r.commit("a.env")
+	r.run(true, 1) // the full scan fills the gitleaks cache
+	f := newFakeProviders(t)
+	known := &attribution.Known{}
+	check := func() (string, map[string]*secretrisk.Liveness) {
+		c := &Connector{Gitleaks: r.gitleaks(), Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+			Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
+			NewChecker: func(home string, cfg liveness.Config) *liveness.Checker {
+				return &liveness.Checker{Config: cfg, Bases: map[string][]string{"stripe": {f.URL}}, Interval: time.Millisecond}
+			}}
+		lc, err := liveness.ParseConfig(map[string]any{"enabled": true, "owners": []any{"unknown"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute, gitCache: true, liveness: lc}
+		s := newScan(context.Background(), c, r.home, cfg, fingerprint.FromBytes(bytes.Repeat([]byte{1}, 32)), &recorder{})
+		if err := s.gitleaks(r.dir); err != nil {
+			t.Fatal(err)
+		}
+		if len(r.scans) != 0 {
+			t.Fatalf("the history was scanned again: %v", r.scans)
+		}
+		fs, _ := s.findings()
+		line := s.checkLiveness(context.Background(), fs, known)
+		out := map[string]*secretrisk.Liveness{}
+		for _, fd := range fs {
+			if ev, ok := findingEvidence(fd); ok {
+				if l, ok := fd.Evidence["liveness"].(secretrisk.Liveness); ok {
+					out[ev.Path] = &l
+				}
+			}
+		}
+		raw, _ := json.Marshal(fs)
+		if strings.Contains(string(raw)+line, secret) {
+			t.Fatal("the recovered value reached the output")
+		}
+		return line, out
+	}
+	r.scans = nil
+	line, got := check()
+	if l := got["~/src/repo/a.env"]; l == nil || l.State != secretrisk.Live || !f.askedAbout(secret) {
+		t.Fatalf("history-only secret: %+v; %s", l, line)
+	}
+	if !strings.Contains(line, "1 values recovered from git history") || !strings.Contains(line, "0 without a value") {
+		t.Errorf("status: %s", line)
+	}
+
+	// The cached leak names a commit git no longer has: the value cannot be read, the secret stays
+	// unchecked and nothing is asked.
+	cache := r.cacheFile(t)
+	raw, _ := os.ReadFile(cache)
+	var hc historyCache
+	if err := json.Unmarshal(raw, &hc); err != nil || len(hc.Leaks) != 1 {
+		t.Fatalf("cache: %v", err)
+	}
+	hc.Leaks[0].Evidence.Commit = "0000000000"
+	raw, _ = json.Marshal(hc)
+	if err := os.WriteFile(cache, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.asked)
+	line, got = check()
+	if l := got["~/src/repo/a.env"]; l != nil || len(f.asked) != before || !strings.Contains(line, "1 without a value") {
+		t.Errorf("unrecoverable: %+v, %d asked; %s", l, len(f.asked)-before, line)
+	}
+}
+
+func TestOnlyKeyID(t *testing.T) {
+	a, b := secretrisk.Evidence{Fingerprint: "a"}, secretrisk.Evidence{Fingerprint: "b"}
+	if id, ok := onlyKeyID([]secretrisk.Evidence{a, a}); !ok || id.Fingerprint != "a" {
+		t.Errorf("one key id seen twice: %v %v", id, ok)
+	}
+	if _, ok := onlyKeyID([]secretrisk.Evidence{a, b}); ok {
+		t.Error("two key ids pair with nothing")
+	}
+	if _, ok := onlyKeyID(nil); ok {
+		t.Error("no key id")
 	}
 }
