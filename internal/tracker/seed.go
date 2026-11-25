@@ -29,8 +29,7 @@ const coverageTheme = "coverage"
 
 // connectorThemes maps a connector that does not declare its theme yet to it.
 var connectorThemes = map[string]string{
-	"prowler":    "cloud",
-	"openrouter": "ai-spend",
+	"prowler": "cloud",
 }
 
 // themeOf is the theme of a finding whose run declared the theme declared ("" for none). The

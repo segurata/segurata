@@ -54,13 +54,6 @@ var rules = []rule{
 	// projects is one thing to fix, so it is one item listing the projects.
 	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
 	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-	{connectors: []string{"openrouter"}, resource: "api_key", by: perAccountSeverity, kind: KindFix, title: func(p *proposal) string {
-		s := fmt.Sprintf("Revoke or limit %s", textfmt.Count(len(p.findings), providerName(p.connector)+" API key", providerName(p.connector)+" API keys"))
-		if p.instance != "" {
-			s += " (" + p.instance + ")"
-		}
-		return s
-	}},
 }
 
 // defaultRule groups a finding that declares nothing.
@@ -139,10 +132,6 @@ func dumpsNext(p *proposal) *Next {
 	fmt.Fprintf(&b, "If they hold personal data of customers or staff, check the GDPR breach notification duty (72 hours): %s, %s.",
 		secretrisk.URLAEPDBreaches, secretrisk.URLEDPBBreaches)
 	return &Next{Who: You, Action: b.String(), URL: secretrisk.DumpFixDoc}
-}
-
-func providerName(connector string) string {
-	return map[string]string{"openrouter": "OpenRouter"}[connector]
 }
 
 var (

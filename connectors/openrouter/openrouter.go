@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
+	"github.com/segurata/segurata/connectors/internal/keytrack"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -57,6 +58,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "OpenRouter keys per workspace, credit limits, last use, spend and balance",
 		Needs:    []string{"secret:" + secretName},
+		Theme:    finding.ThemeAISpend,
 	}
 }
 
@@ -317,3 +319,6 @@ func deref(s *string) string {
 	}
 	return *s
 }
+
+// Track groups the account's API keys by severity (keytrack).
+func (c *Connector) Track(f finding.Finding) *finding.Track { return keytrack.Track("OpenRouter", f) }
