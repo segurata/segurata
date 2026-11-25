@@ -287,12 +287,12 @@ class InventoryTest(unittest.TestCase):
     def test_skip_projects_are_declared_uninspected(self):
         _, records = self.fake.run({"skip_projects": [GAMMA]})
         self.assertEqual(sorted(a[3] for a, _ in self.fake.prowler_runs()), [ALPHA, BETA])
-        self.assertIn({"type": "scope", "scope": GAMMA, "inspected": False, "reason": "in connectors.prowler.config.skip_projects"}, records)
+        self.assertIn({"type": "scope", "scope": GAMMA, "inspected": False, "reason": "expected: in connectors.prowler.config.skip_projects"}, records)
 
     def test_skip_projects_accept_patterns(self):
         _, records = self.fake.run({"skip_projects": ["demo-proj-g*"]})
         self.assertEqual(sorted(a[3] for a, _ in self.fake.prowler_runs()), [ALPHA, BETA])
-        self.assertIn({"type": "scope", "scope": GAMMA, "inspected": False, "reason": "in connectors.prowler.config.skip_projects"}, records)
+        self.assertIn({"type": "scope", "scope": GAMMA, "inspected": False, "reason": "expected: in connectors.prowler.config.skip_projects"}, records)
 
     def test_expired_login_is_reauth_for_that_account_only(self):
         self.fake.flag("notoken", BOB)

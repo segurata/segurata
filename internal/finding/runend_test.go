@@ -70,3 +70,24 @@ func TestScopeOfFallsBackToAccount(t *testing.T) {
 		t.Fatal("ScopeOf")
 	}
 }
+
+// A scope the owner's config leaves out does not make a run partial for people, though it still
+// proves nothing gone there.
+func TestCoverageCompleteAsConfigured(t *testing.T) {
+	var tally Tally
+	tally.Declare("a", true, "")
+	tally.Declare("sys-1", false, "expected: in the config's skip list")
+	end := tally.End("prowler", "", time.Time{}, time.Time{}, nil)
+	c := CoverageOf(&end)
+	if c.Complete() || !c.CompleteAsConfigured() || len(c.Missed()) != 0 {
+		t.Fatalf("expected skip only: complete %v as configured %v missed %v", c.Complete(), c.CompleteAsConfigured(), c.Missed())
+	}
+	if _, unchecked := c.Unchecked("me", "sys-1"); !unchecked {
+		t.Error("a scope left out on purpose was taken as checked")
+	}
+	tally.Declare("b", false, "denied")
+	end = tally.End("prowler", "", time.Time{}, time.Time{}, nil)
+	if c := CoverageOf(&end); c.CompleteAsConfigured() || len(c.Missed()) != 1 || c.Missed()[0].Scope != "b" {
+		t.Fatalf("a real skip: %v", c.Missed())
+	}
+}

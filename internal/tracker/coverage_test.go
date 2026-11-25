@@ -27,6 +27,12 @@ func TestCoverageLine(t *testing.T) {
 	// Only a status the config expects: nothing was inspected, on purpose.
 	writeRun(t, out, t0, "anthropic.jsonl", at("anthropic", t0), finding.Status{Type: "status", Connector: "anthropic", State: finding.StateMissingCredentials, Detail: "no admin key"})
 	writeRun(t, out, t0, "openai.jsonl", at("openai", t0), finding.Status{Type: "status", Connector: "openai", State: finding.StateMissingCredentials, Detail: "no admin key"})
+	// A scope the connector skipped because the owner's config says so is expected; any other
+	// skip makes the run partial.
+	writeRun(t, out, t0, "prowler.jsonl", at("prowler", t0), okStatus("prowler", "me@x.com"),
+		finding.Skipped{Scope: "sys-1", Reason: "expected: in connectors.prowler.config.skip_projects"})
+	writeRun(t, out, t0, "vercel.jsonl", at("vercel", t0), okStatus("vercel", "me"),
+		finding.Skipped{Scope: "team-b", Reason: "no configured account can list this team"})
 	tr := New(t0)
 	expect := func(st *finding.Status) {
 		if st.Connector == "anthropic" {
@@ -38,7 +44,8 @@ func TestCoverageLine(t *testing.T) {
 	}
 	got := tr.coverageLine([]string{"aws", "cloudflare", "gcp", "github"}, t0.Add(3*time.Hour))
 	want := "Coverage: anthropic: 3 h ago (1 scope left out as expected); aws: 29 h ago; cloudflare: never run; gcp: 3 h ago, failed: gcloud exited 1; " +
-		"github: 3 h ago, partial: user:me not checked; openai: 3 h ago, partial: nothing checked."
+		"github: 3 h ago, partial: user:me not checked; openai: 3 h ago, partial: nothing checked; prowler: 3 h ago (1 scope left out as expected); " +
+		"vercel: 3 h ago, partial: team-b not checked."
 	if got != want {
 		t.Errorf("coverage line\n got %q\nwant %q", got, want)
 	}

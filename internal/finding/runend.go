@@ -195,6 +195,25 @@ func (c Coverage) Complete() bool { return c.Known && c.all == "" && len(c.skipp
 // Skipped is what the run did not inspect.
 func (c Coverage) Skipped() []Skipped { return c.skipped }
 
+// Expected reports a scope left out because the owner's config says so: the connector writes its
+// reason starting with "expected". It still proves nothing there gone.
+func (s Skipped) Expected() bool { return strings.HasPrefix(s.Reason, string(StateExpected)) }
+
+// Missed is what the run did not inspect although the owner's config did not leave it out.
+func (c Coverage) Missed() []Skipped {
+	var out []Skipped
+	for _, s := range c.skipped {
+		if !s.Expected() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// CompleteAsConfigured reports whether the run has a run_end and inspected everything the owner's
+// config did not leave out.
+func (c Coverage) CompleteAsConfigured() bool { return c.Known && c.all == "" && len(c.Missed()) == 0 }
+
 // NoneChecked reports, with the reason, a run that proves nothing gone: no run_end, or nothing
 // inspected.
 func (c Coverage) NoneChecked() (string, bool) {

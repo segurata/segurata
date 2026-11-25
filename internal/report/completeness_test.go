@@ -39,7 +39,8 @@ func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 	a, b := repo("a"), repo("b")
 	ok := status("github", "", "github:acme", finding.StateOK, "")
 	runtest.Write(t, path("2026-11-20", "github.jsonl"), a, b, ok)
-	runtest.Write(t, path("2026-11-21", "github.jsonl"), ok, finding.Skipped{Scope: "repo:acme/b", Reason: "GitHub API rate limit ran low"})
+	runtest.Write(t, path("2026-11-21", "github.jsonl"), ok, finding.Skipped{Scope: "repo:acme/b", Reason: "GitHub API rate limit ran low"},
+		finding.Skipped{Scope: "repo:acme/archive", Reason: "expected: in the config's skip list"}) // left out on purpose: not listed
 	runtest.WriteUnfinished(t, path("2026-11-22", "github.jsonl"), ok) // killed
 
 	// macos: a legacy previous run, then a latest run whose account errored.
@@ -78,6 +79,9 @@ func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {
 				t.Errorf("%s report lacks %q", f, want)
 			}
+		}
+		if strings.Contains(out, "acme/archive") || !strings.Contains(out, "1 scope not inspected") {
+			t.Errorf("%s report: a scope left out by config is listed as not inspected", f)
 		}
 	}
 }

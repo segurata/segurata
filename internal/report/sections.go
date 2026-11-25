@@ -87,7 +87,7 @@ func coverageTag(c finding.Coverage) string {
 	switch {
 	case !c.Known:
 		return " (no run_end)"
-	case !c.Complete():
+	case !c.CompleteAsConfigured():
 		return " (partial)"
 	}
 	return ""
@@ -111,8 +111,8 @@ func (r *Report) completeness(d *doc.Doc) {
 		case !c.Known:
 			why, _ := c.NoneChecked()
 			items = append(items, doc.Item{Badge: "unknown", Text: fmt.Sprintf("%s (%s): completeness unknown", run.Label, run.Date), Meta: why})
-		case !c.Complete():
-			sk := c.Skipped()
+		case !c.CompleteAsConfigured():
+			sk := c.Missed()
 			it := doc.Item{Badge: "partial", Text: fmt.Sprintf("%s (%s): %s not inspected", run.Label, run.Date, textfmt.Count(len(sk), "scope", "scopes"))}
 			for _, s := range sk[:min(len(sk), r.Top)] {
 				it.Details = append(it.Details, doc.Detail{Label: s.Scope, Text: s.Reason})

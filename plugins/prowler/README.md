@@ -277,7 +277,7 @@ Not in Prowler, only in `gcp`: billing budgets and local credential files (ADC, 
 | `status reauth` | gcloud's login for the account expired, or Prowler was refused its token |
 | `status missing_credentials` | An account in `accounts` that gcloud has no credentials for |
 | `status unsupported` (scope `*`) | Prowler or gcloud not found; a provider not implemented yet |
-| `scope` inspected false | Projects in `skip_projects`, projects in `projects` no account lists, people `accounts` leaves out |
+| `scope` inspected false | Projects in `projects` no account lists; and, with a reason starting `expected:` so the coverage line counts them as left out on purpose, projects in `skip_projects` and people `accounts` leaves out |
 
 A disabled API leaves nothing of that service to check, so it does not make the run partial; the
 project's summary names it.

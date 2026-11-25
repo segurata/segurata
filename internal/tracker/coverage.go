@@ -45,7 +45,7 @@ func (t *Tracker) recordRuns(folded map[string]*run) {
 		expected[finding.ScopeAll] = expected[finding.ScopeAll] || allExpected
 		var sk []finding.Skipped
 		for _, s := range r.cov.Skipped() {
-			if expected[s.Scope] || strings.HasPrefix(s.Reason, string(finding.StateExpected)) {
+			if expected[s.Scope] || s.Expected() {
 				info.Expected++
 				continue
 			}

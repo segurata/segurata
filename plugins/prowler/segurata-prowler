@@ -824,7 +824,7 @@ def inventory_gcp(config, emit):
     accounts = config.accounts or [a for a in known if not is_service_account(a)]
     for a in known:
         if a not in accounts and not is_service_account(a):
-            emit.scope(a, False, "not in connectors.prowler.config.accounts")
+            emit.scope(a, False, "expected: not in connectors.prowler.config.accounts")
     listing = {}
     for account in accounts:
         if account not in known:
@@ -858,7 +858,7 @@ def inventory_gcp(config, emit):
 
     for p in sorted(owners):
         if skipped(p):
-            emit.scope(p, False, "in connectors.prowler.config.skip_projects")
+            emit.scope(p, False, "expected: in connectors.prowler.config.skip_projects")
     todo = [(p, owners[p]) for p in sorted(owners) if not skipped(p)]
     ctx = {"config": config, "emit": emit, "gcloud": gcloud, "prowler": prowler, "in_org": in_org}
     with ThreadPoolExecutor(max_workers=config.parallel) as pool:
