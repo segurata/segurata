@@ -249,7 +249,7 @@ func TestOnlyTheFindingsOwnFixMakesSegurataTheNextStep(t *testing.T) {
 		"own fix":   {finding.Remediation{Summary: "Turn the firewall on.", Action: "macos.firewall.enable", Automatable: true}, Segurata},
 		"hardening": {finding.Remediation{Summary: "Rotate it.", Action: "file.chmod600", Severity: finding.SevLow, Automatable: true}, You},
 	} {
-		p := &proposal{rule: &rule{}}
+		p := &proposal{grouping: &grouping{}}
 		p.add(finding.Finding{ID: "f1", Connector: "x", Account: "a", Severity: finding.SevHigh, Title: "t", Remediation: c.rem})
 		p.finish("T-0001")
 		if p.next.Who != c.who {

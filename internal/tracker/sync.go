@@ -244,7 +244,7 @@ func (t *Tracker) propose(labels []string, folded map[string]*run, claims map[st
 			}
 			got := props.at(key, p)
 			got.add(f)
-			if p.rule.keep {
+			if p.grouping.keepTitle {
 				got.keepWhere(held)
 			}
 		}
@@ -258,26 +258,26 @@ func (t *Tracker) propose(labels []string, folded map[string]*run, claims map[st
 	return props, regroup
 }
 
-// placeFinding is the key and proposal of f's item, from run r: its grouping rule's, except that
+// placeFinding is the key and proposal of f's item, from run r: its grouping's, except that
 // a run from before declarations keeps f in the item that holds it (held), and a finding an item
-// holds on its own stays there unless its rule now groups it, when moves is true.
+// holds on its own stays there unless its grouping now groups it, when moves is true.
 func placeFinding(f finding.Finding, r *run, held *Item, byKey map[string]*Item) (key string, p proposal, moves bool) {
-	rl := ruleFor(f)
-	key, p = groupKey(f, rl, themeOf(f, r.theme.ID))
+	g := groupingFor(f)
+	key, p = groupKey(f, g, themeOf(f, r.theme.ID))
 	if r.legacy() && held != nil && ruleKey(held.Key) {
 		// A run written before connectors declared how to group: its findings stay in the items
 		// that hold them, under the titles they have, until a run that declares it.
-		kept := *rl
-		kept.keep = true
-		key, p.rule = held.Key, &kept
+		kept := *g
+		kept.keepTitle = true
+		key, p.grouping = held.Key, &kept
 	}
 	if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
-		if rl.by == perFinding || pin.keptApart() {
+		if g.by == perFinding || pin.keptApart() {
 			// An item already holds this finding on its own: it stays there, titled by the finding.
-			p.rule = &rule{kind: rl.kind}
+			p.grouping = &grouping{kind: g.kind}
 			return pinnedKey(f.ID), p, false
 		}
-		// Its rule groups it now (data dumps per repository): it moves to the group.
+		// Its grouping groups it now (data dumps per repository): it moves to the group.
 		return key, p, true
 	}
 	return key, p, false
@@ -706,7 +706,7 @@ func (t *Tracker) AcceptFinding(f finding.Finding, reason, until string, now tim
 		it = nil
 	}
 	if it == nil {
-		r := ruleFor(f)
+		r := groupingFor(f)
 		it = t.newItem(r.kind, pinnedKey(f.ID), theme, f.Title, now)
 		it.Findings = []FindingRef{refOf(f)}
 		it.Severity, it.Priority = f.Severity, priorityOf(f.Severity)
