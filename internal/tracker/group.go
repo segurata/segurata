@@ -84,7 +84,6 @@ var rules = []rule{
 		}
 		return s
 	}},
-	{connectors: []string{"aws"}, by: perFinding, kind: KindFix},
 	{connectors: []string{"browser-extensions"}, by: perFinding, kind: KindReview},
 }
 

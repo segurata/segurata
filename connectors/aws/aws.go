@@ -74,7 +74,13 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Root user MFA and keys, IAM access key age and use, console users without MFA, budgets, local credentials file",
 		Needs:    []string{"cli:aws"},
+		Theme:    finding.ThemeCloud,
 	}
+}
+
+// Track makes one item of each finding: each key, user or budget is its own fix.
+func (c *Connector) Track(finding.Finding) *finding.Track {
+	return &finding.Track{Group: finding.GroupFinding}
 }
 
 func defaultCredentialsFile() string { return sharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials") }
