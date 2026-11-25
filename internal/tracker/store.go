@@ -142,6 +142,9 @@ var upgrades = map[int]func(map[string]any) error{
 	3: func(map[string]any) error { return nil },
 	// 5 adds a location's gone; a version 4 file has none, so it carries over as it is.
 	4: func(map[string]any) error { return nil },
+	// 6 adds a secret's liveness, the history action dead, and attribution facts'
+	// github_logins; a version 5 file has none, so it carries over as it is.
+	5: func(map[string]any) error { return nil },
 }
 
 func parse(raw []byte) (*Tracker, error) {

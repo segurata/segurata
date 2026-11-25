@@ -86,6 +86,12 @@ func (t *Tracker) collectClaims(folded map[string]*run) {
 			}
 		}
 	}
+	// The account the provider says the secret signs in as (liveness check) is a claim too.
+	for _, it := range by {
+		if c := it.livenessClaims(); !c.Empty() {
+			it.attributionResult().Facts.Add(c)
+		}
+	}
 }
 
 func (it *Item) attributionResult() *attribution.Result {

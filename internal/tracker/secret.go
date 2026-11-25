@@ -96,6 +96,8 @@ type Secret struct {
 	RotatedLocations []string `json:"rotated_locations,omitempty"`
 	// Attribution says whose the secret is, from the claims its sightings made (see attribution.go).
 	Attribution *attribution.Result `json:"attribution,omitempty"`
+	// Liveness is the newest answer of the provider when the secret was tried (see liveness.go).
+	Liveness *secretrisk.Liveness `json:"liveness,omitempty"`
 }
 
 // Sighting is one finding of a secret, reduced to what a rotate item needs.
@@ -195,6 +197,7 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		// out to be a temporary credential) can lower it as well as raise it.
 		s.Type, s.Redacted, s.Impact = best.Evidence.Type, best.Evidence.Redacted, impact.String()
 		s.LastSeen = seen.UTC()
+		s.updateLiveness(g)
 		for _, x := range g {
 			it.merge(x.Evidence, seen)
 		}
@@ -228,6 +231,9 @@ func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 	upstream := false
 	for _, s := range g {
 		facts.Add(s.Evidence.Claims)
+		if l := s.Evidence.Liveness; l != nil {
+			facts.Add(attribution.FromAccount(l.Account))
+		}
 		upstream = upstream || secretrisk.NotOwners(s.Evidence.Origin, s.Evidence.Reused)
 	}
 	if !upstream || attribution.Attribute(facts, owned).Owner != attribution.Mine {
@@ -332,6 +338,11 @@ func (it *Item) lastDetail(action string) string {
 // reached it) or one that appeared since. Copies only in git history, transcripts, logs or shell
 // history leave the item done, with a note logged once per rotation.
 func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
+	if it.livenessIs(secretrisk.Dead) || it.closedDead() {
+		// The provider rejected the key: a working file that still holds it fails, it leaks nothing.
+		// If a later check finds it live, reopenProvenLive opens the item, as proven live.
+		g = nil
+	}
 	known := map[string]bool{}
 	for _, r := range it.Secret.RotatedLocations {
 		known[r] = true
@@ -581,6 +592,9 @@ func (it *Item) refreshSecret() {
 	}
 	for _, r := range live {
 		reasons = append(reasons, "live: "+r.Label()+": "+r.Title)
+	}
+	if r := it.livenessReason(); r != "" {
+		reasons = append(reasons, r)
 	}
 	for _, r := range it.Possible {
 		reasons = append(reasons, "possibly: "+r.Label()+": "+r.Title)

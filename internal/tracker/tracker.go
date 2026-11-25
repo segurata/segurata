@@ -21,7 +21,7 @@ import (
 )
 
 // SchemaVersion is the tracker.json format this binary writes.
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 // Kind says what sort of action an item asks for.
 type Kind string
