@@ -280,7 +280,9 @@ Not in Prowler, only in `gcp`: billing budgets and local credential files (ADC, 
 | `scope` inspected false | Projects in `projects` no account lists; and, with a reason starting `expected:` so the coverage line counts them as left out on purpose, projects in `skip_projects` and people `accounts` leaves out |
 
 A disabled API leaves nothing of that service to check, so it does not make the run partial; the
-project's summary names it.
+project's summary names it. The same holds for a call Google refuses (403) because the project has
+billing disabled ("check billing account associated", "requires billing to be enabled"): nothing
+can run there. A service refused for any other reason as well still leaves the project uninspected.
 
 ## Test
 

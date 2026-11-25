@@ -170,6 +170,10 @@ DISABLED_API = re.compile(r"([\w.-]+) API has not been used in project ([^\s\"]+
 # A call Prowler was refused. Each run covers one project, so any refused project-level call in its
 # log is a gap in that project; organization-level calls are not.
 DENIED_CALL = re.compile(r"HttpError 403 when requesting https://([a-z0-9-]+)\.googleapis\.com/(\S*)")
+# Google refuses calls to a project with billing disabled with a 403 too, though nothing can run
+# there: "Read access to project 'x' was denied: please check billing account associated", "This
+# API method requires billing to be enabled".
+BILLING_OFF = re.compile(r"check billing account associated|requires billing to be enabled")
 SERVICEUSAGE_TARGET = re.compile(r"services/([a-z0-9-]+)\.googleapis\.com")
 TOKEN_LIKE = re.compile(r"ya29\.[A-Za-z0-9_\-.]+")
 DENIED = re.compile(r"HttpError 403|\b403 Forbidden|PERMISSION_DENIED|[Pp]ermission denied|does not have permission|"
@@ -649,18 +653,20 @@ def summarize(records, config, account, project, profile=UNKNOWN_PROFILE):
 
 
 def log_problems(text, project):
-    """Services whose API Prowler found disabled in project, and services it was refused a call to
-    (including reading whether their API is enabled), so their checks saw nothing."""
-    disabled, refused = set(), set()
+    """Services whose API Prowler found disabled in project, services refused because the project
+    has no billing (nothing can run there either), and services it was refused a call to for any
+    other reason (including reading whether their API is enabled), so their checks saw nothing."""
+    disabled, unbilled, refused = set(), set(), set()
     for service, p in DISABLED_API.findall(text):
         if p == project:
             disabled.add(service)
-    for host, path in DENIED_CALL.findall(text):
-        if "organizations/" in path:
-            continue
-        target = SERVICEUSAGE_TARGET.search(path) if host == "serviceusage" else None
-        refused.add(target.group(1) if target else host)
-    return disabled, refused - disabled
+    for line in text.splitlines():
+        for host, path in DENIED_CALL.findall(line):
+            if "organizations/" in path:
+                continue
+            target = SERVICEUSAGE_TARGET.search(path) if host == "serviceusage" else None
+            (unbilled if BILLING_OFF.search(line) else refused).add(target.group(1) if target else host)
+    return disabled, unbilled - disabled - refused, refused - disabled
 
 
 # --- running Prowler -------------------------------------------------------------------------
@@ -778,7 +784,7 @@ def inspect_project(project, candidates, ctx):
         findings, counts = summarize(records, config, owner, project, profile)
         for f in findings:
             emit.finding(f)
-        disabled, refused = log_problems(text, project)
+        disabled, unbilled, refused = log_problems(text, project)
         detail = "%d FAIL, %d PASS, %d MANUAL; %d muted, %d already checked by gcp, %d below severity_min" % (
             counts["FAIL"], counts["PASS"], counts["MANUAL"], counts["muted"], counts["overlap"], counts["below_min"])
         detail += "; profile %s; %d lowered by relevance, %d not applicable" % (
@@ -787,6 +793,8 @@ def inspect_project(project, candidates, ctx):
             detail += "; read as " + account
         if disabled:
             detail += "; APIs disabled (nothing to check there): " + ", ".join(sorted(disabled))
+        if unbilled:
+            detail += "; calls refused because billing is disabled (nothing can run there): " + ", ".join(sorted(unbilled))
         if refused:
             emit.status(owner, "noscope", "Google refused Prowler (HTTP 403) on %s, so those checks saw nothing: grant "
                         "%s roles/viewer and roles/iam.securityReviewer on %s (roles/serviceusage.serviceUsageViewer "

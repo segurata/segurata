@@ -48,6 +48,10 @@ if [ -e "$FAKE_DIR/refused/$project" ]; then
   echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"cloudstorage_service.py:40\", \"level\": \"ERROR\", \"module\": \"cloudstorage_service\", \"message\": \"HttpError[52]: <HttpError 403 when requesting https://storage.googleapis.com/storage/v1/b?project=$project&alt=json returned \"denied\">\"}" >> "$logfile"
   echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"iam_service.py:300\", \"level\": \"ERROR\", \"module\": \"iam_service\", \"message\": \"HttpError[90]: <HttpError 403 when requesting https://essentialcontacts.googleapis.com/v1/organizations/123/contacts?alt=json returned \"denied\">\"}" >> "$logfile"
 fi
+if [ -e "$FAKE_DIR/nobilling/$project" ]; then
+  echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"appengine_service.py:30\", \"level\": \"ERROR\", \"module\": \"appengine_service\", \"message\": \"HttpError[31]: <HttpError 403 when requesting https://appengine.googleapis.com/v1/apps/$project?alt=json returned \\\"Read access to project '$project' was denied: please check billing account associated and retry\\\">\"}" >> "$logfile"
+  echo "{\"timestamp\": \"11/24/2026 09:00:00 PM\", \"filename\": \"gke_service.py:40\", \"level\": \"ERROR\", \"module\": \"gke_service\", \"message\": \"HttpError[41]: <HttpError 403 when requesting https://container.googleapis.com/v1/projects/$project/locations/-/clusters?alt=json returned \\\"This API method requires billing to be enabled. Please enable billing on project #$project then retry.\\\">\"}" >> "$logfile"
+fi
 if [ -e "$FAKE_DIR/ocsf/$project.json" ]; then
   cp "$FAKE_DIR/ocsf/$project.json" "$outdir/$name.ocsf.json"
 fi

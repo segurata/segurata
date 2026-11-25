@@ -386,6 +386,20 @@ class InventoryTest(unittest.TestCase):
         self.assertIn("HTTP 403) on storage,", beta["detail"])
         self.assertNotIn("essentialcontacts", beta["detail"])
 
+    def test_calls_refused_for_billing_leave_nothing_to_check(self):
+        # Google refuses a project without billing with a 403, though nothing can run there.
+        self.fake.flag("nobilling", BETA)
+        _, records = self.fake.run()
+        beta = [s for s in of(records, "status") if s.get("scope") == BETA][0]
+        self.assertEqual(beta["state"], "ok")
+        self.assertIn("billing is disabled (nothing can run there): appengine, container", beta["detail"])
+        self.fake.flag("refused", BETA)  # a refusal for any other reason still leaves it uninspected
+        _, records = self.fake.run()
+        beta = [s for s in of(records, "status") if s.get("scope") == BETA][0]
+        self.assertEqual(beta["state"], "noscope")
+        self.assertIn("HTTP 403) on storage,", beta["detail"])
+        self.assertNotIn("appengine", beta["detail"].split("so those checks")[0])
+
     def test_missing_prowler_or_gcloud_is_unsupported_everywhere(self):
         empty = tempfile.mkdtemp()
         try:
