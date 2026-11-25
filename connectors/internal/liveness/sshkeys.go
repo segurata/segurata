@@ -28,7 +28,7 @@ import (
 //   - Registered anywhere: live, with where.
 //   - Only the public half of a key in ~/.ssh on this machine (its .pub): unknown. It is the
 //     owner's key, used from here, registered somewhere segurata does not see.
-//   - Not an OpenSSH key and found nowhere: unknown "not an OpenSSH key". A PKCS#1, PKCS#8 or SEC 1
+//   - Not an OpenSSH key and found nowhere: unknown, "not registered as an SSH key". A PKCS#1, PKCS#8 or SEC 1
 //     key may sign TLS certificates or JWTs, which no registry here holds. Keys from ~/.ssh count
 //     as SSH keys whatever their container.
 //   - Found nowhere, and GitHub's lists were read: unregistered (lower priority, not dead). When gh
