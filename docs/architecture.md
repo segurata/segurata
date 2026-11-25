@@ -662,7 +662,7 @@ field and in its user agent (Brave 156, 2026-11-25), so that field cannot tell i
   CDP" (or "the browser on the debugging port is not Brave"): its `run_end` skips `*` with that
   reason and carries it as `error`, so `track sync` closes neither its findings nor its statuses,
   and the report lists the instance as partial. Secrets are not resolved for it. The log has one
-  line, `skipped <connectors>: <reason>`, after the probe's own error.
+  line, `skipped <connectors>: <reason> (<the probe's error>)`.
 - `~/.segurata/schedule-browser.json` holds `not_run_since`, when the browser connectors last ran
   on schedule (or first were skipped), and `notified`. When a skipped run finds them idle for more
   than `browser_stale_days` (config, default 7, negative for never), it posts one notification,

@@ -46,22 +46,20 @@ func (e Env) splitBrowser(selectors []string) (browser, rest []string) {
 	return browser, rest
 }
 
-// probeBrowser says why the browser connectors cannot run now, "" when Brave answers at cdp_url.
-// Only Brave is driven: another browser on the port, or none, skips them, and nothing is ever
-// started in its place.
-func (e Env) probeBrowser(ctx context.Context) string {
+// probeBrowser says why the browser connectors cannot run now, with the probe's error; "" when
+// Brave answers at cdp_url. Only Brave is driven: another browser on the port, or none, skips them,
+// and nothing is ever started in its place.
+func (e Env) probeBrowser(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, browserProbeTimeout)
 	defer cancel()
 	_, err := e.Browser(ctx, e.Config.CDPURL)
 	switch {
 	case err == nil:
-		return ""
+		return "", nil
 	case errors.Is(err, cdp.ErrNotBrave):
-		e.stamp(reasonNotBrave + ": " + err.Error())
-		return reasonNotBrave
+		return reasonNotBrave, err
 	}
-	e.stamp(reasonUnreachable + ": " + err.Error())
-	return reasonUnreachable
+	return reasonUnreachable, err
 }
 
 // skippedConnector stands in for a browser connector a run could not reach: its run ends at once

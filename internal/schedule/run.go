@@ -50,8 +50,9 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	start := e.Now()
 	var skipped, stale string // why the browser connectors were skipped; the notification that is due
 	if browser, rest := e.splitBrowser(connectors); len(browser) > 0 {
-		if skipped = e.probeBrowser(invCtx); skipped != "" {
-			e.stamp(fmt.Sprintf("skipped %s: %s", strings.Join(browser, " "), skipped))
+		var why error
+		if skipped, why = e.probeBrowser(invCtx); skipped != "" {
+			e.stamp(fmt.Sprintf("skipped %s: %s (%v)", strings.Join(browser, " "), skipped, why))
 			e.recordSkipped(invCtx, browser, skipped)
 			stale = e.browserSkipped(start)
 			connectors = rest

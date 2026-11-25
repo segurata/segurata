@@ -79,7 +79,7 @@ func TestRunSkipsTheBrowserConnectorsWhenBraveDoesNotAnswer(t *testing.T) {
 			t.Fatalf("%s: run_end %+v (found %v)", label, e, ok)
 		}
 	}
-	if n := strings.Count(out.String(), "skipped "); n != 1 || !strings.Contains(out.String(), "skipped connected-apps google-personal: browser not reachable over CDP\n") {
+	if n := strings.Count(out.String(), "skipped "); n != 1 || !strings.Contains(out.String(), "skipped connected-apps google-personal: browser not reachable over CDP (cdp: browser not reachable at "+gone.URL) {
 		t.Fatalf("log:\n%s", out)
 	}
 	if len(r.ran(osascript, "-e")) != 0 {
