@@ -1254,8 +1254,9 @@ its provider's cheapest read-only identity endpoint and records live, dead or un
 **When and with what.** The scan is the only moment segurata holds a value, so the check runs at the
 end of the scan, before the findings are emitted, within 10 minutes of the run's deadline. The
 values of secrets of a supported type stay in memory for the run; an AWS secret access key is tried
-with the one key id found in the same file (or commit and file); with none or several it is not
-tried. A secret is tried when the run reports it (noise never is, which leaves copies in other
+with the one long-term (AKIA) key id found in the same file (or commit and file); with none or
+several it is not tried. A temporary (ASIA) key id never pairs: it needs its session token. One key
+id goes with one secret key, the first by fingerprint; other secret keys beside it are not tried. A secret is tried when the run reports it (noise never is, which leaves copies in other
 people's repositories alone) and its attribution, computed as the next sync would (the tracker's
 facts plus this scan's claims, against the tracker's accounts and config `owned`, lent by the core
 in `connector.Request.Known`, never sent to an external connector), is one of `owners`: for an AWS

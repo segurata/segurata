@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -377,14 +378,16 @@ func TestLivenessLookupsAtScanTime(t *testing.T) {
 	}
 }
 
-// A secret key committed next to someone else's key id: the pair is never sent to STS, neither
-// when the scan read the values nor when the history is replayed from the cache and the values
-// would have to be recovered. The key id's own attribution gates the probe, not the secret key's.
-func TestLivenessNeverSendsAForeignKeyID(t *testing.T) {
+// pairHistory is a repository with one commit holding an AWS key id and a secret access key on
+// the next line, and a gitleaks that reports both as committed on date.
+type pairHistory struct {
+	*historyRepo
+	gl cli.Runner
+}
+
+func newPairHistory(t *testing.T, keyID, secret, date string) pairHistory {
 	r := newHistoryRepo(t)
-	theirs := testcorpus.AWSKeyID("AKIA", 999999999999, false, 1)
-	secret := fake("", 40)
-	if err := os.WriteFile(filepath.Join(r.dir, "creds.env"), []byte("AWS_ACCESS_KEY_ID="+theirs+"\naws_secret_access_key="+secret+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(r.dir, "creds.env"), []byte("AWS_ACCESS_KEY_ID="+keyID+"\naws_secret_access_key="+secret+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r.git("add", "creds.env")
@@ -396,51 +399,100 @@ func TestLivenessNeverSendsAForeignKeyID(t *testing.T) {
 		}
 		r.scans = append(r.scans, args)
 		return json.Marshal([]map[string]any{
-			{"RuleID": "aws-access-token", "File": "creds.env", "StartLine": 1, "Secret": theirs, "Commit": commit, "Date": "2026-11-01T00:00:00Z"},
-			{"RuleID": "aws-secret-key", "File": "creds.env", "StartLine": 2, "Secret": secret, "Commit": commit, "Date": "2026-11-01T00:00:00Z"},
+			{"RuleID": "aws-access-token", "File": "creds.env", "StartLine": 1, "Secret": keyID, "Commit": commit, "Date": date},
+			{"RuleID": "aws-secret-key", "File": "creds.env", "StartLine": 2, "Secret": secret, "Commit": commit, "Date": date},
 		})
 	})
-	f := newFakeProviders(t, theirs)
-	theirAccount := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
-	mine := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"999999999999"}}}
-	for _, tc := range []struct {
-		replay bool
-		known  *attribution.Known
-	}{{false, theirAccount}, {true, theirAccount}, {true, mine}} {
-		replay, known := tc.replay, tc.known
-		c := &Connector{Gitleaks: gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
-			Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
-			NewChecker: func(home string, cfg liveness.Config) *liveness.Checker {
-				return &liveness.Checker{Config: cfg, Bases: map[string][]string{"aws": {f.URL}}, Interval: time.Millisecond}
-			}}
-		lc, err := liveness.ParseConfig(map[string]any{"enabled": true, "owners": []any{"mine", "unknown"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfg := settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute, gitCache: true, liveness: lc}
-		r.scans = nil
-		s := newScan(context.Background(), c, r.home, cfg, fingerprint.FromBytes(bytes.Repeat([]byte{1}, 32)), &recorder{})
-		if err := s.gitleaks(r.dir); err != nil {
-			t.Fatal(err)
-		}
-		if replay != (len(r.scans) == 0) {
-			t.Fatalf("replay %v, scans %v", replay, r.scans)
-		}
-		fs, _ := s.findings()
-		line := s.checkLiveness(context.Background(), fs, known)
-		raw, _ := json.Marshal(fs)
-		if strings.Contains(string(raw)+line, secret) || strings.Contains(string(raw)+line, theirs) {
+	return pairHistory{r, gl}
+}
+
+// check scans the history (from the gitleaks cache after the first time, replayed says which) and
+// runs the liveness check for mine and unknown secrets against f; it fails if a value reaches the
+// findings or the status line.
+func (h pairHistory) check(t *testing.T, f *fakeProviders, known *attribution.Known, values ...string) (line string, replayed bool) {
+	t.Helper()
+	c := &Connector{Gitleaks: h.gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+		Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
+		NewChecker: func(home string, cfg liveness.Config) *liveness.Checker {
+			return &liveness.Checker{Config: cfg, Bases: map[string][]string{"aws": {f.URL}}, Interval: time.Millisecond}
+		}}
+	lc, err := liveness.ParseConfig(map[string]any{"enabled": true, "owners": []any{"mine", "unknown"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := settings{reposRoot: filepath.Join(h.home, "src"), workers: 1, timeout: time.Minute, gitCache: true, liveness: lc}
+	h.scans = nil
+	s := newScan(context.Background(), c, h.home, cfg, fingerprint.FromBytes(bytes.Repeat([]byte{1}, 32)), &recorder{})
+	if err := s.gitleaks(h.dir); err != nil {
+		t.Fatal(err)
+	}
+	fs, _ := s.findings()
+	line = s.checkLiveness(context.Background(), fs, known)
+	raw, _ := json.Marshal(fs)
+	for _, v := range values {
+		if strings.Contains(string(raw)+line, v) {
 			t.Fatal("a value reached the output")
 		}
-		if known == mine {
-			// The control: the same pair, the owner's, is recovered and tried.
-			if !f.askedAbout(theirs) || !strings.Contains(line, "1 asked") {
-				t.Errorf("the owner's pair was not tried: %s", line)
-			}
-			continue
+	}
+	return line, len(h.scans) == 0
+}
+
+// A secret key committed next to someone else's key id: the pair is never sent to STS, neither
+// when the scan read the values nor when the history is replayed from the cache and the values
+// would have to be recovered. The key id's own attribution gates the probe, not the secret key's.
+func TestLivenessNeverSendsAForeignKeyID(t *testing.T) {
+	theirs, secret := testcorpus.AWSKeyID("AKIA", 999999999999, false, 1), fake("", 40)
+	h := newPairHistory(t, theirs, secret, "2026-11-01T00:00:00Z")
+	f := newFakeProviders(t, theirs)
+	theirAccount := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
+	for _, wantReplay := range []bool{false, true} {
+		line, replayed := h.check(t, f, theirAccount, theirs, secret)
+		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "0 asked") || strings.Contains(line, " 0 not allowed") {
+			t.Fatalf("replay %v: someone else's key id was sent (%v): %s", replayed, f.asked, line)
 		}
-		if len(f.asked) != 0 || !strings.Contains(line, "0 asked") || strings.Contains(line, " 0 not allowed") {
-			t.Fatalf("replay %v: someone else's key id was sent (%v): %s", replay, f.asked, line)
+	}
+	// The control: the same pair, the owner's, is recovered and tried.
+	line, _ := h.check(t, f, &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"999999999999"}}}, theirs, secret)
+	if !f.askedAbout(theirs) || !strings.Contains(line, "1 asked") {
+		t.Errorf("the owner's pair was not tried: %s", line)
+	}
+}
+
+// A temporary key id (ASIA) next to a secret key is no pair: signed without its session token it
+// would read as rejected. Neither path pairs it: the key id gets its own lookup (which sends
+// nothing) and the secret key is tried alone: unsupported without a key id.
+func TestLivenessNeverPairsATemporaryKeyID(t *testing.T) {
+	temp, secret := testcorpus.AWSKeyID("ASIA", 12345678901, false, 1), fake("", 40)
+	h := newPairHistory(t, temp, secret, "2026-11-23T20:00:00Z") // within STS's lifetime: not noise
+	f := newFakeProviders(t, temp)
+	for _, wantReplay := range []bool{false, true} {
+		line, replayed := h.check(t, f, &attribution.Known{}, temp, secret)
+		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "1 asked,") || !strings.Contains(line, "1 unsupported") && !strings.Contains(line, "1 without a value") {
+			t.Errorf("replay %v: an ASIA id was paired (%v): %s", replayed, f.asked, line)
+		}
+	}
+}
+
+// One key id and two secret keys in one place: the id goes with one of them, the same one every
+// run, and the other is tried alone (unsupported, or from the cache).
+func TestHeldKeyIDPairsOnce(t *testing.T) {
+	h := heldValues{
+		byFP:       map[string]heldValue{"s2": {"aws-secret-key", "two"}, "s1": {"aws-secret-key", "one"}, "id": {"aws-access-key-id", "AKIA0"}},
+		awsIDs:     map[string]map[string]string{"p": {"id": "AKIA0"}},
+		awsSecrets: map[string][]string{"p": {"s2", "s1"}},
+	}
+	for range 20 {
+		var paired []string
+		for _, p := range h.probes() {
+			if slices.Contains(p.Fingerprints, "id") {
+				paired = append(paired, strings.Join(p.Fingerprints, ","))
+				if p.KeyID != "AKIA0" || p.Value != "one" {
+					t.Fatalf("pair %+v", p)
+				}
+			}
+		}
+		if len(paired) != 1 || paired[0] != "s1,id" {
+			t.Fatalf("the key id went with %v", paired)
 		}
 	}
 }

@@ -47,7 +47,7 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 	h := &s.held
 	place := abs + "\x00" + ev.Commit
 	switch {
-	case ev.Type == "aws-access-key-id" && strings.HasPrefix(value, "AKIA"):
+	case ev.Type == "aws-access-key-id" && pairableKeyID(value):
 		if h.awsIDs == nil {
 			h.awsIDs = map[string]map[string]string{}
 		}
@@ -77,10 +77,16 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 func (h heldValues) probes() []liveness.Probe {
 	var out []liveness.Probe
 	paired := map[string]bool{}
-	for place, secrets := range h.awsSecrets {
-		if ids := h.awsIDs[place]; len(ids) == 1 {
-			for idFP, id := range ids {
-				for _, fp := range secrets {
+	for _, place := range slices.Sorted(maps.Keys(h.awsSecrets)) {
+		ids := h.awsIDs[place]
+		if len(ids) != 1 {
+			continue
+		}
+		for idFP, id := range ids {
+			// One key id goes with one secret key, the first by fingerprint, as the history path
+			// pairs it: the others are tried alone.
+			for _, fp := range slices.Sorted(slices.Values(h.awsSecrets[place])) {
+				if !paired[idFP] && !paired[fp] {
 					out = append(out, liveness.Probe{Fingerprints: []string{fp, idFP}, Type: "aws-secret-key", Value: h.byFP[fp].value, KeyID: id})
 					paired[fp], paired[idFP] = true, true
 				}
@@ -127,7 +133,7 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 			if _, seen := history[ev.Fingerprint]; !seen {
 				history[ev.Fingerprint] = ev
 			}
-			if ev.Type == "aws-access-key-id" {
+			if ev.Type == "aws-access-key-id" && pairableKeyID(ev.Redacted) {
 				place := historyPlace(ev)
 				historyIDs[place] = append(historyIDs[place], ev)
 			}
@@ -149,10 +155,10 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		}
 		return 1
 	}
-	unread := slices.SortedFunc(maps.Keys(types), func(a, b string) int {
+	reported := slices.SortedFunc(maps.Keys(types), func(a, b string) int {
 		return cmp.Or(cmp.Compare(secretKeysFirst(a), secretKeysFirst(b)), cmp.Compare(a, b))
 	})
-	for _, fp := range unread {
+	for _, fp := range reported {
 		typ := types[fp]
 		if covered[fp] || !liveness.Supported(typ) {
 			continue
@@ -205,6 +211,11 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	}
 	return line
 }
+
+// pairableKeyID reports whether an AWS access key id (or its redacted hint) can be tried with a
+// secret key: a long-term AKIA id. A temporary ASIA id needs its session token, which segurata does
+// not pair; signed without it, STS would reject a pair that works.
+func pairableKeyID(s string) bool { return strings.HasPrefix(s, "AKIA") }
 
 // historyPlace is where a history leak sits: repository, file and commit.
 func historyPlace(ev secretrisk.Evidence) string {
