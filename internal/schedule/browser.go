@@ -1,10 +1,7 @@
 package schedule
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -42,11 +39,7 @@ type browserState struct {
 
 func (e Env) loadBrowserState() browserState {
 	var s browserState
-	raw, err := os.ReadFile(e.Paths().BrowserState)
-	if err == nil {
-		err = json.Unmarshal(raw, &s)
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if _, err := statefile.ReadJSON(e.Paths().BrowserState, &s); err != nil {
 		fmt.Fprintf(e.IO.Err, "reading %s: %v\n", e.Paths().BrowserState, err)
 	}
 	return s

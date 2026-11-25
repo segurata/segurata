@@ -3,8 +3,6 @@ package localsecrets
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -85,10 +83,12 @@ func (s *scan) ownersCachePath() string {
 func (s *scan) githubOwners() (ownersCache, bool) {
 	path := s.ownersCachePath()
 	var c ownersCache
-	if raw, err := os.ReadFile(path); err == nil && json.Unmarshal(raw, &c) == nil && c.Login != "" && s.now.Sub(c.At) < ownersTTL {
-		return c, true
-	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	found, err := statefile.ReadJSON(path, &c)
+	if err != nil {
 		s.emit.Log("github owners cache: " + err.Error())
+	}
+	if found && err == nil && c.Login != "" && s.now.Sub(c.At) < ownersTTL {
+		return c, true
 	}
 	if s.c.GH == nil {
 		return c, false
