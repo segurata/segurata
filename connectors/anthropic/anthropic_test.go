@@ -145,6 +145,9 @@ func TestInventoryFindsOrphanAndUnusedKeysAndCost(t *testing.T) {
 	if got := rec.ByResource(t, "workspace", "wrkspc_prod").Evidence["cost_30d_usd"]; got != 12.5 {
 		t.Errorf("prod cost = %v, want 12.5", got)
 	}
+	if b := rec.ByResource(t, "organization", "organization").Blast; b != finding.BlastMoney {
+		t.Errorf("organization blast %q", b)
+	}
 	if got := rec.ByResource(t, "organization", "organization").Evidence["cost_30d_usd"]; got != 13.5 {
 		t.Errorf("org cost = %v, want 13.5", got)
 	}

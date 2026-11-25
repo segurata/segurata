@@ -422,6 +422,7 @@ func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a al
 		Severity: sev,
 		Title:    title,
 		Evidence: ev,
+		Blast:    finding.BlastMoney,
 		Remediation: finding.Remediation{
 			Summary: "Set a monthly hard spend limit and at least one spend alert (organization limits, or the project's Limits page)",
 			URL:     limitsURL,

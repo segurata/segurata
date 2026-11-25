@@ -157,11 +157,7 @@ func labels(cfg config.Config, named []string) []string {
 	var out []string
 	for _, name := range Watchable {
 		for _, in := range cfg.Instances(name) {
-			lbl := name
-			if in.Label != "" {
-				lbl += ":" + in.Label
-			}
-			out = append(out, lbl)
+			out = append(out, finding.Label(name, in.Label))
 		}
 	}
 	return out

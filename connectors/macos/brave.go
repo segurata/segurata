@@ -19,7 +19,7 @@ var (
 // braveDebugging flags Brave running with --remote-debugging-port: while it is open any local
 // process can drive the browser with every signed-in session.
 func (c *Connector) braveDebugging(ctx context.Context) check {
-	ch := check{id: "brave-remote-debugging", sev: finding.SevHigh,
+	ch := check{id: "brave-remote-debugging", sev: finding.SevHigh, blast: finding.BlastBrowser,
 		title: "Brave runs with a remote debugging port: any local process can act as every signed-in account",
 		rem:   manual("Quit Brave and start it without --remote-debugging-port. Start it with the flag only while running the google-personal or connected-apps connectors.")}
 	ps, _ := c.text(ctx, psBin, "-axo", "command=")

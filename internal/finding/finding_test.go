@@ -71,3 +71,13 @@ func TestSeverityRank(t *testing.T) {
 		t.Fatal("unknown severity should rank lowest")
 	}
 }
+
+// Label spells a connector instance as the command line and the config do.
+func TestLabel(t *testing.T) {
+	if Label("aws", "") != "aws" || Label("openrouter", "work") != "openrouter:work" {
+		t.Errorf("%q %q", Label("aws", ""), Label("openrouter", "work"))
+	}
+	if f := (Finding{Connector: "openrouter", Instance: "work"}); f.Selector() != "openrouter:work" {
+		t.Errorf("selector %q", f.Selector())
+	}
+}

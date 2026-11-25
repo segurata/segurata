@@ -47,6 +47,25 @@ func (s Severity) Rank() int {
 	return 0
 }
 
+// Blast names what a finding puts at stake beyond its severity: the reach of what a connector
+// found, which ranks the tracker's "Do next" (docs/architecture.md). The connector says which
+// applies, the tracker weighs it; "" (and a value not listed here) is none.
+type Blast string
+
+const (
+	BlastLogin        Blast = "login"            // the account is the login of money and cloud accounts
+	BlastOrgAccess    Blast = "org-access"       // one stolen password opens every repository of an org
+	BlastDevice       Blast = "device"           // a lost, stolen or encrypted Mac takes every file
+	BlastMailAndFiles Blast = "mail-and-files"   // apps that can read or change an account's mail and files
+	BlastBrowser      Blast = "browser"          // any local program can drive the browser's sessions
+	BlastPersonalData Blast = "personal-data"    // other people's data, with breach duties
+	BlastAllRepos     Blast = "all-repositories" // write access to every repository of the account
+	BlastOrgWrite     Blast = "org-write"        // every member of an org can change every repository
+	BlastPosts        Blast = "posts"            // at worst, posts as the account
+	BlastMoney        Blast = "money"            // spend, bounded by the card on file
+	BlastLeftovers    Blast = "leftovers"        // leftovers, nothing running
+)
+
 type Resource struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
@@ -81,22 +100,26 @@ func (f Finding) ActionSeverity() Severity {
 
 // Finding is one thing worth looking at. Evidence must never hold a secret value: use Redact.
 type Finding struct {
-	Type        string         `json:"type"` // always "finding"
-	ID          string         `json:"id"`
-	Connector   string         `json:"connector"`
-	Instance    string         `json:"instance,omitempty"` // config label, for several accounts of one provider
-	Account     string         `json:"account"`
-	Scope       string         `json:"scope,omitempty"` // part of the account inspected as a unit, when narrower; see ScopeOf
-	Resource    Resource       `json:"resource"`
-	Kind        Kind           `json:"kind"`
-	Severity    Severity       `json:"severity"`
-	Title       string         `json:"title"`
-	Evidence    map[string]any `json:"evidence,omitempty"`
-	CreatedAt   *time.Time     `json:"created_at"`
-	LastUsedAt  *time.Time     `json:"last_used_at"` // nil when the provider does not say
-	Remediation Remediation    `json:"remediation"`
-	ObservedAt  time.Time      `json:"observed_at"`
-	Accepted    *Acceptance    `json:"accepted,omitempty"` // set by the core from the accepted-risks file
+	Type      string         `json:"type"` // always "finding"
+	ID        string         `json:"id"`
+	Connector string         `json:"connector"`
+	Instance  string         `json:"instance,omitempty"` // config label, for several accounts of one provider
+	Account   string         `json:"account"`
+	Scope     string         `json:"scope,omitempty"` // part of the account inspected as a unit, when narrower; see ScopeOf
+	Resource  Resource       `json:"resource"`
+	Kind      Kind           `json:"kind"`
+	Severity  Severity       `json:"severity"`
+	Title     string         `json:"title"`
+	Evidence  map[string]any `json:"evidence,omitempty"`
+	Blast     Blast          `json:"blast,omitempty"` // what it puts at stake beyond its severity
+	// Unconfirmed says the connector is not sure the problem is real (a file named like a
+	// database dump whose content does not show one); ranking discounts it.
+	Unconfirmed bool        `json:"unconfirmed,omitempty"`
+	CreatedAt   *time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time  `json:"last_used_at"` // nil when the provider does not say
+	Remediation Remediation `json:"remediation"`
+	ObservedAt  time.Time   `json:"observed_at"`
+	Accepted    *Acceptance `json:"accepted,omitempty"` // set by the core from the accepted-risks file
 }
 
 // Acceptance records that the owner keeps this risk on purpose. An expired one no longer hides
@@ -119,14 +142,17 @@ func (f Finding) DisplayTitle() string {
 	return f.Title
 }
 
-// Selector is the connector instance that produced f, spelled as on the command line: "name" or
-// "name:label".
-func (f Finding) Selector() string {
-	if f.Instance == "" {
-		return f.Connector
+// Label spells a connector instance as the command line and the config key do: "name", or
+// "name:label" for a labelled instance.
+func Label(connector, instance string) string {
+	if instance == "" {
+		return connector
 	}
-	return f.Connector + ":" + f.Instance
+	return connector + ":" + instance
 }
+
+// Selector is the connector instance that produced f, spelled as Label does.
+func (f Finding) Selector() string { return Label(f.Connector, f.Instance) }
 
 // HiddenNote is the line printed under a list that left out accepted findings, or "" for none.
 func HiddenNote(n int) string {

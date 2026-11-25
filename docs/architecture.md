@@ -275,7 +275,7 @@ substring of the status detail, or a regular expression between slashes; `reason
   (`auto-reopen`); when the status is gone the item is done like any other, and when only
   expected statuses come back it is expected again, not open.
 - `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
-  setup blockers (and the report's "Needs attention" before any sync); `inventory` prints one line
+  setup blockers; `inventory` prints one line
   per instance and reason.
 - `segurata track expect <setup-id> --reason "…" [--detail text] [--dry-run]` writes the rule
   that matches the item (its instance's key, the reported state, the account with glob characters
@@ -328,7 +328,7 @@ owner's after all. Ignoring it by hand afterwards sticks.
 
 ### Lifecycle: `segurata track sync`
 
-`track sync` runs at the end of `inventory` and `rotations sync`, or by hand. It reads the latest
+`track sync` runs at the end of `inventory`, as `rotations sync`, or by hand. It reads the latest
 finished run of every connector instance (`run.LatestFiles`) and:
 
 1. Skips a run older than the one the tracker last folded for that instance (`sources`), so
@@ -420,10 +420,10 @@ findings)"):
 | Factor | Values |
 |---|---|
 | impact | the priority: P0 10, P1 6, P2 3, P3 1, none 0.5 |
-| blast | what is at stake beyond one finding's severity, first match: a Google account that is the login for other services 3, 2FA not required (or members without it) in GitHub orgs 3, no Time Machine backup 2.5, high-risk Google OAuth grants 2.5, a browser with a remote debugging port 2, data dumps 2, apps that can delete or write every repository 1.5, every org member can write every repository 1.5, spend limits and budgets 0.7, X apps 0.6, endpoint-agent leftovers 0.5; else 1 |
+| blast | what is at stake beyond one finding's severity, as the connector declares it (the finding's `blast`, see docs/connectors.md), the first of these one of the item's findings declares: `login` (a Google account that is the login for other services) 3, `org-access` (2FA not required, or members without it, in GitHub orgs) 3, `device` (no Time Machine backup) 2.5, `mail-and-files` (high-risk Google OAuth grants) 2.5, `browser` (a remote debugging port) 2, `personal-data` (data dumps) 2, `all-repositories` (apps that can delete or write every repository) 1.5, `org-write` (every org member can write every repository) 1.5, `posts` (X apps) 0.6, `money` (spend limits and budgets) 0.7, `leftovers` (endpoint agents) 0.5; else 1. Titles are never read |
 | exposure (secrets) | worst copy remote 1.5, shared 1, local 0.7 |
 | liveness (secrets) | live and leaked 2 (see "Correlation"), live 1.5, attributed mine 1.3, attributed not-mine 0.3 |
-| confidence | a secret nothing shows still valid 0.8, a review list 0.8, a "possible" dump 0.7 |
+| confidence | a secret nothing shows still valid 0.8, a review list 0.8, every finding `unconfirmed` (a file only named like a dump) 0.7 |
 | effort | rotate with `rotations replace` 1, rotate by hand 1.5, a history rewrite (dumps) 3, a review list 1 + entries/20 (3 at most), else 1; doubled when a pending decision blocks the item |
 | quick win | 1.5 when segurata does it after confirmation, or one fix closes 3 findings or more |
 
@@ -573,8 +573,8 @@ opens the item again.
 `segurata report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
 changes:
 
-- the latest finished run of every connector instance and the finished run before it, through
-  `run.LatestRuns` and `run.Read` (findings, statuses and `run_end`);
+- the latest finished run of every connector instance, through `run.LatestRuns` and `run.Read`
+  (findings, statuses and `run_end`);
 - the tracker's acceptances, which annotate every finding as `inventory` does, so an acceptance
   made after the run counts and an expired one shows again;
 - the tracker's rotate items.
@@ -582,19 +582,13 @@ changes:
 The only write is the one-time import of the former state files, when the tracker does not exist
 yet.
 
-Once a sync has filled the tracker (`last_sync_at` set), the report counts what `status` counts:
-its headline is the tracker's (`Tracker.Headline`: items by priority and theme), followed by the
-findings of the latest runs as a note ("an item groups the findings one action fixes") and the
-table by connector instance; its setup section is the tracker's setup blockers (`tracker.Blockers`)
-instead of the runs' statuses; and its changes are the items found, closed, verified and reopened
-in the last 7 days (`tracker.Changes`, the same counts `status` gives since the last status)
-instead of the file diff below, which only a report without a synced tracker shows.
-
-The diff is by finding id: an id only in the latest file is new, one only in the previous file is
-resolved if the latest run inspected its scope and "not checked this run" otherwise, one in both
-with another severity changed. That is why ids must stay stable (see
-"Accepted risks"). Runs compare per connector instance, because each connector runs on its own
-schedule.
+The report counts what `status` counts: its headline is the tracker's (`Tracker.Headline`: items
+by priority and theme), followed by the findings of the latest runs as a note ("an item groups the
+findings one action fixes") and the table by connector instance; its setup section is the
+tracker's setup blockers (`tracker.Blockers`); and its changes are the items found, closed,
+verified and reopened in the last 7 days (`tracker.Changes`, the same counts `status` gives since
+the last status). Runs are compared in one place, the tracker's sync: a tracker that never synced
+(`last_sync_at` unset) is synced in memory from the same runs for the report, and not saved.
 
 The report is built once as a small document (headings, paragraphs, lists, tables) and rendered as
 text, Markdown or HTML, so the three formats carry the same content. Markdown escapes markup in
@@ -632,21 +626,20 @@ which leaves time for the report. At the deadline the inventory gets an interrup
 `install` puts an interval other than 24h on the agent's command line (`schedule run --every 6h`),
 so an agent installed before that runs with the 24h bound until it is installed again.
 
-1. Reads the high and critical findings of the latest scheduled run (`~/.segurata/out`),
-   leaving out accepted ones.
-2. Runs `segurata inventory --out ~/.segurata/out <connectors>`. Without
-   `--connectors`, every installed connector except those whose `describe` needs `cdp`: the browser
-   is rarely running with its debugging port when the agent fires.
-3. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three new
-   high or critical findings by title. Titles never carry secrets; evidence is never shown. Each
-   is also written to the log.
-4. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
+1. Runs `segurata inventory --out ~/.segurata/out <connectors>`, which ends in `track sync`.
+   Without `--connectors`, every installed connector except those whose `describe` needs `cdp`:
+   the browser is rarely running with its debugging port when the agent fires.
+2. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three of
+   the open P0 and P1 items that sync found or reopened (history `found` or `reopened` since the
+   run started), by title: the tracker is the one place runs are compared. Titles never carry
+   secrets; evidence is never shown. Each is also written to the log.
+3. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
-5. Once the report is written, prunes `~/.segurata/out` (`run.Prune`): it removes the
+4. Once the report is written, prunes `~/.segurata/out` (`run.Prune`): it removes the
    `<date>/*.jsonl` files and leftover `*.partial` files of days older than `keep_runs_days` in
    the config (default 30; a negative value keeps everything), except the latest finished run of
-   each instance, the one before it and a newer unfinished one, which the tracker, `report` and
-   `remediate` read. Nothing else under `out/` is touched, and empty days are removed.
+   each instance and a newer unfinished one, which the tracker, `report` and `remediate` read,
+   and the finished run before it, kept in case the latest proves unreadable. Nothing else under `out/` is touched, and empty days are removed.
    `accounts list` reads every remaining run, so it shows accounts seen within that window.
 
 Scheduled inventories live apart from the interactive `out/`; `segurata remediate --out
@@ -920,7 +913,9 @@ check (with `skip_git_history: true`, no rg, gitleaks or ssh-keygen pass runs).
 `segurata rotations` turns `local-secrets` findings into a list of secrets to rotate, one item per
 fingerprint. The items are the tracker's rotate items (`internal/tracker/secret.go`: folding,
 priority, reopen rules); `internal/rotation` is the command family on top (list, next, show,
-replace, done, snooze, ignore, reopen). The risk model it shares with the connector lives in
+replace). `rotations sync`, `done`, `snooze`, `ignore` and `reopen` are `track`'s own verbs, run
+on rotate items only (`tracker.CLI.Rotations`): the same code and output, except that ids and
+`--path` name secrets only and `sync` refuses to save without a local-secrets run. The risk model it shares with the connector lives in
 `internal/secretrisk`, so a finding's severity and an item's priority never disagree.
 
 State: in the tracker (see "Tracker"). A rotate item holds redacted hints and fingerprints, never values. Its status is the
@@ -981,9 +976,11 @@ Priority is impact × exposure, both table-driven:
   private keys) have none.
 - `secret.id` is the first 8 characters of the fingerprint, longer on collision. Commands accept
   any unique prefix of it or of the fingerprint, or the tracker's `T-` id.
-- `done`, `snooze`, `ignore` and `reopen` also take `--path <prefix>` instead of an id: every item
-  whose current locations all lie under that path. A test log or a data file full of fixtures goes away in
-  one command, while a secret that also appears elsewhere stays.
+- `done`, `snooze`, `ignore` and `reopen` (of `track` and `rotations`) also take `--path <prefix>`
+  instead of an id: every item whose current locations (a secret's) or reported findings' paths
+  (any other item's) all lie under that path. A test log or a data file full of fixtures goes away
+  in one command, while a secret that also appears elsewhere stays. A secret answers with its own
+  line (`3f9a12c4 stripe/stripe-live sk_live_…: rotated`).
 
 ### What counts against the owner
 
@@ -1242,7 +1239,12 @@ On the rotate item, the refs still reported are evidence the secret is live:
   ignored: …"), since the connector's own item merged into it and the key would otherwise have no
   open item. A decision's rule that ignored it does not close it again. Ignoring it by hand after
   the proof sticks. An accepted item stays accepted (the risk was kept on purpose; the priority
-  still rises), and a done item is reopened only by the working-file sightings of "Rotation ledger".
+  still rises);
+- a done item opens again when a connector signs in with the old value itself (a fingerprint
+  match: a hint or a path would also fit the new key in the same file) in a run after it was marked
+  rotated: "proven live by aws; after it was marked rotated: …". Marking it rotated again holds
+  until a later run proves the old value live again. Otherwise a done item is reopened only by the
+  working-file sightings of "Rotation ledger".
 
 ## Redaction
 

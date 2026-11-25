@@ -206,8 +206,11 @@ func (h dumpHit) label() string {
 	case h.Content == contentSchema && !h.strong():
 		return "Database schema"
 	}
-	return "Possible database dump"
+	return possibleDump
 }
+
+// possibleDump labels a file only named like a dump: its finding is unconfirmed.
+const possibleDump = "Possible database dump"
 
 func (h dumpHit) exposure() string {
 	switch {
@@ -250,6 +253,8 @@ func (h dumpHit) toFinding() finding.Finding {
 		Severity:    h.severity(),
 		Title:       title,
 		Evidence:    ev,
+		Blast:       finding.BlastPersonalData,
+		Unconfirmed: h.label() == possibleDump,
 		Remediation: finding.Remediation{Summary: h.remediation(), URL: secretrisk.URLAEPDBreaches},
 	}
 }

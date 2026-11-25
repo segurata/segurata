@@ -337,11 +337,11 @@ func (p *proposal) finishTranscripts() {
 func RunLabel(file string, rf runfile.Output) string {
 	switch {
 	case rf.End != nil:
-		return label(rf.End.Connector, rf.End.Instance)
+		return finding.Label(rf.End.Connector, rf.End.Instance)
 	case len(rf.Findings) > 0:
-		return label(rf.Findings[0].Connector, rf.Findings[0].Instance)
+		return finding.Label(rf.Findings[0].Connector, rf.Findings[0].Instance)
 	case len(rf.Statuses) > 0:
-		return label(rf.Statuses[0].Connector, rf.Statuses[0].Instance)
+		return finding.Label(rf.Statuses[0].Connector, rf.Statuses[0].Instance)
 	}
 	base := filepath.Base(file)
 	return base[:len(base)-len(filepath.Ext(base))]

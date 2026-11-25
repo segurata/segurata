@@ -123,6 +123,9 @@ func TestBackupChecksGradeTimeMachine(t *testing.T) {
 			for _, f := range rec.Findings {
 				if strings.HasPrefix(f.Resource.ID, "backup-") {
 					got[f.Resource.ID] = f.Severity
+					if (f.Resource.ID == "backup-none") != (f.Blast == finding.BlastDevice) {
+						t.Errorf("%s blast %q", f.Resource.ID, f.Blast)
+					}
 					if f.Remediation.Summary == "" || !strings.Contains(f.Remediation.Summary, "System Settings") {
 						t.Errorf("%s remediation %q", f.Resource.ID, f.Remediation.Summary)
 					}

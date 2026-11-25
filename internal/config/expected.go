@@ -112,11 +112,7 @@ func (c Config) Expect(st *finding.Status) {
 	if st.State == finding.StateOK || st.State == finding.StateExpected {
 		return
 	}
-	key := st.Connector
-	if st.Instance != "" {
-		key += ":" + st.Instance
-	}
-	for _, e := range c.Connectors[key].Expected {
+	for _, e := range c.Connectors[finding.Label(st.Connector, st.Instance)].Expected {
 		if e.Matches(*st, st.State) {
 			st.Was, st.State, st.Expected = st.State, finding.StateExpected, e.Reason
 			return

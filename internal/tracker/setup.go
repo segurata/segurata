@@ -18,13 +18,13 @@ import (
 // setupProposal is the setup item for a connector status other than ok, without refs: addStatus
 // adds one per distinct detail.
 func setupProposal(lbl string, st finding.Status) (string, proposal) {
-	key := SetupKey(lbl, st)
+	key := setupKey(lbl, st)
 	return key, proposal{theme: "setup", kind: KindSetup, connector: st.Connector, instance: st.Instance, account: st.Account}
 }
 
-// SetupKey is the key of the setup item a status other than ok makes. An expected status keeps
+// setupKey is the key of the setup item a status other than ok makes. An expected status keeps
 // the key of the state the connector reported, so the item it closes is the one it opened.
-func SetupKey(lbl string, st finding.Status) string {
+func setupKey(lbl string, st finding.Status) string {
 	return "setup:" + lbl + "|" + st.Account + "|" + string(reported(st).State)
 }
 
@@ -69,7 +69,7 @@ func (p *proposal) finishSetup(itemID string) {
 	}
 	var actions, cmds []string
 	for _, s := range p.statuses {
-		a, c := StatusAction(reported(s), lbl, itemID)
+		a, c := statusAction(reported(s), lbl, itemID)
 		if !slices.Contains(actions, a) {
 			actions = append(actions, a)
 		}
@@ -162,11 +162,11 @@ func adminOnly(detail string) bool {
 	return strings.Contains(d, "needs admin") || strings.Contains(d, "need sudo") || strings.Contains(d, "needs sudo") || strings.Contains(d, "requires root")
 }
 
-// StatusAction is what to do about a status, and the command to run: the fix the detail names
+// statusAction is what to do about a status, and the command to run: the fix the detail names
 // when it names one (then the action says to rerun the connector after it), otherwise the rerun
 // that checks it. The action ends with how to keep the limitation on purpose, when that makes
 // sense; itemID names the setup item there ("" for a placeholder).
-func StatusAction(st finding.Status, lbl, itemID string) (string, string) {
+func statusAction(st finding.Status, lbl, itemID string) (string, string) {
 	rerun := "segurata inventory " + lbl
 	if itemID == "" {
 		itemID = "<item>"
@@ -283,9 +283,9 @@ func (it *Item) BrowserSignIn(browser func(connector string) bool, now time.Time
 }
 
 // StatusLabel is the connector instance a status is about, as the command line names it.
-func StatusLabel(st finding.Status) string { return label(st.Connector, st.Instance) }
+func StatusLabel(st finding.Status) string { return finding.Label(st.Connector, st.Instance) }
 
-// setupState is the state a setup item's key names: the last field of SetupKey.
+// setupState is the state a setup item's key names: the last field of setupKey.
 func (it *Item) setupState() finding.State {
 	return finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])
 }

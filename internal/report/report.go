@@ -1,6 +1,7 @@
-// Package report builds `segurata report`: the latest run of every connector instance, what
-// changed since each one's previous run, the statuses that need action, the rotation ledger and
-// the accepted risks, as terminal text, Markdown or a self-contained HTML page. It reads only
+// Package report builds `segurata report`: the tracker's items as status counts them (setup
+// blockers, changes from item history), the latest run of every connector instance and its
+// completeness, the rotation ledger and the accepted risks, as terminal text, Markdown or a
+// self-contained HTML page. Runs are compared in one place, the tracker's sync. It reads only
 // segurata's own files and never holds a secret value: findings carry none, and the tracker's
 // rotate items only redacted hints. See docs/architecture.md, "Report".
 package report
@@ -18,33 +19,16 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-// Run is the latest run of one connector instance, compared with its previous one.
+// Run is the latest run of one connector instance.
 type Run struct {
-	Label    string // "name" or "name:label"
-	File     string
-	Date     string // YYYY-MM-DD of the run
-	PrevDate string // "" when there is no earlier run to compare with
+	Label string // "name" or "name:label"
+	File  string
+	Date  string // YYYY-MM-DD of the run
 	// Unfinished is the date of a newer run without run_end that was passed over, or "".
 	Unfinished string
 	Coverage   finding.Coverage
 	Findings   []finding.Finding
 	Statuses   []finding.Status
-	New        []finding.Finding // in this run, not in the previous one
-	Resolved   []finding.Finding // in the previous run, gone from this one, and its scope inspected
-	NotChecked []NotChecked      // in the previous run, missing from this one, its scope not inspected
-	Changed    []Change          // same finding, other severity
-}
-
-// NotChecked is a finding of the previous run that the latest run could not have seen.
-type NotChecked struct {
-	finding.Finding
-	Reason string
-}
-
-// Change is a finding whose severity moved between runs.
-type Change struct {
-	finding.Finding
-	From finding.Severity
 }
 
 // Accepted is one accepted risk and where it stands today.
@@ -84,19 +68,28 @@ type Inputs struct {
 	TrackerPath string
 	MinSev      finding.Severity
 	Top         int // findings per connector in "Top findings"
-	// Expect applies the config's expected rules to each status (nil for none).
-	Expect func(*finding.Status)
+	// Sync is how a tracker that was never synced is synced in memory, from OutDir, so the report
+	// counts items before the first `track sync` too; nothing is saved. Its Expect also applies the
+	// config's expected rules to the runs' statuses.
+	Sync tracker.SyncOptions
 }
 
 // maxP0 is how many P0 rotation items the report names.
 const maxP0 = 5
 
-// Build reads the latest run of every connector instance and its previous run, and annotates
-// every finding with the tracker's acceptances as of today.
+// Build reads the latest run of every connector instance and annotates every finding with the
+// tracker's acceptances as of today.
 func Build(in Inputs) (*Report, error) {
 	latest, err := runfile.LatestRuns(in.OutDir, in.Now)
 	if err != nil {
 		return nil, err
+	}
+	if in.Tracker.LastSyncAt == nil {
+		opt := in.Sync
+		opt.OutDir = in.OutDir
+		if _, err := in.Tracker.Sync(opt, in.Now); err != nil {
+			return nil, err
+		}
 	}
 	annotate := in.Tracker.Annotator(func() time.Time { return in.Now })
 	r := &Report{Generated: in.Now, OutDir: in.OutDir, MinSev: in.MinSev, Top: in.Top, tr: in.Tracker}
@@ -107,9 +100,9 @@ func Build(in Inputs) (*Report, error) {
 		if err != nil {
 			return nil, err
 		}
-		if in.Expect != nil {
+		if in.Sync.Expect != nil {
 			for i := range run.Statuses {
-				in.Expect(&run.Statuses[i])
+				in.Sync.Expect(&run.Statuses[i])
 			}
 		}
 		for _, x := range run.Findings {
@@ -136,9 +129,7 @@ func Build(in Inputs) (*Report, error) {
 
 func dateOf(file string) string { return filepath.Base(filepath.Dir(file)) }
 
-// readRun reads a latest run and diffs it with the previous one. A finding missing from it is
-// resolved only when the run inspected its scope; findings of a previous run without run_end carry
-// no reliable scope, so any skipped scope makes them not checked.
+// readRun reads a latest run.
 func readRun(l runfile.Latest, annotate func(*finding.Finding)) (*Run, error) {
 	rf, err := runfile.Read(l.File)
 	if err != nil {
@@ -151,44 +142,6 @@ func readRun(l runfile.Latest, annotate func(*finding.Finding)) (*Run, error) {
 	}
 	for i := range run.Findings {
 		annotate(&run.Findings[i])
-	}
-	if l.Prev == "" {
-		return run, nil
-	}
-	prevRun, err := runfile.Read(l.Prev)
-	if err != nil {
-		return nil, err
-	}
-	prev := prevRun.Findings
-	run.PrevDate = dateOf(l.Prev)
-	before := make(map[string]finding.Finding, len(prev))
-	for _, f := range prev {
-		before[f.ID] = f
-	}
-	for _, f := range run.Findings {
-		old, ok := before[f.ID]
-		switch {
-		case !ok:
-			run.New = append(run.New, f)
-		case old.Severity != f.Severity:
-			run.Changed = append(run.Changed, Change{Finding: f, From: old.Severity})
-		}
-		delete(before, f.ID)
-	}
-	for _, f := range prev { // file order, not map order
-		if _, gone := before[f.ID]; !gone {
-			continue
-		}
-		annotate(&f)
-		scope := finding.ScopeOf(f)
-		if prevRun.End == nil {
-			scope = ""
-		}
-		if why, unchecked := run.Coverage.Unchecked(f.Account, scope); unchecked {
-			run.NotChecked = append(run.NotChecked, NotChecked{Finding: f, Reason: why})
-			continue
-		}
-		run.Resolved = append(run.Resolved, f)
 	}
 	return run, nil
 }

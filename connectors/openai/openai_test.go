@@ -116,6 +116,9 @@ func TestInventoryFindsUncappedIdleAndOrphanKeysAndBudgets(t *testing.T) {
 	}
 	for _, tc := range cases {
 		f := rec.ByResource(t, tc.typ, tc.id)
+		if wantBlast := map[bool]finding.Blast{true: finding.BlastMoney}[tc.kind == finding.KindSpend]; f.Blast != wantBlast {
+			t.Errorf("%s %s: blast %q", tc.typ, tc.id, f.Blast)
+		}
 		if f.Kind != tc.kind || f.Severity != tc.sev {
 			t.Errorf("%s %s: kind=%s severity=%s, want %s %s (%s)", tc.typ, tc.id, f.Kind, f.Severity, tc.kind, tc.sev, f.Title)
 		}

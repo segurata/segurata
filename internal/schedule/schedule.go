@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 const (
@@ -74,6 +75,9 @@ type Env struct {
 	// Keep is how old a run file may grow before a finished run prunes it (config keep_runs_days);
 	// 0 keeps everything.
 	Keep time.Duration
+	// Tracker is the tracker the inventory's sync writes, whose new items a run notifies; zero
+	// means tracker.DefaultPaths.
+	Tracker tracker.Paths
 }
 
 // Paths are the files the schedule uses, all under the owner's home.

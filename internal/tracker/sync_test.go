@@ -1,7 +1,10 @@
 package tracker
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -559,8 +562,10 @@ func TestGroupTitlesAgreeInNumber(t *testing.T) {
 	}
 }
 
-// track sync folds the runs again into a tracker.json another command saved while it worked (an
-// edit, a binary without the lock), instead of failing or dropping that change.
+// track sync and rotations sync fold the runs again into a tracker.json another command saved
+// while they worked (an edit, a binary without the lock), instead of failing or dropping that
+// change. A requirement the report fails (rotations sync without a local-secrets run) saves
+// nothing, on either pass.
 func TestSyncAndSaveFoldsAgainIntoATrackerChangedMeanwhile(t *testing.T) {
 	dir := t.TempDir()
 	path, out := filepath.Join(dir, "tracker.json"), filepath.Join(dir, "out")
@@ -574,8 +579,22 @@ func TestSyncAndSaveFoldsAgainIntoATrackerChangedMeanwhile(t *testing.T) {
 	if err := other.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	rep, err := syncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour))
-	if err != nil || rep.Created != 1 {
+	before, _ := os.ReadFile(path)
+	noSecrets := errors.New("no local-secrets run")
+	require := func(rep SyncReport) error {
+		if !rep.FoldedSecrets() {
+			return noSecrets
+		}
+		return nil
+	}
+	if _, _, err := syncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour), require); err != noSecrets {
+		t.Fatalf("requirement: %v", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("saved although the requirement failed")
+	}
+	saved, rep, err := syncAndSave(stale, path, SyncOptions{OutDir: out}, t0.Add(time.Hour), nil)
+	if err != nil || rep.Created != 1 || saved == stale {
 		t.Fatalf("sync: %+v %v", rep, err)
 	}
 	got, _ := Load(path)

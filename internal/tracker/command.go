@@ -41,7 +41,9 @@ const trackUsage = `usage: segurata track <command>
              --kind decide --question text --option a --option "b=ignore:path:~/src/old"   (an option's effect applies when it is the answer;
              "b=ignore@not-mine:path:~/src/old" closes only secrets attributed not-mine)
   sync       [--out out] [--from out/<date>/local-secrets.jsonl] [--include-noise]
-<id> is T-0012 (or T-12), or a secret's short id.`
+<id> is T-0012 (or T-12), or a secret's short id. done, snooze, ignore and reopen take --path <prefix>
+instead of an id: every item (open, or closed for reopen) whose locations all lie under that path,
+e.g. a test log full of fixtures.`
 
 const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--explain] [--write] [--mark-seen]"
 
@@ -57,10 +59,52 @@ type CLI struct {
 	// Browser names the connectors that drive the browser (status's segurata signin line); nil
 	// for none.
 	Browser func(connector string) bool
+
+	// rotations is the usage of `segurata rotations` when Rotations runs a verb; "" for track.
+	rotations string
+}
+
+var (
+	trackVerbs = []string{"list", "show", "add", "sync", "start", "done", "note", "decide", "snooze", "ignore", "reopen", "prioritize", "expect"}
+	// RotationVerbs are the verbs of track that `segurata rotations` runs as its own (see Rotations).
+	RotationVerbs = []string{"sync", "done", "snooze", "ignore", "reopen"}
+	// pathVerbs take --path instead of an id.
+	pathVerbs = []string{"done", "snooze", "ignore", "reopen"}
+)
+
+// Rotations runs one of RotationVerbs as `segurata rotations`: track's own code, with ids and
+// --path naming secrets only, a sync that refuses to save without a local-secrets run, and usage
+// (the rotations family's) and "rotations" in the messages.
+func (c CLI) Rotations(args []string, usage string) int {
+	c.rotations = usage
+	return c.Track(args)
+}
+
+// name is the command family the user typed.
+func (c CLI) name() string {
+	if c.rotations != "" {
+		return "rotations"
+	}
+	return "track"
+}
+
+func (c CLI) usage() string {
+	if c.rotations != "" {
+		return c.rotations
+	}
+	return trackUsage
+}
+
+// find is the item an id names: any item for track, a secret for rotations.
+func (c CLI) find(t *Tracker, ref string) (*Item, error) {
+	if c.rotations != "" {
+		return t.FindRotate(ref)
+	}
+	return t.Find(ref)
 }
 
 func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, "track:", err)
+	fmt.Fprintln(c.Err, c.name()+":", err)
 	return 1
 }
 
@@ -86,17 +130,15 @@ func set(s string, upper bool) map[string]bool {
 
 // Track runs one `segurata track` subcommand.
 func (c CLI) Track(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(c.Err, trackUsage)
+	verbs := trackVerbs
+	if c.rotations != "" {
+		verbs = RotationVerbs
+	}
+	if len(args) == 0 || !slices.Contains(verbs, args[0]) {
+		fmt.Fprintln(c.Err, c.usage())
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
-	switch cmd {
-	case "list", "show", "add", "sync", "start", "done", "note", "decide", "snooze", "ignore", "reopen", "prioritize", "expect":
-	default:
-		fmt.Fprintln(c.Err, trackUsage)
-		return 2
-	}
 	now := c.Now()
 	t, path, unlock, err := LoadFor(c.Paths, now, cmd != "list" && cmd != "show")
 	defer unlock()
@@ -119,42 +161,77 @@ func (c CLI) Track(args []string) int {
 }
 
 func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
-	fs := cliflag.New("track sync", c.Err)
+	fs := cliflag.New(c.name()+" sync", c.Err)
 	out := fs.String("out", config.DefaultOutDir(), "inventory output directory")
 	from := fs.String("from", "", "local-secrets JSONL to read instead of its latest run")
 	noise := fs.Bool("include-noise", false, "also track noise-only secrets, without a priority")
 	if pos, err := cliflag.Parse(fs, args); err != nil || len(pos) > 0 {
-		fmt.Fprintln(c.Err, trackUsage)
+		fmt.Fprintln(c.Err, c.usage())
 		return 2
 	}
 	opt, err := ConfiguredSync(c.Config, SyncOptions{OutDir: *out, From: *from, IncludeNoise: *noise})
 	if err != nil {
 		return c.fail(err)
 	}
-	rep, err := syncAndSave(t, path, opt, now)
+	var require func(SyncReport) error
+	if c.rotations != "" {
+		require = func(rep SyncReport) error {
+			if !rep.FoldedSecrets() {
+				return fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", SecretsConnector, *out, SecretsConnector)
+			}
+			return nil
+		}
+	}
+	t, rep, err := syncAndSave(t, path, opt, now, require)
 	if err != nil {
 		return c.fail(err)
 	}
-	s := rep.Secrets
-	fmt.Fprintf(c.Out, "Secrets: %d (%d new, %d reopened, %d reclassified as noise, %d noise-only skipped).\n", s.Secrets, s.Created, s.Reopened, s.Reclassified, s.Skipped)
+	if rep.FoldedSecrets() {
+		t.secretsSynced(c.Out, rep, path, now)
+	}
 	fmt.Fprint(c.Out, SyncLine(rep))
 	return 0
 }
 
-// syncAndSave folds the runs into t and saves it. When tracker.json changed after t was loaded
-// (saved by something that does not take the lock: an edit, an older binary), it folds the same
-// runs once more into that version instead of failing a scheduled sync or dropping the change.
-func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time) (SyncReport, error) {
+// secretsSynced prints what a sync did to the secrets and what is open.
+func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now time.Time) {
+	r := rep.Secrets
+	fmt.Fprintf(w, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d reclassified as noise, %d noise-only skipped.\n",
+		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Reclassified, r.Skipped)
+	if r.HistoryOnly > 0 {
+		fmt.Fprintf(w, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
+			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), HistoryOnly)
+	}
+	counts := map[secretrisk.Priority]int{}
+	for _, it := range t.Items {
+		if it.Kind == KindRotate && it.Active(now) {
+			counts[it.EffectivePriority()]++
+		}
+	}
+	fmt.Fprintf(w, "Open: P0 %d, P1 %d, P2 %d, P3 %d. Tracker: %s\n", counts[secretrisk.P0], counts[secretrisk.P1], counts[secretrisk.P2], counts[secretrisk.P3], path)
+	owners := t.OwnerCounts(func(it *Item) bool { return it.Active(now) })
+	fmt.Fprintf(w, "Open by owner: mine %d, not-mine %d, unknown %d (segurata rotations list --owner not-mine).\n",
+		owners[attribution.Mine], owners[attribution.NotMine], owners[attribution.Unknown])
+}
+
+// syncAndSave folds the runs into t and saves it, unless require (nil for none) rejects the sync's
+// report; it returns the tracker it saved. When tracker.json changed after t was loaded (saved by
+// something that does not take the lock: an edit, an older binary), it folds the same runs once
+// more into that version instead of failing a scheduled sync or dropping the change.
+func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, require func(SyncReport) error) (*Tracker, SyncReport, error) {
 	for again := false; ; again = true {
 		rep, err := t.Sync(opt, now)
+		if err == nil && require != nil {
+			err = require(rep)
+		}
 		if err != nil {
-			return rep, err
+			return t, rep, err
 		}
 		if err = t.Save(path); again || !errors.Is(err, ErrChanged) {
-			return rep, err
+			return t, rep, err
 		}
 		if t, err = Load(path); err != nil {
-			return rep, err
+			return t, rep, err
 		}
 	}
 }
@@ -330,7 +407,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 }
 
 func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) int {
-	fs := cliflag.New("track "+cmd, c.Err)
+	fs := cliflag.New(c.name()+" "+cmd, c.Err)
 	note := fs.String("note", "", "free text kept in the history")
 	until := fs.String("until", "", "snooze: date the item comes back, YYYY-MM-DD")
 	reason := fs.String("reason", "", "ignore, prioritize: why")
@@ -340,86 +417,153 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	fs.Var(&acceptScopes, "accept-scope", "decide: accept every item in this scope, now and at every sync (repeat for each)")
 	owner := fs.String("owner", "", "decide: the scopes' rules close only secrets attributed to these owners: mine, not-mine, unknown (comma-separated)")
 	dry := fs.Bool("dry-run", false, "decide: print what answering would close and keep open, change nothing")
+	under := new(string)
+	byPath := slices.Contains(pathVerbs, cmd)
+	if byPath {
+		under = fs.String("path", "", "instead of an id: every item whose locations all lie under this path")
+	}
 	pos, err := cliflag.Parse(fs, args)
 	want := 1 // note takes the id and any number of words
-	if cmd == "prioritize" {
+	switch {
+	case cmd == "prioritize":
 		want = 2
+	case *under != "":
+		want = 0
 	}
-	if err != nil || len(pos) < 1 || (cmd != "note" && len(pos) != want) {
-		fmt.Fprintf(c.Err, "usage: segurata track %s <id> (see: segurata track)\n", cmd)
+	if err != nil || (cmd == "note" && len(pos) < 1) || (cmd != "note" && len(pos) != want) {
+		form := "<id>"
+		if byPath {
+			form += " | --path <prefix>"
+		}
+		fmt.Fprintf(c.Err, "usage: segurata %s %s %s (see: segurata %s)\n", c.name(), cmd, form, c.name())
 		return 2
 	}
-	it, err := t.Find(pos[0])
-	if err != nil {
-		return c.fail(err)
+	var items []*Item
+	if *under != "" {
+		if items = c.itemsUnder(t, *under, cmd == "reopen", now); len(items) == 0 {
+			return c.fail(fmt.Errorf("no %s item lies entirely under %s", map[bool]string{true: "closed", false: "open"}[cmd == "reopen"], *under))
+		}
+	} else {
+		it, err := c.find(t, pos[0])
+		if err != nil {
+			return c.fail(err)
+		}
+		items = []*Item{it}
 	}
-	switch cmd {
-	case "start":
-		err = it.Start(now, *note)
-	case "done":
-		it.Done(now, *note)
-	case "note":
-		err = it.Note(now, strings.Join(pos[1:], " "))
-	case "decide":
-		var owners []attribution.Owner
-		if *owner != "" {
-			if owners, err = attribution.ParseOwners(*owner); err != nil {
-				return c.fail(err)
+	for _, it := range items {
+		switch cmd {
+		case "start":
+			err = it.Start(now, *note)
+		case "done":
+			it.Done(now, *note)
+		case "note":
+			err = it.Note(now, strings.Join(pos[1:], " "))
+		case "decide":
+			if *dry {
+				return c.previewDecision(t, it, now, *answer, ignoreScopes, acceptScopes, *owner)
+			}
+			err = c.decide(t, it, now, *answer, ignoreScopes, acceptScopes, *owner)
+		case "snooze":
+			err = it.Snooze(now, *until, *note)
+		case "ignore":
+			r := strings.TrimSpace(*reason)
+			if r != "" && *note != "" {
+				r += "; " + *note
+			}
+			err = it.Ignore(now, r)
+		case "reopen":
+			it.Reopen(now, *note)
+			if n := t.DropRules(it.ID); n > 0 {
+				fmt.Fprintf(c.Out, "%s of this decision removed; the items they closed stay as they are.\n", textfmt.Count(n, "rule", "rules"))
+			}
+		case "prioritize":
+			var p secretrisk.Priority
+			if p, err = ParsePriority(pos[1]); err == nil {
+				err = it.Prioritize(now, p, *reason)
 			}
 		}
-		if *dry {
-			lines, err := t.PreviewDecision(it, now, *answer, ignoreScopes, acceptScopes, owners)
-			if err != nil {
-				return c.fail(err)
-			}
-			for _, l := range lines {
-				fmt.Fprintf(c.Out, "Answering %s\n", l)
-			}
-			if len(lines) == 0 {
-				fmt.Fprintln(c.Out, "This answer adds no rule.")
-			}
-			fmt.Fprintln(c.Out, "Nothing written (--dry-run).")
-			return 0
+		if err != nil {
+			return c.fail(err) // nothing saved: a bad flag fails before the first item changes
 		}
-		var added []Rule
-		var closed int
-		again := it.Decision != nil && it.Decision.Answer != ""
-		if added, closed, err = t.DecideWithEffects(it, now, *answer, ignoreScopes, acceptScopes, owners); err == nil && again {
-			fmt.Fprintf(c.Out, "This answer %s.\n", it.lastDetail(actReanswer))
-		}
-		if err == nil && len(added) > 0 {
-			for _, r := range added {
-				fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
-			}
-			fmt.Fprintf(c.Out, "%s closed now by this decision.\n", textfmt.Count(closed, "item", "items"))
-		}
-	case "snooze":
-		err = it.Snooze(now, *until, *note)
-	case "ignore":
-		r := strings.TrimSpace(*reason)
-		if r != "" && *note != "" {
-			r += "; " + *note
-		}
-		err = it.Ignore(now, r)
-	case "reopen":
-		it.Reopen(now, *note)
-		if n := t.DropRules(it.ID); n > 0 {
-			fmt.Fprintf(c.Out, "%s of this decision removed; the items they closed stay as they are.\n", textfmt.Count(n, "rule", "rules"))
-		}
-	case "prioritize":
-		var p secretrisk.Priority
-		if p, err = ParsePriority(pos[1]); err == nil {
-			err = it.Prioritize(now, p, *reason)
-		}
-	}
-	if err != nil {
-		return c.fail(err)
 	}
 	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
-	fmt.Fprintf(c.Out, "%s %s · %s: %s\n", it.ID, textfmt.OrDash(string(it.EffectivePriority())), it.Title, it.Status)
+	for _, it := range items {
+		if s := it.Secret; s != nil {
+			fmt.Fprintf(c.Out, "%s %s/%s %s: %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted), it.RotationStatus())
+		} else {
+			fmt.Fprintf(c.Out, "%s %s · %s: %s\n", it.ID, textfmt.OrDash(string(it.EffectivePriority())), it.Title, it.Status)
+		}
+	}
+	if len(items) > 1 {
+		fmt.Fprintf(c.Out, "%d items\n", len(items))
+	}
 	return 0
+}
+
+// itemsUnder returns the items whose every location lies under prefix (a ~/ path, as findings
+// report them; an absolute path inside the home directory is accepted too), secrets only for
+// rotations: active ones, or closed ones when closed is true.
+func (c CLI) itemsUnder(t *Tracker, prefix string, closed bool, now time.Time) []*Item {
+	var out []*Item
+	for _, it := range t.Items {
+		if (c.rotations == "" || it.Kind == KindRotate) && it.Active(now) != closed && it.Under(prefix) {
+			out = append(out, it)
+		}
+	}
+	Sort(out)
+	return out
+}
+
+func parseOwners(s string) ([]attribution.Owner, error) {
+	if s == "" {
+		return nil, nil
+	}
+	return attribution.ParseOwners(s)
+}
+
+// previewDecision prints what answering would close and keep open, and changes nothing.
+func (c CLI) previewDecision(t *Tracker, it *Item, now time.Time, answer string, ignore, accept []string, owner string) int {
+	owners, err := parseOwners(owner)
+	if err != nil {
+		return c.fail(err)
+	}
+	lines, err := t.PreviewDecision(it, now, answer, ignore, accept, owners)
+	if err != nil {
+		return c.fail(err)
+	}
+	for _, l := range lines {
+		fmt.Fprintf(c.Out, "Answering %s\n", l)
+	}
+	if len(lines) == 0 {
+		fmt.Fprintln(c.Out, "This answer adds no rule.")
+	}
+	fmt.Fprintln(c.Out, "Nothing written (--dry-run).")
+	return 0
+}
+
+// decide answers a decision with its effects and says what the answer replaced and closed.
+func (c CLI) decide(t *Tracker, it *Item, now time.Time, answer string, ignore, accept []string, owner string) error {
+	owners, err := parseOwners(owner)
+	if err != nil {
+		return err
+	}
+	again := it.Decision != nil && it.Decision.Answer != ""
+	added, closed, err := t.DecideWithEffects(it, now, answer, ignore, accept, owners)
+	if err != nil {
+		return err
+	}
+	if again {
+		fmt.Fprintf(c.Out, "This answer %s.\n", it.lastDetail(actReanswer))
+	}
+	if len(added) > 0 {
+		for _, r := range added {
+			fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
+		}
+		fmt.Fprintf(c.Out, "%s closed now by this decision.\n", textfmt.Count(closed, "item", "items"))
+	}
+	return nil
 }
 
 func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {

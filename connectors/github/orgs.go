@@ -172,6 +172,7 @@ func (r *run) org(ctx context.Context, org string) {
 			Resource:    finding.Resource{Type: "github_org_setting", ID: string(f.check), Name: org},
 			Kind:        finding.KindSetting,
 			Severity:    severities[f.check],
+			Blast:       blasts[f.check],
 			Title:       f.title,
 			Evidence:    withCheck(f.evidence, f.check),
 			Remediation: remedy(f.fix, f.url, org, f.check),

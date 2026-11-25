@@ -96,6 +96,7 @@ func loginDependency(account string, apps []finding.Finding) (finding.Finding, b
 		Title: fmt.Sprintf("Google account %s is the login for %d financial/cloud %s: use a passkey/security key and consider Advanced Protection",
 			account, len(names), textfmt.Plural(len(names), "service", "services")),
 		Evidence: map[string]any{"services": names, "can_move_money": moves},
+		Blast:    finding.BlastLogin,
 		Remediation: finding.Remediation{
 			Summary: "Whoever takes over this Google account signs in to " + strings.Join(names, ", ") +
 				". Add a passkey or security key and remove SMS as a second step, and consider Advanced Protection (" + urlAdvancedProtection +

@@ -155,6 +155,54 @@ func TestProofOfALiveKeyReopensAnIgnoredSecret(t *testing.T) {
 	}
 }
 
+// A secret marked rotated whose old value a connector still signs in with, in a run after the
+// rotation, opens again: the old key works, so it was not rotated. Proof from a run before the
+// rotation, or a match less certain than the fingerprint (a file's new key matched by path), does
+// not reopen it; marking it rotated again holds until a later run proves the old key live again.
+func TestProofOfALiveKeyReopensARotatedSecret(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	tr := New(t0)
+	cred := secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/legacyco/data/s3.py",
+		Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2019-05-02"}
+	key := func(at time.Time, fp string) finding.Finding {
+		return withEvidence(fnd("aws", "", "local", "aws_local_credentials", "/x/.aws/credentials#default", "default", finding.SevMedium,
+			`Long-lived AWS access key for profile "default" stored in plain text; aws sts says it works for account 012345678901`, at),
+			map[string]any{"file": "~/.aws/credentials", "key_id": "AKIARB…(20)", "fingerprint": fp, "sts_account": "012345678901"})
+	}
+	writeRun(t, out, t0, "local-secrets.jsonl", leak(cred, t0), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0, "aws.jsonl", key(t0, awsFP), okStatus("aws", "012345678901"))
+	syncOrDie(t, tr, out, t0.Add(time.Minute))
+	rot := mustRotate(t, tr, awsFP[:8])
+	rot.Done(t0.Add(time.Hour), "rotated in the console")
+	// The same runs, from before the rotation, prove nothing.
+	syncOrDie(t, tr, out, t0.Add(2*time.Hour))
+	if rot.Status != Done {
+		t.Fatalf("reopened by a run older than the rotation: %s", rot.Status)
+	}
+
+	day2 := t0.Add(24 * time.Hour)
+	writeRun(t, out, day2, "local-secrets.jsonl", leak(cred, day2), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, day2, "aws.jsonl", key(day2, awsFP), okStatus("aws", "012345678901"))
+	syncOrDie(t, tr, out, day2.Add(time.Minute))
+	if rot.Status != Open {
+		t.Fatalf("the old key still works: %s", rot.Status)
+	}
+	last := rot.History[len(rot.History)-1]
+	if last.Action != actProvenLive || !strings.Contains(last.Detail, "proven live by aws") || !strings.Contains(last.Detail, "after it was marked rotated: rotated in the console") {
+		t.Errorf("history %+v", last)
+	}
+
+	// Rotated again, and the next run reports another key in the file: it stays rotated.
+	rot.Done(day2.Add(time.Hour), "")
+	day3 := day2.Add(24 * time.Hour)
+	writeRun(t, out, day3, "local-secrets.jsonl", leak(cred, day3), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, day3, "aws.jsonl", key(day3, "b6b6b6b6b6b6b6b6"), okStatus("aws", "012345678901"))
+	syncOrDie(t, tr, out, day3.Add(time.Minute))
+	if rot.Status != Done {
+		t.Errorf("reopened by another key: %s", rot.Status)
+	}
+}
+
 // Without a fingerprint, a provider key matches by its redacted hint and service, a credential
 // file by its path; info findings (a key in use) are evidence too, and a secret a connector signs
 // in with (run_end) is live.

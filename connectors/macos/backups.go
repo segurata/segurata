@@ -60,7 +60,7 @@ func (c *Connector) destinationInfo(ctx context.Context) (map[string]any, error)
 // latest backup older than a week. Encryption comes from the preferences file; without it, the
 // destination's encryption is unknown and not reported.
 func (c *Connector) backupChecks(ctx context.Context) []check {
-	none := check{id: "backup-none", sev: finding.SevHigh,
+	none := check{id: "backup-none", sev: finding.SevHigh, blast: finding.BlastDevice,
 		title: "No Time Machine backup is configured",
 		rem:   manual("Set up an encrypted backup disk in " + backupSettings + " > Add Backup Disk, with Encrypt Backup on. Keep a second, offsite copy too (3-2-1).")}
 	info, err := c.destinationInfo(ctx)

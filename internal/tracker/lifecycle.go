@@ -290,6 +290,15 @@ func (it *Item) Active(today time.Time) bool {
 	return false
 }
 
+// RotationStatus is the item's status in the words of `segurata rotations`: a done secret is
+// "rotated".
+func (it *Item) RotationStatus() string {
+	if it.Status == Done {
+		return "rotated"
+	}
+	return string(it.Status)
+}
+
 // snoozeOver reports whether today has reached the snooze's date, in today's zone.
 func (it *Item) snoozeOver(today time.Time) bool {
 	d, err := time.ParseInLocation(time.DateOnly, it.SnoozedUntil, today.Location())

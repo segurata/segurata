@@ -310,7 +310,12 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 		ev["dependency"] = dep.label
 		summary = dep.fix
 	}
+	var blast finding.Blast
+	if resType == "oauth_grant" && sev.Rank() >= finding.SevHigh.Rank() {
+		blast = finding.BlastMailAndFiles // high-risk scopes read or change mail and files
+	}
 	res.finding = finding.Finding{
+		Blast:     blast,
 		Resource:  finding.Resource{Type: resType, ID: overviewID(l.Href), Name: appName},
 		Kind:      finding.KindGrant,
 		Severity:  sev,

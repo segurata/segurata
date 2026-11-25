@@ -350,24 +350,47 @@ func (it *Item) reopenMerged(now time.Time) {
 	it.setStatus(now, Open, EvReopened, actAutoReopen, "no longer part of "+from)
 }
 
-// reopenProvenLive opens an ignored rotate item that a connector claims (see correlate): the key
-// works, which contradicts "not a real problem", and the connector's own item has merged into this
-// one, so leaving it ignored would leave a live key with no open item. The owner ignoring it again
-// after the proof sticks. Only ignored items give way: an accepted one is a risk kept on purpose
-// (the proof still raises its priority), a done one is governed by its working-file sightings (see
-// rotatedSeen), and a reclassified one is never claimed.
+// reopenProvenLive opens a rotate item that a connector claims (see correlate) when the proof
+// contradicts how it was closed, since the connector's own item has merged into it and leaving it
+// closed would leave a live key with no open item:
+//   - ignored: the key works, which contradicts "not a real problem". The owner ignoring it again
+//     after the proof sticks.
+//   - done: a connector signs in with the old value itself (a fingerprint match, not a hint or a
+//     path, which the new key in the same file would also fit) in a run after the rotation, so it
+//     was not rotated. Marking it rotated again holds until a later run proves it live again.
+//
+// An accepted one stays: that risk was kept on purpose (the proof still raises its priority). A
+// reclassified one is never claimed.
 func (it *Item) reopenProvenLive(now time.Time) {
-	live := it.live()
-	if it.Status != Ignored || len(live) == 0 || it.ignoredAfterProof() {
+	var proof []FindingRef
+	var was string
+	switch it.Status {
+	case Ignored:
+		if it.ignoredAfterProof() {
+			return
+		}
+		proof, was = it.live(), "it was ignored: "+it.lastDetail(actIgnore)
+	case Done:
+		for _, r := range it.live() {
+			if r.Confidence == confCertain && r.LastSeen.After(it.StatusAt) {
+				proof = append(proof, r)
+			}
+		}
+		was = "after it was marked rotated"
+		if note := it.lastDetail(actDone); note != "" {
+			was += ": " + note
+		}
+	}
+	if len(proof) == 0 {
 		return
 	}
 	var labels []string
-	for _, r := range live {
+	for _, r := range proof {
 		if !slices.Contains(labels, r.Label()) {
 			labels = append(labels, r.Label())
 		}
 	}
-	it.setStatus(now, Open, EvReopened, actProvenLive, "proven live by "+strings.Join(labels, ", ")+"; it was ignored: "+it.lastDetail(actIgnore))
+	it.setStatus(now, Open, EvReopened, actProvenLive, "proven live by "+strings.Join(labels, ", ")+"; "+was)
 }
 
 // ignoredAfterProof reports whether the item's latest ignore came after a proof that it is live.

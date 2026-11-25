@@ -24,8 +24,9 @@ func runsByLabel(t *testing.T, out string, tr *tracker.Tracker) (*Report, map[st
 	return r, runs
 }
 
-// A finding missing from a run that did not inspect its scope is "not checked", never resolved.
-func TestFindingsOfUninspectedScopesAreNotResolved(t *testing.T) {
+// The report names the runs that are not complete and what they left out; an accepted finding in
+// a scope the latest run did not inspect is not "no longer reported".
+func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	path := func(day, file string) string { return filepath.Join(out, day, file) }
 	repo := func(name string) finding.Finding {
@@ -50,26 +51,16 @@ func TestFindingsOfUninspectedScopesAreNotResolved(t *testing.T) {
 	runtest.WriteUnfinished(t, path("2026-11-20", "aws.jsonl"), key)
 	runtest.WriteUnfinished(t, path("2026-11-21", "aws.jsonl"), status("aws", "", "local", finding.StateOK, ""))
 
-	tr := &tracker.Tracker{}
+	tr := tracker.New(now)
 	if _, err := tr.AcceptFinding(b, "kept on purpose", "", now); err != nil {
 		t.Fatal(err)
 	}
 	r, runs := runsByLabel(t, out, tr)
-	gh := runs["github"]
-	if gh.Date != "2026-11-21" || gh.PrevDate != "2026-11-20" || gh.Unfinished != "2026-11-22" {
-		t.Fatalf("github run %s prev %s unfinished %s", gh.Date, gh.PrevDate, gh.Unfinished)
+	if gh := runs["github"]; gh.Date != "2026-11-21" || gh.Unfinished != "2026-11-22" {
+		t.Fatalf("github run %s unfinished %s", gh.Date, gh.Unfinished)
 	}
-	if got := ids(gh.Resolved); len(got) != 1 || got[0] != a.ID {
-		t.Errorf("resolved %v, want only %s", got, a.ID)
-	}
-	if len(gh.NotChecked) != 1 || gh.NotChecked[0].ID != b.ID || !strings.Contains(gh.NotChecked[0].Reason, "rate limit") {
-		t.Errorf("not checked %+v", gh.NotChecked)
-	}
-	if m := runs["macos"]; len(m.Resolved) != 0 || len(m.NotChecked) != 2 {
-		t.Errorf("macos: a legacy previous run against an incomplete latest one resolves nothing: %+v", m)
-	}
-	if w := runs["aws"]; len(w.Resolved) != 0 || len(w.NotChecked) != 1 || w.Coverage.Known {
-		t.Errorf("aws: a latest run without run_end resolves nothing: %+v", w)
+	if w := runs["aws"]; w.Coverage.Known {
+		t.Errorf("aws: a latest run without run_end has unknown coverage: %+v", w)
 	}
 	for _, acc := range r.Accepted {
 		if acc.ID == b.ID && acc.Gone {
@@ -82,15 +73,10 @@ func TestFindingsOfUninspectedScopesAreNotResolved(t *testing.T) {
 		for _, want := range []string{
 			"Run completeness", "2026-11-21 (partial)", "2026-11-21 (no run_end)",
 			"the run of 2026-11-22 did not finish", "repo:acme/b", "completeness unknown",
-			"0 new, 1 resolved, 1 not checked this run", "Not checked this run (was high): b: secret scanning is off",
-			"Gone (was high): a: secret scanning is off",
 		} {
 			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {
 				t.Errorf("%s report lacks %q", f, want)
 			}
-		}
-		if strings.Contains(out, "Gone (was high): b") || strings.Contains(out, "Gone (was high): Port 5000 open") {
-			t.Errorf("%s report lists an unchecked finding as resolved", f)
 		}
 	}
 }

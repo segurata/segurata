@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
+	"time"
 
-	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 var confirmFunc = prompt.Confirm
@@ -24,14 +27,14 @@ func (e Env) DefaultConnectors() []string {
 			out = append(out, d.Name)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
 // Run is one scheduled run, what the agent executes: `segurata inventory` over the selected
-// connectors, a notification for high and critical findings that were not in the previous run,
-// then `segurata report --format md`. Both commands are this same binary, run as separate
-// processes so a scheduled run does exactly what the owner would type.
+// connectors (which ends in a tracker sync), a notification for the P0 and P1 items that sync
+// found or reopened, then `segurata report --format md`. Both commands are this same binary, run
+// as separate processes so a scheduled run does exactly what the owner would type.
 //
 // The run ends before the next one is due, and the inventory early enough to leave time for the
 // report: launchd starts no run while one is still going, so one that hung would stop scheduled
@@ -53,38 +56,20 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	if len(connectors) == 0 {
 		connectors = e.DefaultConnectors()
 	}
-	// The snapshot before is only what notifications compare with: a run file it cannot read must
-	// not stop the inventory that writes the file replacing it.
-	before, err := e.serious(p.Out)
-	if err != nil {
-		fmt.Fprintf(e.IO.Err, "previous findings unreadable, every high or critical finding counts as new: %v\n", err)
-		before = map[string]finding.Finding{}
-	}
+	start := e.Now()
 	e.stamp("inventory " + strings.Join(connectors, " "))
 	inv := append([]string{"inventory", "--out", p.Out}, connectors...)
 	if err := e.Runner.Run(invCtx, e.Exe, inv, e.IO.Out, e.IO.Err); err != nil {
 		return fmt.Errorf("inventory: %w", err)
 	}
-	after, err := e.serious(p.Out)
+	fresh, err := e.news(start)
 	if err != nil {
 		return err
 	}
-	var fresh []finding.Finding
-	for id, f := range after {
-		if _, seen := before[id]; !seen {
-			fresh = append(fresh, f)
-		}
-	}
-	sort.Slice(fresh, func(i, j int) bool {
-		if a, b := fresh[i].Severity.Rank(), fresh[j].Severity.Rank(); a != b {
-			return a > b
-		}
-		return fresh[i].ID < fresh[j].ID
-	})
 	if len(fresh) > 0 {
-		e.stamp(fmt.Sprintf("%d new high or critical findings", len(fresh)))
-		for _, f := range fresh {
-			fmt.Fprintf(e.IO.Out, "  [%s] %s %s\n", f.Severity, f.Selector(), f.Title)
+		e.stamp(textfmt.Count(len(fresh), "new P0 or P1 item", "new P0 or P1 items"))
+		for _, it := range fresh {
+			fmt.Fprintf(e.IO.Out, "  [%s] %s %s\n", it.EffectivePriority(), it.ID, it.Title)
 		}
 		if e.GOOS == "darwin" {
 			if err := e.Runner.Run(ctx, osascript, []string{"-e", notification(fresh)}, e.IO.Out, e.IO.Err); err != nil {
@@ -121,43 +106,47 @@ func (e Env) prune(outDir string) {
 	}
 }
 
-// serious returns the high and critical findings of the latest run of each connector, leaving out
-// accepted ones. No run yet means none.
-func (e Env) serious(outDir string) (map[string]finding.Finding, error) {
-	files, err := run.LatestFiles(outDir, e.Now())
-	if err != nil {
-		return map[string]finding.Finding{}, nil // nothing inventoried yet
-	}
-	all, err := run.Load(files)
+// news are the open P0 and P1 items that a sync found or reopened at or after start, most urgent
+// first: what the inventory's sync recorded.
+func (e Env) news(start time.Time) ([]*tracker.Item, error) {
+	t, err := tracker.LoadOrNew(e.Tracker, e.Now())
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]finding.Finding{}
-	for _, f := range all {
-		if f.Severity.Rank() >= finding.SevHigh.Rank() && !f.Hidden() {
-			out[f.ID] = f
+	var out []*tracker.Item
+	for _, it := range t.Items {
+		if p := it.EffectivePriority(); !it.Active(e.Now()) || p != secretrisk.P0 && p != secretrisk.P1 {
+			continue
+		}
+		if slices.ContainsFunc(it.History, func(ev tracker.Event) bool {
+			return (ev.Event == tracker.EvFound || ev.Event == tracker.EvReopened) && !ev.At.Before(start.UTC())
+		}) {
+			out = append(out, it)
 		}
 	}
+	tracker.Sort(out)
 	return out, nil
 }
 
 const maxNotified = 3
 
-// notification is the AppleScript that posts one notification naming the new findings by title.
+// notification is the AppleScript that posts one notification naming the new items by title.
 // Titles never hold secrets (docs/connectors.md); evidence is never shown.
-func notification(fresh []finding.Finding) string {
+func notification(fresh []*tracker.Item) string {
 	var titles []string
-	for i, f := range fresh {
-		if i == maxNotified {
-			titles = append(titles, fmt.Sprintf("and %d more", len(fresh)-maxNotified))
-			break
+	what := string(fresh[0].EffectivePriority())
+	for i, it := range fresh {
+		if it.EffectivePriority() != fresh[0].EffectivePriority() {
+			what = "P0 or P1"
 		}
-		titles = append(titles, f.Title)
+		switch {
+		case i < maxNotified:
+			titles = append(titles, it.Title)
+		case i == maxNotified:
+			titles = append(titles, fmt.Sprintf("and %d more", len(fresh)-maxNotified))
+		}
 	}
-	head := fmt.Sprintf("%d new high or critical findings", len(fresh))
-	if len(fresh) == 1 {
-		head = "1 new " + string(fresh[0].Severity) + " finding"
-	}
+	head := textfmt.Count(len(fresh), "new "+what+" item", "new "+what+" items")
 	return fmt.Sprintf("display notification %s with title %s subtitle %s",
 		appleString(strings.Join(titles, "; ")), appleString("segurata"), appleString(head))
 }

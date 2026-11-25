@@ -136,8 +136,13 @@ func TestDumpSeverity(t *testing.T) {
 	if f.Title != "Production database dump in the git history of ~/src/shop: db/production_latest_backup.sql (12 MB, pushed)" {
 		t.Errorf("title %q", f.Title)
 	}
-	if f.Kind != finding.KindExposure || f.Resource.Type != "data_dump" || f.Resource.ID != "~/src/shop:db/production_latest_backup.sql" || f.Remediation.Action != "" || f.Scope != "dumps:~/src/shop" {
+	if f.Kind != finding.KindExposure || f.Resource.Type != "data_dump" || f.Resource.ID != "~/src/shop:db/production_latest_backup.sql" || f.Remediation.Action != "" || f.Scope != "dumps:~/src/shop" ||
+		f.Blast != finding.BlastPersonalData || f.Unconfirmed {
 		t.Errorf("finding %+v", f)
+	}
+	// A file only named like a dump may be none: the finding says so.
+	if p := (dumpHit{Repo: "~/src/shop", Path: "db/backup.sql", Size: big, Remote: true}).toFinding(); !p.Unconfirmed || !strings.HasPrefix(p.Title, "Possible database dump") {
+		t.Errorf("name-only dump: %v %q", p.Unconfirmed, p.Title)
 	}
 	for _, want := range []string{"git filter-repo --path 'db/production_latest_backup.sql' --invert-paths", "force-push", "re-clone", "segurata never rewrites history", secretrisk.URLAEPDBreaches, secretrisk.URLEDPBBreaches} {
 		if !strings.Contains(f.Remediation.Summary, want) {

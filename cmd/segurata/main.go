@@ -34,11 +34,11 @@ var commands = []command{
 	{"inventory", "[name|name:label ...] [--min-severity=low] [--out=out] [--verbose]", "run connectors (all when none given)", inventory},
 	{"status", "[--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]", "the briefing",
 		func(args []string) int { return trackerCLI().Status(args) }},
-	{"track", "list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|add|sync", "tracker items",
+	{"track", "list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|expect|add|sync", "tracker items",
 		func(args []string) int { return trackerCLI().Track(args) }},
 	{"report", "[--format text|md|html] [--out file]", "latest runs, changes, secrets, accepted risks", reportCmd},
 	{"remediate", "--list | <finding-id> [--apply] [--yes]", "automatable findings of the latest run; the plan, applied with --apply", remediateCmd},
-	{"rotations", "sync|list|next|show|replace|done|snooze|ignore|reopen", "ledger of secrets to rotate", rotationsCmd},
+	{"rotations", "list|next|show|replace|sync|done|snooze|ignore|reopen", "ledger of secrets to rotate; sync, done, snooze, ignore and reopen are track's, on secrets", rotationsCmd},
 	{"accounts", "list|watch|unwatch|owned", "accounts each connector saw and watches; the owner's accounts", accountsCmd},
 	{"signin", "[name|name:label ...] [--all] [--list] [--timeout 10m]", "open the pages where you sign in again, wait, rerun", signinCmd},
 	{"redact", "--trails|--path p|--item id [--apply [--yes]]", "replace secrets in trail files", redactCmd},
@@ -92,13 +92,15 @@ func connectorsCmd([]string) int {
 
 // all is every connector, built-in and external. Discovery runs each plugin's describe, so it
 // happens once per process however many times a command asks.
-var all = sync.OnceValue(func() []connector.Connector {
+var all = sync.OnceValue(discover)
+
+func discover() []connector.Connector {
 	conns := connector.Builtins()
 	for _, e := range connector.Discover() {
 		conns = append(conns, e)
 	}
 	return conns
-})
+}
 
 func inventory(args []string) int {
 	fs := cliflag.New("inventory", os.Stderr)

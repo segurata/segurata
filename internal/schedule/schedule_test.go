@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,16 +17,20 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/proc/proctest"
+	"github.com/segurata/segurata/internal/tracker"
 )
 
 // fakeRunner records every command. launchctl print succeeds when loaded is set; the segurata
-// inventory writes the findings in inventory to the --out directory, as a finished run.
+// inventory writes the findings in inventory to the --out directory, as a finished run, and ends
+// in a tracker sync, as the real one does.
 type fakeRunner struct {
 	calls     [][]string
 	loaded    bool
 	fail      map[string]error // by first argument
 	inventory []finding.Finding
 	exe       string
+	tracker   string // tracker.json the inventory syncs
+	now       func() time.Time
 	deadlines map[string]time.Time // by first argument, of the commands that had one
 }
 
@@ -53,12 +58,19 @@ func (r *fakeRunner) Run(ctx context.Context, name string, args []string, _, _ i
 			return err
 		}
 		var buf bytes.Buffer
+		at := r.now().UTC()
 		for _, f := range r.inventory {
-			f.Type = "finding"
+			f.Type, f.ObservedAt = "finding", at
 			_ = json.NewEncoder(&buf).Encode(f)
 		}
-		buf.WriteString(`{"type":"run_end","connector":"macos","complete":true}` + "\n")
-		return os.WriteFile(filepath.Join(dir, "macos.jsonl"), buf.Bytes(), 0o600)
+		fmt.Fprintf(&buf, `{"type":"run_end","connector":"macos","complete":true,"ended_at":%q}`+"\n", at.Format(time.RFC3339))
+		if err := os.WriteFile(filepath.Join(dir, "macos.jsonl"), buf.Bytes(), 0o600); err != nil {
+			return err
+		}
+		return tracker.Update(r.tracker, r.now(), func(t *tracker.Tracker) error {
+			_, err := t.Sync(tracker.SyncOptions{OutDir: args[2]}, r.now())
+			return err
+		})
 	}
 	return nil
 }
@@ -84,12 +96,16 @@ func testEnv(t *testing.T, goos string) (Env, *fakeRunner, *bytes.Buffer) {
 	t.Helper()
 	home := t.TempDir()
 	exe := filepath.Join(home, "bin", "segurata")
-	r := &fakeRunner{exe: exe}
+	// The clock moves a second per reading, so a run's start comes before what its sync records.
+	ticks := 0
+	now := func() time.Time { ticks++; return time.Date(2026, 11, 24, 3, 0, ticks, 0, time.UTC) }
+	paths := tracker.Paths{Tracker: filepath.Join(home, ".segurata", "tracker.json")}
+	r := &fakeRunner{exe: exe, tracker: paths.Tracker, now: now}
 	out := &bytes.Buffer{}
 	return Env{
 		GOOS: goos, Home: home, UID: 501, Exe: exe, Path: "/opt/homebrew/bin:/usr/bin:/bin", TmpDir: filepath.Join(home, "tmp"),
 		Runner: r, IO: connector.IO{In: strings.NewReader(""), Out: out, Err: &bytes.Buffer{}}, TTY: false,
-		Now: func() time.Time { return time.Date(2026, 11, 24, 3, 0, 0, 0, time.UTC) },
+		Now: now, Tracker: paths,
 		Connectors: []connector.Connector{
 			desc{Name: "macos"}, desc{Name: "google-personal", Needs: []string{"cdp"}},
 			desc{Name: "connected-apps", Needs: []string{"cdp", "cli:gh"}}, desc{Name: "hibp", Needs: []string{"secret:HIBP_API_KEY"}},
@@ -263,12 +279,11 @@ func high(id, title string) finding.Finding {
 	return finding.Finding{ID: id, Connector: "macos", Severity: finding.SevHigh, Title: title}
 }
 
-func TestRunNotifiesOnlyNewHighOrCriticalFindings(t *testing.T) {
+// A run notifies the P0 and P1 items its sync found or reopened: the tracker is the only diff of
+// runs. Items it already had, and lower priorities, are not news.
+func TestRunNotifiesTheP0AndP1ItemsItsSyncFoundOrReopened(t *testing.T) {
 	env, r, out := testEnv(t, "darwin")
-	accepted := high("acc", "Brave debugging port")
-	accepted.Accepted = &finding.Acceptance{Reason: "agents"}
-	r.inventory = []finding.Finding{high("a", "Firewall is off"), accepted,
-		{ID: "m", Connector: "macos", Severity: finding.SevMedium, Title: "medium one"}}
+	r.inventory = []finding.Finding{high("a", "Firewall is off"), {ID: "m", Connector: "macos", Severity: finding.SevMedium, Title: "medium one"}}
 	if err := env.Run(context.Background(), Options{}); err != nil {
 		t.Fatal(err)
 	}
@@ -282,10 +297,10 @@ func TestRunNotifiesOnlyNewHighOrCriticalFindings(t *testing.T) {
 		t.Fatalf("report calls %v", rep)
 	}
 	notes := r.ran(osascript, "-e")
-	if len(notes) != 1 || notes[0][2] != `display notification "Firewall is off" with title "segurata" subtitle "1 new high finding"` {
+	if len(notes) != 1 || notes[0][2] != `display notification "Firewall is off" with title "segurata" subtitle "1 new P1 item"` {
 		t.Fatalf("notifications %v", notes)
 	}
-	if !strings.Contains(out.String(), "1 new high or critical findings") {
+	if !strings.Contains(out.String(), "1 new P0 or P1 item") || !strings.Contains(out.String(), "[P1] T-") {
 		t.Fatal(out.String())
 	}
 
@@ -294,14 +309,32 @@ func TestRunNotifiesOnlyNewHighOrCriticalFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(r.ran(osascript, "-e")) != 1 {
-		t.Fatal("notified again about known findings")
+		t.Fatal("notified again about known items")
 	}
 	r.inventory = append(r.inventory, finding.Finding{ID: "c", Connector: "macos", Severity: finding.SevCritical, Title: `Share "Public" open to guests`})
 	if err := env.Run(context.Background(), Options{Connectors: []string{"macos"}}); err != nil {
 		t.Fatal(err)
 	}
 	notes = r.ran(osascript, "-e")
-	if len(notes) != 2 || !strings.Contains(notes[1][2], `"Share \"Public\" open to guests"`) {
+	if len(notes) != 2 || !strings.Contains(notes[1][2], `"Share \"Public\" open to guests"`) || !strings.Contains(notes[1][2], `"1 new P0 item"`) {
+		t.Fatalf("notifications %v", notes)
+	}
+
+	// Marked done, still reported: reopened, so news again.
+	if err := tracker.Update(env.Tracker.Tracker, env.Now(), func(tr *tracker.Tracker) error {
+		for _, it := range tr.Items {
+			if it.Title == "Firewall is off" {
+				it.Done(env.Now(), "")
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.Run(context.Background(), Options{Connectors: []string{"macos"}}); err != nil {
+		t.Fatal(err)
+	}
+	if notes = r.ran(osascript, "-e"); len(notes) != 3 || !strings.Contains(notes[2][2], `"Firewall is off"`) {
 		t.Fatalf("notifications %v", notes)
 	}
 }
@@ -317,10 +350,9 @@ func TestRunOnLinuxLogsInsteadOfNotifying(t *testing.T) {
 	}
 }
 
-// A torn file from the previous run must not stop the run that writes the file replacing it: the
-// "before" snapshot is best-effort.
+// A torn file from the previous run does not stop the run that writes the file replacing it.
 func TestRunScansEvenWhenThePreviousRunIsUnreadable(t *testing.T) {
-	env, r, out := testEnv(t, "darwin")
+	env, r, _ := testEnv(t, "darwin")
 	dir := filepath.Join(env.Paths().Out, "2026-11-23")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -333,11 +365,8 @@ func TestRunScansEvenWhenThePreviousRunIsUnreadable(t *testing.T) {
 	if err := env.Run(context.Background(), Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.ran(env.Exe, "inventory")) != 1 || len(r.ran(env.Exe, "report")) != 1 {
+	if len(r.ran(env.Exe, "inventory")) != 1 || len(r.ran(env.Exe, "report")) != 1 || len(r.ran(osascript, "-e")) != 1 {
 		t.Fatalf("calls %v", r.calls)
-	}
-	if errs := env.IO.Err.(*bytes.Buffer).String(); !strings.Contains(errs, "macos.jsonl") {
-		t.Errorf("no warning about the unreadable run: %q (out %s)", errs, out)
 	}
 }
 
@@ -432,12 +461,13 @@ func TestRunStopsWhenInventoryFailsAndReportsAReportFailure(t *testing.T) {
 }
 
 func TestNotificationNamesAtMostThreeTitles(t *testing.T) {
-	var fs []finding.Finding
+	var items []*tracker.Item
 	for _, id := range []string{"1", "2", "3", "4", "5"} {
-		fs = append(fs, high(id, "t"+id+"\nline"))
+		items = append(items, &tracker.Item{ID: "T-000" + id, Title: "t" + id + "\nline", Priority: "P1"})
 	}
-	got := notification(fs)
-	want := `display notification "t1 line; t2 line; t3 line; and 2 more" with title "segurata" subtitle "5 new high or critical findings"`
+	items[0].Priority = "P0"
+	got := notification(items)
+	want := `display notification "t1 line; t2 line; t3 line; and 2 more" with title "segurata" subtitle "5 new P0 or P1 items"`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

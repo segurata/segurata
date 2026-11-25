@@ -254,7 +254,7 @@ type proposal struct {
 
 // groupKey is the item key of a finding under its rule.
 func groupKey(f finding.Finding, r *rule) (key string, p proposal) {
-	lbl := label(f.Connector, f.Instance)
+	lbl := finding.Label(f.Connector, f.Instance)
 	p = proposal{theme: themeOf(f.Connector, f.Resource.Type), connector: f.Connector, instance: f.Instance,
 		resource: f.Resource.Type, account: f.Account, kind: r.kind, rule: r}
 	base := "group:" + lbl + "|" + f.Resource.Type
@@ -296,7 +296,7 @@ func (p *proposal) add(f finding.Finding) {
 
 func refOf(f finding.Finding) FindingRef {
 	r := FindingRef{ID: f.ID, Connector: f.Connector, Instance: f.Instance, Account: f.Account, Scope: finding.ScopeOf(f), Title: f.Title,
-		Severity: f.Severity, LastSeen: f.ObservedAt.UTC(), Type: f.Resource.Type, Resource: f.Resource.ID}
+		Severity: f.Severity, LastSeen: f.ObservedAt.UTC(), Type: f.Resource.Type, Resource: f.Resource.ID, Blast: f.Blast, Unconfirmed: f.Unconfirmed}
 	str := func(k string) string { s, _ := f.Evidence[k].(string); return s }
 	for _, p := range []string{str("repo"), str("path")} {
 		if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "/") {

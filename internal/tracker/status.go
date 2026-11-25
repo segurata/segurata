@@ -344,14 +344,14 @@ func Blockers(d *doc.Doc, items []*Item, now time.Time, browser func(connector s
 	if slices.ContainsFunc(items, func(it *Item) bool { return it.BrowserSignIn(browser, now) }) {
 		d.P("`segurata signin` opens the pages that need you.")
 	}
-	if line := ExpectedLine(ExpectedReasons(items)); line != "" {
+	if line := expectedLine(expectedByReason(items)); line != "" {
 		d.P(line)
 	}
 }
 
-// ExpectedLine is the one line that stands for the statuses the config expects, with their
+// expectedLine is the one line that stands for the statuses the config expects, with their
 // reasons: "3 expected (by your config): ephemeral key (1); other people's accounts (2)." or "".
-func ExpectedLine(byReason map[string]int) string {
+func expectedLine(byReason map[string]int) string {
 	if len(byReason) == 0 {
 		return ""
 	}

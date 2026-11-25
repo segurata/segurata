@@ -196,6 +196,10 @@ func statusesOf(rec *httpxtest.Recorder, acct string) []finding.Status {
 	return out
 }
 
+// orgBlasts are the org checks that put more than their severity at stake.
+var orgBlasts = map[check]finding.Blast{orgNo2FARequirement: finding.BlastOrgAccess, orgMembersNo2FA: finding.BlastOrgAccess,
+	orgCollaboratorsNo2FA: finding.BlastOrgAccess, orgDefaultPermission: finding.BlastOrgWrite}
+
 func TestInventoryAccountAndOrganizations(t *testing.T) {
 	rec := inventory(t, world(), nil)
 
@@ -226,6 +230,9 @@ func TestInventoryAccountAndOrganizations(t *testing.T) {
 			continue
 		}
 		got[check(f.Resource.ID)] = f.Severity
+		if want := orgBlasts[check(f.Resource.ID)]; f.Blast != want {
+			t.Errorf("%s: blast %q, want %q", f.Resource.ID, f.Blast, want)
+		}
 		if f.Remediation.Summary == "" || !strings.HasPrefix(f.Remediation.URL, "https://github.com/") {
 			t.Errorf("%s: remediation %+v", f.Resource.ID, f.Remediation)
 		}

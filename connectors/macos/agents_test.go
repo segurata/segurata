@@ -41,7 +41,7 @@ func TestEndpointAgentsAreListedAndLeftoversGraded(t *testing.T) {
 	}
 	sophos := rec.ByResource(t, "endpoint_agent", "endpoint-agent:Sophos")
 	if sophos.Evidence["service_account"] != "_sophos" || fmt.Sprint(sophos.Evidence["folders"]) != "[/Library/Application Support/Sophos]" ||
-		!strings.HasPrefix(sophos.Title, "Leftovers of endpoint agent Sophos") {
+		!strings.HasPrefix(sophos.Title, "Leftovers of endpoint agent Sophos") || sophos.Blast != finding.BlastLeftovers {
 		t.Errorf("sophos %q %v", sophos.Title, sophos.Evidence)
 	}
 	eset := rec.ByResource(t, "endpoint_agent", "endpoint-agent:ESET")

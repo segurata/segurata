@@ -36,7 +36,7 @@ func (c CLI) Run(args []string) int {
 	out := fs.String("out", "", "write the report to this file (mode 0600) instead of stdout")
 	dir := fs.String("dir", config.DefaultOutDir(), "inventory output directory")
 	minSev := fs.String("min-severity", string(finding.SevLow), "leave findings below this severity out of the lists")
-	top := fs.Int("top", 10, "findings listed per connector and per kind of change")
+	top := fs.Int("top", 10, "findings listed per connector")
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil || len(pos) > 0 || *top < 1 || !validSeverity(finding.Severity(*minSev)) {
 		fmt.Fprintln(c.Err, usage)
@@ -56,11 +56,11 @@ func (c CLI) Run(args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	expect, err := tracker.Expectations(c.Config)
+	opt, err := tracker.ConfiguredSync(c.Config, tracker.SyncOptions{})
 	if err != nil {
 		return c.fail(err)
 	}
-	r, err := Build(Inputs{OutDir: *dir, Now: now, Tracker: t, TrackerPath: paths.Tracker, Expect: expect,
+	r, err := Build(Inputs{OutDir: *dir, Now: now, Tracker: t, TrackerPath: paths.Tracker, Sync: opt,
 		MinSev: finding.Severity(*minSev), Top: *top})
 	if err != nil {
 		return c.fail(err)
