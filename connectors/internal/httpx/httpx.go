@@ -136,7 +136,13 @@ func (c *Client) Fetch(ctx context.Context, method, path string, q url.Values, b
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		// url.Error carries the URL: no credential for the connectors that put theirs in headers.
+		// url.Error carries the URL, and a credential may ride in its path or query: it names the
+		// scheme, host and ShownPath, without the query.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			p, _, _ := strings.Cut(path, "?")
+			ue.URL = req.URL.Scheme + "://" + req.URL.Host + ShownPath(p)
+		}
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
@@ -243,4 +249,15 @@ func (a Assessment) Done(fine string) Assessment {
 		return Assessment{Severity: finding.SevInfo, Reasons: []string{fine}}
 	}
 	return a
+}
+
+// ShownPath is a request path as segurata shows it: a token in the path (Telegram's
+// /bot<token>/) is replaced by a placeholder.
+func ShownPath(path string) string {
+	if rest, ok := strings.CutPrefix(path, "/bot"); ok {
+		if _, after, ok := strings.Cut(rest, "/"); ok {
+			return "/bot<token>/" + after
+		}
+	}
+	return path
 }

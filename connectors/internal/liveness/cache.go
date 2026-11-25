@@ -1,9 +1,6 @@
 package liveness
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -20,12 +17,9 @@ const (
 	DeadTTL = 7 * 24 * time.Hour
 )
 
-const cacheVersion = 1
-
-// DefaultCachePath is ~/.cache/segurata/liveness.json.
-func DefaultCachePath(home string) string {
-	return filepath.Join(home, ".cache", "segurata", "liveness.json")
-}
+// cacheVersion 2 came with secretrisk.LivenessRules 2: a version-1 file's dead results may be a
+// bare 401, so it is discarded and every secret asked again.
+const cacheVersion = 2
 
 // Cache keeps results by fingerprint in a 0600 file: fingerprint, state, when, provider and the
 // account, never a value.
@@ -39,8 +33,7 @@ type Cache struct {
 // LoadCache reads the cache at path; a missing, unreadable or older-format file is an empty cache.
 func LoadCache(path string) *Cache {
 	c := &Cache{path: path}
-	raw, err := os.ReadFile(path)
-	if err == nil && json.Unmarshal(raw, c) == nil && c.Version == cacheVersion && c.Results != nil {
+	if found, err := statefile.ReadJSON(path, c); found && err == nil && c.Version == cacheVersion && c.Results != nil {
 		return c
 	}
 	return &Cache{path: path, Results: map[string]secretrisk.Liveness{}}
@@ -94,7 +87,11 @@ func (c *Cache) put(fps []string, r secretrisk.Liveness) {
 }
 
 // withinTTL reports whether a live or dead result is still young enough to stand for a new check.
+// One dated after now (a clock that jumped forward) never is.
 func withinTTL(r secretrisk.Liveness, now time.Time) bool {
+	if r.CheckedAt.After(now) {
+		return false
+	}
 	switch r.State {
 	case secretrisk.Live, secretrisk.Unregistered:
 		return now.Sub(r.CheckedAt) < LiveTTL

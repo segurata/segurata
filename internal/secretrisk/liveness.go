@@ -35,6 +35,8 @@ type Liveness struct {
 	// is what was read ("GET api.github.com/user/keys"), Reason what it says of the secret
 	// ("GitHub SSH key 'laptop'", "Inactive in account 123456789012").
 	ByOwner bool `json:"by_owner,omitempty"`
+	// Rules is the version of the verdict rules that judged it (LivenessRules when it was made).
+	Rules int `json:"rules,omitempty"`
 }
 
 // Said is what the check found, for reasons and history: "GET api.github.com/user answered HTTP
@@ -44,4 +46,15 @@ func (l Liveness) Said() string {
 		return l.Reason + " (" + l.Endpoint + ")"
 	}
 	return l.Endpoint + " answered " + l.Reason
+}
+
+// LivenessRules is the version of the verdict rules. 2: dead only on a provider's documented
+// invalid-key signal in the body; version 1 (no rules field) also read a bare 401 as dead.
+const LivenessRules = 2
+
+// Trusted reports whether the result may stand: a dead verdict of older rules may have been a
+// bare 401 from a key that still works, so it counts as no result at all. A lookup with the
+// owner's credentials never judged by status.
+func (l Liveness) Trusted() bool {
+	return l.State != Dead || l.ByOwner || l.Rules >= LivenessRules
 }

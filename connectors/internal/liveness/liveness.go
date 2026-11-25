@@ -5,9 +5,10 @@
 // when the owner turned it on for secrets attributed to owners they chose: see
 // docs/architecture.md, "Liveness".
 //
-// Safety: every endpoint is a GET that reads who the caller is, or lists something; none changes
-// state, costs money or sends anything. Calls go one at a time per provider, with a pause between
-// any two, through httpx (credentials are dropped on a redirect to another host). Results hold
+// Safety: every endpoint reads who the caller is, or lists something; none changes state, costs
+// money or sends anything. Every call is a GET except two POSTs: Slack's auth.test, without a body,
+// and Linear's GraphQL endpoint, with one fixed query. Calls go one at a time per provider, with a pause between
+// any two, through httpx, following no redirect (a 3xx is unknown). Results hold
 // no value and no provider message (which may echo part of the key), and are cached by
 // fingerprint so a secret is not tried again for a while.
 package liveness
@@ -186,13 +187,32 @@ type Checker struct {
 	Interval time.Duration
 	// Owner runs the lookups (lookup.go); its zero value leaves them without sources.
 	Owner Owner
+	// Attribution is the owner of a fingerprint, false when the run has none for it. Check tries a
+	// probe only when Config.Allows every one of its fingerprints; nil allows nothing.
+	Attribution func(fingerprint string) (attribution.Owner, bool)
+}
+
+// allows reports whether the owner and provider gates let the probe through: every fingerprint
+// attributed to an owner the config allows (someone else's key never rides along with the owner's),
+// and the provider in the allowlist.
+func (c *Checker) allows(p Probe, pv *provider) bool {
+	if c.Attribution == nil || len(p.Fingerprints) == 0 || pv != nil && !c.Config.allowsProvider(pv.name) {
+		return false
+	}
+	for _, fp := range p.Fingerprints {
+		if o, ok := c.Attribution(fp); !ok || !c.Config.Allows(o, p.Type) {
+			return false
+		}
+	}
+	return true
 }
 
 // DefaultInterval keeps the whole check under four calls a second.
 const DefaultInterval = 250 * time.Millisecond
 
 // Check tries each probe the config allows, one call per probe, and returns the result by
-// fingerprint. A probe whose fingerprints all have a fresh cached result is not asked again.
+// fingerprint. The gates come first: a probe they refuse is neither answered from the cache nor
+// recovered. A probe whose fingerprints all have a fresh cached result is not asked again.
 // Results of probes asked are cached; ctx ending stops the calls that have not started.
 func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretrisk.Liveness, Stats) {
 	now := c.now()
@@ -200,6 +220,11 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 	var st Stats
 	queues := map[*provider][]Probe{}
 	for _, p := range probes {
+		pv := forType(p.Type)
+		if !c.allows(p, pv) {
+			st.NotAllowed++
+			continue
+		}
 		if r, ok := c.Cache.fresh(p.Fingerprints, now); ok {
 			for _, fp := range p.Fingerprints {
 				out[fp] = r
@@ -207,14 +232,11 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 			st.Cached++
 			continue
 		}
-		pv := forType(p.Type)
 		switch {
 		case p.Value == "" && p.Recover == nil:
 			st.NoValue++
 		case pv == nil, p.Recover == nil && forProbe(p) == nil: // an AWS secret key without its key id
 			st.Unsupported++
-		case !c.Config.allowsProvider(pv.name):
-			st.NotAllowed++
 		default:
 			queues[pv] = append(queues[pv], p)
 		}
@@ -254,8 +276,8 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 					count(&st.Interrupted)
 					continue
 				}
-				r := c.ask(ctx, lk, pv, p)
-				r.CheckedAt = c.now().UTC()
+				r := withoutValue(c.ask(ctx, lk, pv, p), p)
+				r.CheckedAt, r.Rules = c.now().UTC(), secretrisk.LivenessRules
 				mu.Lock()
 				st.Asked++
 				switch r.State {
@@ -295,8 +317,8 @@ func (c *Checker) interval() time.Duration {
 	return c.Interval
 }
 
-// ask tries the probe on each of the provider's hosts while they say dead: dead only when every
-// host rejects it. A lookup runs once, with the owner's credentials.
+// ask tries the probe on each of the provider's hosts until one accepts it: dead only when every
+// host says dead, else the first other answer. A lookup runs once, with the owner's credentials.
 func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) secretrisk.Liveness {
 	if pv.lookup != nil {
 		r := pv.lookup(ctx, lk, p)
@@ -308,12 +330,49 @@ func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) s
 		bases = b
 	}
 	var r secretrisk.Liveness
-	for _, base := range bases {
-		if r = pv.ask(ctx, base, p); r.State != secretrisk.Dead {
+	for i, base := range bases {
+		got := pv.ask(ctx, base, p)
+		if got.State == secretrisk.Live {
+			r = got
 			break
+		}
+		if i == 0 || r.State == secretrisk.Dead {
+			r = got
 		}
 	}
 	r.Provider = pv.name
+	return r
+}
+
+// valueWindow is the shortest run of a value that counts as holding it.
+const valueWindow = 8
+
+// withoutValue is r with every field that holds a part of the probe's value or key id (any
+// valueWindow characters of it) dropped: the reason becomes "error", the account and the endpoint's
+// path go. The judges keep no provider message, and providerText keeps only short codes; this is
+// the last guard, whatever a provider echoes.
+func withoutValue(r secretrisk.Liveness, p Probe) secretrisk.Liveness {
+	holds := func(s string) bool {
+		for _, v := range []string{p.Value, p.KeyID} {
+			for i := 0; i+valueWindow <= len(v); i++ {
+				if strings.Contains(s, v[i:i+valueWindow]) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if holds(r.Reason) {
+		r.Reason = "error"
+	}
+	if holds(r.Account) {
+		r.Account = ""
+	}
+	if holds(r.Endpoint) {
+		method, rest, _ := strings.Cut(r.Endpoint, " ")
+		host, _, _ := strings.Cut(rest, "/")
+		r.Endpoint = method + " " + host
+	}
 	return r
 }
 

@@ -310,3 +310,20 @@ func TestPriorityLower(t *testing.T) {
 		}
 	}
 }
+
+func TestLivenessTrusted(t *testing.T) {
+	for _, c := range []struct {
+		l    Liveness
+		want bool
+	}{
+		{Liveness{State: Dead}, false}, // rules 1: may be a bare 401
+		{Liveness{State: Dead, Rules: LivenessRules}, true},
+		{Liveness{State: Dead, ByOwner: true}, true},
+		{Liveness{State: Live}, true},
+		{Liveness{State: Unknown}, true},
+	} {
+		if got := c.l.Trusted(); got != c.want {
+			t.Errorf("%+v: %v", c.l, got)
+		}
+	}
+}

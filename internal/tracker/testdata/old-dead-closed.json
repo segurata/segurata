@@ -1,0 +1,505 @@
+{
+  "schema_version": 6,
+  "next_id": 10,
+  "last_sync_at": "2026-11-25T10:01:00Z",
+  "sources": {
+    "local-secrets": "2026-11-25T10:00:00Z"
+  },
+  "themes": [
+    {
+      "id": "rotations",
+      "title": "Secrets to rotate",
+      "description": "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."
+    },
+    {
+      "id": "data-dumps",
+      "title": "Data dumps in git",
+      "description": "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."
+    },
+    {
+      "id": "transcripts",
+      "title": "Trail files to redact",
+      "description": "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."
+    },
+    {
+      "id": "mac",
+      "title": "This Mac",
+      "description": "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."
+    },
+    {
+      "id": "browser-extensions",
+      "title": "Browser extensions",
+      "description": "Extensions that can read or drive your pages, one item per extension."
+    },
+    {
+      "id": "github-orgs",
+      "title": "GitHub",
+      "description": "Organizations and repositories you administer: 2FA, default permissions, Actions, secret scanning."
+    },
+    {
+      "id": "connected-apps",
+      "title": "Connected apps",
+      "description": "Third-party apps with access to GitHub, X, Slack, Notion, Facebook and other accounts."
+    },
+    {
+      "id": "google",
+      "title": "Google",
+      "description": "Apps with access to your Google accounts, and Workspace tenants."
+    },
+    {
+      "id": "cloud",
+      "title": "Cloud",
+      "description": "GCP, AWS, Azure, Cloudflare, Vercel and Supabase: keys, roles, budgets."
+    },
+    {
+      "id": "ai-spend",
+      "title": "AI providers",
+      "description": "OpenAI, Anthropic and OpenRouter keys, limits and spend."
+    },
+    {
+      "id": "coverage",
+      "title": "Not audited here",
+      "description": "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."
+    },
+    {
+      "id": "setup",
+      "title": "Setup",
+      "description": "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."
+    },
+    {
+      "id": "decisions",
+      "title": "Decisions",
+      "description": "Questions only you can answer before the related work can go ahead."
+    },
+    {
+      "id": "other",
+      "title": "Other",
+      "description": "Findings of connectors without a theme of their own, and items added by hand."
+    }
+  ],
+  "items": [
+    {
+      "id": "T-0001",
+      "key": "decide:daily-schedule",
+      "kind": "decide",
+      "theme": "decisions",
+      "title": "Install the daily scheduled inventory?",
+      "status": "open",
+      "priority": "P3",
+      "severity": "medium",
+      "next": {
+        "who": "you",
+        "action": "Decide: Install the daily scheduled inventory?",
+        "command": "segurata track decide T-0001 --answer \"…\""
+      },
+      "decision": {
+        "question": "Install the daily scheduled inventory?",
+        "options": [
+          "yes: segurata schedule install --apply",
+          "not now"
+        ]
+      },
+      "status_at": "2026-11-23T10:00:00Z",
+      "created_at": "2026-11-23T10:00:00Z",
+      "updated_at": "2026-11-23T10:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "decision to take"
+        }
+      ]
+    },
+    {
+      "id": "T-0002",
+      "key": "rotate:c7c7c7c7c7c7c7c7",
+      "kind": "rotate",
+      "theme": "rotations",
+      "title": "GitHub token ghp_…wxyz(40) in shop:deploy.sh (+1 place), committed 2021-03",
+      "status": "done",
+      "priority": "P0",
+      "severity": "critical",
+      "fingerprint": "c7c7c7c7c7c7c7c7",
+      "secret": {
+        "id": "c7c7c7c7",
+        "service": "github",
+        "type": "github",
+        "redacted": "ghp_…wxyz(40)",
+        "impact": "high",
+        "reasons": [
+          "dead: GET api.github.com/x rejected it on 2026-11-24 (HTTP 401)",
+          "GitHub token; committed to a git repository with a remote, so every clone has it",
+          "also in a local file only you can read (1 place)"
+        ],
+        "first_seen": "2026-11-23T10:00:00Z",
+        "last_seen": "2026-11-25T10:00:00Z",
+        "locations": [
+          {
+            "path": "~/src/shop/deploy.sh",
+            "bucket": "0-git",
+            "tracked": true,
+            "source": "gitleaks",
+            "kind": "repo",
+            "remote": true,
+            "repo": "~/src/shop",
+            "date": "2021-03-04",
+            "last_seen": "2026-11-25T10:00:00Z"
+          },
+          {
+            "path": "~/src/shop/.env",
+            "bucket": "3-local",
+            "tracked": false,
+            "mode": "600",
+            "source": "scan",
+            "kind": "repo",
+            "last_seen": "2026-11-25T10:00:00Z"
+          }
+        ],
+        "used_in": [
+          "~/src/shop/.env"
+        ],
+        "rotate_url": "https://github.com/settings/tokens",
+        "attribution": {
+          "owner": "unknown",
+          "confidence": "low",
+          "reasons": [
+            "the secret names no account, project or workspace that can be read offline"
+          ],
+          "facts": {}
+        },
+        "liveness": {
+          "state": "dead",
+          "checked_at": "2026-11-24T10:00:00Z",
+          "provider": "github",
+          "endpoint": "GET api.github.com/x",
+          "reason": "HTTP 401"
+        }
+      },
+      "next": {
+        "who": "you",
+        "action": "Rotate it at https://github.com/settings/tokens and copy the new value; segurata puts it in 1 file.",
+        "command": "segurata rotations replace c7c7c7c7",
+        "url": "https://github.com/settings/tokens"
+      },
+      "status_at": "2026-11-24T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-25T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "found in 2 places"
+        },
+        {
+          "at": "2026-11-24T10:01:00Z",
+          "event": "status",
+          "action": "dead",
+          "detail": "key no longer valid (checked 2026-11-24: GET api.github.com/x answered HTTP 401)"
+        },
+        {
+          "at": "2026-11-25T10:01:00Z",
+          "event": "note",
+          "action": "history-only",
+          "detail": "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
+        }
+      ]
+    },
+    {
+      "id": "T-0003",
+      "key": "rotate:b2b2b2b2b2b2b2b2",
+      "kind": "rotate",
+      "theme": "rotations",
+      "title": "OpenAI project key sk-proj-…abcd(164) in shop:app.py, committed 2021-03",
+      "status": "done",
+      "priority": "P1",
+      "severity": "high",
+      "fingerprint": "b2b2b2b2b2b2b2b2",
+      "secret": {
+        "id": "b2b2b2b2",
+        "service": "openai",
+        "type": "openai-project",
+        "redacted": "sk-proj-…abcd(164)",
+        "impact": "medium",
+        "reasons": [
+          "dead: GET api.openai.com/x rejected it on 2026-11-24 (HTTP 401)",
+          "OpenAI project key; committed to a git repository with a remote, so every clone has it"
+        ],
+        "first_seen": "2026-11-23T10:00:00Z",
+        "last_seen": "2026-11-25T10:00:00Z",
+        "locations": [
+          {
+            "path": "~/src/shop/app.py",
+            "bucket": "0-git",
+            "tracked": true,
+            "source": "gitleaks",
+            "kind": "repo",
+            "remote": true,
+            "repo": "~/src/shop",
+            "date": "2021-03-04",
+            "last_seen": "2026-11-25T10:00:00Z"
+          }
+        ],
+        "used_in": [],
+        "rotate_url": "https://platform.openai.com/api-keys",
+        "attribution": {
+          "owner": "unknown",
+          "confidence": "low",
+          "reasons": [
+            "the secret names no account, project or workspace that can be read offline"
+          ],
+          "facts": {}
+        },
+        "liveness": {
+          "state": "dead",
+          "checked_at": "2026-11-24T10:00:00Z",
+          "provider": "openai",
+          "endpoint": "GET api.openai.com/x",
+          "reason": "HTTP 401"
+        }
+      },
+      "next": {
+        "who": "you",
+        "action": "Rotate it at https://platform.openai.com/api-keys, then mark it done (no working file holds it).",
+        "command": "segurata rotations done b2b2b2b2",
+        "url": "https://platform.openai.com/api-keys"
+      },
+      "status_at": "2026-11-24T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-25T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "found in 1 place"
+        },
+        {
+          "at": "2026-11-24T10:01:00Z",
+          "event": "status",
+          "action": "dead",
+          "detail": "key no longer valid (checked 2026-11-24: GET api.openai.com/x answered HTTP 401)"
+        },
+        {
+          "at": "2026-11-25T10:01:00Z",
+          "event": "note",
+          "action": "history-only",
+          "detail": "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
+        }
+      ]
+    },
+    {
+      "id": "T-0004",
+      "key": "rotate:c3c3c3c3c3c3c3c3",
+      "kind": "rotate",
+      "theme": "rotations",
+      "title": "OpenAI project key sk-proj-…abcd(164) in shop:app.py, committed 2021-03",
+      "status": "done",
+      "priority": "P1",
+      "severity": "high",
+      "fingerprint": "c3c3c3c3c3c3c3c3",
+      "secret": {
+        "id": "c3c3c3c3",
+        "service": "openai",
+        "type": "openai-project",
+        "redacted": "sk-proj-…abcd(164)",
+        "impact": "medium",
+        "reasons": [
+          "dead: GET api.openai.com/x rejected it on 2026-11-24 (HTTP 401)",
+          "OpenAI project key; committed to a git repository with a remote, so every clone has it"
+        ],
+        "first_seen": "2026-11-23T10:00:00Z",
+        "last_seen": "2026-11-25T10:00:00Z",
+        "locations": [
+          {
+            "path": "~/src/shop/app.py",
+            "bucket": "0-git",
+            "tracked": true,
+            "source": "gitleaks",
+            "kind": "repo",
+            "remote": true,
+            "repo": "~/src/shop",
+            "date": "2021-03-04",
+            "last_seen": "2026-11-25T10:00:00Z"
+          }
+        ],
+        "used_in": [],
+        "rotate_url": "https://platform.openai.com/api-keys",
+        "attribution": {
+          "owner": "unknown",
+          "confidence": "low",
+          "reasons": [
+            "the secret names no account, project or workspace that can be read offline"
+          ],
+          "facts": {}
+        },
+        "liveness": {
+          "state": "dead",
+          "checked_at": "2026-11-24T10:00:00Z",
+          "provider": "openai",
+          "endpoint": "GET api.openai.com/x",
+          "reason": "HTTP 401"
+        }
+      },
+      "next": {
+        "who": "you",
+        "action": "Rotate it at https://platform.openai.com/api-keys, then mark it done (no working file holds it).",
+        "command": "segurata rotations done c3c3c3c3",
+        "url": "https://platform.openai.com/api-keys"
+      },
+      "status_at": "2026-11-24T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-25T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "found in 1 place"
+        },
+        {
+          "at": "2026-11-24T10:01:00Z",
+          "event": "status",
+          "action": "dead",
+          "detail": "key no longer valid (checked 2026-11-24: GET api.openai.com/x answered HTTP 401)"
+        },
+        {
+          "at": "2026-11-25T10:01:00Z",
+          "event": "note",
+          "action": "history-only",
+          "detail": "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
+        }
+      ]
+    },
+    {
+      "id": "T-0005",
+      "key": "coverage:google-recovery",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Google recovery options and passkeys are not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "On every Google account, run Security Checkup (sessions, devices, recovery phone and email) and register a passkey or security key; remove SMS as a second factor (docs/plan.md, section 1). Mark this done when checked.",
+        "url": "https://myaccount.google.com/security-checkup"
+      },
+      "status_at": "2026-11-23T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-23T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0006",
+      "key": "coverage:apple-account",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Apple Account devices and Sign in with Apple apps are not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "Review the devices and the apps using Sign in with Apple, and remove the ones you no longer use (docs/manual-review.md). Mark this done when checked.",
+        "url": "https://account.apple.com/account/manage"
+      },
+      "status_at": "2026-11-23T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-23T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0007",
+      "key": "coverage:stripe-keys",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Stripe API keys are not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (docs/plan.md, section 6). Mark this done when checked.",
+        "url": "https://dashboard.stripe.com/apikeys"
+      },
+      "status_at": "2026-11-23T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-23T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0008",
+      "key": "coverage:hibp",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Breaches of your email addresses are not checked: the hibp connector is not set up",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "Install the example connector and give it a Have I Been Pwned API key and your addresses (examples/hibp/README.md), then run it.",
+        "command": "segurata inventory hibp",
+        "url": "https://haveibeenpwned.com/API/Key"
+      },
+      "status_at": "2026-11-23T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-23T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0009",
+      "key": "coverage:password-manager",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "The password manager's reused and breached password report is not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (docs/plan.md, section 2). Mark this done when checked."
+      },
+      "status_at": "2026-11-23T10:01:00Z",
+      "created_at": "2026-11-23T10:01:00Z",
+      "updated_at": "2026-11-23T10:01:00Z",
+      "history": [
+        {
+          "at": "2026-11-23T10:01:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    }
+  ],
+  "owned": {},
+  "runs": {
+    "local-secrets": {
+      "at": "2026-11-25T10:00:00Z",
+      "finished": true,
+      "complete": true,
+      "theme": "other"
+    }
+  }
+}

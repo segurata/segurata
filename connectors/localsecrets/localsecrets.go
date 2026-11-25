@@ -238,14 +238,16 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 
 	findings, noise := s.findings()
 	live := s.checkLiveness(ctx, findings, req.Known)
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
+	// The scan is done: its findings are emitted even when the run ends during the liveness check,
+	// which the sink then marks interrupted.
 	for _, f := range findings {
 		emit.Finding(f)
 	}
 	if sum, ok := noise.summary(); ok {
 		emit.Finding(sum)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	detail := fmt.Sprintf("%d findings", len(findings))
 	switch {

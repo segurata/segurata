@@ -1,6 +1,7 @@
 package liveness
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -14,13 +15,14 @@ import (
 )
 
 // provider is one provider's check: the secret types it takes and the call that tries one. Every
-// call is a GET to a read-only endpoint that says who the caller is or lists something; see the
-// table in docs/architecture.md, "Liveness", for each endpoint's documentation.
+// call goes to a read-only endpoint that says who the caller is or lists something (a GET, except
+// Slack's and Linear's POSTs); see the table in docs/architecture.md, "Liveness", for each
+// endpoint's documentation.
 type provider struct {
 	name  string
 	types []string
-	// bases are the API hosts, tried in order while each says dead: a key of SendGrid's EU region
-	// is rejected by the global host.
+	// bases are the API hosts, tried in order until one accepts the key (Checker.ask): a key of
+	// SendGrid's EU region is rejected by the global host.
 	bases []string
 	ask   func(ctx context.Context, base string, p Probe) secretrisk.Liveness
 	// lookup, in place of ask, classifies the secret with the owner's credentials (lookup.go).
@@ -30,13 +32,13 @@ type provider struct {
 var providers = []*provider{
 	{name: "openai", types: []string{"openai-project", "openai-service", "openai-legacy"}, bases: []string{"https://api.openai.com"}, ask: askOpenAI},
 	{name: "anthropic", types: []string{"anthropic"}, bases: []string{"https://api.anthropic.com"}, ask: askAnthropic},
-	{name: "openrouter", types: []string{"openrouter"}, bases: []string{"https://openrouter.ai"}, ask: bearer("/api/v1/key", accepted(byStatus(false), http.StatusPaymentRequired), nil)},
+	{name: "openrouter", types: []string{"openrouter"}, bases: []string{"https://openrouter.ai"}, ask: bearer("/api/v1/key", deadWhen(http.StatusUnauthorized, "error.code", "401", accepted(byStatus(false), http.StatusPaymentRequired)), nil)},
 	{name: "github", types: []string{"github", "github-pat"}, bases: []string{"https://api.github.com"}, ask: askGitHub},
 	{name: "gitlab", types: []string{"gitlab"}, bases: []string{"https://gitlab.com"}, ask: askGitLab},
 	{name: "aws", types: []string{"aws-secret-key"}, bases: []string{"https://sts.amazonaws.com"}, ask: askAWS},
 	{name: "google", types: []string{"google-api-key"}, bases: []string{"https://generativelanguage.googleapis.com"}, ask: askGoogle},
 	{name: "slack", types: []string{"slack-token"}, bases: []string{"https://slack.com"}, ask: askSlack},
-	{name: "stripe", types: []string{"stripe-live", "stripe-test"}, bases: []string{"https://api.stripe.com"}, ask: bearer("/v1/balance", byStatus(true), nil)},
+	{name: "stripe", types: []string{"stripe-live", "stripe-test"}, bases: []string{"https://api.stripe.com"}, ask: bearer("/v1/balance", deadWhen(http.StatusUnauthorized, "error.code", "api_key_expired", byStatus(true)), nil)},
 	{name: "sendgrid", types: []string{"sendgrid"}, bases: []string{"https://api.sendgrid.com", "https://api.eu.sendgrid.com"}, ask: bearer("/v3/scopes", byStatus(true), nil)},
 	{name: "telegram", types: []string{"telegram-bot"}, bases: []string{"https://api.telegram.org"}, ask: askTelegram},
 	{name: "huggingface", types: []string{"huggingface"}, bases: []string{"https://huggingface.co"}, ask: bearer("/api/whoami-v2", byStatus(false), account("huggingface", "name"))},
@@ -45,8 +47,10 @@ var providers = []*provider{
 	{name: "groq", types: []string{"groq"}, bases: []string{"https://api.groq.com"}, ask: bearer("/openai/v1/models", byStatus(false), nil)},
 	{name: "notion", types: []string{"notion"}, bases: []string{"https://api.notion.com"}, ask: askNotion},
 	{name: "cloudflare", types: []string{"cloudflare-token"}, bases: []string{"https://api.cloudflare.com"}, ask: askCloudflare},
-	{name: "digitalocean", types: []string{"digitalocean"}, bases: []string{"https://api.digitalocean.com"}, ask: bearer("/v2/account", byStatus(false), account("digitalocean", "account.uuid"))},
-	{name: "sentry", types: []string{"sentry-token"}, bases: []string{"https://sentry.io"}, ask: askSentry},
+	{name: "digitalocean", types: []string{"digitalocean"}, bases: []string{"https://api.digitalocean.com"}, ask: bearer("/v2/account", deadWhen(http.StatusUnauthorized, "id", "unauthorized", byStatus(false)), account("digitalocean", "account.uuid"))},
+	// A token of a self-hosted Sentry, or of an organization stored in another region, may be
+	// refused by sentry.io: only a 2xx tells.
+	{name: "sentry", types: []string{"sentry-token"}, bases: []string{"https://sentry.io"}, ask: bearer("/api/0/organizations/", byStatus(false), nil)},
 	{name: "linear", types: []string{"linear"}, bases: []string{"https://api.linear.app"}, ask: askLinear},
 	{name: "aws-keys", types: []string{"aws-access-key-id"}, lookup: lookupAWSKey},
 	{name: "ssh-keys", types: []string{"private-key", "ssh-key"}, lookup: lookupSSHKey},
@@ -87,21 +91,72 @@ func Supported(typ string) bool { return forType(typ) != nil }
 // judge turns an HTTP answer into a state and segurata's own reason.
 type judge func(code int, body []byte) (secretrisk.LiveState, string)
 
-// byStatus is the common judgement: 2xx live, 401 dead, 403 live when the provider answers 403
-// only to a valid key that lacks a permission (forbiddenIsLive), anything else unknown.
+// byStatus is the common judgement: 2xx live, 403 live when the provider answers 403 only to a
+// valid key that lacks a permission (forbiddenIsLive), anything else unknown. A status alone never
+// says dead: a 401 can be a key of another instance, region or partition, an IP allowlist, a
+// missing scope. Dead is deadWhen's, on the provider's documented signal.
 func byStatus(forbiddenIsLive bool) judge {
 	return func(code int, _ []byte) (secretrisk.LiveState, string) {
 		reason := "HTTP " + strconv.Itoa(code)
 		switch {
 		case code >= 200 && code <= 299:
 			return secretrisk.Live, reason
-		case code == http.StatusUnauthorized:
-			return secretrisk.Dead, reason
 		case code == http.StatusForbidden && forbiddenIsLive:
 			return secretrisk.Live, reason + " (valid, lacks a permission)"
 		}
 		return secretrisk.Unknown, reason
 	}
+}
+
+// deadWhen is j, except that an answer with the status whose body holds value at field (a dotted
+// path) is dead: the signal the provider documents for an invalid, revoked or expired key. The
+// reason is value, segurata's copy of it.
+func deadWhen(status int, field, value string, j judge) judge {
+	return func(code int, body []byte) (secretrisk.LiveState, string) {
+		if code == status && bodyField(body, field) == value {
+			return secretrisk.Dead, value
+		}
+		return j(code, body)
+	}
+}
+
+// bodyField is the string or number at a dotted path into a JSON body, through providerText; ""
+// when there is none.
+func bodyField(body []byte, field string) string {
+	var v any
+	if json.Unmarshal(body, &v) != nil {
+		return ""
+	}
+	for _, k := range strings.Split(field, ".") {
+		m, _ := v.(map[string]any)
+		v = m[k]
+	}
+	switch x := v.(type) {
+	case string:
+		return providerText(x)
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	}
+	return ""
+}
+
+// maxProviderText bounds what segurata keeps of a provider's words: a code, an account id.
+const maxProviderText = 64
+
+// providerText is the one sanitizer of text read from a provider's answer (codes, reasons,
+// statuses, account ids): kept only when it is short and made of letters, digits and _ . @ -,
+// else "". Anything else could be a message that echoes part of the key. Checker.Check also drops
+// any result field that holds a part of the probe's value (withoutValue).
+func providerText(s string) string {
+	if len(s) > maxProviderText {
+		return ""
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_.@-", r)) {
+			return ""
+		}
+	}
+	return s
 }
 
 // accepted is j, except that the codes given mean the provider accepted the key: OpenAI answers 429
@@ -119,15 +174,7 @@ func accepted(j judge, codes ...int) judge {
 // dotted path into nested objects ("bot.workspace_id").
 func account(provider, field string) func([]byte) string {
 	return func(body []byte) string {
-		var v any
-		if json.Unmarshal(body, &v) != nil {
-			return ""
-		}
-		for _, k := range strings.Split(field, ".") {
-			m, _ := v.(map[string]any)
-			v = m[k]
-		}
-		if s, ok := v.(string); ok && s != "" {
+		if s := bodyField(body, field); s != "" {
 			return provider + ":" + s
 		}
 		return ""
@@ -147,8 +194,10 @@ func send(ctx context.Context, method, base, path string, body []byte, header ht
 	if u != nil {
 		host = u.Host
 	}
-	r := secretrisk.Liveness{Endpoint: method + " " + host + endpointPath(path)}
-	code, answer, err := httpx.New(base, header).Fetch(ctx, method, path, nil, body)
+	r := secretrisk.Liveness{Endpoint: method + " " + host + httpx.ShownPath(path)}
+	client := httpx.New(base, header)
+	client.HTTP.CheckRedirect = httpx.NoRedirect // the key goes to the provider's URL only; a 3xx is unknown
+	code, answer, err := client.Fetch(ctx, method, path, nil, body)
 	if err != nil {
 		r.State, r.Reason = secretrisk.Unknown, "no answer"
 		return r
@@ -158,17 +207,6 @@ func send(ctx context.Context, method, base, path string, body []byte, header ht
 		r.Account = acct(answer)
 	}
 	return r
-}
-
-// endpointPath is the path as results show it: a token in the path (Telegram's /bot<token>/) is
-// replaced by a placeholder.
-func endpointPath(path string) string {
-	if rest, ok := strings.CutPrefix(path, "/bot"); ok {
-		if _, after, ok := strings.Cut(rest, "/"); ok {
-			return "/bot<token>/" + after
-		}
-	}
-	return path
 }
 
 // bearerAuth is the header that sends the secret as a bearer token.
@@ -184,7 +222,9 @@ func bearer(path string, j judge, acct func([]byte) string) func(context.Context
 }
 
 // askOpenAI lists models; an admin key works only on the organization endpoints, so it lists one
-// project instead.
+// project instead. Never dead: OpenAI documents a 401 for an IP outside the allowlist, an account
+// out of its organization and a key without the endpoint's permission as well as for a wrong key,
+// and no body code that tells them apart.
 func askOpenAI(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	path := "/v1/models"
 	if strings.HasPrefix(p.Value, "sk-admin-") {
@@ -201,27 +241,23 @@ func askAnthropic(ctx context.Context, base string, p Probe) secretrisk.Liveness
 		path = "/v1/organizations/me"
 	}
 	h := http.Header{"X-Api-Key": {p.Value}, "Anthropic-Version": {"2023-06-01"}}
-	return call(ctx, base, path, h, byStatus(true), nil)
+	return call(ctx, base, path, h, deadWhen(http.StatusUnauthorized, "error.type", "authentication_error", byStatus(true)), nil)
 }
 
-// askGitHub reads the user a token signs in as. A 403 tells nothing: an installation token (ghs_)
-// cannot call /user, and GitHub may answer 403 to any credential after many invalid ones.
+// askGitHub reads the user a token signs in as. Never dead: GitHub Enterprise Server and GHE.com
+// issue tokens of the same formats, which api.github.com rejects with the 401 it gives a revoked
+// one. A 403 tells nothing either: an installation token (ghs_) cannot call /user, and GitHub may
+// answer 403 to any credential after many invalid ones.
 func askGitHub(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	h := bearerAuth(p.Value)
 	h.Set("X-Github-Api-Version", "2022-11-28")
 	return call(ctx, base, "/user", h, byStatus(false), account("github", "login"))
 }
 
-// askGitLab reads the user on gitlab.com. A 401 there is not dead: the token may belong to a
-// self-managed instance, which segurata cannot know.
+// askGitLab reads the user on gitlab.com. Never dead: the token may belong to a self-managed
+// instance, which segurata cannot know.
 func askGitLab(ctx context.Context, base string, p Probe) secretrisk.Liveness {
-	j := func(code int, body []byte) (secretrisk.LiveState, string) {
-		if code == http.StatusUnauthorized {
-			return secretrisk.Unknown, "HTTP 401 on gitlab.com (it may belong to a self-managed instance)"
-		}
-		return byStatus(true)(code, body)
-	}
-	return call(ctx, base, "/api/v4/user", http.Header{"Private-Token": {p.Value}}, j, account("gitlab", "username"))
+	return call(ctx, base, "/api/v4/user", http.Header{"Private-Token": {p.Value}}, byStatus(true), account("gitlab", "username"))
 }
 
 // askGoogle lists Gemini models, free of charge, with the key in a header. Google checks the key
@@ -256,77 +292,53 @@ func googleReason(body []byte) string {
 	}
 	for _, d := range e.Error.Details {
 		if strings.HasSuffix(d.Type, "google.rpc.ErrorInfo") && d.Reason != "" {
-			return d.Reason
+			return providerText(d.Reason)
 		}
 	}
 	return ""
 }
 
-// slackDead are the auth.test errors of a token that no longer works.
-var slackDead = map[string]bool{"invalid_auth": true, "not_authed": true, "token_revoked": true, "token_expired": true, "account_inactive": true}
+// slackDead are the auth.test errors of a token that no longer works. not_authed (no token sent)
+// is not one of them: segurata sent one, so it says nothing about it.
+var slackDead = map[string]bool{"invalid_auth": true, "token_revoked": true, "token_expired": true, "account_inactive": true}
 
 // askSlack calls auth.test, which answers 200 either way: ok true with the workspace, or ok false
 // with an error code. Slack documents it as POST; it reads, and the request has no body.
 func askSlack(ctx context.Context, base string, p Probe) secretrisk.Liveness {
-	var team string
 	j := func(code int, body []byte) (secretrisk.LiveState, string) {
 		var r struct {
-			OK     bool   `json:"ok"`
-			Error  string `json:"error"`
-			TeamID string `json:"team_id"`
+			OK bool `json:"ok"`
 		}
 		if code != http.StatusOK || json.Unmarshal(body, &r) != nil {
 			return byStatus(false)(code, body)
 		}
+		e := bodyField(body, "error")
 		switch {
 		case r.OK:
-			team = r.TeamID
 			return secretrisk.Live, "ok"
-		case slackDead[r.Error]:
-			return secretrisk.Dead, r.Error
+		case slackDead[e]:
+			return secretrisk.Dead, e
 		}
-		return secretrisk.Unknown, safeCode(r.Error)
+		return secretrisk.Unknown, cmp.Or(e, "error")
 	}
-	res := send(ctx, http.MethodPost, base, "/api/auth.test", nil, bearerAuth(p.Value), j, nil)
-	if res.State == secretrisk.Live && team != "" {
-		res.Account = "slack:" + team
-	}
-	return res
+	return send(ctx, http.MethodPost, base, "/api/auth.test", nil, bearerAuth(p.Value), j, account("slack", "team_id"))
 }
 
 // askTelegram calls getMe, whose URL holds the token: the endpoint recorded hides it, and a failed
-// call keeps no error.
+// call keeps no error. Never dead: the Bot API says its error_code "is subject to change".
 func askTelegram(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	acct := func(body []byte) string {
-		var r struct {
-			Result struct {
-				Username string `json:"username"`
-			} `json:"result"`
+		if u := bodyField(body, "result.username"); u != "" {
+			return "telegram:@" + u
 		}
-		if json.Unmarshal(body, &r) != nil || r.Result.Username == "" {
-			return ""
-		}
-		return "telegram:@" + r.Result.Username
+		return ""
 	}
 	return call(ctx, base, "/bot"+p.Value+"/getMe", http.Header{}, byStatus(false), acct)
 }
 
-// safeCode keeps an API error code only when it is a short snake_case word: anything else could
-// be text the provider echoed.
-func safeCode(s string) string {
-	if len(s) == 0 || len(s) > 40 {
-		return "error"
-	}
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r == '_') {
-			return "error"
-		}
-	}
-	return s
-}
-
 // askXAI reads the key's own record. A key that still authenticates but is blocked or disabled,
-// or whose team is blocked, answers 200 with a flag set: dead, by the first flag set.
+// or whose team is blocked, answers 200 with a flag set: dead, by the first flag set. A 401 is
+// unknown: xAI documents no body code for it.
 func askXAI(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	j := func(code int, body []byte) (secretrisk.LiveState, string) {
 		var k map[string]any
@@ -350,7 +362,7 @@ const notionVersion = "2026-03-11"
 func askNotion(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	h := bearerAuth(p.Value)
 	h.Set("Notion-Version", notionVersion)
-	return call(ctx, base, "/v1/users/me", h, byStatus(true), account("notion", "bot.workspace_id"))
+	return call(ctx, base, "/v1/users/me", h, deadWhen(http.StatusUnauthorized, "code", "unauthorized", byStatus(true)), account("notion", "bot.workspace_id"))
 }
 
 // askCloudflare verifies a user API token. Only the token's status decides: active is live,
@@ -358,67 +370,32 @@ func askNotion(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 // endpoint that needs the account id, and a legacy Global API Key needs the account's email.
 func askCloudflare(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	j := func(code int, body []byte) (secretrisk.LiveState, string) {
-		var r struct {
-			Result struct {
-				Status string `json:"status"`
-			} `json:"result"`
-		}
-		if code != http.StatusOK || json.Unmarshal(body, &r) != nil {
+		status := bodyField(body, "result.status")
+		if code != http.StatusOK || status == "" {
 			return secretrisk.Unknown, "HTTP " + strconv.Itoa(code)
 		}
-		switch r.Result.Status {
+		switch status {
 		case "active":
 			return secretrisk.Live, "active"
 		case "disabled", "expired":
-			return secretrisk.Dead, "token " + r.Result.Status
+			return secretrisk.Dead, "token " + status
 		}
-		return secretrisk.Unknown, "status " + safeCode(r.Result.Status)
+		return secretrisk.Unknown, "status " + status
 	}
 	return call(ctx, base, "/client/v4/user/tokens/verify", bearerAuth(p.Value), j, nil)
-}
-
-// askSentry lists the organizations a token reaches. Only a 2xx tells: a token of a self-hosted
-// Sentry, or of an organization stored in another region, may be refused by sentry.io.
-func askSentry(ctx context.Context, base string, p Probe) secretrisk.Liveness {
-	j := func(code int, body []byte) (secretrisk.LiveState, string) {
-		if code >= 200 && code <= 299 {
-			return secretrisk.Live, "HTTP " + strconv.Itoa(code)
-		}
-		return secretrisk.Unknown, "HTTP " + strconv.Itoa(code) + " on sentry.io (it may belong to a self-hosted Sentry or another region)"
-	}
-	return call(ctx, base, "/api/0/organizations/", bearerAuth(p.Value), j, nil)
 }
 
 // linearQuery is the only body sent to Linear: a GraphQL query, which cannot change anything.
 var linearQuery = []byte(`{"query":"{ viewer { id } }"}`)
 
-// graphQLError is one entry of a GraphQL answer's errors.
-type graphQLError struct {
-	Extensions struct {
-		Code string `json:"code"`
-	} `json:"extensions"`
-}
-
 // askLinear asks Linear's GraphQL API who the viewer is. A personal API key goes in Authorization
-// as it is, without Bearer. An authentication error is dead.
+// as it is, without Bearer. Never dead: Linear documents no error code for an invalid key.
 func askLinear(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	j := func(code int, body []byte) (secretrisk.LiveState, string) {
-		var r struct {
-			Data struct {
-				Viewer struct {
-					ID string `json:"id"`
-				} `json:"viewer"`
-			} `json:"data"`
-			Errors []graphQLError `json:"errors"`
-		}
-		_ = json.Unmarshal(body, &r)
-		switch {
-		case code == http.StatusOK && r.Data.Viewer.ID != "":
+		if code == http.StatusOK && bodyField(body, "data.viewer.id") != "" {
 			return secretrisk.Live, "HTTP 200"
-		case slices.ContainsFunc(r.Errors, func(e graphQLError) bool { return e.Extensions.Code == "AUTHENTICATION_ERROR" }):
-			return secretrisk.Dead, "AUTHENTICATION_ERROR"
 		}
-		return byStatus(false)(code, body)
+		return secretrisk.Unknown, "HTTP " + strconv.Itoa(code)
 	}
 	return send(ctx, http.MethodPost, base, "/graphql", linearQuery, http.Header{"Authorization": {p.Value}}, j, account("linear", "data.viewer.id"))
 }

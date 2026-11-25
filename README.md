@@ -566,9 +566,11 @@ Secrets seen only in cached git history are read again from their commit when ne
 ```
 
 `owners` defaults to `["mine"]`; `not-mine` is refused, so someone else's key is never tried.
-`providers` narrows the list. A live key that left the machine is P0; a dead one (the provider
-rejects it as invalid, revoked or expired) is closed as done, "key no longer valid (checked
-<date>)", and opens again if a later check finds it live; an unknown answer changes nothing.
+`providers` narrows the list. A live key that left the machine is P0; a dead one (the provider's
+body carries its documented signal for an invalid, revoked or expired key; a bare 401 is unknown)
+is closed as done, "key no longer valid (checked <date>)", once no working file holds it, and opens
+again if a later check finds it live or a working file holds it again; an unknown answer changes
+nothing.
 Results are cached by fingerprint in `~/.cache/segurata/liveness.json` (live 1 day, dead 7 days)
 and hold no value. `rotations list` shows a LIVE column and, like `status`, "Liveness checked for N
 of M secrets". Endpoints, documentation and limits:

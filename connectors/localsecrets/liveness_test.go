@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -43,8 +44,9 @@ func newFakeProviders(t *testing.T, liveKeyIDs ...string) *fakeProviders {
 		f.asked = append(f.asked, auth)
 		f.mu.Unlock()
 		switch {
-		case r.Header.Get("X-Api-Key") != "":
+		case r.Header.Get("X-Api-Key") != "": // the documented invalid-key answer
 			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`))
 		case strings.HasPrefix(auth, "AWS4-HMAC-SHA256"):
 			for _, id := range liveKeyIDs {
 				if strings.Contains(auth, "Credential="+id+"/") {
@@ -371,5 +373,234 @@ func TestLivenessLookupsAtScanTime(t *testing.T) {
 	keys := livenessOf(t, rec, "private-key")
 	if l := keys["scan:~/src/shop/deploy2.pem"]; l == nil || l.State != secretrisk.Live || l.Reason != `GitHub SSH key "deploy box"` || l.Account != "github:octocat" {
 		t.Errorf("private key: %+v", keys)
+	}
+}
+
+// pairHistory is a repository with one commit holding an AWS key id and a secret access key on
+// the next line, and a gitleaks that reports both as committed on date.
+type pairHistory struct {
+	*historyRepo
+	gl cli.Runner
+}
+
+func newPairHistory(t *testing.T, keyID, secret, date string) pairHistory {
+	r := newHistoryRepo(t)
+	if err := os.WriteFile(filepath.Join(r.dir, "creds.env"), []byte("AWS_ACCESS_KEY_ID="+keyID+"\naws_secret_access_key="+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.git("add", "creds.env")
+	r.git("commit", "-q", "-m", "creds")
+	commit := r.git("rev-parse", "HEAD")
+	gl := cli.RunnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "version" {
+			return []byte("v8.30.1\n"), nil
+		}
+		r.scans = append(r.scans, args)
+		return json.Marshal([]map[string]any{
+			{"RuleID": "aws-access-token", "File": "creds.env", "StartLine": 1, "Secret": keyID, "Commit": commit, "Date": date},
+			{"RuleID": "aws-secret-key", "File": "creds.env", "StartLine": 2, "Secret": secret, "Commit": commit, "Date": date},
+		})
+	})
+	return pairHistory{r, gl}
+}
+
+// check scans the history (from the gitleaks cache after the first time, replayed says which) and
+// runs the liveness check for mine and unknown secrets against f; it fails if a value reaches the
+// findings or the status line.
+func (h pairHistory) check(t *testing.T, f *fakeProviders, known *attribution.Known, values ...string) (line string, replayed bool) {
+	t.Helper()
+	c := &Connector{Gitleaks: h.gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+		Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
+		NewChecker: func(home string, cfg liveness.Config) *liveness.Checker {
+			return &liveness.Checker{Config: cfg, Bases: map[string][]string{"aws": {f.URL}}, Interval: time.Millisecond}
+		}}
+	lc, err := liveness.ParseConfig(map[string]any{"enabled": true, "owners": []any{"mine", "unknown"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := settings{reposRoot: filepath.Join(h.home, "src"), workers: 1, timeout: time.Minute, gitCache: true, liveness: lc}
+	h.scans = nil
+	s := newScan(context.Background(), c, h.home, cfg, fingerprint.FromBytes(bytes.Repeat([]byte{1}, 32)), &recorder{})
+	if err := s.gitleaks(h.dir); err != nil {
+		t.Fatal(err)
+	}
+	fs, _ := s.findings()
+	line = s.checkLiveness(context.Background(), fs, known)
+	raw, _ := json.Marshal(fs)
+	for _, v := range values {
+		if strings.Contains(string(raw)+line, v) {
+			t.Fatal("a value reached the output")
+		}
+	}
+	return line, len(h.scans) == 0
+}
+
+// A secret key committed next to someone else's key id: the pair is never sent to STS, neither
+// when the scan read the values nor when the history is replayed from the cache and the values
+// would have to be recovered. The key id's own attribution gates the probe, not the secret key's.
+func TestLivenessNeverSendsAForeignKeyID(t *testing.T) {
+	theirs, secret := testcorpus.AWSKeyID("AKIA", 999999999999, false, 1), fake("", 40)
+	h := newPairHistory(t, theirs, secret, "2026-11-01T00:00:00Z")
+	f := newFakeProviders(t, theirs)
+	theirAccount := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
+	for _, wantReplay := range []bool{false, true} {
+		line, replayed := h.check(t, f, theirAccount, theirs, secret)
+		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "0 asked") || strings.Contains(line, " 0 not allowed") {
+			t.Fatalf("replay %v: someone else's key id was sent (%v): %s", replayed, f.asked, line)
+		}
+	}
+	// The control: the same pair, the owner's, is recovered and tried.
+	line, _ := h.check(t, f, &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"999999999999"}}}, theirs, secret)
+	if !f.askedAbout(theirs) || !strings.Contains(line, "1 asked") {
+		t.Errorf("the owner's pair was not tried: %s", line)
+	}
+}
+
+// A temporary key id (ASIA) next to a secret key is no pair: signed without its session token it
+// would read as rejected. Neither path pairs it: the key id gets its own lookup (which sends
+// nothing) and the secret key is tried alone: unsupported without a key id.
+func TestLivenessNeverPairsATemporaryKeyID(t *testing.T) {
+	temp, secret := testcorpus.AWSKeyID("ASIA", 12345678901, false, 1), fake("", 40)
+	h := newPairHistory(t, temp, secret, "2026-11-23T20:00:00Z") // within STS's lifetime: not noise
+	f := newFakeProviders(t, temp)
+	for _, wantReplay := range []bool{false, true} {
+		line, replayed := h.check(t, f, &attribution.Known{}, temp, secret)
+		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "1 asked,") || !strings.Contains(line, "1 unsupported") && !strings.Contains(line, "1 without a value") {
+			t.Errorf("replay %v: an ASIA id was paired (%v): %s", replayed, f.asked, line)
+		}
+	}
+}
+
+// One key id and two secret keys in one place: the id goes with one of them, the same one every
+// run, and the other is tried alone (unsupported, or from the cache).
+func TestHeldKeyIDPairsOnce(t *testing.T) {
+	h := heldValues{
+		byFP:       map[string]heldValue{"s2": {"aws-secret-key", "two"}, "s1": {"aws-secret-key", "one"}, "id": {"aws-access-key-id", "AKIA0"}},
+		awsIDs:     map[string]map[string]string{"p": {"id": "AKIA0"}},
+		awsSecrets: map[string][]string{"p": {"s2", "s1"}},
+	}
+	for range 20 {
+		var paired []string
+		for _, p := range h.probes() {
+			if slices.Contains(p.Fingerprints, "id") {
+				paired = append(paired, strings.Join(p.Fingerprints, ","))
+				if p.KeyID != "AKIA0" || p.Value != "one" {
+					t.Fatalf("pair %+v", p)
+				}
+			}
+		}
+		if len(paired) != 1 || paired[0] != "s1,id" {
+			t.Fatalf("the key id went with %v", paired)
+		}
+	}
+}
+
+// A Cloudflare token is the one probed type whose value does not name its provider: it is tried
+// only when its key names Cloudflare, never for a bare CF_TOKEN, which may be anything.
+func TestCloudflareOnlyWhenNamed(t *testing.T) {
+	fx := newFixture(t)
+	named, bare := fake("", 40), fake("", 40)
+	fx.secrets = append(fx.secrets, named, bare)
+	fx.write(t, ".config/cf/env", "CLOUDFLARE_API_TOKEN="+named+"\nCF_API_TOKEN="+bare+"\n", 0o600)
+	f := newFakeProviders(t)
+	c := fx.livenessConnector(t, f)
+	req := connector.Request{Known: &attribution.Known{}, Config: map[string]any{"liveness": map[string]any{"enabled": true, "owners": []any{"unknown"}, "providers": []any{"cloudflare"}}}}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), req, rec); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, fd := range rec.findings {
+		if ev, ok := secretrisk.EvidenceOf(fd); ok && ev.Type == "cloudflare-token" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("both tokens found: %d", n)
+	}
+	if !f.askedAbout(named) || f.askedAbout(bare) {
+		t.Errorf("named asked %v, bare asked %v", f.askedAbout(named), f.askedAbout(bare))
+	}
+	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	if strings.Contains(string(raw), named) || strings.Contains(string(raw), bare) {
+		t.Fatal("a token reached the output")
+	}
+}
+
+// hangingProviders never answers until the request is abandoned; called runs at the first request.
+func hangingProviders(t *testing.T, called func()) *fakeProviders {
+	var once sync.Once
+	f := &fakeProviders{}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.asked = append(f.asked, r.Header.Get("Authorization")+r.Header.Get("X-Api-Key"))
+		f.mu.Unlock()
+		once.Do(called)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+// The liveness phase never costs the scan its findings: it ends a minute before the run's deadline
+// (so a deadline closer than livenessTimeout leaves it no time at all), and a run cancelled while
+// it probes still emits every finding before it returns.
+func TestLivenessNeverDiscardsTheScan(t *testing.T) {
+	req := connector.Request{Known: &attribution.Known{}, Config: map[string]any{"liveness": map[string]any{"enabled": true, "owners": []any{"unknown"}}}}
+	reported := func(rec *recorder) int {
+		n := 0
+		for _, f := range rec.findings {
+			if _, ok := secretrisk.EvidenceOf(f); ok {
+				n++
+			}
+		}
+		return n
+	}
+
+	fx := newFixture(t)
+	f := hangingProviders(t, func() {})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rec := &recorder{}
+	start := time.Now()
+	if err := fx.livenessConnector(t, f).Inventory(ctx, req, rec); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 20*time.Second || reported(rec) == 0 || len(f.asked) != 0 || !strings.Contains(rec.statuses[0].Detail, "interrupted") {
+		t.Errorf("deadline in 30s: took %s, %d findings, %d asked; %v", d, reported(rec), len(f.asked), rec.statuses)
+	}
+
+	fx = newFixture(t)
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	f = hangingProviders(t, cancel) // Ctrl-C while the first provider is asked
+	rec = &recorder{}
+	if err := fx.livenessConnector(t, f).Inventory(ctx, req, rec); err == nil {
+		t.Error("a cancelled run reported success")
+	}
+	if reported(rec) == 0 || len(f.asked) == 0 {
+		t.Errorf("cancelled while probing: %d findings, %d asked", reported(rec), len(f.asked))
+	}
+	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	for _, s := range fx.secrets {
+		if len(s) >= 6 && strings.Contains(string(raw), s) {
+			t.Fatal("a raw secret reached the output")
+		}
+	}
+}
+
+// The liveness cache sits beside the other caches, under the connector's CacheDir root.
+func TestLivenessCacheFollowsCacheDir(t *testing.T) {
+	home := t.TempDir()
+	c := &Connector{CacheDir: func(h string) string { return filepath.Join(h, "state", "gitleaks") }}
+	ch := c.checker(home, liveness.Config{})
+	if err := ch.Cache.Save(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "state", "liveness.json")); err != nil {
+		t.Errorf("cache not under CacheDir's root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cache")); err == nil {
+		t.Error("a cache was written under ~/.cache")
 	}
 }

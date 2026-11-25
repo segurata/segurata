@@ -104,6 +104,20 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	live := cred == liveKey || strings.HasSuffix(cred, liveKey)
+	if !live {
+		// The documented invalid-key answers (docs/architecture.md, "Liveness").
+		switch {
+		case r.Header.Get("X-Api-Key") != "":
+			reply(http.StatusUnauthorized, `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`)
+			return
+		case r.URL.Path == "/api/v1/key":
+			reply(http.StatusUnauthorized, `{"error":{"code":401,"message":"User not found."}}`)
+			return
+		case r.URL.Path == "/v1/balance":
+			reply(http.StatusUnauthorized, `{"error":{"code":"api_key_expired","type":"invalid_request_error","message":"Expired API Key provided: `+cred+`"}}`)
+			return
+		}
+	}
 	switch r.URL.Path {
 	case "/v1/api-key": // xAI: a disabled key still answers 200
 		switch {
@@ -185,7 +199,14 @@ func (f *fake) checker() *Checker {
 	for _, p := range providers {
 		bases[p.name] = []string{f.URL}
 	}
-	return &Checker{Config: Config{Enabled: true, Owners: []attribution.Owner{attribution.Mine}}, Bases: bases, Interval: time.Millisecond}
+	return mineOnly(&Checker{Bases: bases, Interval: time.Millisecond})
+}
+
+// mineOnly lets c try every probe: each fingerprint attributed mine, mine allowed.
+func mineOnly(c *Checker) *Checker {
+	c.Config.Enabled, c.Config.Owners = true, []attribution.Owner{attribution.Mine}
+	c.Attribution = func(string) (attribution.Owner, bool) { return attribution.Mine, true }
+	return c
 }
 
 func TestEveryProviderLiveAndDead(t *testing.T) {
@@ -197,29 +218,31 @@ func TestEveryProviderLiveAndDead(t *testing.T) {
 		deadState      secretrisk.LiveState
 		liveReasonPart string
 	}{
-		{"openai-project", "sk-proj-", "", secretrisk.Dead, "HTTP 200"},
-		{"openai-service", "sk-admin-", "", secretrisk.Dead, "HTTP 200"},
+		// Dead only where the provider documents a body signal for an invalid key; a bare 401 (or
+		// one whose cause the provider lists as several things) is unknown.
+		{"openai-project", "sk-proj-", "", secretrisk.Unknown, "HTTP 200"},
+		{"openai-service", "sk-admin-", "", secretrisk.Unknown, "HTTP 200"},
 		{"anthropic", "sk-ant-api03-", "", secretrisk.Dead, "HTTP 200"},
 		{"anthropic", "sk-ant-admin01-", "", secretrisk.Dead, "HTTP 200"},
 		{"openrouter", "sk-or-v1-", "", secretrisk.Dead, "HTTP 200"},
-		{"github", "ghp_", "github:octocat", secretrisk.Dead, "HTTP 200"},
-		{"github-pat", "github_pat_", "github:octocat", secretrisk.Dead, "HTTP 200"},
+		{"github", "ghp_", "github:octocat", secretrisk.Unknown, "HTTP 200"},
+		{"github-pat", "github_pat_", "github:octocat", secretrisk.Unknown, "HTTP 200"},
 		{"gitlab", "glpat-", "gitlab:gitlab-me", secretrisk.Unknown, "HTTP 200"},
 		{"google-api-key", "AIza", "", secretrisk.Dead, "SERVICE_DISABLED"},
 		{"slack-token", "xoxb-", "slack:T0FAKE", secretrisk.Dead, "ok"},
 		{"stripe-live", "sk_live_", "", secretrisk.Dead, "HTTP 200"},
 		{"stripe-test", "rk_test_", "", secretrisk.Dead, "HTTP 200"},
-		{"sendgrid", "SG.", "", secretrisk.Dead, "HTTP 200"},
-		{"telegram-bot", "123456789:AA", "telegram:@fake_bot", secretrisk.Dead, "HTTP 200"},
-		{"huggingface", "hf_", "huggingface:hf-me", secretrisk.Dead, "HTTP 200"},
-		{"npm-token", "npm_", "npm:npm-me", secretrisk.Dead, "HTTP 200"},
-		{"xai", "xai-", "", secretrisk.Dead, "HTTP 200"},
-		{"groq", "gsk_", "", secretrisk.Dead, "HTTP 200"},
+		{"sendgrid", "SG.", "", secretrisk.Unknown, "HTTP 200"},
+		{"telegram-bot", "123456789:AA", "telegram:@fake_bot", secretrisk.Unknown, "HTTP 200"},
+		{"huggingface", "hf_", "huggingface:hf-me", secretrisk.Unknown, "HTTP 200"},
+		{"npm-token", "npm_", "npm:npm-me", secretrisk.Unknown, "HTTP 200"},
+		{"xai", "xai-", "", secretrisk.Unknown, "HTTP 200"},
+		{"groq", "gsk_", "", secretrisk.Unknown, "HTTP 200"},
 		{"notion", "ntn_", "notion:ws-1", secretrisk.Dead, "HTTP 200"},
 		{"cloudflare-token", "", "", secretrisk.Unknown, "active"},
 		{"digitalocean", "dop_v1_", "digitalocean:do-uuid-1", secretrisk.Dead, "HTTP 200"},
 		{"sentry-token", "sntryu_", "", secretrisk.Unknown, "HTTP 200"},
-		{"linear", "lin_api_", "linear:lin-user-1", secretrisk.Dead, "HTTP 200"},
+		{"linear", "lin_api_", "linear:lin-user-1", secretrisk.Unknown, "HTTP 200"},
 	}
 	for _, tc := range cases {
 		probes := []Probe{
@@ -262,7 +285,7 @@ func TestQuotaAndCreditsMeanAccepted(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
-	c := &Checker{Bases: map[string][]string{"openai": {srv.URL}, "openrouter": {srv.URL}}, Interval: time.Millisecond}
+	c := mineOnly(&Checker{Bases: map[string][]string{"openai": {srv.URL}, "openrouter": {srv.URL}}, Interval: time.Millisecond})
 	got, _ := c.Check(context.Background(), []Probe{
 		{Fingerprints: []string{"o"}, Type: "openai-project", Value: liveKey},
 		{Fingerprints: []string{"r"}, Type: "openrouter", Value: liveKey},
@@ -275,17 +298,28 @@ func TestQuotaAndCreditsMeanAccepted(t *testing.T) {
 func TestDeadOnlyWhenEveryRegionSaysSo(t *testing.T) {
 	global, eu := newFake(t), newFake(t)
 	c := global.checker()
-	c.Bases["sendgrid"] = []string{global.URL, eu.URL}
-	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"d"}, Type: "sendgrid", Value: "SG." + deadKey}})
+	c.Bases["stripe"] = []string{global.URL, eu.URL}
+	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"d"}, Type: "stripe-live", Value: deadKey}})
 	if got["d"].State != secretrisk.Dead || len(eu.paths) != 1 {
 		t.Errorf("a key both hosts reject: %+v, EU asked %d times", got["d"], len(eu.paths))
 	}
 	euOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"scopes":[]}`)) }))
 	defer euOnly.Close()
-	c.Bases["sendgrid"] = []string{global.URL, euOnly.URL}
-	got, _ = c.Check(context.Background(), []Probe{{Fingerprints: []string{"e"}, Type: "sendgrid", Value: "SG." + deadKey}})
-	if got["e"].State != secretrisk.Live {
-		t.Errorf("an EU key the global host rejects: %+v", got["e"])
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer flaky.Close()
+	for _, bases := range [][]string{{global.URL, euOnly.URL}, {flaky.URL, euOnly.URL}} {
+		c.Bases["stripe"] = bases
+		got, _ = c.Check(context.Background(), []Probe{{Fingerprints: []string{"e"}, Type: "stripe-live", Value: deadKey}})
+		if got["e"].State != secretrisk.Live {
+			t.Errorf("a key the second host accepts: %+v", got["e"])
+		}
+	}
+	for _, bases := range [][]string{{global.URL, flaky.URL}, {flaky.URL, global.URL}} {
+		c.Bases["stripe"] = bases
+		got, _ = c.Check(context.Background(), []Probe{{Fingerprints: []string{"u"}, Type: "stripe-live", Value: deadKey}})
+		if got["u"].State != secretrisk.Unknown {
+			t.Errorf("one host dead, one without an answer: %+v", got["u"])
+		}
 	}
 	if p := byName("sendgrid"); len(p.bases) != 2 || !strings.Contains(p.bases[1], "api.eu.sendgrid.com") {
 		t.Errorf("sendgrid hosts %v", p.bases)
@@ -324,8 +358,9 @@ func TestAWSPair(t *testing.T) {
 	if r := got["secret"]; r.State != secretrisk.Live || r.Account != "aws:012345678901" || got["id"] != r {
 		t.Errorf("pair: %+v / %+v", r, got["id"])
 	}
-	if r := got["gone"]; r.State != secretrisk.Dead || r.Reason != "InvalidClientTokenId" {
-		t.Errorf("deleted key id: %+v", r)
+	// The global STS endpoint also rejects keys of the GovCloud and China partitions this way.
+	if r := got["gone"]; r.State != secretrisk.Unknown || r.Reason != "InvalidClientTokenId" {
+		t.Errorf("a key id STS does not know: %+v", r)
 	}
 	if r := got["mismatch"]; r.State != secretrisk.Unknown || r.Reason != "SignatureDoesNotMatch" {
 		t.Errorf("secret that is not the key id's: %+v", r)
@@ -356,11 +391,14 @@ func TestUnsupportedAndAllowlist(t *testing.T) {
 		{Fingerprints: []string{"a"}, Type: "slack-webhook", Value: liveKey},   // trying it would post
 		{Fingerprints: []string{"b"}, Type: "npm-authtoken", Value: liveKey},   // any registry
 		{Fingerprints: []string{"c"}, Type: "aws-access-key-id", Value: keyID}, // a lookup, not in the allowlist
-		{Fingerprints: []string{"f"}, Type: "aws-secret-key", Value: liveKey},  // needs its key id, whatever the allowlist
+		{Fingerprints: []string{"f"}, Type: "aws-secret-key", Value: liveKey},  // not in the allowlist (and without its key id)
 		{Fingerprints: []string{"d"}, Type: "openai-project", Value: liveKey},  // not in the allowlist
 		{Fingerprints: []string{"e"}, Type: "github", Value: "ghp_" + liveKey}, // allowed
 	})
-	if st.Unsupported != 3 || st.NotAllowed != 2 || st.Asked != 1 || len(got) != 1 {
+	c.Config.Providers = nil // allowed, but unsupported without its key id
+	_, st2 := c.Check(context.Background(), []Probe{{Fingerprints: []string{"g"}, Type: "aws-secret-key", Value: liveKey}})
+	st.Unsupported += st2.Unsupported
+	if st.Unsupported != 3 || st.NotAllowed != 3 || st.Asked != 1 || len(got) != 1 {
 		t.Errorf("stats %+v, results %v", st, got)
 	}
 	if len(f.paths) != 1 {
@@ -376,7 +414,7 @@ func TestCache(t *testing.T) {
 	c.Cache, c.Now = LoadCache(path), func() time.Time { return now }
 	probes := []Probe{
 		{Fingerprints: []string{"live"}, Type: "github", Value: "ghp_" + liveKey},
-		{Fingerprints: []string{"dead"}, Type: "github", Value: "ghp_" + deadKey},
+		{Fingerprints: []string{"dead"}, Type: "anthropic", Value: deadKey},
 		{Fingerprints: []string{"flaky"}, Type: "github", Value: flakyKey},
 	}
 	c.Check(context.Background(), probes)
@@ -487,7 +525,7 @@ func TestSupported(t *testing.T) {
 func TestGitHubForbiddenIsUnknown(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }))
 	defer srv.Close()
-	c := &Checker{Bases: map[string][]string{"github": {srv.URL}}, Interval: time.Millisecond}
+	c := mineOnly(&Checker{Bases: map[string][]string{"github": {srv.URL}}, Interval: time.Millisecond})
 	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"g"}, Type: "github", Value: "ghs_" + liveKey}})
 	if got["g"].State != secretrisk.Unknown {
 		t.Errorf("403: %+v", got["g"])
@@ -556,5 +594,203 @@ func TestDisabledOrExpiredIsDead(t *testing.T) {
 	}
 	if got["c"].State != secretrisk.Dead || got["c"].Reason != "token expired" {
 		t.Errorf("Cloudflare expired token: %+v", got["c"])
+	}
+}
+
+// A status alone never says dead: every provider answering 401 (or Slack's ok:false) without its
+// documented invalid-key signal is unknown, and the item it would have closed stays open.
+func TestBareStatusIsNeverDead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/auth.test":
+			_, _ = w.Write([]byte(`{"ok":false,"error":"not_authed"}`))
+		case r.URL.Path == "/client/v4/user/tokens/verify":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"success":false,"result":{"status":"expired"}}`))
+		case r.URL.Path == "/v1beta/models":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID"}]}}`))
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Bad credentials","error":{"code":"other","type":"other"},"code":"other","id":"other"}`))
+		}
+	}))
+	defer srv.Close()
+	bases := map[string][]string{}
+	for _, p := range providers {
+		bases[p.name] = []string{srv.URL}
+	}
+	c := mineOnly(&Checker{Bases: bases, Interval: time.Millisecond})
+	var probes []Probe
+	for _, p := range providers {
+		probes = append(probes, Probe{Fingerprints: []string{p.name}, Type: p.types[0], Value: liveKey, KeyID: keyID})
+	}
+	got, st := c.Check(context.Background(), probes)
+	for _, p := range providers {
+		if r := got[p.name]; r.State != secretrisk.Unknown {
+			t.Errorf("%s: a bare 401 judged %+v", p.name, r)
+		}
+	}
+	if st.Dead != 0 || st.Asked != len(providers) {
+		t.Errorf("stats %+v", st)
+	}
+}
+
+// Every result says which verdict rules judged it, so a tracker can drop a dead verdict of older,
+// looser rules.
+func TestResultsCarryTheRules(t *testing.T) {
+	f := newFake(t)
+	got, _ := f.checker().Check(context.Background(), []Probe{
+		{Fingerprints: []string{"a"}, Type: "anthropic", Value: deadKey},
+		{Fingerprints: []string{"b"}, Type: "github", Value: flakyKey},
+	})
+	for fp, r := range got {
+		if r.Rules != secretrisk.LivenessRules {
+			t.Errorf("%s: rules %d, want %d", fp, r.Rules, secretrisk.LivenessRules)
+		}
+	}
+}
+
+// A cache written under older verdict rules is discarded: its dead results may be a bare 401.
+func TestOlderCacheIsDiscarded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "liveness.json")
+	old := `{"version":1,"results":{"x":{"state":"dead","checked_at":"2026-11-25T00:00:00Z","provider":"github","reason":"HTTP 401"}}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 25, 1, 0, 0, 0, time.UTC)
+	if _, ok := LoadCache(path).fresh([]string{"x"}, now); ok {
+		t.Error("a dead result of the old rules answered from the cache")
+	}
+}
+
+// The owner and provider gates apply to every fingerprint of a probe, inside Check, before the
+// cache and before a value is recovered: a pair whose key id is someone else's is never sent, nor
+// answered from the cache; a lookup (it sends nothing) runs for unknown whatever owners says, never
+// for not-mine; a fingerprint with no attribution is refused.
+func TestGatesEveryFingerprint(t *testing.T) {
+	f := newFake(t)
+	c := f.checker()
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	c.Cache, c.Now = LoadCache(filepath.Join(t.TempDir(), "l.json")), func() time.Time { return now }
+	owners := map[string]attribution.Owner{"mine": attribution.Mine, "mine-id": attribution.Mine, "their-id": attribution.NotMine,
+		"cached-theirs": attribution.NotMine, "unknown-id": attribution.Unknown, "their-lone-id": attribution.NotMine, "cached-openai": attribution.Mine}
+	c.Attribution = func(fp string) (attribution.Owner, bool) { o, ok := owners[fp]; return o, ok }
+	c.Config.Providers = []string{"aws", "aws-keys", "github"}
+	c.Cache.put([]string{"cached-theirs"}, secretrisk.Liveness{State: secretrisk.Live, CheckedAt: now, Account: "github:them"})
+	c.Cache.put([]string{"cached-openai"}, secretrisk.Liveness{State: secretrisk.Live, CheckedAt: now})
+	const theirSecret = "fake/secret/for/tests/only/9999999999999"
+	recovered := false
+	got, st := c.Check(context.Background(), []Probe{
+		{Fingerprints: []string{"mine", "their-id"}, Type: "aws-secret-key", Value: theirSecret, KeyID: keyID},
+		{Fingerprints: []string{"mine", "unattributed"}, Type: "aws-secret-key", Recover: func(context.Context) (string, string, bool) {
+			recovered = true
+			return theirSecret, keyID, true
+		}},
+		{Fingerprints: []string{"cached-theirs"}, Type: "github", Value: "ghp_" + liveKey},
+		{Fingerprints: []string{"cached-openai"}, Type: "openai-project", Value: liveKey},
+		{Fingerprints: []string{"their-lone-id"}, Type: "aws-access-key-id", Value: keyID},
+		{Fingerprints: []string{"unknown-id"}, Type: "aws-access-key-id", Value: keyID},
+	})
+	if len(f.paths) != 0 || recovered {
+		t.Errorf("someone else's key was sent (%v) or recovered (%v)", f.paths, recovered)
+	}
+	for _, fp := range []string{"mine", "their-id", "unattributed", "cached-theirs", "cached-openai", "their-lone-id"} {
+		if r, ok := got[fp]; ok {
+			t.Errorf("%s has a result: %+v", fp, r)
+		}
+	}
+	if _, ok := got["unknown-id"]; !ok {
+		t.Error("a lookup for an unknown key id did not run")
+	}
+	if st.NotAllowed != 5 || st.Cached != 0 || st.Recovered != 0 {
+		t.Errorf("stats %+v", st)
+	}
+	noLeak(t, got, st, theirSecret, liveKey)
+	if c.Attribution = nil; true {
+		got, st = c.Check(context.Background(), []Probe{{Fingerprints: []string{"mine"}, Type: "github", Value: "ghp_" + liveKey}})
+		if len(got) != 0 || st.NotAllowed != 1 || len(f.paths) != 0 {
+			t.Errorf("a checker without attribution tried a key: %+v %+v", got, st)
+		}
+	}
+}
+
+// A result dated after now (a clock that jumped forward) is never fresh: its age would be
+// negative, and it would stand for any later check.
+func TestFutureResultIsNotFresh(t *testing.T) {
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	c := LoadCache(filepath.Join(t.TempDir(), "l.json"))
+	c.put([]string{"x"}, secretrisk.Liveness{State: secretrisk.Dead, CheckedAt: now.Add(time.Hour)})
+	if _, ok := c.fresh([]string{"x"}, now); ok {
+		t.Error("a result from the future answered")
+	}
+}
+
+// Every provider's body may echo the key in any field segurata reads: an error code, a reason, a
+// status, an account. No part of the key reaches a result, whatever the answer's status, and a
+// long or odd provider string is not kept either.
+func TestProviderTextNeverHoldsTheKey(t *testing.T) {
+	const key = "ECHO0key0for0tests0only0ZZZZ" // the characters a provider code may have
+	echo := func(v string) string {
+		return `{"login":"` + v + `","username":"` + v + `","name":"` + v + `","team_id":"` + v + `","ok":true,"error":"` + v +
+			`","id":"` + v + `","code":"` + v + `","type":"` + v + `","account":{"uuid":"` + v + `"},"bot":{"workspace_id":"` + v +
+			`"},"data":{"viewer":{"id":"` + v + `"}},"result":{"username":"` + v + `","status":"` + v + `"},"api_key_disabled":false,` +
+			`"errors":[{"extensions":{"code":"` + v + `"}}],"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"` + v + `"}]}`
+	}
+	for _, code := range []int{http.StatusOK, http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden} {
+		for _, v := range []string{key, strings.Repeat("A", 200), "a b<c>"} {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.Header.Get("Authorization"), "AWS4") {
+					w.WriteHeader(code)
+					_, _ = w.Write([]byte(`<ErrorResponse><Error><Code>` + v + `</Code></Error><Account>` + v + `</Account></ErrorResponse>`))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(code)
+				_, _ = w.Write([]byte(echo(v)))
+			}))
+			bases := map[string][]string{}
+			for _, p := range providers {
+				bases[p.name] = []string{srv.URL}
+			}
+			c := mineOnly(&Checker{Bases: bases, Interval: time.Millisecond})
+			var probes []Probe
+			for _, p := range providers {
+				if p.lookup == nil {
+					probes = append(probes, Probe{Fingerprints: []string{p.name}, Type: p.types[0], Value: key, KeyID: keyID})
+				}
+			}
+			got, st := c.Check(context.Background(), probes)
+			srv.Close()
+			noLeak(t, got, st, key)
+			raw, _ := json.Marshal(got)
+			if strings.Contains(string(raw), strings.Repeat("A", 65)) || strings.Contains(string(raw), "a b<c>") {
+				t.Errorf("HTTP %d: provider text kept: %s", code, raw)
+			}
+		}
+	}
+}
+
+// The liveness client follows no redirect: the key goes only to the provider's own URL, and a 3xx
+// tells nothing.
+func TestRedirectIsUnknownAndNotFollowed(t *testing.T) {
+	reached := false
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		_, _ = w.Write([]byte(`{"login":"octocat"}`))
+	}))
+	defer other.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer api.Close()
+	c := mineOnly(&Checker{Bases: map[string][]string{"github": {api.URL}, "telegram": {api.URL}}, Interval: time.Millisecond})
+	got, _ := c.Check(context.Background(), []Probe{
+		{Fingerprints: []string{"g"}, Type: "github", Value: "ghp_" + liveKey},
+		{Fingerprints: []string{"t"}, Type: "telegram-bot", Value: "123:AA" + liveKey},
+	})
+	if reached || got["g"].State != secretrisk.Unknown || got["g"].Reason != "HTTP 302" || got["t"].State != secretrisk.Unknown {
+		t.Errorf("followed %v: %+v", reached, got)
 	}
 }

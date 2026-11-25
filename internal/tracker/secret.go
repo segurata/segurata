@@ -193,7 +193,7 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		// out to be a temporary credential) can lower it as well as raise it.
 		s.Type, s.Redacted, s.Impact = best.Evidence.Type, best.Evidence.Redacted, impact.String()
 		s.LastSeen = seen.UTC()
-		s.updateLiveness(g)
+		s.updateLiveness(g, now)
 		for _, x := range g {
 			it.merge(x.Evidence, seen)
 		}
@@ -333,12 +333,10 @@ func (it *Item) lastDetail(action string) string {
 // only a working file that still holds it matters: one known at rotation time (the new value never
 // reached it) or one that appeared since. Copies only in git history, transcripts, logs or shell
 // history leave the item done, with a note logged once per rotation.
+//
+// An item a dead check closed has no rotated locations, so any working file reopens it: the owner
+// still has a copy to clean (closeDead leaves such an item open in the first place).
 func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
-	if it.livenessIs(secretrisk.Dead) || it.closedDead() {
-		// The provider rejected the key: a working file that still holds it fails, it leaks nothing.
-		// If a later check finds it live, reopenProvenLive opens the item, as proven live.
-		g = nil
-	}
 	known := map[string]bool{}
 	for _, r := range it.Secret.RotatedLocations {
 		known[r] = true

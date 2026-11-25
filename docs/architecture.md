@@ -1254,14 +1254,20 @@ its provider's cheapest read-only identity endpoint and records live, dead or un
 | `providers` | every provider below | Allowlist of providers to ask |
 
 **When and with what.** The scan is the only moment segurata holds a value, so the check runs at the
-end of the scan, before the findings are emitted, within 10 minutes of the run's deadline. The
+end of the scan, before the findings are emitted, for at most 10 minutes and ending a minute before
+the run's deadline. The findings are emitted whatever happens to the check: a run cancelled or out
+of time while it probes still reports the scan, and is marked interrupted. The
 values of secrets of a supported type stay in memory for the run; an AWS secret access key is tried
-with the one key id found in the same file (or commit and file); with none or several it is not
-tried. A secret is tried when the run reports it (noise never is, which leaves copies in other
+with the one long-term (AKIA) key id found in the same file (or commit and file); with none or
+several it is not tried. A temporary (ASIA) key id never pairs: it needs its session token. One key
+id goes with one secret key, the first by fingerprint; other secret keys beside it are not tried. A secret is tried when the run reports it (noise never is, which leaves copies in other
 people's repositories alone) and its attribution, computed as the next sync would (the tracker's
 facts plus this scan's claims, against the tracker's accounts and config `owned`, lent by the core
-in `connector.Request.Known`, never sent to an external connector), is one of `owners`. A run
-without a tracker gets no attribution and tries nothing.
+in `connector.Request.Known`, never sent to an external connector), is one of `owners`: for an AWS
+key pair, the key id's attribution as well as the secret key's. The checker applies the owner and
+provider gates to every fingerprint of a probe before it looks in the cache or recovers a value, so
+someone else's key is neither sent nor answered from the cache. A run without a tracker gets no
+attribution and tries nothing.
 
 Secrets seen only in history replayed from the git history cache have no value in memory. When the
 liveness cache has no fresh answer for one and the check still has time, its value is read again
@@ -1278,43 +1284,53 @@ sent without a body, and Linear's GraphQL endpoint, whose documentation shows on
 fixed query `{ viewer { id } }` (a query, never a mutation). None changes state, costs money or sends anything; slack webhooks (trying
 one posts), Twilio and Mailgun keys (they need a second credential or a region segurata cannot
 know) and npm `_authToken` lines (any registry) are not tried. One call at a time per provider and
-at most four a second overall, through `httpx` (credentials are dropped on a redirect to another
-host). Results are cached in `~/.cache/segurata/liveness.json` (0600) by fingerprint: live for 1
-day, dead for 7, unknown never. A result holds the state, the date, the provider, the endpoint,
+at most four a second overall, through `httpx`, following no redirect: a 3xx is unknown, and the
+key goes nowhere but the provider's URL. Results are cached in `~/.cache/segurata/liveness.json` (0600) by fingerprint: live for 1
+day, dead for 7, unknown never; a result dated after now (a clock that jumped forward) is never
+fresh, and the tracker drops one too. A result holds the state, the date, the provider, the endpoint,
 segurata's own reason (`HTTP 401`, `invalid_auth`, `InvalidClientTokenId`) and the account the
 provider names; never the value and never the provider's message, which may echo part of the key.
+Every word read from a provider's answer (a code, a reason, a status, an account id) passes one
+sanitizer, `providerText`: at most 64 characters of letters, digits and `_ . @ -`, else dropped.
+After it, any result field that holds 8 characters in a row of the value or key id is dropped too,
+and a failed call's error names the scheme, host and path with Telegram's token masked, never the
+query.
 The status line counts what was asked, read from the cache, recovered from git history, refused by
 owner or provider, unsupported, left without a value and interrupted.
 
-**Providers.** Live is a 2xx; dead is the answer the provider documents for an invalid, revoked or
-expired key; anything else (network, 5xx, rate limits, a 403 that may be a region) is unknown,
-except where a 403 or 429 proves the key was accepted.
+**Providers.** Live is a 2xx; dead is only the signal in the body that the provider documents for an
+invalid, revoked or expired key (`deadWhen` in `providers.go`). A status alone is never dead: a 401
+can be a key of another instance, region or partition, an IP allowlist or a missing scope. Anything
+else (network, 5xx, rate limits, a 403 that may be a region, a bare 401) is unknown, except where a
+403 or 429 proves the key was accepted. Every result records the version of these rules
+(`secretrisk.LivenessRules`, now 2); version 1 also read a bare 401 as dead.
 
 | Provider (types) | Endpoint | Live | Dead | Docs |
 |---|---|---|---|---|
-| OpenAI (`openai-*`) | `GET api.openai.com/v1/models`; admin keys (`sk-admin-`) `GET /v1/organization/projects?limit=1` | 2xx; 429 (out of quota or over the rate limit: the key was accepted) | 401 | [models](https://developers.openai.com/api/reference/resources/models/methods/list), [error codes](https://developers.openai.com/api/docs/guides/error-codes), [projects](https://developers.openai.com/api/reference/resources/projects/methods/list) |
-| Anthropic (`anthropic`) | `GET api.anthropic.com/v1/models` with `x-api-key`; admin keys (`sk-ant-admin`) `GET /v1/organizations/me` | 2xx; 403 `permission_error` | 401 `authentication_error` (for admin keys by the same error model; the Admin API page does not say) | [models](https://platform.claude.com/docs/en/api/models/list), [errors](https://platform.claude.com/docs/en/api/errors), [Admin API](https://platform.claude.com/docs/en/manage-claude/admin-api) |
-| OpenRouter (`openrouter`) | `GET openrouter.ai/api/v1/key` | 2xx; 402 (no credits) | 401 | [key](https://openrouter.ai/docs/api-reference/limits), [errors](https://openrouter.ai/docs/api-reference/errors) |
-| GitHub (`github`, `github-pat`) | `GET api.github.com/user`; account `github:<login>` | 2xx | 401. A 403 is unknown: installation tokens (`ghs_`) cannot call `/user`, and GitHub may answer 403 to any credential after many invalid ones | [get the authenticated user](https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-the-authenticated-user), [authenticating](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api), [installation token endpoints](https://docs.github.com/en/rest/authentication/endpoints-available-for-github-app-installation-access-tokens) |
+| OpenAI (`openai-*`) | `GET api.openai.com/v1/models`; admin keys (`sk-admin-`) `GET /v1/organization/projects?limit=1` | 2xx; 429 (out of quota or over the rate limit: the key was accepted) | never: the error-code guide lists a 401 for a wrong, deleted or revoked key, for an IP outside the allowlist, for an account out of its organization and for a key without the endpoint's permission, and documents no body code that tells them apart | [models](https://developers.openai.com/api/reference/resources/models/methods/list), [error codes](https://developers.openai.com/api/docs/guides/error-codes), [projects](https://developers.openai.com/api/reference/resources/projects/methods/list) |
+| Anthropic (`anthropic`) | `GET api.anthropic.com/v1/models` with `x-api-key`; admin keys (`sk-ant-admin`) `GET /v1/organizations/me` | 2xx; 403 `permission_error` | 401 with `error.type` `authentication_error` ("malformed, revoked, or expired"; for admin keys by the same error model) | [models](https://platform.claude.com/docs/en/api/models/list), [errors](https://platform.claude.com/docs/en/api/errors), [Admin API](https://platform.claude.com/docs/en/manage-claude/admin-api) |
+| OpenRouter (`openrouter`) | `GET openrouter.ai/api/v1/key` | 2xx; 402 (no credits) | 401 with `error.code` 401 ("disabled/invalid API key") | [key](https://openrouter.ai/docs/api-reference/limits), [errors](https://openrouter.ai/docs/api-reference/errors) |
+| GitHub (`github`, `github-pat`) | `GET api.github.com/user`; account `github:<login>` | 2xx | never: GitHub Enterprise Server and GHE.com issue tokens of the same formats, which api.github.com rejects with the 401 a revoked token gets. A 403 tells nothing either: installation tokens (`ghs_`) cannot call `/user`, and GitHub may answer 403 to any credential after many invalid ones | [get the authenticated user](https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-the-authenticated-user), [authenticating](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api), [installation token endpoints](https://docs.github.com/en/rest/authentication/endpoints-available-for-github-app-installation-access-tokens) |
 | GitLab (`gitlab`) | `GET gitlab.com/api/v4/user` with `PRIVATE-TOKEN`; account `gitlab:<username>` | 2xx; 403 `insufficient_scope` | never: a 401 is unknown, the token may belong to a self-managed instance | [users](https://docs.gitlab.com/api/users/), [troubleshooting](https://docs.gitlab.com/api/rest/troubleshooting/) |
-| AWS (`aws-secret-key` with its key id) | `GET sts.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15`, Signature Version 4 by hand (us-east-1, `sts`); needs no IAM permission; account `aws:<id>` | 200 | 403 `InvalidClientTokenId`; `SignatureDoesNotMatch` (the pair found is not a pair) is unknown | [GetCallerIdentity](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html), [common errors](https://docs.aws.amazon.com/STS/latest/APIReference/CommonErrors.html), [GET for Query APIs](https://docs.aws.amazon.com/IAM/latest/UserGuide/programming.html), [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html); the signer is tested with AWS's `get-vanilla` vector |
+| AWS (`aws-secret-key` with its key id) | `GET sts.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15`, Signature Version 4 by hand (us-east-1, `sts`); needs no IAM permission; account `aws:<id>` | 200 | never: the global endpoint answers 403 `InvalidClientTokenId` to a deleted key id and to every key of the GovCloud and China partitions alike; `SignatureDoesNotMatch` says the pair found is not a pair | [GetCallerIdentity](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html), [common errors](https://docs.aws.amazon.com/STS/latest/APIReference/CommonErrors.html), [GET for Query APIs](https://docs.aws.amazon.com/IAM/latest/UserGuide/programming.html), [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html); the signer is tested with AWS's `get-vanilla` vector |
 | Google (`google-api-key`) | `GET generativelanguage.googleapis.com/v1beta/models?pageSize=1` with `x-goog-api-key`; free | 2xx; 403 with an `ErrorInfo` reason (`SERVICE_DISABLED`, a restriction): the key exists | 400 `API_KEY_INVALID` | [API keys](https://aistudio.google.com/docs/api-key), [troubleshooting](https://aistudio.google.com/docs/troubleshooting), [error model](https://google.aip.dev/193) |
-| Slack (`slack-token`) | `POST slack.com/api/auth.test`, no body; account `slack:<team_id>` | `ok: true` | `ok: false` with `invalid_auth`, `not_authed`, `token_revoked`, `token_expired` or `account_inactive` | [auth.test](https://docs.slack.dev/reference/methods/auth.test) |
-| Stripe (`stripe-live`, `stripe-test`) | `GET api.stripe.com/v1/balance` | 2xx; 403 (a restricted key without that permission) | 401 | [retrieve balance](https://docs.stripe.com/api/balance/balance_retrieve), [authentication](https://docs.stripe.com/api/authentication), [keys](https://docs.stripe.com/keys) |
-| SendGrid (`sendgrid`) | `GET api.sendgrid.com/v3/scopes`, then `api.eu.sendgrid.com` when the first says dead | 2xx; 403 | 401 on both hosts | [scopes](https://www.twilio.com/docs/sendgrid/api-reference/api-key-permissions/retrieve-a-list-of-scopes-for-which-this-user-has-access) |
-| Telegram (`telegram-bot`) | `GET api.telegram.org/bot<token>/getMe` (the recorded endpoint hides the token); account `telegram:@<username>` | 2xx | 401 (observed; the Bot API documents the error envelope, not the code) | [getMe](https://core.telegram.org/bots/api#getme) |
-| Hugging Face (`huggingface`) | `GET huggingface.co/api/whoami-v2`; account `huggingface:<name>` | 2xx | 401 (observed, not documented) | [OpenAPI](https://huggingface.co/.well-known/openapi.md) (lists the endpoint, documents only its 200) |
-| npm (`npm-token`) | `GET registry.npmjs.org/-/whoami`; account `npm:<username>` | 2xx | 401 (observed, not documented) | [npm whoami](https://docs.npmjs.com/cli/v10/commands/npm-whoami) (says it calls `/-/whoami`) |
-| xAI (`xai`) | `GET api.x.ai/v1/api-key` | 2xx with no flag set; 403 (lacks a permission) | 401; 200 with `api_key_blocked`, `api_key_disabled` or `team_blocked` true | [API key](https://docs.x.ai/developers/rest-api-reference/inference/other), [errors](https://docs.x.ai/developers/debugging) |
-| Groq (`groq`) | `GET api.groq.com/openai/v1/models` | 2xx | 401 | [API reference](https://console.groq.com/docs/api-reference), [errors](https://console.groq.com/docs/errors) |
-| Notion (`notion`) | `GET api.notion.com/v1/users/me` with `Notion-Version: 2026-03-11`; account `notion:<workspace_id>` | 2xx; 403 `restricted_resource` | 401 `unauthorized` | [retrieve your bot user](https://developers.notion.com/reference/get-self), [status codes](https://developers.notion.com/reference/status-codes) |
-| Cloudflare (`cloudflare-token`) | `GET api.cloudflare.com/client/v4/user/tokens/verify` | `result.status` `active` | `result.status` `disabled` or `expired`. Any error is unknown: account-owned tokens verify at `/accounts/{account_id}/tokens/verify` and a Global API Key needs the account email | [verify user token](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/), [account-owned tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) |
-| DigitalOcean (`digitalocean`) | `GET api.digitalocean.com/v2/account`; account `digitalocean:<uuid>` | 2xx | 401 `unauthorized` | [account](https://docs.digitalocean.com/reference/api/reference/account/index.html.md) |
+| Slack (`slack-token`) | `POST slack.com/api/auth.test`, no body; account `slack:<team_id>` | `ok: true` | `ok: false` with `invalid_auth`, `token_revoked`, `token_expired` or `account_inactive` (`not_authed`, "no token provided", is unknown: segurata sent one) | [auth.test](https://docs.slack.dev/reference/methods/auth.test) |
+| Stripe (`stripe-live`, `stripe-test`) | `GET api.stripe.com/v1/balance` | 2xx; 403 (a restricted key without that permission) | 401 with `error.code` `api_key_expired`. Any other 401 is unknown: Stripe documents no code for a wrong key | [retrieve balance](https://docs.stripe.com/api/balance/balance_retrieve), [authentication](https://docs.stripe.com/api/authentication), [keys](https://docs.stripe.com/keys), [error codes](https://docs.stripe.com/error-codes#api-key-expired) |
+| SendGrid (`sendgrid`) | `GET api.sendgrid.com/v3/scopes`, then `api.eu.sendgrid.com` | 2xx; 403 | never: the documented 401 is "authorization required", the caller "doesn't have the authorization to view the list of scopes"; the EU host is asked whenever the global one does not accept the key | [scopes](https://www.twilio.com/docs/sendgrid/api-reference/api-key-permissions/retrieve-a-list-of-scopes-for-which-this-user-has-access) |
+| Telegram (`telegram-bot`) | `GET api.telegram.org/bot<token>/getMe` (the recorded endpoint hides the token); account `telegram:@<username>` | 2xx | never: the Bot API says `error_code` "is subject to change" | [getMe](https://core.telegram.org/bots/api#getme) |
+| Hugging Face (`huggingface`) | `GET huggingface.co/api/whoami-v2`; account `huggingface:<name>` | 2xx | never: no error is documented | [OpenAPI](https://huggingface.co/.well-known/openapi.md) (lists the endpoint, documents only its 200) |
+| npm (`npm-token`) | `GET registry.npmjs.org/-/whoami`; account `npm:<username>` | 2xx | never: no error is documented | [npm whoami](https://docs.npmjs.com/cli/v10/commands/npm-whoami) (says it calls `/-/whoami`) |
+| xAI (`xai`) | `GET api.x.ai/v1/api-key` | 2xx with no flag set; 403 (lacks a permission) | 200 with `api_key_blocked`, `api_key_disabled` or `team_blocked` true. A 401 is unknown: xAI documents no body code for it | [API key](https://docs.x.ai/developers/rest-api-reference/inference/other), [errors](https://docs.x.ai/developers/debugging) |
+| Groq (`groq`) | `GET api.groq.com/openai/v1/models` | 2xx | never: the errors page gives a 401 no body code | [API reference](https://console.groq.com/docs/api-reference), [errors](https://console.groq.com/docs/errors) |
+| Notion (`notion`) | `GET api.notion.com/v1/users/me` with `Notion-Version: 2026-03-11`; account `notion:<workspace_id>` | 2xx; 403 `restricted_resource` | 401 with `code` `unauthorized` ("The bearer token is not valid") | [retrieve your bot user](https://developers.notion.com/reference/get-self), [status codes](https://developers.notion.com/reference/status-codes) |
+| Cloudflare (`cloudflare-token`) | `GET api.cloudflare.com/client/v4/user/tokens/verify`, only for a token whose key names Cloudflare (a bare `CF_TOKEN` may be any provider's; gitleaks' rule requires the word) | `result.status` `active` | `result.status` `disabled` or `expired`. Any error is unknown: account-owned tokens verify at `/accounts/{account_id}/tokens/verify` and a Global API Key needs the account email | [verify user token](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/), [account-owned tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) |
+| DigitalOcean (`digitalocean`) | `GET api.digitalocean.com/v2/account`; account `digitalocean:<uuid>` | 2xx | 401 with `id` `unauthorized` | [account](https://docs.digitalocean.com/reference/api/reference/account/index.html.md) |
 | Sentry (`sentry-token`) | `GET sentry.io/api/0/organizations/` | 2xx | never: a token of a self-hosted Sentry or of another region may be refused by sentry.io, so any error is unknown | [list your organizations](https://docs.sentry.io/api/users/list-your-organizations/), [data storage location](https://docs.sentry.io/organization/data-storage-location/) |
-| Linear (`linear`) | `POST api.linear.app/graphql`, query `{ viewer { id } }`, the key in `Authorization` without `Bearer`; account `linear:<id>` | `data.viewer.id` | an `AUTHENTICATION_ERROR` in `errors`, or 401 (observed, not documented) | [GraphQL API](https://linear.app/developers/graphql) |
+| Linear (`linear`) | `POST api.linear.app/graphql`, query `{ viewer { id } }`, the key in `Authorization` without `Bearer`; account `linear:<id>` | `data.viewer.id` | never: the GraphQL guide lists no error code for an invalid key | [GraphQL API](https://linear.app/developers/graphql) |
 
-Known gaps: keys of AWS partitions other than the standard one (GovCloud, China) read as dead on
-the global STS endpoint; OpenAI answers 403 from unsupported regions, which reads as unknown.
+Known gap: OpenAI answers 403 from unsupported regions, which reads as unknown. Fail closed costs
+dead verdicts: GitHub, GitLab, AWS, OpenAI, SendGrid, Telegram, Hugging Face, npm, Groq, Sentry and
+Linear never say dead, so their dead keys stay open until the owner closes them.
 
 **Lookups with the owner's credentials.** Two kinds of secret cannot be tried by themselves: an AWS
 access key id with no secret key beside it, and a private key. They are looked up instead
@@ -1367,16 +1383,21 @@ checked in the liveness line, and is cached for a day, like live: a key can be r
   in "Do next" and no confidence discount. An ignored item opens again ("proven live by the
   liveness check of …"), as does a done one when the check is newer than the done.
 - **Dead** closes an open, in-progress or snoozed item as `done` (history action `dead`, "key no
-  longer valid (checked 2026-11-25: GET api.github.com/user answered HTTP 401)"), and its reasons
-  say "dead: … rejected it on …". A key nobody can use is where a rotation ends too, so the item
-  ends the same way instead of staying open at P3: the queue is what still needs the owner, and a
-  copy left in a file is no longer a risk. Copies in working files do not reopen it (they fail for
-  whoever reads them; the one-time history note says so). A later check that finds it live opens it
+  longer valid (checked 2026-11-25: GET api.notion.com/v1/users/me answered unauthorized)") once
+  no working file holds the key, and its reasons say "dead: … rejected it on …". A key nobody can
+  use is where a rotation ends too, so the item ends the same way instead of staying open at P3.
+  A copy in a working file keeps the item open, or opens a closed one again ("new working
+  location …"): the owner still has a file to clean. A later check that finds it live opens it
   again; the owner reopening it by hand after the check keeps it open. Ignored and accepted items
   are not touched, nor an item a connector reports live: two sources disagree and the item stays
-  open.
+  open. A dead verdict of rules older than `secretrisk.LivenessRules` (a bare 401 under version 1)
+  is dropped, held or seen, and an item such a verdict closed opens again ("the dead verdict that
+  closed it no longer stands") unless a check of the current rules finds the key dead. The liveness
+  cache's version went up with the rules, so the first run after the upgrade asks every secret
+  again.
 - **Unregistered** (lookups only) lowers the priority one step; see above.
-- **Unknown** changes nothing.
+- **Unknown** changes nothing: it never replaces a held live, dead or unregistered result, however
+  newer (a 429 after the live result's day would otherwise drop a P0).
 
 `rotations list` has a LIVE column (live, dead, unregistered, unknown, unchecked) and ends, like the
 status briefing after its coverage line, with "Liveness checked for N of M secrets: …", where M

@@ -14,25 +14,46 @@ import (
 // in the evidence (connectors/internal/liveness). A rotate item keeps the newest answer:
 //   - live is proof the key works, as a connector's report is (see correlate.go): P0 once a copy
 //     left the machine, an ignored or rotated item opens again;
-//   - dead closes an open item as done, "key no longer valid": nobody can use the key, which is where
-//     a rotation ends too, so the item ends the same way. Copies in working files do not reopen it
-//     (they fail for whoever reads them). A later check that finds it live opens it again; the owner
-//     reopening it by hand after the check sticks. Ignored and accepted items are left alone, and
-//     so is an item a connector reports live: two sources disagree, the open item stays;
+//   - dead closes an open item as done, "key no longer valid", once no working file holds it: nobody
+//     can use the key, which is where a rotation ends too, so the item ends the same way. A copy in
+//     a working file keeps it open, or opens it again: the owner still has a file to clean. A later
+//     check that finds it live opens it again; the owner reopening it by hand after the check
+//     sticks. Ignored and accepted items are left alone, and so is an item a connector reports
+//     live: two sources disagree, the open item stays. Dead is the provider's documented
+//     invalid-key signal only (secretrisk.LivenessRules); a dead verdict of older rules is dropped,
+//     and an item it closed opens again unless a current check finds the key dead;
 //   - unregistered (an SSH key the owner's GitHub keys, deploy keys and authorized_keys do not hold)
 //     lowers the priority one step, unless a connector reports it live: not proof it is dead;
-//   - unknown changes nothing.
+//   - unknown changes nothing, and never replaces a held live, dead or unregistered result.
 // See docs/architecture.md, "Liveness".
 
 // updateLiveness keeps the newest result among the sightings, so a run that did not check the
-// secret (or a cached result older than the one held) leaves the item's as it is.
-func (s *Secret) updateLiveness(g []Sighting) {
+// secret (or a cached result older than the one held) leaves the item's as it is. Unknown never
+// replaces a held live or dead result: it tells nothing. A dead verdict of older rules, or a result
+// dated after now (a clock that jumped forward), is no result: held, it is dropped; seen, skipped.
+func (s *Secret) updateLiveness(g []Sighting, now time.Time) {
+	usable := func(l *secretrisk.Liveness) bool { return l.Trusted() && !l.CheckedAt.After(now) }
+	if s.Liveness != nil && !usable(s.Liveness) {
+		s.Liveness = nil
+	}
 	for _, x := range g {
-		if l := x.Evidence.Liveness; l != nil && (s.Liveness == nil || l.CheckedAt.After(s.Liveness.CheckedAt)) {
+		if l := x.Evidence.Liveness; l != nil && usable(l) && supersedes(*l, s.Liveness) {
 			c := *l
 			s.Liveness = &c
 		}
 	}
+}
+
+// supersedes reports whether a new result replaces the held one: a newer one, unless it is unknown
+// and the held one says live or dead.
+func supersedes(l secretrisk.Liveness, held *secretrisk.Liveness) bool {
+	switch {
+	case held == nil:
+		return true
+	case l.State == secretrisk.Unknown && held.State != secretrisk.Unknown:
+		return false
+	}
+	return l.CheckedAt.After(held.CheckedAt)
 }
 
 // liveness is the latest check's result, nil when the item has no secret or it was never checked.
@@ -103,11 +124,26 @@ func (it *Item) closeDead(now time.Time) {
 		return
 	}
 	l := it.Secret.Liveness
-	if it.reopenedSince(l.CheckedAt) {
+	if it.reopenedSince(l.CheckedAt) || it.inWorkingFile() {
 		return
 	}
 	it.leaveAccepted()
 	it.setStatus(now, Done, EvStatus, actDead, fmt.Sprintf("key no longer valid (checked %s: %s)", l.CheckedAt.Format(time.DateOnly), l.Said()))
+	it.derive()
+}
+
+// inWorkingFile reports whether a current location of the secret is a working file.
+func (it *Item) inWorkingFile() bool {
+	return slices.ContainsFunc(it.Secret.Locations, func(l Location) bool { return l.Working() && !l.Gone })
+}
+
+// reopenUndead opens an item a dead check closed when the item no longer holds a dead verdict: the
+// verdict was of older rules and dropped, or a later check found the key unknown.
+func (it *Item) reopenUndead(now time.Time) {
+	if it.Status != Done || !it.closedDead() || it.livenessIs(secretrisk.Dead) {
+		return
+	}
+	it.setStatus(now, Open, EvReopened, actAutoReopen, "the dead verdict that closed it no longer stands: the key is "+it.LivenessLabel()+" now")
 	it.derive()
 }
 

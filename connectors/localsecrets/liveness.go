@@ -23,8 +23,23 @@ import (
 // of it gets the result in its evidence. Values stay in memory for the length of the run. See
 // docs/architecture.md, "Liveness".
 
-// livenessTimeout bounds the whole check, so a slow provider never costs the scan its findings.
-const livenessTimeout = 10 * time.Minute
+// livenessTimeout bounds the whole check, and livenessMargin is the time it leaves before the
+// run's deadline: the findings are emitted after it, and a slow provider never costs the scan
+// them (livenessDeadline).
+const (
+	livenessTimeout = 10 * time.Minute
+	livenessMargin  = time.Minute
+)
+
+// livenessDeadline is when the check stops: livenessTimeout from now, or livenessMargin before the
+// run's deadline when that comes first.
+func livenessDeadline(ctx context.Context, now time.Time) time.Time {
+	at := now.Add(livenessTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Add(-livenessMargin).Before(at) {
+		at = d.Add(-livenessMargin)
+	}
+	return at
+}
 
 // heldValues are the values of the secrets the check may try, by fingerprint, and the AWS access
 // key ids, which are tried only with a secret access key found in the same place.
@@ -46,7 +61,7 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 	h := &s.held
 	place := abs + "\x00" + ev.Commit
 	switch {
-	case ev.Type == "aws-access-key-id" && strings.HasPrefix(value, "AKIA"):
+	case ev.Type == "aws-access-key-id" && pairableKeyID(value):
 		if h.awsIDs == nil {
 			h.awsIDs = map[string]map[string]string{}
 		}
@@ -55,6 +70,8 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 		}
 		h.awsIDs[place][ev.Fingerprint] = value
 		return
+	case ev.Type == "cloudflare-token" && !namesCloudflare(ev):
+		return // CF_TOKEN may be any provider's: it is never sent to Cloudflare
 	case ev.Type == "aws-secret-key":
 		if h.awsSecrets == nil {
 			h.awsSecrets = map[string][]string{}
@@ -76,10 +93,16 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 func (h heldValues) probes() []liveness.Probe {
 	var out []liveness.Probe
 	paired := map[string]bool{}
-	for place, secrets := range h.awsSecrets {
-		if ids := h.awsIDs[place]; len(ids) == 1 {
-			for idFP, id := range ids {
-				for _, fp := range secrets {
+	for _, place := range slices.Sorted(maps.Keys(h.awsSecrets)) {
+		ids := h.awsIDs[place]
+		if len(ids) != 1 {
+			continue
+		}
+		for idFP, id := range ids {
+			// One key id goes with one secret key, the first by fingerprint, as the history path
+			// pairs it: the others are tried alone.
+			for _, fp := range slices.Sorted(slices.Values(h.awsSecrets[place])) {
+				if !paired[idFP] && !paired[fp] {
 					out = append(out, liveness.Probe{Fingerprints: []string{fp, idFP}, Type: "aws-secret-key", Value: h.byFP[fp].value, KeyID: id})
 					paired[fp], paired[idFP] = true, true
 				}
@@ -126,7 +149,7 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 			if _, seen := history[ev.Fingerprint]; !seen {
 				history[ev.Fingerprint] = ev
 			}
-			if ev.Type == "aws-access-key-id" {
+			if ev.Type == "aws-access-key-id" && pairableKeyID(ev.Redacted) {
 				place := historyPlace(ev)
 				historyIDs[place] = append(historyIDs[place], ev)
 			}
@@ -148,10 +171,10 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		}
 		return 1
 	}
-	unread := slices.SortedFunc(maps.Keys(types), func(a, b string) int {
+	reported := slices.SortedFunc(maps.Keys(types), func(a, b string) int {
 		return cmp.Or(cmp.Compare(secretKeysFirst(a), secretKeysFirst(b)), cmp.Compare(a, b))
 	})
-	for _, fp := range unread {
+	for _, fp := range reported {
 		typ := types[fp]
 		if covered[fp] || !liveness.Supported(typ) {
 			continue
@@ -172,26 +195,23 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		}
 		candidates = append(candidates, p)
 	}
-	var probes []liveness.Probe
-	refused := 0
-	for _, p := range candidates {
-		fp := p.Fingerprints[0]
-		switch _, reported := claims[fp]; {
-		case !reported: // noise, or dropped after it was held
-		case !s.cfg.liveness.Allows(known.Of(fp, claims[fp]), p.Type):
-			refused++
-		default:
-			probes = append(probes, p)
-		}
-	}
+	// A probe of a secret no longer reported (noise, or dropped after it was held) is left out; the
+	// checker refuses any other whose fingerprints are not all attributed to an owner it allows.
+	probes := slices.DeleteFunc(candidates, func(p liveness.Probe) bool {
+		_, reported := claims[p.Fingerprints[0]]
+		return !reported
+	})
 	ch := s.c.checker(s.home, s.cfg.liveness)
 	if ch.Now == nil {
 		ch.Now = s.c.Now
 	}
-	lctx, cancel := context.WithTimeout(ctx, livenessTimeout)
+	ch.Attribution = func(fp string) (attribution.Owner, bool) {
+		c, reported := claims[fp]
+		return known.Of(fp, c), reported
+	}
+	lctx, cancel := context.WithDeadline(ctx, livenessDeadline(ctx, time.Now()))
 	defer cancel()
 	results, st := ch.Check(lctx, probes)
-	st.NotAllowed += refused
 	for i := range fs {
 		ev, ok := secretrisk.EvidenceOf(fs[i])
 		if !ok {
@@ -208,6 +228,17 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	}
 	return line
 }
+
+// namesCloudflare reports whether a Cloudflare token's context names Cloudflare: gitleaks' rule
+// requires the word, this connector's pattern also takes a bare CF_ key, kept in the note.
+func namesCloudflare(ev secretrisk.Evidence) bool {
+	return ev.Source == "gitleaks" || strings.Contains(strings.ToLower(ev.Note), "cloudflare")
+}
+
+// pairableKeyID reports whether an AWS access key id (or its redacted hint) can be tried with a
+// secret key: a long-term AKIA id. A temporary ASIA id needs its session token, which segurata does
+// not pair; signed without it, STS would reject a pair that works.
+func pairableKeyID(s string) bool { return strings.HasPrefix(s, "AKIA") }
 
 // historyPlace is where a history leak sits: repository, file and commit.
 func historyPlace(ev secretrisk.Evidence) string {
@@ -272,12 +303,12 @@ func (s *scan) recoverValue(ctx context.Context, ev secretrisk.Evidence) (string
 	return "", false
 }
 
-// checker is the real checker unless a test gives one: the providers' hosts, the cache under
-// ~/.cache/segurata, and the owner's gh, aws and ssh for the lookups.
+// checker is the real checker unless a test gives one: the providers' hosts, the cache beside the
+// other caches (~/.cache/segurata/liveness.json), and the owner's gh, aws and ssh for the lookups.
 func (c *Connector) checker(home string, cfg liveness.Config) *liveness.Checker {
 	if c.NewChecker != nil {
 		return c.NewChecker(home, cfg)
 	}
-	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(liveness.DefaultCachePath(home)),
+	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(filepath.Join(c.cacheRoot(home), "liveness.json")),
 		Owner: liveness.Owner{AWS: c.AWS, GH: c.GH, SSH: c.SSH, Home: home}}
 }
