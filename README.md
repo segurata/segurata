@@ -8,16 +8,13 @@ accounts, clouds, AI providers and secrets on disk. Design: [docs/architecture.m
 
 The name: "segurata" is Spanish slang for a security guard.
 
-House rule: every connector **inventories first, read-only**. Removing access is a separate step,
-by hand or with an explicit remediation, after reviewing the list.
-
 ## Install
 
 Release binaries for macOS, Linux and Windows (amd64 and arm64) are static, with a SHA-256
 `checksums.txt` signed keylessly with Sigstore cosign and an SPDX SBOM per archive.
 
 ```bash
-brew install --cask example-org/tap/segurata                  # Homebrew tap
+brew install --cask segurata/tap/segurata                      # Homebrew tap
 go install github.com/segurata/segurata/cmd/segurata@latest     # from source, Go 1.26+
 segurata version
 ```
@@ -27,15 +24,21 @@ and the archive with `sha256sum -c`, and put `segurata` on your `PATH`. The exac
 certificate identity to expect and the caveats while the repository is private:
 [docs/releasing.md](docs/releasing.md#verifying-a-release).
 
-## Build
+## Quickstart
 
 ```bash
-go build -o segurata ./cmd/segurata
-./segurata connectors            # built-in and external connectors
-./segurata inventory [name ...]  # all connectors when none is given
+segurata doctor                   # read-only: config, CLIs, sign-ins, file modes, and the fix for each problem
+segurata connectors               # built-in and external connectors
+segurata inventory [name ...]     # read-only; every connector when none is given
+segurata status                   # what to do next
+segurata remediate --list         # findings segurata can fix
+segurata remediate <id>           # the exact plan; nothing changes without --apply
 ```
 
-Before the first inventory, `./segurata doctor` checks, read-only, the config and its secret
+The config is `~/.config/segurata/config.json` (`SEGURATA_CONFIG` overrides it); each connector's
+section below lists its keys. To build from a clone: `go build -o segurata ./cmd/segurata`.
+
+Before the first inventory, `segurata doctor` checks, read-only, the config and its secret
 references (resolved, never printed), the browser's debugging port, each connector's CLIs and
 sign-ins (expired gcloud accounts, AWS profiles, `az`, `gh` scopes, Workspace tokens, the
 Cloudflare token's permissions, rg and gitleaks) and the modes of segurata's own files, with the exact fix for each problem
@@ -49,6 +52,27 @@ Output goes to `~/.segurata/out/<date>/<connector>.jsonl` (mode 0600, in a 0700 
 holds email addresses and each account's services), whatever folder you run segurata from;
 `SEGURATA_OUT` or `--out` choose another place. The summary is sorted by severity. Each inventory
 ends with `segurata track sync`, which folds the latest runs into the tracker.
+
+## Safety model
+
+Every connector **inventories first, read-only**. Changing anything is a separate step, by hand or
+with `segurata remediate`, which shows the exact plan and changes nothing without `--apply` and a
+confirmation. The full list of guarantees, each of which counts as a vulnerability when broken:
+[SECURITY.md](SECURITY.md#security-principles).
+
+### What leaves your machine
+
+- No telemetry, no segurata server, no update check.
+- Read requests to the providers you configure, with your own credentials: the provider CLIs
+  (`gh`, `gcloud`, `aws`, `az`), GET requests to provider APIs with the token your config
+  references, and pages of your own signed-in browser through its local debugging port.
+- Never a secret value found on disk: secrets are fingerprinted locally
+  ([Fingerprints](#fingerprints)) and attributed offline ([Attribution](#attribution)).
+- Results stay on disk, in `~/.segurata` with mode 0600.
+- `segurata remediate --apply` sends exactly the commands or requests its plan showed.
+- External connectors (`segurata-<name>` on `PATH`) run as you and send what they send: the
+  [hibp example](examples/hibp/README.md) sends your email addresses to Have I Been Pwned. Read one
+  before you install it.
 
 ## Tracker and status
 
