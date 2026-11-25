@@ -173,7 +173,7 @@ var gaps = []gap{
 	{slug: "password-manager", title: "The password manager's reused and breached password report is not audited by any connector",
 		step: "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (docs/plan.md, section 2). Mark this done when checked."},
 	{slug: "workspace", title: "Google Workspace administration is not audited: no workspace tenant could be read",
-		covered: workspaceRead,
+		audited: true,
 		step:    "Set up read-only Admin SDK credentials for each tenant (README.md, \"Google Workspace administration\"), then run the connector.",
 		command: "segurata inventory workspace"},
 }
@@ -195,20 +195,6 @@ func (t *Tracker) audited(g gap) (covered bool, how string, known bool) {
 	return false, "", reported || g.unreported && !legacy
 }
 
-// openSetup reports whether an active setup item whose key starts with prefix has a reported
-// status ref that match accepts.
-func (t *Tracker) openSetup(prefix string, match func(FindingRef) bool) bool {
-	for _, it := range t.Items {
-		if it.Kind != KindSetup || it.Status != Open && it.Status != InProgress || !strings.HasPrefix(it.Key, prefix) {
-			continue
-		}
-		if slices.ContainsFunc(it.Findings, func(r FindingRef) bool { return !r.Gone && match(r) }) {
-			return true
-		}
-	}
-	return false
-}
-
 // ranConnector is covered once an instance of the connector has run.
 func ranConnector(name string) func(*Tracker, map[string]*run) (bool, string, bool) {
 	return func(t *Tracker, _ map[string]*run) (bool, string, bool) {
@@ -219,26 +205,6 @@ func ranConnector(name string) func(*Tracker, map[string]*run) (bool, string, bo
 		}
 		return false, "", true
 	}
-}
-
-// workspaceRead is covered when a workspace tenant reported ok; it is a gap only when some tenant
-// is configured (it ran) and none could be read: whether the owner has a tenant is not known
-// otherwise.
-func workspaceRead(t *Tracker, folded map[string]*run) (bool, string, bool) {
-	configured := false
-	for l, r := range folded {
-		if l != "workspace" && !strings.HasPrefix(l, "workspace:") {
-			continue
-		}
-		configured = true
-		if slices.ContainsFunc(r.statuses, func(st finding.Status) bool { return st.State == finding.StateOK }) {
-			return true, l + " was read", true
-		}
-	}
-	if !configured && t.openSetup("setup:workspace", func(FindingRef) bool { return true }) {
-		return false, "", true // no workspace run folded now, but a tenant is still waiting for setup
-	}
-	return false, "", configured
 }
 
 // CoverageReport counts what a sync did to coverage items.
