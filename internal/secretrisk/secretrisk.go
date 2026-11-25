@@ -113,6 +113,14 @@ func (p Priority) Rank() int {
 	return 9
 }
 
+// Lower is the next priority down, P3 staying P3; noise stays noise.
+func (p Priority) Lower() Priority {
+	if r := p.Rank(); r < 3 {
+		return Priority("P" + string(rune('0'+r+1)))
+	}
+	return p
+}
+
 // SeverityOf maps a priority to a finding severity.
 func SeverityOf(p Priority) finding.Severity {
 	switch p {
