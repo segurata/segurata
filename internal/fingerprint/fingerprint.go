@@ -99,8 +99,8 @@ func (k Key) Of(secret string) string {
 	return hex.EncodeToString(m.Sum(nil))[:16]
 }
 
-// Find returns the substring of line, n bytes long, whose fingerprint is fp, or "". Only windows
-// that fits accepts (a redacted hint's prefix, tail and length) are fingerprinted, so a value can
+// Find returns the substring of line, n bytes long, whose fingerprint is fp, or "". Only the windows
+// fits accepts (those matching a redacted hint's prefix and tail) are fingerprinted, so a value can
 // be located again without ever having been stored: `rotations replace` finds the old value in a
 // file, the liveness check finds a value in a line of git history.
 func (k Key) Find(line string, n int, fp string, fits func(string) bool) string {

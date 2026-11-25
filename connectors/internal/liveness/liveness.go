@@ -168,7 +168,7 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 		switch {
 		case p.Value == "" && p.Recover == nil:
 			st.NoValue++
-		case pv == nil:
+		case pv == nil, p.Recover == nil && forProbe(p) == nil: // an AWS secret key without its key id
 			st.Unsupported++
 		case !c.Config.allowsProvider(pv.name):
 			st.NotAllowed++
@@ -179,15 +179,15 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	lim := &limiter{every: c.interval()}
+	count := func(n *int) {
+		mu.Lock()
+		*n++
+		mu.Unlock()
+	}
 	for pv, queue := range queues {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			count := func(n *int) {
-				mu.Lock()
-				*n++
-				mu.Unlock()
-			}
 			for _, p := range queue {
 				if ctx.Err() != nil {
 					count(&st.Interrupted)

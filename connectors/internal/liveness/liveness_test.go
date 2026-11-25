@@ -356,10 +356,11 @@ func TestUnsupportedAndAllowlist(t *testing.T) {
 		{Fingerprints: []string{"a"}, Type: "slack-webhook", Value: liveKey},   // trying it would post
 		{Fingerprints: []string{"b"}, Type: "npm-authtoken", Value: liveKey},   // any registry
 		{Fingerprints: []string{"c"}, Type: "aws-access-key-id", Value: keyID}, // needs its secret
+		{Fingerprints: []string{"f"}, Type: "aws-secret-key", Value: liveKey},  // needs its key id, whatever the allowlist
 		{Fingerprints: []string{"d"}, Type: "openai-project", Value: liveKey},  // not in the allowlist
 		{Fingerprints: []string{"e"}, Type: "github", Value: "ghp_" + liveKey}, // allowed
 	})
-	if st.Unsupported != 3 || st.NotAllowed != 1 || st.Asked != 1 || len(got) != 1 {
+	if st.Unsupported != 4 || st.NotAllowed != 1 || st.Asked != 1 || len(got) != 1 {
 		t.Errorf("stats %+v, results %v", st, got)
 	}
 	if len(f.paths) != 1 {

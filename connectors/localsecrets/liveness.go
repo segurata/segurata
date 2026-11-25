@@ -133,7 +133,8 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 				history[ev.Fingerprint] = ev
 			}
 			if ev.Type == "aws-access-key-id" {
-				historyIDs[historyPlace(ev)] = append(historyIDs[historyPlace(ev)], ev)
+				place := historyPlace(ev)
+				historyIDs[place] = append(historyIDs[place], ev)
 			}
 		}
 	}
@@ -164,17 +165,17 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		covered[fp] = true
 		p := liveness.Probe{Fingerprints: []string{fp}, Type: typ}
 		if ev, ok := history[fp]; ok {
-			p.Recover = s.recoverer(ev, nil)
-			if typ == "aws-secret-key" {
-				p.Recover = nil
+			switch typ {
+			case "aws-access-key-id":
+				// Tried only with its secret key.
+			case "aws-secret-key":
 				if id, ok := onlyKeyID(historyIDs[historyPlace(ev)]); ok && !covered[id.Fingerprint] {
 					covered[id.Fingerprint] = true
 					p.Fingerprints = append(p.Fingerprints, id.Fingerprint)
 					p.Recover = s.recoverer(ev, &id)
 				}
-			}
-			if typ == "aws-access-key-id" {
-				p.Recover = nil // tried only with its secret key
+			default:
+				p.Recover = s.recoverer(ev, nil)
 			}
 		}
 		candidates = append(candidates, p)

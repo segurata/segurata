@@ -1,7 +1,6 @@
 package fingerprint
 
 import (
-	"strings"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -9,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
