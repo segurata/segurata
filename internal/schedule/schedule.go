@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -398,7 +399,7 @@ func (e Env) printSystemd(o Options) error {
 }
 
 func (e Env) confirm(o Options) (bool, error) {
-	ok, err := confirmFunc(e.IO.In, e.IO.Out, o.Yes, e.TTY)
+	ok, err := prompt.Confirm(e.IO.In, e.IO.Out, o.Yes, e.TTY)
 	if err == nil && !ok {
 		fmt.Fprintln(e.IO.Out, "Not applied.")
 	}

@@ -11,6 +11,9 @@ const (
 	Unknown LiveState = "unknown" // no answer that tells: network, rate limit, server error, ambiguous
 )
 
+// LiveStates are every state a check can end in, in the order listings show them.
+var LiveStates = []LiveState{Live, Dead, Unknown}
+
 // Liveness is the result of local-secrets' liveness check of one secret: one call to the
 // provider's read-only identity endpoint with the secret (see connectors/internal/liveness and
 // docs/architecture.md, "Liveness"). Never the value, and never the provider's own message, which

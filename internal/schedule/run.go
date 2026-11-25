@@ -8,15 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
 )
-
-var confirmFunc = prompt.Confirm
 
 // Run is one scheduled run, what the agent executes: `segurata inventory` over the selected
 // connectors (which ends in a tracker sync), a notification for the P0 and P1 items that sync
