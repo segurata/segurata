@@ -302,3 +302,11 @@ func TestUpstreamOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestPriorityLower(t *testing.T) {
+	for in, want := range map[Priority]Priority{P0: P1, P1: P2, P2: P3, P3: P3, "": ""} {
+		if got := in.Lower(); got != want {
+			t.Errorf("%q.Lower() = %q, want %q", in, got, want)
+		}
+	}
+}

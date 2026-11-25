@@ -575,6 +575,9 @@ func (it *Item) refreshSecret() {
 			it.Priority = p
 		}
 	}
+	if it.livenessIs(secretrisk.Unregistered) && len(live) == 0 {
+		it.Priority = it.Priority.Lower()
+	}
 	var reasons []string
 	if it.LiveAndLeaked() {
 		it.Priority = secretrisk.P0

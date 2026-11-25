@@ -19,6 +19,8 @@ import (
 //     (they fail for whoever reads them). A later check that finds it live opens it again; the owner
 //     reopening it by hand after the check sticks. Ignored and accepted items are left alone, and
 //     so is an item a connector reports live: two sources disagree, the open item stays;
+//   - unregistered (an SSH key the owner's GitHub keys, deploy keys and authorized_keys do not hold)
+//     lowers the priority one step, unless a connector reports it live: not proof it is dead;
 //   - unknown changes nothing.
 // See docs/architecture.md, "Liveness".
 
@@ -72,14 +74,18 @@ func (it *Item) livenessReason() string {
 		return ""
 	}
 	day := l.CheckedAt.Format(time.DateOnly)
-	switch l.State {
-	case secretrisk.Live:
+	switch {
+	case l.State == secretrisk.Unregistered:
+		return "unregistered: " + l.Said() + " on " + day + "; not proof it is dead"
+	case l.ByOwner && (l.State == secretrisk.Live || l.State == secretrisk.Dead):
+		return string(l.State) + ": " + l.Said() + " on " + day
+	case l.State == secretrisk.Live:
 		r := "live: " + l.Endpoint + " accepted it on " + day
 		if l.Account != "" {
 			r += " as " + l.Account
 		}
 		return r
-	case secretrisk.Dead:
+	case l.State == secretrisk.Dead:
 		return fmt.Sprintf("dead: %s rejected it on %s (%s)", l.Endpoint, day, l.Reason)
 	}
 	return ""
@@ -101,7 +107,7 @@ func (it *Item) closeDead(now time.Time) {
 		return
 	}
 	it.leaveAccepted()
-	it.setStatus(now, Done, EvStatus, actDead, fmt.Sprintf("key no longer valid (checked %s: %s answered %s)", l.CheckedAt.Format(time.DateOnly), l.Endpoint, l.Reason))
+	it.setStatus(now, Done, EvStatus, actDead, fmt.Sprintf("key no longer valid (checked %s: %s)", l.CheckedAt.Format(time.DateOnly), l.Said()))
 	it.derive()
 }
 
@@ -128,7 +134,7 @@ func (it *Item) livenessClaims() attribution.Claims {
 }
 
 // LivenessLine is the coverage of the check over the tracked secrets (not noise, not merged): how
-// many it settled live or dead, and the count of each state. "" without such secrets.
+// many it settled live, dead or unregistered, and the count of each state. "" without such secrets.
 func (t *Tracker) LivenessLine() string {
 	counts := map[string]int{}
 	total := 0
@@ -143,11 +149,14 @@ func (t *Tracker) LivenessLine() string {
 		return ""
 	}
 	var parts []string
+	settled := 0
 	for _, st := range append(slices.Clone(secretrisk.LiveStates), unchecked) {
 		if counts[string(st)] > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", counts[string(st)], st))
 		}
+		if st != secretrisk.Unknown && st != unchecked {
+			settled += counts[string(st)]
+		}
 	}
-	settled := counts[string(secretrisk.Live)] + counts[string(secretrisk.Dead)]
 	return fmt.Sprintf("Liveness checked for %d of %d secrets: %s.", settled, total, strings.Join(parts, ", "))
 }

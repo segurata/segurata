@@ -527,7 +527,8 @@ unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture
 
 Each secret is attributed `mine`, `not-mine` or `unknown`, offline: attribution never sends a
 leaked secret to a provider to ask whose it is (the liveness check below, off by default, asks
-whether it works, and only for owners you allow). At scan time `local-secrets` reads what the value itself
+whether it works, and only for owners you allow; its lookups with your own credentials may name the
+account too). At scan time `local-secrets` reads what the value itself
 names (the AWS account an access key id encodes, the Slack workspace of a webhook, the GCP project
 number of an OAuth client id) and, for AWS and Google credentials, what the file around it names
 (the key id next to a secret access key, `project_id` in a credentials file), plus the author of
@@ -569,6 +570,25 @@ Results are cached by fingerprint in `~/.cache/segurata/liveness.json` (live 1 d
 and hold no value. `rotations list` shows a LIVE column and, like `status`, "Liveness checked for N
 of M secrets". Endpoints, documentation and limits:
 [docs/architecture.md](docs/architecture.md#liveness).
+
+Two kinds of secret cannot be tried by themselves, and are looked up with your own credentials
+instead, without sending the secret anywhere (for mine and unknown secrets, whatever `owners` says):
+
+- A lone AWS access key id (no secret key next to it) is compared with the IAM inventory of each
+  of your aws CLI profiles (`iam list-users`, `iam list-access-keys`, `iam get-account-summary`):
+  Active is live, Inactive dead, absent from an account read whole and without root keys dead.
+  The profiles need what SecurityAudit grants; without it the key stays unknown and the status
+  line says what to allow. `aws_profiles` picks the profiles (default: all).
+- A private key's public half is derived in memory and looked up among your GitHub SSH and signing
+  keys, the deploy keys of your 30 most recently pushed repositories (through `gh`, which needs
+  `read:public_key` and `read:ssh_signing_key`), `~/.ssh/authorized_keys`, and with `ssh_hosts`
+  (opt-in, at most 20) the `authorized_keys` of those hosts over `ssh -o BatchMode=yes`. Registered
+  anywhere is live; registered nowhere is `unregistered`, one priority lower (not proof it is
+  dead); a PEM key found nowhere may sign TLS or JWTs and stays unknown.
+
+```json
+{"liveness": {"enabled": true, "aws_profiles": ["prod"], "ssh_hosts": ["deploy@build1"]}}
+```
 
 The guided loop is `next`, rotate at the provider, `replace`, `next` again. `next` prints one item:
 what it is (redacted), why it is urgent, where it leaked, the provider page with a few checked

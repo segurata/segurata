@@ -16,13 +16,17 @@ go test ./...
 scripts/check-public.sh                     # gitleaks and private identifiers over tracked files
 ```
 
-`scripts/check-public.sh` needs [gitleaks](https://github.com/gitleaks/gitleaks). Maintainers keep
-a list of private identifiers (client names, internal hosts, project ids) outside the repository,
-at `~/.config/segurata/public-gate.txt` or `$SEGURATA_PUBLIC_GATE` (format in
-[`scripts/identifiers.py`](scripts/identifiers.py)), and run the gate before every push:
+`scripts/check-public.sh` needs [gitleaks](https://github.com/gitleaks/gitleaks). Run without
+options it checks the tracked files of the working tree only, not the commits: `--history` adds
+every commit. Maintainers keep a list of private identifiers (client names, internal hosts, project
+ids) outside the repository, at `~/.config/segurata/public-gate.txt` or `$SEGURATA_PUBLIC_GATE`
+(format in [`scripts/identifiers.py`](scripts/identifiers.py)), and gate every push with a pre-push
+hook. With `--pre-push` the gate reads the refs being pushed from the hook's input and scans exactly
+the commits the remote lacks, so a secret or identifier added in one commit and deleted in the next
+is still caught:
 
 ```bash
-printf '#!/bin/sh\nexec scripts/check-public.sh --require-identifiers\n' > "$(git rev-parse --git-path hooks)/pre-push"
+printf '#!/bin/sh\nexec scripts/check-public.sh --require-identifiers --pre-push\n' > "$(git rev-parse --git-path hooks)/pre-push"
 chmod +x "$(git rev-parse --git-path hooks)/pre-push"
 ```
 

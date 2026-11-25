@@ -26,11 +26,6 @@ import (
 // livenessTimeout bounds the whole check, so a slow provider never costs the scan its findings.
 const livenessTimeout = 10 * time.Minute
 
-// newChecker is the real checker: the providers' hosts and the cache under ~/.cache/segurata.
-func newChecker(home string, cfg liveness.Config) *liveness.Checker {
-	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(liveness.DefaultCachePath(home))}
-}
-
 // heldValues are the values of the secrets the check may try, by fingerprint, and the AWS access
 // key ids, which are tried only with a secret access key found in the same place.
 type heldValues struct {
@@ -76,8 +71,8 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 
 // probes are the held secrets to try, one per fingerprint: an AWS secret access key with the one
 // key id found in the same place (both fingerprints get the result). A secret key without its key
-// id and a key id without its secret key are probes too, which the checker answers from its cache
-// or counts as unsupported.
+// id is a probe too, which the checker answers from its cache or counts as unsupported; a key id
+// without its secret key is looked up in the owner's IAM inventory.
 func (h heldValues) probes() []liveness.Probe {
 	var out []liveness.Probe
 	paired := map[string]bool{}
@@ -158,15 +153,13 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	})
 	for _, fp := range unread {
 		typ := types[fp]
-		if covered[fp] || !liveness.Supported(typ) && typ != "aws-access-key-id" {
+		if covered[fp] || !liveness.Supported(typ) {
 			continue
 		}
 		covered[fp] = true
 		p := liveness.Probe{Fingerprints: []string{fp}, Type: typ}
 		if ev, ok := history[fp]; ok {
 			switch typ {
-			case "aws-access-key-id":
-				// Tried only with its secret key.
 			case "aws-secret-key":
 				if id, ok := onlyKeyID(historyIDs[historyPlace(ev)]); ok && !covered[id.Fingerprint] {
 					covered[id.Fingerprint] = true
@@ -185,7 +178,7 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		fp := p.Fingerprints[0]
 		switch _, reported := claims[fp]; {
 		case !reported: // noise, or dropped after it was held
-		case !s.cfg.liveness.Allows(known.Of(fp, claims[fp])):
+		case !s.cfg.liveness.Allows(known.Of(fp, claims[fp]), p.Type):
 			refused++
 		default:
 			probes = append(probes, p)
@@ -279,9 +272,12 @@ func (s *scan) recoverValue(ctx context.Context, ev secretrisk.Evidence) (string
 	return "", false
 }
 
+// checker is the real checker unless a test gives one: the providers' hosts, the cache under
+// ~/.cache/segurata, and the owner's gh, aws and ssh for the lookups.
 func (c *Connector) checker(home string, cfg liveness.Config) *liveness.Checker {
 	if c.NewChecker != nil {
 		return c.NewChecker(home, cfg)
 	}
-	return newChecker(home, cfg)
+	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(liveness.DefaultCachePath(home)),
+		Owner: liveness.Owner{AWS: c.AWS, GH: c.GH, SSH: c.SSH, Home: home}}
 }

@@ -1173,10 +1173,12 @@ places. `rotations next` and the "Rotate N P0 secrets" entry of `status` follow 
 
 The owner of old projects wants to rotate only what links to them personally. `internal/attribution`
 decides, for each secret, `mine`, `not-mine` or `unknown`, offline: attribution asks no provider
-about a leaked secret, not even with `sts get-access-key-info`, which takes only the key id but is
-still a call to AWS about it. The liveness check (see "Liveness"), off by default, does call
-providers, and only with secrets attribution already allows; what it learns (the AWS account, GitHub
-login or Slack workspace a key signs in as) is one more claim.
+about a leaked secret. The liveness check (see "Liveness"), off by default, does call providers,
+and only with secrets attribution already allows; what it learns (the AWS account, GitHub login or
+Slack workspace a key signs in as, the account whose IAM inventory holds a key id, the GitHub login
+that registered a key) is one more claim. Its only call that names a leaked value is `sts
+get-access-key-info`, with the owner's profile, for an AWS key id of the older format whose account
+cannot be decoded.
 
 **Claims, at scan time.** Only local-secrets has the raw value, so it derives the identifiers there
 (`connectors/localsecrets/attribution.go`) and stores them in the evidence (`aws_account`,
@@ -1190,7 +1192,7 @@ login or Slack workspace a key signs in as) is one more claim.
 | `gcp_project` | an OAuth client id (`<number>-….apps.googleusercontent.com`) | the project number it starts with |
 | `gcp_project` | a Google API key, OAuth client secret or service-account key | the file around it: `project_id`, `project_number`, `GCM_SENDER_ID`, or a client id, when it names one project only. An API key alone names none |
 | `author_email` | a git history finding | the author of the commit gitleaks reports |
-| `aws_account`, `github_login`, `slack_team` | the liveness check | the account the provider says the key signs in as (`secret.liveness.account`): STS `Account`, GitHub `login`, Slack `team_id`. A GitHub login is compared with `owned.github` |
+| `aws_account`, `github_login`, `slack_team` | the liveness check | the account the provider says the key signs in as (`secret.liveness.account`): STS `Account`, GitHub `login`, Slack `team_id`; for lookups, the account whose IAM inventory holds a key id (or that `sts get-access-key-info` names) and the GitHub login (or repository owner) that registered a private key's public half. A GitHub login is compared with `owned.github` |
 
 History findings replayed from the incremental cache (see "Incremental git history scan") keep
 the claims of the run that first scanned them; ones cached before claims existed gain them at the
@@ -1314,6 +1316,48 @@ except where a 403 or 429 proves the key was accepted.
 Known gaps: keys of AWS partitions other than the standard one (GovCloud, China) read as dead on
 the global STS endpoint; OpenAI answers 403 from unsupported regions, which reads as unknown.
 
+**Lookups with the owner's credentials.** Two kinds of secret cannot be tried by themselves: an AWS
+access key id with no secret key beside it, and a private key. They are looked up instead
+(`connectors/internal/liveness/lookup.go`) with the owner's own aws CLI profiles, gh login and
+`~/.ssh`, and the secret is never sent: the key id is compared in memory with the owner's IAM
+inventory, the private key's public half with the keys the owner registered. A lookup runs for
+secrets attributed mine or unknown whatever `owners` says (it tries nothing), never for not-mine,
+and only for the providers `aws-keys` and `ssh-keys` the allowlist names (both by default). Its
+result has `by_owner: true`; its endpoint is what was read and its reason what that says. Each
+command goes through a read-only guard: aws `configure list-profiles`, `sts get-caller-identity`,
+`sts get-access-key-info`, `iam list-users`, `iam list-access-keys`, `iam get-account-summary`; gh
+`api [--paginate]` with five GET paths; ssh with one fixed shape. No command output or error text
+is kept (a CLI's error may echo its arguments): a failure is reduced to a code ("AccessDenied",
+"not installed") and a setup hint at the end of the status line.
+
+| Secret | Read once per run | Live | Dead | Otherwise |
+|---|---|---|---|---|
+| AWS key id (AKIA) alone (`aws-keys`) | per profile in `liveness.aws_profiles` (default `aws configure list-profiles`): `sts get-caller-identity`; per account reached: `iam list-users` (at most 1000), `iam list-access-keys --user-name` for each, `iam get-account-summary` (`AccountAccessKeysPresent`, the root user's keys) | Active in an account's inventory | Inactive there; or not among the keys of the account it belongs to, when that account's inventory was read whole and its root user has no keys (deleted) | unknown: an ASIA id (temporary credentials, never listed); an account no profile reaches (its id is a claim, so attribution decides); an inventory not read whole; root keys present; a profile that does not sign in |
+| Private key (`private-key`, `ssh-key`; `ssh-keys`) | gh `api user`, `api --paginate user/keys`, `api --paginate user/ssh_signing_keys`, `api user/repos?affiliation=owner&sort=pushed&per_page=30` and `api repos/<repo>/keys` for each; `~/.ssh/authorized_keys` and `~/.ssh/*.pub`; with `liveness.ssh_hosts` (at most 20), `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -T -- <host> cat .ssh/authorized_keys` | its public half's SHA256 fingerprint is a GitHub SSH or signing key, a deploy key, or in an authorized_keys: "GitHub SSH key \"laptop\"", "authorized on host build1" | never | `unregistered` when found nowhere and both GitHub lists were read; unknown when it is only the `.pub` of a key in `~/.ssh` (used from here), when it is not in the OpenSSH container and not from `~/.ssh` ("may sign TLS certificates or JWTs"), when GitHub's lists could not be read, and for a PKCS#8 key encrypted or a body cut short |
+
+The account of an AKIA key id comes from the key id itself (see "Attribution"); for one of the older
+format (fifth character I or J), `sts get-access-key-info` with the first profile that signs in,
+the one command given the key id. GetAccessKeyInfo "does not indicate the state of the access key",
+so absence is read from the inventory, never from it. The public half comes from
+`connectors/internal/sshkey`, standard library only: the OpenSSH container stores it in clear (even
+when the private part is encrypted); PKCS#1, PKCS#8 and SEC 1 keys are parsed with `crypto/x509`,
+and EC keys with explicit curve parameters (macOS's ssh-keygen writes them) by hand; the SSH wire
+format (RFC 4253 6.6, RFC 5656 3.1, RFC 8709 4) is built field by field and fingerprinted as
+ssh-keygen does. Tests compare it with ssh-keygen's output for every type and container.
+
+Unregistered is not proof of death: the key may be authorized on a host segurata does not read. It
+lowers the item's priority one step (P0 to P1) unless a connector reports the key live, counts as
+checked in the liveness line, and is cached for a day, like live: a key can be registered any day.
+
+| API | Permission | Docs |
+|---|---|---|
+| `sts:GetCallerIdentity` | none | [GetCallerIdentity](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html) |
+| `iam:ListUsers`, `iam:ListAccessKeys`, `iam:GetAccountSummary` | the same names (all in SecurityAudit) | [ListAccessKeys](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListAccessKeys.html) (Status `Active`, `Inactive`), [ListUsers](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListUsers.html), [GetAccountSummary](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetAccountSummary.html) |
+| `sts:GetAccessKeyInfo` | `sts:GetAccessKeyInfo` (an action of access level Read) | [GetAccessKeyInfo](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetAccessKeyInfo.html), [STS actions](https://docs.aws.amazon.com/service-authorization/latest/reference/list_awssecuritytokenservice.html) |
+| GitHub `GET /user/keys` | `read:public_key` | [keys](https://docs.github.com/en/rest/users/keys?apiVersion=2022-11-28#list-public-ssh-keys-for-the-authenticated-user) |
+| GitHub `GET /user/ssh_signing_keys` | `read:ssh_signing_key` | [SSH signing keys](https://docs.github.com/en/rest/users/ssh-signing-keys?apiVersion=2022-11-28) |
+| GitHub `GET /repos/{owner}/{repo}/keys` | admin on the repository; a repository gh may not read is skipped | [deploy keys](https://docs.github.com/en/rest/deploy-keys/deploy-keys?apiVersion=2022-11-28#list-deploy-keys) |
+
 **In the tracker.** A rotate item keeps the newest result of its sightings in `secret.liveness`
 (`internal/tracker/liveness.go`):
 
@@ -1331,12 +1375,13 @@ the global STS endpoint; OpenAI answers 403 from unsupported regions, which read
   again; the owner reopening it by hand after the check keeps it open. Ignored and accepted items
   are not touched, nor an item a connector reports live: two sources disagree and the item stays
   open.
+- **Unregistered** (lookups only) lowers the priority one step; see above.
 - **Unknown** changes nothing.
 
-`rotations list` has a LIVE column (live, dead, unknown, unchecked) and ends, like the status
-briefing after its coverage line, with "Liveness checked for N of M secrets: …", where M counts the
-tracked secrets (not noise, not merged) and N those found live or dead. `rotations show` prints the
-answer, its date, endpoint and account.
+`rotations list` has a LIVE column (live, dead, unregistered, unknown, unchecked) and ends, like the
+status briefing after its coverage line, with "Liveness checked for N of M secrets: …", where M
+counts the tracked secrets (not noise, not merged) and N those found live, dead or unregistered.
+`rotations show` prints the answer, its date, what was read and the account.
 
 ## Correlation
 
