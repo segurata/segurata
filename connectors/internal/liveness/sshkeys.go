@@ -257,7 +257,7 @@ func lookupSSHKey(ctx context.Context, l *lookups, p Probe) secretrisk.Liveness 
 		return unknown(pubFile, "the public half of "+pubFile+" on this machine, registered nowhere segurata can see")
 	}
 	if !openssh && p.Type != "ssh-key" {
-		return unknown("", "not an OpenSSH key: it may sign TLS certificates or JWTs, which segurata cannot look up")
+		return unknown("", "not registered as an SSH key where segurata looked; a PEM key may instead sign TLS certificates or JWTs, which it cannot look up")
 	}
 	if !reg.githubRead {
 		return unknown(ghKeysEndpoint, "your GitHub keys could not be listed")

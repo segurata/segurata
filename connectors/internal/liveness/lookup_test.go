@@ -263,7 +263,7 @@ func newTestKey(t *testing.T, alg string) testKey {
 	return testKey{pem: body, openssh: opensshBody(pub), line: pub.Type + " " + base64.StdEncoding.EncodeToString(pub.Blob)}
 }
 
-const pemUnknown = "not an OpenSSH key: it may sign TLS certificates or JWTs, which segurata cannot look up"
+const pemUnknown = "not registered as an SSH key where segurata looked; a PEM key may instead sign TLS certificates or JWTs, which it cannot look up"
 
 func TestLookupSSHKeys(t *testing.T) {
 	keys := map[string]testKey{}
