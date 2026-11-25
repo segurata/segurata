@@ -90,6 +90,7 @@ class DescribeTest(unittest.TestCase):
         d = json.loads(out.getvalue())
         self.assertEqual((d["name"], d["protocol"], d["needs"]), ("hibp", 2, ["secret:HIBP_API_KEY"]))
         self.assertNotIn("remediates", d)
+        self.assertEqual(d["covers"], [{"id": "hibp"}])
 
 
 class InventoryTest(unittest.TestCase):

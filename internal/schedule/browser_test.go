@@ -155,7 +155,7 @@ func TestASkippedRunResolvesNothing(t *testing.T) {
 	}
 	earlier := `{"type":"finding","id":"g1","connector":"google-personal","account":"a@example.com","severity":"high","title":"App with full Gmail access","resource":{"type":"oauth_app","id":"app1"},"observed_at":"2020-01-01T00:00:00Z"}
 {"type":"status","connector":"google-personal","account":"b@example.com","state":"reauth"}
-{"type":"run_end","connector":"google-personal","complete":false,"started_at":"2020-01-01T00:00:00Z","ended_at":"2020-01-01T00:00:01Z","scopes":{"inspected":["a@example.com"],"inspected_count":1,"skipped":[{"scope":"b@example.com","reason":"reauth"}],"skipped_count":1}}
+{"type":"run_end","connector":"google-personal","complete":false,"started_at":"2020-01-01T00:00:00Z","ended_at":"2020-01-01T00:00:01Z","scopes":{"inspected":["a@example.com"],"inspected_count":1,"skipped":[{"scope":"b@example.com","reason":"reauth"}],"skipped_count":1},"theme":{"id":"google"}}
 `
 	if err := os.WriteFile(filepath.Join(dir, "google-personal.jsonl"), []byte(earlier), 0o600); err != nil {
 		t.Fatal(err)

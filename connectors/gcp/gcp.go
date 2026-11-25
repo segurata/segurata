@@ -48,6 +48,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Google Cloud: API keys, service account keys and roles, billing budgets, local credentials",
 		Needs:    []string{"cli:gcloud"},
+		Theme:    finding.ThemeCloud,
 	}
 }
 

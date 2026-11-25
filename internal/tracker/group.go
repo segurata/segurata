@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -13,72 +14,76 @@ import (
 )
 
 // Grouping turns findings into items: one item per thing a person would do. Five GitHub orgs that
-// do not require 2FA are one item (one settings page, five times); each data dump is its own item;
-// thirty X apps that can post as you are one review. Info findings never make an item. Secrets are
-// grouped by fingerprint elsewhere (secret.go); connector statuses become setup items (sync.go).
+// do not require 2FA are one item (one settings page, five times); a repository's data dumps are
+// one item; thirty X apps that can post as you are one review. Each connector declares how its
+// findings group (finding.Track); the tracker applies it, and groups the findings of a connector
+// that declares nothing by title family. Info findings never make an item. Secrets are grouped by
+// fingerprint elsewhere (secret.go); connector statuses become setup items (sync.go).
 
 type groupBy int
 
 const (
 	perFinding         groupBy = iota // one item per finding
-	perCheck                          // one item per check (resource id) across accounts
+	perCheck                          // one item per check (declared key, or resource id) across accounts
 	perAccount                        // one item per account
 	perAccountSeverity                // one item per account and severity
-	perProject                        // one item per evidence.project
+	perProject                        // one item per project (declared key, or account)
 	perFamily                         // one item per account and title family (the title without the resource's name)
 	perRepo                           // one item per evidence.repo
-	perEvidenceCheck                  // one item per evidence.check_id across scopes (e.g. one Prowler check failing in many projects)
 )
 
-// rule maps findings of a connector and resource type (and, optionally, some resource ids) to how
-// they group, the kind of item and its title. First match wins.
-type rule struct {
-	connectors []string // empty: any
-	resource   string   // empty: any
-	by         groupBy
-	kind       Kind
-	title      func(p *proposal) string // nil: the finding's title, or the family with a count
-	next       func(p *proposal) *Next  // nil: the worst finding's remediation
+// groupsBy maps a finding.Track group to how it groups.
+var groupsBy = map[string]groupBy{
+	finding.GroupFinding: perFinding, finding.GroupCheck: perCheck, finding.GroupAccount: perAccount,
+	finding.GroupAccountSeverity: perAccountSeverity, finding.GroupProject: perProject, finding.GroupFamily: perFamily,
 }
 
-var rules = []rule{
-	// Prowler reports one failure per check and project; the same CIS logging check failing in 90
-	// projects is one thing to fix, so it is one item listing the projects.
-	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
-	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-	{connectors: []string{"github"}, resource: "github_org_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
-	{connectors: []string{"github"}, resource: "github_repo_setting", by: perCheck, kind: KindFix, title: githubCheckTitle},
-	{connectors: []string{"github"}, resource: "github_repo", by: perAccount, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Repository security settings off in %s of %s", textfmt.Count(len(p.findings), "repository", "repositories"), p.account)
-	}},
-	{connectors: []string{"connected-apps"}, resource: "slack_app", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
-		return fmt.Sprintf("Review %s with %s permissions in %s", textfmt.Count(len(p.findings), "Slack app", "Slack apps"),
-			breadth(p.worst().Severity, "broad", "several", "few"), strings.TrimPrefix(p.account, "slack:"))
-	}},
-	{connectors: []string{"connected-apps"}, by: perFamily, kind: KindReview, title: appsTitle},
-	{connectors: []string{"google-personal"}, resource: "oauth_grant", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
-		return fmt.Sprintf("Review %s with %s access to %s", textfmt.Count(len(p.findings), "app", "apps"),
-			breadth(p.worst().Severity, "high-risk", "broad", "limited"), p.account)
-	}},
-	{connectors: []string{"gcp"}, resource: "api_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Restrict %s in GCP project %s", textfmt.Count(len(p.findings), "API key", "API keys"), p.project)
-	}},
-	{connectors: []string{"gcp"}, resource: "service_account_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Rotate or delete %s in GCP project %s", textfmt.Count(len(p.findings), "user-managed service-account key", "user-managed service-account keys"), p.project)
-	}},
-	{connectors: []string{"gcp"}, resource: "service_account_role", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Narrow the roles of %s in GCP project %s", textfmt.Count(len(p.findings), "service account", "service accounts"), p.project)
-	}},
-	{connectors: []string{"openai", "anthropic", "openrouter"}, resource: "api_key", by: perAccountSeverity, kind: KindFix, title: func(p *proposal) string {
-		s := fmt.Sprintf("Revoke or limit %s", textfmt.Count(len(p.findings), providerName(p.connector)+" API key", providerName(p.connector)+" API keys"))
-		if p.instance != "" {
-			s += " (" + p.instance + ")"
-		}
-		return s
-	}},
-	{connectors: []string{"macos", "aws"}, by: perFinding, kind: KindFix},
-	{connectors: []string{"browser-extensions"}, by: perFinding, kind: KindReview},
-	{by: perFamily, kind: KindFix},
+// rule says how findings group, the kind of item and its title: what a finding declares
+// (finding.Track), or the tracker's own rule for local-secrets' data dumps.
+type rule struct {
+	by    groupBy
+	kind  Kind
+	title func(p *proposal) string // nil: the finding's title, or the worst finding's with a count
+	next  func(p *proposal) *Next  // nil: the worst finding's remediation
+	keep  bool                     // keep the item's title (a run from before declarations)
+}
+
+// dumpsRule makes one item of a repository's data dumps, purged in one history rewrite.
+var dumpsRule = &rule{by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext}
+
+// defaultRule groups a finding that declares nothing.
+var defaultRule = &rule{by: perFamily, kind: KindFix}
+
+// declared is the rule a finding's Track declares.
+func declared(tr *finding.Track) *rule {
+	r := *defaultRule
+	if by, ok := groupsBy[tr.Group]; ok {
+		r.by = by
+	}
+	if tr.Kind == finding.TrackReview {
+		r.kind = KindReview
+	}
+	if tr.Title != "" {
+		r.title = declaredTitle
+	}
+	return &r
+}
+
+// declaredTitle is the title the group's first finding declares, with the count in it.
+func declaredTitle(p *proposal) string {
+	tr := p.findings[0].Track
+	n := len(p.findings)
+	switch tr.Count {
+	case finding.CountAccounts:
+		n = len(p.accounts())
+	case finding.CountScopes:
+		n = len(p.scopes())
+	}
+	if n == 1 && tr.TitleOne != "" {
+		return tr.TitleOne
+	}
+	noun, nouns := cmp.Or(tr.Noun, "finding"), cmp.Or(tr.Nouns, "findings")
+	return strings.ReplaceAll(tr.Title, "{count}", textfmt.Count(n, noun, nouns))
 }
 
 // dumpsTitle names a repository's dumps by number and total size: "3 database dumps in the git
@@ -124,84 +129,6 @@ func dumpsNext(p *proposal) *Next {
 	return &Next{Who: You, Action: b.String(), URL: secretrisk.DumpFixDoc}
 }
 
-// breadth words a group's worst severity: high and critical, medium, or lower.
-func breadth(s finding.Severity, high, medium, low string) string {
-	switch {
-	case s.Rank() >= finding.SevHigh.Rank():
-		return high
-	case s == finding.SevMedium:
-		return medium
-	}
-	return low
-}
-
-func providerName(connector string) string {
-	return map[string]string{"openai": "OpenAI", "anthropic": "Anthropic", "openrouter": "OpenRouter"}[connector]
-}
-
-// githubChecks phrase each organization-level check the github connector reports.
-var githubChecks = map[string]string{
-	"org-2fa-not-required":                          "Two-factor authentication not required",
-	"org-members-without-2fa":                       "Members without two-factor authentication",
-	"org-outside-collaborators-without-2fa":         "Outside collaborators without two-factor authentication",
-	"org-default-repository-permission":             "Every member can write to every repository",
-	"org-default-workflow-permissions-write":        "Workflows get a read and write GITHUB_TOKEN by default",
-	"org-all-actions-allowed":                       "Workflows may use any action from any author",
-	"org-actions-can-approve-pull-requests":         "Workflows can create and approve pull requests",
-	"org-members-can-create-public-repos":           "Members can create public repositories",
-	"org-new-public-repos-without-secret-scanning":  "New public repositories get no secret scanning or push protection",
-	"org-new-private-repos-without-secret-scanning": "New private repositories get no secret scanning or push protection",
-	"dependabot-security-updates-disabled":          "Repositories without Dependabot security updates",
-	"fork-secret-scanning-disabled":                 "Forks without secret scanning or push protection",
-	"fork-workflow-write":                           "Forks whose workflows get a read and write GITHUB_TOKEN",
-	"private-secret-scanning-disabled":              "Private repositories without secret scanning or push protection",
-}
-
-func githubCheckTitle(p *proposal) string {
-	phrase, ok := githubChecks[p.check]
-	if !ok {
-		phrase = strings.ReplaceAll(strings.TrimPrefix(p.check, "org-"), "-", " ")
-	}
-	return phrase + " in " + textfmt.Count(len(p.accounts()), "GitHub org", "GitHub orgs")
-}
-
-// appNouns name what a connected-apps resource type is.
-var appNouns = map[string][2]string{
-	"x_app":                 {"X app", "X apps"},
-	"github_oauth_app":      {"GitHub OAuth app", "GitHub OAuth apps"},
-	"github_app_installed":  {"GitHub App", "GitHub Apps"},
-	"github_app_authorized": {"authorized GitHub App", "authorized GitHub Apps"},
-	"github_ssh_key":        {"GitHub SSH key", "GitHub SSH keys"},
-	"notion_integration":    {"Notion integration", "Notion integrations"},
-	"facebook_app":          {"Facebook app", "Facebook apps"},
-	"dropbox_app":           {"Dropbox app", "Dropbox apps"},
-	"microsoft_work_app":    {"work account app", "work account apps"},
-}
-
-// appsTitle puts the count and noun in front of what the findings' titles say about one app, with
-// the predicate made plural: "7 Notion integrations can read and change the Notion pages shared
-// with them (your own integrations)".
-func appsTitle(p *proposal) string {
-	if len(p.findings) == 1 {
-		return p.findings[0].Title
-	}
-	noun, ok := appNouns[p.resource]
-	if !ok {
-		noun = [2]string{"app", "apps"}
-	}
-	n := len(p.findings)
-	rest := textfmt.PluralPredicate(n, stripName(p.findings[0]))
-	one, many := lastWord(noun[0]), lastWord(noun[1])
-	rest = strings.ReplaceAll(rest, "(your own "+one+")", "(your own "+many+")")
-	return textfmt.Count(n, noun[0], noun[1]) + " " + rest
-}
-
-// lastWord is the head noun of an app noun: "integration" for "Notion integration".
-func lastWord(s string) string {
-	f := strings.Fields(s)
-	return f[len(f)-1]
-}
-
 var (
 	quoted = regexp.MustCompile(`"[^"]*"`)
 	digits = regexp.MustCompile(`[0-9]+`)
@@ -222,67 +149,54 @@ func family(f finding.Finding) string {
 	return digits.ReplaceAllString(quoted.ReplaceAllString(stripName(f), `"…"`), "N")
 }
 
-func (r rule) matches(f finding.Finding) bool {
-	if r.resource != "" && r.resource != f.Resource.Type {
-		return false
-	}
-	return len(r.connectors) == 0 || slices.Contains(r.connectors, f.Connector)
-}
-
+// ruleFor is the rule a finding groups by.
 func ruleFor(f finding.Finding) *rule {
-	for i := range rules {
-		if rules[i].matches(f) {
-			return &rules[i]
-		}
+	switch {
+	case f.Connector == SecretsConnector && f.Resource.Type == "data_dump":
+		return dumpsRule
+	case f.Track != nil:
+		return declared(f.Track)
 	}
-	return &rules[len(rules)-1]
+	return defaultRule
 }
 
 // proposal is what one sync says an item should hold.
 type proposal struct {
-	key, theme, connector, instance, resource string
-	account, project, check, repo             string
-	kind                                      Kind
-	rule                                      *rule
-	findings                                  []finding.Finding
-	refs                                      []FindingRef
-	maxSeverity                               finding.Severity // "" for no cap
-	title                                     string           // set for proposals not made of findings by a rule
-	next                                      *Next
-	statuses                                  []finding.Status // setup proposals: one per ref
+	key, theme, connector, instance, account string
+	repo                                     string // perRepo: the repository the dumps are in
+	kind                                     Kind
+	rule                                     *rule
+	findings                                 []finding.Finding
+	refs                                     []FindingRef
+	maxSeverity                              finding.Severity // "" for no cap
+	title                                    string           // set for proposals not made of findings by a rule
+	next                                     *Next
+	statuses                                 []finding.Status // setup proposals: one per ref
 }
 
 // groupKey is the item key of a finding under its rule.
-func groupKey(f finding.Finding, r *rule) (key string, p proposal) {
+func groupKey(f finding.Finding, r *rule, theme string) (key string, p proposal) {
 	lbl := finding.Label(f.Connector, f.Instance)
-	p = proposal{theme: themeOf(f.Connector, f.Resource.Type), connector: f.Connector, instance: f.Instance,
-		resource: f.Resource.Type, account: f.Account, kind: r.kind, rule: r}
+	p = proposal{theme: theme, connector: f.Connector, instance: f.Instance, account: f.Account, kind: r.kind, rule: r}
 	base := "group:" + lbl + "|" + f.Resource.Type
+	var declaredKey string
+	if f.Track != nil {
+		declaredKey = f.Track.Key
+	}
 	switch r.by {
 	case perCheck:
-		p.check = f.Resource.ID
-		key = base + "|check:" + p.check
+		key = base + "|check:" + cmp.Or(declaredKey, f.Resource.ID)
 	case perAccount:
 		key = base + "|account:" + f.Account
 	case perAccountSeverity:
 		key = base + "|account:" + f.Account + "|severity:" + string(f.Severity)
 	case perProject:
-		p.project, _ = f.Evidence["project"].(string)
-		if p.project == "" {
-			p.project = f.Account
-		}
-		key = base + "|project:" + p.project
+		key = base + "|project:" + cmp.Or(declaredKey, f.Account)
 	case perFamily:
 		key = base + "|account:" + f.Account + "|family:" + family(f)
 	case perRepo:
 		p.repo, _ = f.Evidence["repo"].(string)
 		key = base + "|repo:" + p.repo
-	case perEvidenceCheck:
-		p.check, _ = f.Evidence["check_id"].(string)
-		if p.check == "" {
-			p.check = f.Resource.ID
-		}
-		key = base + "|check:" + p.check
 	default:
 		key = pinnedKey(f.ID)
 	}
@@ -304,13 +218,21 @@ func refOf(f finding.Finding) FindingRef {
 			break
 		}
 	}
-	if f.Connector == "github" && strings.Count(f.Resource.Name, "/") == 1 {
-		r.Repo = f.Resource.Name
-	}
-	if f.Connector == "gcp" {
-		r.Project = str("project")
+	if tr := f.Track; tr != nil {
+		r.Repo, r.Project = tr.Repo, tr.Project
 	}
 	return r
+}
+
+// keepWhere gives the last ref added the repository and project its item's ref of the same
+// finding says, which only a declared Track carries.
+func (p *proposal) keepWhere(held *Item) {
+	r := &p.refs[len(p.refs)-1]
+	for _, old := range held.Findings {
+		if old.ID == r.ID {
+			r.Repo, r.Project = cmp.Or(r.Repo, old.Repo), cmp.Or(r.Project, old.Project)
+		}
+	}
 }
 
 // worst is the most severe finding (the first one on a tie).
@@ -322,6 +244,15 @@ func (p *proposal) worst() finding.Finding {
 		}
 	}
 	return w
+}
+
+// scopes are the distinct scopes of the findings (finding.ScopeOf).
+func (p *proposal) scopes() map[string]bool {
+	out := map[string]bool{}
+	for _, f := range p.findings {
+		out[finding.ScopeOf(f)] = true
+	}
+	return out
 }
 
 func (p *proposal) accounts() []string {
@@ -357,6 +288,7 @@ func (p *proposal) finish(itemID string) {
 		return
 	}
 	switch {
+	case p.rule.keep:
 	case p.rule.title != nil:
 		p.title = p.rule.title(p)
 	case len(p.findings) == 1:
@@ -365,7 +297,9 @@ func (p *proposal) finish(itemID string) {
 		// A group no rule names: the worst finding's own title, and how many more are like it.
 		p.title = fmt.Sprintf("%s, and %d more like it", p.worst().Title, len(p.findings)-1)
 	}
-	p.title += p.severitySplit()
+	if p.title != "" {
+		p.title += p.severitySplit()
+	}
 	if p.rule.next != nil {
 		p.next = p.rule.next(p)
 		p.next.Command = "segurata track show " + itemID
@@ -411,21 +345,4 @@ func (p *proposal) severitySplit() string {
 		}
 	}
 	return " (" + strings.Join(parts, ", ") + ")"
-}
-
-// prowlerCheckTitle names the Prowler check and how many projects fail it.
-func prowlerCheckTitle(p *proposal) string {
-	f := p.worst()
-	name, _ := f.Evidence["check_title"].(string)
-	if name == "" {
-		name = p.check
-	}
-	scopes := map[string]bool{}
-	for _, x := range p.findings {
-		scopes[finding.ScopeOf(x)] = true
-	}
-	if len(scopes) == 1 {
-		return fmt.Sprintf("%s fails in %s (Prowler %s)", name, finding.ScopeOf(f), p.check)
-	}
-	return fmt.Sprintf("%s fails in %s (Prowler %s)", name, textfmt.Count(len(scopes), "project", "projects"), p.check)
 }

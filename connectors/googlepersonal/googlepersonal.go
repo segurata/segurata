@@ -59,6 +59,7 @@ func (GooglePersonal) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Apps linked to every Google account in the browser: OAuth grants, scopes, Sign in with Google",
 		Needs:    []string{"cdp"},
+		Theme:    finding.ThemeGoogle,
 	}
 }
 

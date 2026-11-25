@@ -115,6 +115,7 @@ class DescribeTest(unittest.TestCase):
         out = subprocess.run([sys.executable, "-I", SCRIPT, "describe"], capture_output=True, text=True, timeout=30)
         d = json.loads(out.stdout)
         self.assertEqual((d["name"], d["protocol"], d["needs"]), ("prowler", 1, ["cli:prowler", "cli:gcloud"]))
+        self.assertEqual(d["theme"], {"id": "cloud"})
         self.assertNotIn("remediates", d)
 
     def test_other_protocols_and_bad_input_are_refused(self):
@@ -210,6 +211,12 @@ class InventoryTest(unittest.TestCase):
         self.assertIn("allUsers", bucket["remediation"]["summary"])
         self.assertIsNone(bucket["created_at"])
         self.assertNotIn("id", bucket)
+        # One tracker item per check across projects, titled by the check (segurata's golden test
+        # holds the same declarations: internal/tracker/golden_test.go).
+        self.assertEqual(bucket["track"], {
+            "group": "check", "key": "cloudstorage_bucket_public_access", "count": "scopes", "noun": "project", "nouns": "projects",
+            "title": "Cloud Storage bucket is not publicly accessible fails in {count} (Prowler cloudstorage_bucket_public_access)",
+            "title_one": "Cloud Storage bucket is not publicly accessible fails in demo-proj-alpha (Prowler cloudstorage_bucket_public_access)"})
         admin = by_check[("iam_sa_no_administrative_privileges", "uploader@demo-proj-alpha.iam.gserviceaccount.com")]
         self.assertEqual((admin["kind"], admin["severity"]), ("setting", "high"))
         self.assertNotIn("**", admin["remediation"]["summary"])

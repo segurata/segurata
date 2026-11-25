@@ -1,0 +1,810 @@
+{
+  "Themes": [
+    {
+      "id": "rotations",
+      "title": "Secrets to rotate",
+      "description": "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."
+    },
+    {
+      "id": "data-dumps",
+      "title": "Data dumps in git",
+      "description": "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."
+    },
+    {
+      "id": "transcripts",
+      "title": "Trail files to redact",
+      "description": "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."
+    },
+    {
+      "id": "mac",
+      "title": "This Mac",
+      "description": "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."
+    },
+    {
+      "id": "browser-extensions",
+      "title": "Browser extensions",
+      "description": "Extensions that can read or drive your pages, one item per extension."
+    },
+    {
+      "id": "github-orgs",
+      "title": "GitHub",
+      "description": "Organizations and repositories you administer: 2FA, default permissions, Actions, secret scanning."
+    },
+    {
+      "id": "connected-apps",
+      "title": "Connected apps",
+      "description": "Third-party apps with access to GitHub, X, Slack, Notion, Facebook and other accounts."
+    },
+    {
+      "id": "google",
+      "title": "Google",
+      "description": "Apps with access to your Google accounts, and Workspace tenants."
+    },
+    {
+      "id": "cloud",
+      "title": "Cloud",
+      "description": "GCP, AWS, Azure, Cloudflare, Vercel and Supabase: keys, roles, budgets."
+    },
+    {
+      "id": "ai-spend",
+      "title": "AI providers",
+      "description": "OpenAI, Anthropic and OpenRouter keys, limits and spend."
+    },
+    {
+      "id": "coverage",
+      "title": "Not audited here",
+      "description": "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."
+    },
+    {
+      "id": "setup",
+      "title": "Setup",
+      "description": "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."
+    },
+    {
+      "id": "decisions",
+      "title": "Decisions",
+      "description": "Questions only you can answer before the related work can go ahead."
+    },
+    {
+      "id": "other",
+      "title": "Other",
+      "description": "Findings of connectors without a theme of their own, and items added by hand."
+    }
+  ],
+  "Items": [
+    {
+      "Key": "coverage:apple-account",
+      "Kind": "review",
+      "Theme": "coverage",
+      "Title": "Apple Account devices and Sign in with Apple apps are not audited by any connector",
+      "Severity": "",
+      "Priority": "",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Review the devices and the apps using Sign in with Apple, and remove the ones you no longer use (docs/manual-review.md). Mark this done when checked.",
+      "Command": "",
+      "URL": "https://account.apple.com/account/manage",
+      "Findings": null
+    },
+    {
+      "Key": "coverage:github-owner-2fa",
+      "Kind": "review",
+      "Theme": "coverage",
+      "Title": "Two-factor authentication of your own GitHub account is not audited",
+      "Severity": "",
+      "Priority": "",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Give gh the read:user scope so the github connector can read whether 2FA is on, then run it again.",
+      "Command": "gh auth refresh -h github.com -s read:user \u0026\u0026 segurata inventory github",
+      "URL": "https://github.com/settings/security",
+      "Findings": null
+    },
+    {
+      "Key": "coverage:google-recovery",
+      "Kind": "review",
+      "Theme": "coverage",
+      "Title": "Google recovery options and passkeys are not audited by any connector",
+      "Severity": "",
+      "Priority": "",
+      "Status": "open",
+      "Who": "you",
+      "Action": "On every Google account, run Security Checkup (sessions, devices, recovery phone and email) and register a passkey or security key; remove SMS as a second factor (docs/plan.md, section 1). Mark this done when checked.",
+      "Command": "",
+      "URL": "https://myaccount.google.com/security-checkup",
+      "Findings": null
+    },
+    {
+      "Key": "coverage:password-manager",
+      "Kind": "review",
+      "Theme": "coverage",
+      "Title": "The password manager's reused and breached password report is not audited by any connector",
+      "Severity": "",
+      "Priority": "",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (docs/plan.md, section 2). Mark this done when checked.",
+      "Command": "",
+      "URL": "",
+      "Findings": null
+    },
+    {
+      "Key": "coverage:stripe-keys",
+      "Kind": "review",
+      "Theme": "coverage",
+      "Title": "Stripe API keys are not audited by any connector",
+      "Severity": "",
+      "Priority": "",
+      "Status": "open",
+      "Who": "you",
+      "Action": "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (docs/plan.md, section 6). Mark this done when checked.",
+      "Command": "",
+      "URL": "https://dashboard.stripe.com/apikeys",
+      "Findings": null
+    },
+    {
+      "Key": "coverage:workspace",
+      "Kind": "review",
+      "Theme": "coverage",
+      "Title": "Google Workspace administration is not audited: no workspace tenant could be read",
+      "Severity": "",
+      "Priority": "",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Set up read-only Admin SDK credentials for each tenant (README.md, \"Google Workspace administration\"), then run the connector.",
+      "Command": "segurata inventory workspace",
+      "URL": "",
+      "Findings": null
+    },
+    {
+      "Key": "decide:daily-schedule",
+      "Kind": "decide",
+      "Theme": "decisions",
+      "Title": "Install the daily scheduled inventory?",
+      "Severity": "medium",
+      "Priority": "P3",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Decide: Install the daily scheduled inventory?",
+      "Command": "segurata track decide T-0001 --answer \"…\"",
+      "URL": "",
+      "Findings": null
+    },
+    {
+      "Key": "finding:64aa46053c9659ff",
+      "Kind": "fix",
+      "Theme": "mac",
+      "Title": "FileVault is off",
+      "Severity": "critical",
+      "Priority": "P0",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: FileVault is off",
+      "Command": "segurata track show T-0031",
+      "URL": "https://example.com/filevault",
+      "Findings": [
+        "macos repo= project= FileVault is off"
+      ]
+    },
+    {
+      "Key": "finding:bbc264531d1368b6",
+      "Kind": "fix",
+      "Theme": "mac",
+      "Title": "The firewall is off",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "segurata",
+      "Action": "Fix: The firewall is off",
+      "Command": "segurata remediate bbc264531d1368b6",
+      "URL": "https://example.com/firewall",
+      "Findings": [
+        "macos repo= project= The firewall is off"
+      ]
+    },
+    {
+      "Key": "finding:fa733b02a3b620ba",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "deploy has an access key 400 days old",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: deploy has an access key 400 days old",
+      "Command": "segurata track show T-0003",
+      "URL": "https://example.com/AKIA1",
+      "Findings": [
+        "aws repo= project= deploy has an access key 400 days old"
+      ]
+    },
+    {
+      "Key": "finding:fb1cb31cb30ca9bd",
+      "Kind": "review",
+      "Theme": "browser-extensions",
+      "Title": "Grammarly can read every page",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Grammarly can read every page",
+      "Command": "segurata track show T-0005",
+      "URL": "https://example.com/ext1",
+      "Findings": [
+        "browser-extensions repo= project= Grammarly can read every page"
+      ]
+    },
+    {
+      "Key": "group:anthropic|api_key|account:org-1|severity:medium",
+      "Kind": "fix",
+      "Theme": "ai-spend",
+      "Title": "Revoke or limit 1 Anthropic API key",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Key ak-a has no limit",
+      "Command": "segurata track show T-0002",
+      "URL": "https://example.com/ak-a",
+      "Findings": [
+        "anthropic repo= project= Key ak-a has no limit"
+      ]
+    },
+    {
+      "Key": "group:azure|client_secret|account:sub-1|family:Client secret of app never expires",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Client secret of app never expires",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Client secret of app never expires",
+      "Command": "segurata track show T-0004",
+      "URL": "https://example.com/cs1",
+      "Findings": [
+        "azure repo= project= Client secret of app never expires"
+      ]
+    },
+    {
+      "Key": "group:cloudflare|api_token|account:acc-1|family:Token ci has no expiry",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Token ci has no expiry",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Token ci has no expiry",
+      "Command": "segurata track show T-0006",
+      "URL": "https://example.com/t1",
+      "Findings": [
+        "cloudflare repo= project= Token ci has no expiry"
+      ]
+    },
+    {
+      "Key": "group:connected-apps|github_oauth_app|account:me@example.com|family:can read and write all your repositories",
+      "Kind": "review",
+      "Theme": "connected-apps",
+      "Title": "Travis can read and write all your repositories",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Travis can read and write all your repositories",
+      "Command": "segurata track show T-0012",
+      "URL": "https://example.com/o1",
+      "Findings": [
+        "connected-apps repo= project= Travis can read and write all your repositories"
+      ]
+    },
+    {
+      "Key": "group:connected-apps|notion_integration|account:me@example.com|family:can read and change the Notion pages shared with it (your own integration)",
+      "Kind": "review",
+      "Theme": "connected-apps",
+      "Title": "2 Notion integrations can read and change the Notion pages shared with them (your own integrations)",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Sync can read and change the Notion pages shared with it (your own integration)",
+      "Command": "segurata track show T-0010",
+      "URL": "https://example.com/n1",
+      "Findings": [
+        "connected-apps repo= project= Backup can read and change the Notion pages shared with it (your own integration)",
+        "connected-apps repo= project= Sync can read and change the Notion pages shared with it (your own integration)"
+      ]
+    },
+    {
+      "Key": "group:connected-apps|slack_app|account:slack:acme|severity:high",
+      "Kind": "review",
+      "Theme": "connected-apps",
+      "Title": "Review 2 Slack apps with broad permissions in acme",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Zapier can read every channel",
+      "Command": "segurata track show T-0007",
+      "URL": "https://example.com/s1",
+      "Findings": [
+        "connected-apps repo= project= Polly can read every channel",
+        "connected-apps repo= project= Zapier can read every channel"
+      ]
+    },
+    {
+      "Key": "group:connected-apps|slack_app|account:slack:acme|severity:medium",
+      "Kind": "review",
+      "Theme": "connected-apps",
+      "Title": "Review 1 Slack app with several permissions in acme",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Donut can read every channel",
+      "Command": "segurata track show T-0008",
+      "URL": "https://example.com/s3",
+      "Findings": [
+        "connected-apps repo= project= Donut can read every channel"
+      ]
+    },
+    {
+      "Key": "group:connected-apps|x_app|account:me@example.com|family:can post and delete posts as you",
+      "Kind": "review",
+      "Theme": "connected-apps",
+      "Title": "2 X apps can post and delete posts as you",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Flickr can post and delete posts as you",
+      "Command": "segurata track show T-0009",
+      "URL": "https://example.com/x1",
+      "Findings": [
+        "connected-apps repo= project= Buffer can post and delete posts as you",
+        "connected-apps repo= project= Flickr can post and delete posts as you"
+      ]
+    },
+    {
+      "Key": "group:connected-apps|zoom_app|account:me@example.com|family:has used your account N times",
+      "Kind": "review",
+      "Theme": "connected-apps",
+      "Title": "2 apps has used your account 3 times",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Recorder has used your account 3 times",
+      "Command": "segurata track show T-0011",
+      "URL": "https://example.com/z1",
+      "Findings": [
+        "connected-apps repo= project= Notes has used your account 12 times",
+        "connected-apps repo= project= Recorder has used your account 3 times"
+      ]
+    },
+    {
+      "Key": "group:gcp|api_key|project:p1",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Restrict 2 API keys in GCP project p1",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: api_key k1 is too broad",
+      "Command": "segurata track show T-0013",
+      "URL": "https://example.com/k1",
+      "Findings": [
+        "gcp repo= project=p1 api_key k1 is too broad",
+        "gcp repo= project=p1 api_key k2 is too broad"
+      ]
+    },
+    {
+      "Key": "group:gcp|billing_budget|account:billing-1|family:has no budget with alerts",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Billing 1 has no budget with alerts",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Billing 1 has no budget with alerts",
+      "Command": "segurata track show T-0016",
+      "URL": "https://example.com/billing-1",
+      "Findings": [
+        "gcp repo= project= Billing 1 has no budget with alerts"
+      ]
+    },
+    {
+      "Key": "group:gcp|service_account_key|project:p2",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Rotate or delete 1 user-managed service-account key in GCP project p2",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: service_account_key sak1 is too broad",
+      "Command": "segurata track show T-0014",
+      "URL": "https://example.com/sak1",
+      "Findings": [
+        "gcp repo= project=p2 service_account_key sak1 is too broad"
+      ]
+    },
+    {
+      "Key": "group:gcp|service_account_role|project:me@example.com",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Narrow the roles of 1 service account in GCP project me@example.com",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: service_account_role sa1 is too broad",
+      "Command": "segurata track show T-0015",
+      "URL": "https://example.com/sa1",
+      "Findings": [
+        "gcp repo= project= service_account_role sa1 is too broad"
+      ]
+    },
+    {
+      "Key": "group:github|github_account|account:me|family:Your account has no NFA",
+      "Kind": "fix",
+      "Theme": "github-orgs",
+      "Title": "Your account has no 2FA",
+      "Severity": "critical",
+      "Priority": "P0",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Your account has no 2FA",
+      "Command": "segurata track show T-0021",
+      "URL": "https://example.com/two-factor-authentication",
+      "Findings": [
+        "github repo= project= Your account has no 2FA"
+      ]
+    },
+    {
+      "Key": "group:github|github_org_setting|check:org-2fa-not-required",
+      "Kind": "fix",
+      "Theme": "github-orgs",
+      "Title": "Two-factor authentication not required in 2 GitHub orgs",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: acme does not require 2FA",
+      "Command": "segurata track show T-0017",
+      "URL": "https://example.com/org-2fa-not-required",
+      "Findings": [
+        "github repo= project= acme does not require 2FA",
+        "github repo= project= beta does not require 2FA"
+      ]
+    },
+    {
+      "Key": "group:github|github_org_setting|check:org-some-new-check",
+      "Kind": "fix",
+      "Theme": "github-orgs",
+      "Title": "some new check in 1 GitHub org",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: acme has a new problem",
+      "Command": "segurata track show T-0018",
+      "URL": "https://example.com/org-some-new-check",
+      "Findings": [
+        "github repo= project= acme has a new problem"
+      ]
+    },
+    {
+      "Key": "group:github|github_repo_setting|check:dependabot-security-updates-disabled",
+      "Kind": "fix",
+      "Theme": "github-orgs",
+      "Title": "Repositories without Dependabot security updates in 1 GitHub org",
+      "Severity": "low",
+      "Priority": "P3",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: 2 repositories of acme lack Dependabot",
+      "Command": "segurata track show T-0019",
+      "URL": "https://example.com/dependabot-security-updates-disabled",
+      "Findings": [
+        "github repo= project= 2 repositories of acme lack Dependabot"
+      ]
+    },
+    {
+      "Key": "group:github|github_repo|account:acme",
+      "Kind": "fix",
+      "Theme": "github-orgs",
+      "Title": "Repository security settings off in 2 repositories of acme",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: acme/api has secret scanning off",
+      "Command": "segurata track show T-0020",
+      "URL": "https://example.com/101",
+      "Findings": [
+        "github repo=acme/api project= acme/api has secret scanning off",
+        "github repo=acme/web project= acme/web has secret scanning off"
+      ]
+    },
+    {
+      "Key": "group:google-personal|account_setting|account:me@gmail.com|family:are allowed",
+      "Kind": "fix",
+      "Theme": "google",
+      "Title": "Less secure apps are allowed",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Less secure apps are allowed",
+      "Command": "segurata track show T-0026",
+      "URL": "https://example.com/less-secure",
+      "Findings": [
+        "google-personal repo= project= Less secure apps are allowed"
+      ]
+    },
+    {
+      "Key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:critical",
+      "Kind": "review",
+      "Theme": "google",
+      "Title": "Review 1 app with high-risk access to me@gmail.com",
+      "Severity": "critical",
+      "Priority": "P0",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Sorter can read your mail",
+      "Command": "segurata track show T-0024",
+      "URL": "https://example.com/c2",
+      "Findings": [
+        "google-personal repo= project= Sorter can read your mail"
+      ]
+    },
+    {
+      "Key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:high",
+      "Kind": "review",
+      "Theme": "google",
+      "Title": "Review 1 app with high-risk access to me@gmail.com",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Mailer can read your mail",
+      "Command": "segurata track show T-0023",
+      "URL": "https://example.com/c1",
+      "Findings": [
+        "google-personal repo= project= Mailer can read your mail"
+      ]
+    },
+    {
+      "Key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:low",
+      "Kind": "review",
+      "Theme": "google",
+      "Title": "Review 1 app with limited access to me@gmail.com",
+      "Severity": "low",
+      "Priority": "P3",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Calendar sync can read your mail",
+      "Command": "segurata track show T-0025",
+      "URL": "https://example.com/c3",
+      "Findings": [
+        "google-personal repo= project= Calendar sync can read your mail"
+      ]
+    },
+    {
+      "Key": "group:hibp|breach|account:me@example.com|family:me@example.com was in the Adobe breach of N",
+      "Kind": "fix",
+      "Theme": "other",
+      "Title": "me@example.com was in the Adobe breach of 2013",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: me@example.com was in the Adobe breach of 2013",
+      "Command": "segurata track show T-0027",
+      "URL": "https://example.com/Adobe",
+      "Findings": [
+        "hibp repo= project= me@example.com was in the Adobe breach of 2013"
+      ]
+    },
+    {
+      "Key": "group:hibp|breach|account:me@example.com|family:me@example.com was in the Canva breach of N",
+      "Kind": "fix",
+      "Theme": "other",
+      "Title": "me@example.com was in the Canva breach of 2019",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: me@example.com was in the Canva breach of 2019",
+      "Command": "segurata track show T-0028",
+      "URL": "https://example.com/Canva",
+      "Findings": [
+        "hibp repo= project= me@example.com was in the Canva breach of 2019"
+      ]
+    },
+    {
+      "Key": "group:local-secrets|data_dump|repo:~/src/api",
+      "Kind": "fix",
+      "Theme": "data-dumps",
+      "Title": "2 database dumps in the git history of ~/src/api (2.5 MB)",
+      "Severity": "critical",
+      "Priority": "P0",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Treat the data as exposed to everyone who could clone the repository. Rotate every credential the dumps hold, then purge them from history in one pass: `git filter-repo --invert-paths --path 'db/prod.sql' --path 'backup.dump'` and force-push every branch and tag; collaborators must re-clone. segurata never rewrites history or pushes.\nFiles: db/prod.sql (x, pushed); backup.dump (x, pushed).\nIf they hold personal data of customers or staff, check the GDPR breach notification duty (72 hours): https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales, https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en.",
+      "Command": "segurata track show T-0029",
+      "URL": "docs/secrets.md#data-dumps-in-git",
+      "Findings": [
+        "local-secrets repo= project= Database dump committed to ~/src/api: backup.dump",
+        "local-secrets repo= project= Database dump committed to ~/src/api: db/prod.sql"
+      ]
+    },
+    {
+      "Key": "group:openai|api_key|account:org-1|severity:high",
+      "Kind": "fix",
+      "Theme": "ai-spend",
+      "Title": "Revoke or limit 2 OpenAI API keys",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Key sk-a has no limit",
+      "Command": "segurata track show T-0032",
+      "URL": "https://example.com/sk-a",
+      "Findings": [
+        "openai repo= project= Key sk-a has no limit",
+        "openai repo= project= Key sk-b has no limit"
+      ]
+    },
+    {
+      "Key": "group:openrouter:work|api_key|account:org-1|severity:high",
+      "Kind": "fix",
+      "Theme": "ai-spend",
+      "Title": "Revoke or limit 1 OpenRouter API key (work)",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Key or-a has no limit",
+      "Command": "segurata track show T-0033",
+      "URL": "https://example.com/or-a",
+      "Findings": [
+        "openrouter repo= project= Key or-a has no limit"
+      ]
+    },
+    {
+      "Key": "group:prowler|prowler_check|check:dns_dnssec",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "dns_dnssec fails in p3 (Prowler dns_dnssec)",
+      "Severity": "low",
+      "Priority": "P3",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Detail of dns_dnssec on zone-a",
+      "Command": "segurata track show T-0036",
+      "URL": "https://example.com/dns_dnssec:p3:zone-a",
+      "Findings": [
+        "prowler repo= project= Detail of dns_dnssec on zone-a"
+      ]
+    },
+    {
+      "Key": "group:prowler|prowler_check|check:iam_keys",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Service account keys rotated fails in p1 (Prowler iam_keys)",
+      "Severity": "high",
+      "Priority": "P1",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Detail of iam_keys on key-a",
+      "Command": "segurata track show T-0035",
+      "URL": "https://example.com/iam_keys:p1:key-a",
+      "Findings": [
+        "prowler repo= project= Detail of iam_keys on key-a",
+        "prowler repo= project= Detail of iam_keys on key-b"
+      ]
+    },
+    {
+      "Key": "group:prowler|prowler_check|check:logging_audit",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Log metric filter for audit changes fails in 2 projects (Prowler logging_audit) (1 medium, 1 low)",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Detail of logging_audit on sink-a",
+      "Command": "segurata track show T-0034",
+      "URL": "https://example.com/logging_audit:p1:sink-a",
+      "Findings": [
+        "prowler repo= project= Detail of logging_audit on sink-a",
+        "prowler repo= project= Detail of logging_audit on sink-b"
+      ]
+    },
+    {
+      "Key": "group:supabase|project_setting|account:org-1|family:does not enforce SSL",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "db does not enforce SSL",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: db does not enforce SSL",
+      "Command": "segurata track show T-0037",
+      "URL": "https://example.com/ssl",
+      "Findings": [
+        "supabase repo= project= db does not enforce SSL"
+      ]
+    },
+    {
+      "Key": "group:vercel|token|account:team-1|family:Token \"…\" unused for N days",
+      "Kind": "fix",
+      "Theme": "cloud",
+      "Title": "Token \"deploy\" unused for 120 days, and 1 more like it",
+      "Severity": "low",
+      "Priority": "P3",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: Token \"deploy\" unused for 120 days",
+      "Command": "segurata track show T-0038",
+      "URL": "https://example.com/v1",
+      "Findings": [
+        "vercel repo= project= Token \"ci\" unused for 200 days",
+        "vercel repo= project= Token \"deploy\" unused for 120 days"
+      ]
+    },
+    {
+      "Key": "group:workspace|admin_2sv|account:acme.com|family:N admins have no N-Step Verification",
+      "Kind": "fix",
+      "Theme": "google",
+      "Title": "2 admins have no 2-Step Verification",
+      "Severity": "critical",
+      "Priority": "P0",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Fix: 2 admins have no 2-Step Verification",
+      "Command": "segurata track show T-0039",
+      "URL": "https://example.com/admins",
+      "Findings": [
+        "workspace repo= project= 2 admins have no 2-Step Verification"
+      ]
+    },
+    {
+      "Key": "setup:github|me|noscope",
+      "Kind": "setup",
+      "Theme": "setup",
+      "Title": "github · me: lacks a permission",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Grant the missing permission with the command below. Then: segurata inventory github. On purpose? segurata track expect T-0022 --reason \"…\".",
+      "Command": "gh auth refresh -h github.com -s read:user",
+      "URL": "",
+      "Findings": [
+        "github repo= project= gh lacks the read:user scope: run gh auth refresh -h github.com -s read:user"
+      ]
+    },
+    {
+      "Key": "setup:workspace|acme.com|error",
+      "Kind": "setup",
+      "Theme": "setup",
+      "Title": "workspace · acme.com: failed",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "The credential was denied some reads (see the detail): grant them. On purpose? segurata track expect T-0040 --reason \"…\".",
+      "Command": "segurata inventory workspace",
+      "URL": "",
+      "Findings": [
+        "workspace repo= project= Admin SDK: permission denied"
+      ]
+    }
+  ]
+}

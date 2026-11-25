@@ -47,6 +47,17 @@ func (s Severity) Rank() int {
 	return 0
 }
 
+// Pick words a severity: high for high and critical, medium for medium, low for the rest.
+func (s Severity) Pick(high, medium, low string) string {
+	switch {
+	case s.Rank() >= SevHigh.Rank():
+		return high
+	case s == SevMedium:
+		return medium
+	}
+	return low
+}
+
 // Blast names what a finding puts at stake beyond its severity: the reach of what a connector
 // found, which ranks the tracker's "Do next" (docs/architecture.md). The connector says which
 // applies, the tracker weighs it; "" (and a value not listed here) is none.
@@ -114,7 +125,9 @@ type Finding struct {
 	Blast     Blast          `json:"blast,omitempty"` // what it puts at stake beyond its severity
 	// Unconfirmed says the connector is not sure the problem is real (a file named like a
 	// database dump whose content does not show one); ranking discounts it.
-	Unconfirmed bool        `json:"unconfirmed,omitempty"`
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	// Track says how the tracker groups and titles the finding; nil for the default (see Track).
+	Track       *Track      `json:"track,omitempty"`
 	CreatedAt   *time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time  `json:"last_used_at"` // nil when the provider does not say
 	Remediation Remediation `json:"remediation"`

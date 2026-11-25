@@ -84,6 +84,8 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Google Workspace tenant: 2SV, admins, suspended or inactive accounts, third-party OAuth apps, token activity",
 		Needs:    []string{"cli:gcloud", "secret:" + secretName},
+		Theme:    finding.ThemeGoogle,
+		Covers:   []finding.Area{{ID: "workspace"}}, // audited when a tenant reports ok
 	}
 }
 

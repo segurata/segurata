@@ -61,6 +61,9 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "GitHub account 2FA, organization security settings, and the webhooks, deploy keys and code security of repositories you administer",
 		Needs:    []string{"cli:gh"},
+		Theme:    finding.ThemeGitHub,
+		// The owner's own account is read under the user:<login> scope, with gh's read:user.
+		Covers: []finding.Area{{ID: "github-owner-2fa", Scope: "user:"}},
 	}
 }
 

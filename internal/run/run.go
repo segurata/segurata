@@ -105,6 +105,9 @@ type sink struct {
 	out      io.Writer
 	verbose  io.Writer
 	annotate func(*finding.Finding)
+	tracker  connector.Tracker     // the built-in connector's grouping, nil for none
+	theme    finding.Theme         // the connector's theme, for run_end
+	covers   []finding.Area        // the plan areas the connector audits, for run_end
 	expect   func(*finding.Status) // the config's expected rules
 	res      *Result
 	tally    finding.Tally
@@ -136,6 +139,9 @@ func (s *sink) Finding(f finding.Finding) {
 	f.Fill(now)
 	if s.annotate != nil {
 		s.annotate(&f)
+	}
+	if f.Track == nil && s.tracker != nil {
+		f.Track = s.tracker.Track(f)
 	}
 	s.res.Findings = append(s.res.Findings, f)
 	_ = s.write(f)
@@ -171,7 +177,7 @@ func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.res.End = s.tally.End(s.name, s.inst, started, time.Now(), errors.Join(err, s.werr))
-	s.res.End.SecretFingerprints = fps
+	s.res.End.SecretFingerprints, s.res.End.Theme, s.res.End.Covers = fps, s.theme, s.covers
 	ended = s.write(s.res.End) == nil
 	return ended, s.werr
 }
@@ -227,7 +233,10 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		return res
 	}
 	partial := f.Name()
-	s := &sink{name: name, label: label, inst: t.Instance.Label, out: f, verbose: verbose, annotate: lent.Annotate, expect: cfg.Expect, res: res}
+	d := t.Connector.Describe()
+	s := &sink{name: name, label: label, inst: t.Instance.Label, out: f, verbose: verbose, annotate: lent.Annotate, expect: cfg.Expect, res: res,
+		theme: finding.ThemeFor(d.Theme), covers: d.Covers}
+	s.tracker, _ = t.Connector.(connector.Tracker)
 
 	req, errs := NewRequest(ctx, cfg, t.Instance)
 	req.Known = lent.Known

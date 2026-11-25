@@ -1,10 +1,12 @@
 package connectors
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
 )
 
 // Every built-in connector that needs a secret says how to set it up, so the core's one
@@ -27,6 +29,20 @@ func TestConnectorsThatNeedASecretGiveASetupHint(t *testing.T) {
 			if h.SetupHint("SOMETHING_ELSE") != "" {
 				t.Errorf("%s gives a hint for a secret it does not need", d.Name)
 			}
+		}
+	}
+}
+
+// Every built-in connector files its items under a shared theme, so none lands in "other";
+// local-secrets is the exception: the tracker files secrets and data dumps itself.
+func TestConnectorsDeclareASharedTheme(t *testing.T) {
+	for _, c := range connector.Builtins() {
+		d := c.Describe()
+		if d.Name == "local-secrets" {
+			continue
+		}
+		if !slices.Contains(finding.Themes, d.Theme) {
+			t.Errorf("%s declares theme %+v, not one of finding.Themes", d.Name, d.Theme)
 		}
 	}
 }

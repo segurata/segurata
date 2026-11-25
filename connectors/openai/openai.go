@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
+	"github.com/segurata/segurata/connectors/internal/keytrack"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -57,6 +58,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "OpenAI keys, admin keys, spend limits, spend alerts and 30-day cost",
 		Needs:    []string{"secret:" + secretName},
+		Theme:    finding.ThemeAISpend,
 	}
 }
 
@@ -526,3 +528,6 @@ func adminKeyFinding(k adminKey, now time.Time) finding.Finding {
 		},
 	}
 }
+
+// Track groups the account's API keys by severity (keytrack).
+func (c *Connector) Track(f finding.Finding) *finding.Track { return keytrack.Track("OpenAI", f) }

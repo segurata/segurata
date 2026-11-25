@@ -185,14 +185,18 @@ truth, and every change goes through the CLI.
     `priority`, `reclassified` or `merged`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
     `snooze-expired`, `acceptance-expired`, `history-only`, `redacted`, `next`, …).
 - **Theme**: `{id, title, description}`, seeded in every tracker: `rotations`, `data-dumps`,
-  `transcripts`, `mac`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`,
-  `ai-spend`, `setup`, `decisions`, `other`. A connector maps to one (local-secrets by resource
-  type).
+  `transcripts`, the shared connector themes (`mac`, `browser-extensions`, `github-orgs`,
+  `connected-apps`, `google`, `cloud`, `ai-spend`, from `finding.Themes`), `coverage`, `setup`,
+  `decisions`, `other`. Each connector declares its theme in `describe`, a shared one or its own,
+  which the first run that declares it adds (see connectors.md, "Theme and grouping"); the run's
+  `run_end` carries it. local-secrets is filed by the tracker itself: data dumps apart from the
+  secrets to rotate.
 
 ### Grouping
 
-Info findings never make an item. The rest group by a table of rules (`group.go`), matched on
-connector and resource type, first match wins:
+Info findings never make an item. The rest group as their connector declares on each finding
+(`track`, see connectors.md, "Theme and grouping"); the tracker applies the declaration
+(`group.go`) and keeps one rule of its own, for data dumps. What the connectors declare today:
 
 | Findings | One item per | Kind |
 |---|---|---|
@@ -208,7 +212,8 @@ connector and resource type, first match wins:
 | openai, anthropic, openrouter API keys | instance, account and severity | fix |
 | macos, aws | finding | fix |
 | browser-extensions | extension | review |
-| anything else | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked), titled by the worst finding: `Expired client secret of app "Billing" is still registered, and 69 more like it` | fix |
+| prowler (plugin) failed checks | check, across projects: "Log sink created fails in 40 projects (Prowler logging_sink_created)" | fix |
+| anything that declares no group | account, resource type and title family (the title without the resource's name, quoted names and numbers blanked), titled by the worst finding: `Expired client secret of app "Billing" is still registered, and 69 more like it` | fix |
 | a connector status other than `ok` | instance, account and state | setup |
 
 A group's severity and priority are its worst finding's. When its scopes (projects, orgs,
@@ -229,6 +234,11 @@ command is the rerun. Actions are state-specific and name the real config key:
 for a signed-out service, and `segurata track expect <id>` (see "Expected statuses") for a
 limitation kept on purpose. An `unsupported` check that needs administrator rights asks for no
 install.
+
+A run whose `run_end` names no theme was written before connectors declared themes and grouping.
+Its findings stay in the items that already hold them, under their titles and with the repository
+and project their refs know, so upgrading segurata never moves a finding to another key; the next
+run of that connector regroups them as it declares.
 
 A finding that has an item of its own (key `finding:<id>`) goes there before any rule when it was
 accepted or ignored on its own, or when its rule groups per finding anyway. Otherwise its rule now
@@ -465,12 +475,19 @@ would cover it:
 | Google recovery options and passkeys | always (no connector) | Security Checkup and passkeys on every account |
 | Apple Account devices and Sign in with Apple | always | account.apple.com, see manual-review.md |
 | Stripe API keys | always | restricted keys, delete unused ones |
-| breaches of your addresses (HIBP) | no hibp instance has run | install examples/hibp and run it |
+| breaches of your addresses (HIBP) | no hibp run has read the addresses | install examples/hibp and run it |
 | the password manager's password report | always | 1Password Watchtower or Bitwarden Reports |
 | Google Workspace administration | a workspace tenant ran and none reported ok | README, "Google Workspace administration" |
 
-A sync opens the item when the gap is there and closes it as done and verified ("covered: the
-github run read your account") when a run covers it; one segurata closed opens again when the gap
+The connectors that audit an area declare it in `describe` (`covers`, see connectors.md,
+"Theme and grouping"): github `github-owner-2fa` under its `user:` scope, workspace `workspace`,
+hibp `hibp`. A sync keeps, per connector instance, whether its newest run audited each area it
+covers (a status of the area says ok, or none says otherwise). A gap is covered when any run
+audited it, open when one could not, and otherwise left as it is, except hibp's, which is open
+while no run reports it; while a run from before declarations is kept, it is left as it is too.
+
+A sync opens the item when the gap is there and closes it as done and verified ("covered: github
+audited it") when a run covers it; one segurata closed opens again when the gap
 comes back. An item the owner marks done (the manual areas) stays done. They stay out of the
 headline counts and "Do next", in a section of their own, "Not audited on this machine": they say
 what is unknown, not what is failing.

@@ -114,12 +114,12 @@ func TestExternalConnectorSpeaksTheProtocol(t *testing.T) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 case "$1" in
-describe) echo '{"name":"ext","version":"1.0","protocol":1,"summary":"test","needs":[]}';;
+describe) echo '{"name":"ext","version":"1.0","protocol":1,"summary":"test","needs":[],"theme":{"id":"breaches","title":"Breaches"}}';;
 inventory)
   req=$(cat)
   case "$req" in *'"protocol":1'*) ;; *) echo "bad request" >&2; exit 3;; esac
   echo '{"type":"status","account":"a","state":"reauth","detail":"sign in again"}'
-  echo '{"type":"finding","connector":"spoofed","account":"a","resource":{"type":"oauth_grant","id":"g","name":"App"},"kind":"grant","severity":"medium","title":"App has Drive"}'
+  echo '{"type":"finding","connector":"spoofed","account":"a","resource":{"type":"oauth_grant","id":"g","name":"App"},"kind":"grant","severity":"medium","title":"App has Drive","track":{"group":"check","key":"drive","title":"{count} have Drive"}}'
   echo '{"type":"scope","scope":"repo:a/b","inspected":false,"reason":"rate limit"}'
   echo '{"type":"log","msg":"done"}';;
 esac
@@ -147,6 +147,12 @@ esac
 	}
 	if len(r.Findings) != 1 || r.Findings[0].Connector != "ext" || r.Findings[0].ID == "" {
 		t.Fatalf("findings: %+v (connector name must come from describe, not the record)", r.Findings)
+	}
+	if tr := r.Findings[0].Track; tr == nil || *tr != (finding.Track{Group: finding.GroupCheck, Key: "drive", Title: "{count} have Drive"}) {
+		t.Fatalf("track: %+v", tr)
+	}
+	if r.End.Theme != (finding.Theme{ID: "breaches", Title: "Breaches"}) {
+		t.Fatalf("run_end theme: %+v", r.End.Theme)
 	}
 	// Nothing said ok, so everything is uninspected; the scope record still reaches run_end.
 	if sk := r.End.Scopes.Skipped; len(sk) != 3 || sk[0].Scope != finding.ScopeAll || sk[1].Scope != "a" ||
@@ -629,6 +635,42 @@ func TestAHungExternalConnectorTimesOut(t *testing.T) {
 
 // observed_at belongs to the core: a connector's own value, a future one above all, is replaced
 // with the time the record was written.
+// tracked is a built-in connector that declares a shared theme and how its findings group.
+type tracked struct{ emitting }
+
+func (tracked) Describe() connector.Description {
+	return connector.Description{Name: "fake", Version: "0", Protocol: 1, Theme: finding.Theme{ID: finding.ThemeCloud.ID},
+		Covers: []finding.Area{{ID: "breaches"}}}
+}
+
+func (tracked) Track(f finding.Finding) *finding.Track {
+	return &finding.Track{Group: finding.GroupProject, Key: f.Account + "/" + f.Instance}
+}
+
+// The core sets Track on each finding of a built-in connector that declares it, unless the finding
+// carries its own, and writes the declared theme, resolved, and covered areas in run_end.
+func TestTheCoreStampsTrackAndTheme(t *testing.T) {
+	c := tracked{func(_ context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "a"}, Severity: finding.SevLow, Title: "a"})
+		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "b"}, Severity: finding.SevLow, Title: "b",
+			Track: &finding.Track{Group: finding.GroupFinding}})
+		return nil
+	}}
+	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, c), t.TempDir(), nil, Lent{})
+	fs := res[0].Findings
+	if fs[0].Track == nil || fs[0].Track.Key != "acct/" || fs[1].Track.Group != finding.GroupFinding {
+		t.Fatalf("tracks: %+v %+v", fs[0].Track, fs[1].Track)
+	}
+	if res[0].End.Theme != finding.ThemeCloud || len(res[0].End.Covers) != 1 || res[0].End.Covers[0].ID != "breaches" {
+		t.Fatalf("theme %+v, covers %+v", res[0].End.Theme, res[0].End.Covers)
+	}
+	lines := readLines(t, res[0].File)
+	if end := lines[len(lines)-1]; end["theme"].(map[string]any)["title"] != finding.ThemeCloud.Title {
+		t.Fatalf("run_end written: %v", end)
+	}
+}
+
 func TestTheCoreStampsObservedAt(t *testing.T) {
 	future := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	inv := emitting(func(_ context.Context, e connector.Emitter) error {

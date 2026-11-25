@@ -148,7 +148,13 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "FileVault, SIP, Gatekeeper, firewall, updates, screen lock, local accounts, Time Machine, endpoint agents, network ports, login items, home folder, SMB shares, Brave debugging port",
 		Needs:    []string{"os:darwin"},
+		Theme:    finding.ThemeMac,
 	}
+}
+
+// Track makes one item of each finding: each is its own setting to fix.
+func (c *Connector) Track(finding.Finding) *finding.Track {
+	return &finding.Track{Group: finding.GroupFinding}
 }
 
 // slowTimeout is how long the tools that can take minutes get: softwareupdate asks Apple's

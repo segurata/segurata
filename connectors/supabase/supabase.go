@@ -43,6 +43,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Organizations and plans, projects, API keys by name and type; the spend cap is not exposed by the API",
 		Needs:    []string{"secret:" + secretName},
+		Theme:    finding.ThemeCloud,
 	}
 }
 

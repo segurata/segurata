@@ -64,6 +64,8 @@ def describe():
         "protocol": PROTOCOL,
         "summary": "Breaches in Have I Been Pwned that include the configured email addresses",
         "needs": ["secret:" + SECRET],
+        # Closes the tracker's "breaches not checked" gap once a run reads the addresses.
+        "covers": [{"id": "hibp"}],
     }
 
 
