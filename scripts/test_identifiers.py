@@ -247,6 +247,69 @@ class ScanHistoryTest(Base):
         self.assertEqual(identifiers.scan_history(repo.path, identifiers.load(self.ids("acme-corp\n"))), [])
 
 
+class PushTest(Base):
+    ZERO = "0" * 40
+
+    def setUp(self):
+        super().setUp()
+        self.repo_ = self.repo()
+        self.repo_.write("a.txt", "clean\n")
+        self.repo_.commit("published")
+        self.published = self.head()
+        self.repo_.write("old.txt", "x\nÑANDÚ-ácme\n")
+        self.repo_.commit("add")
+        self.repo_.git("rm", "-q", "old.txt")
+        self.repo_.commit("delete")  # the tip is clean again: only the pushed commits show it
+        self.tip = self.head()
+
+    def head(self):
+        return subprocess.run(["git", "-C", self.repo_.path, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+    def stdin(self, *rows):
+        return [" ".join(row).encode() for row in rows]
+
+    def test_revs(self):
+        unknown = "1" * 40
+        cases = {
+            "update": ((("refs/heads/main", self.tip, "refs/heads/main", self.published),),
+                       [self.tip, "^" + self.published, "--not", "--remotes"]),
+            "new ref": ((("refs/heads/main", self.tip, "refs/heads/new", self.ZERO),), [self.tip, "--not", "--remotes"]),
+            "remote commit not here": ((("refs/heads/main", self.tip, "refs/heads/main", unknown),),
+                                       [self.tip, "--not", "--remotes"]),
+            "deletion": ((("(delete)", self.ZERO, "refs/heads/gone", self.published),), []),
+        }
+        for name, (rows, revs) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(identifiers.push_revs(self.repo_.path, self.stdin(*rows))[0], revs)
+
+    def test_rejects_malformed_input(self):
+        for line in (b"refs/heads/main", b"refs/heads/main --all refs/heads/main " + self.ZERO.encode()):
+            with self.subTest(line=line):
+                with self.assertRaisesRegex(identifiers.InputError, "pre-push input"):
+                    identifiers.push_revs(self.repo_.path, [line])
+
+    def test_added_then_deleted_is_caught(self):
+        entries = identifiers.load(self.ids("Ñandú-Ácme\n"))
+        self.assertEqual(identifiers.scan_tree(self.repo_.path, entries), [])  # what the old hook saw
+        rows = (("refs/heads/main", self.tip, "refs/heads/main", self.published),)
+        hits = identifiers.scan_push(self.repo_.path, entries, self.stdin(*rows))
+        self.assertEqual([re.sub("[0-9a-f]{40}", "OID", hit) for hit in hits], ["identifier on line 1: blob OID old.txt:2"])
+
+    def test_published_commits_and_deletions_are_not_rescanned(self):
+        entries = identifiers.load(self.ids("published\n"))  # only in the first commit's message
+        rows = (("refs/heads/main", self.tip, "refs/heads/main", self.published),)
+        self.assertEqual(identifiers.scan_push(self.repo_.path, entries, self.stdin(*rows)), [])
+        rows = (("(delete)", self.ZERO, "refs/heads/published-branch", self.published),)
+        self.assertEqual(identifiers.scan_push(self.repo_.path, entries, self.stdin(*rows)), [])
+
+    def test_remote_ref_names(self):
+        entries = identifiers.load(self.ids("Ñandú-Ácme\n"))
+        rows = (("refs/heads/main", self.published, "refs/heads/ñandú-ácme-fix", self.ZERO),)
+        hits = identifiers.scan_push(self.repo_.path, entries, self.stdin(*rows))
+        self.assertIn("identifier on line 1: ref refs/heads/<identifier 1>-fix", hits)
+        self.assertNoIdentifier(hits, "Ñandú-Ácme")
+
+
 class MainTest(Base):
     def test_exit_codes(self):
         repo = self.repo()

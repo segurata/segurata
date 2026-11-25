@@ -23,6 +23,10 @@ Commands:
     identifiers.py replace-file FILE OUT      write git filter-repo --replace-text expressions
     identifiers.py scan-tree REPO FILE        tracked files of the working tree: content and paths
     identifiers.py scan-history REPO FILE     every object reachable from any ref, and ref names
+    identifiers.py scan-push REPO FILE        what a git push sends: the pre-push hook's stdin
+                                              names the refs; objects already on the remote and
+                                              in any remote-tracking ref are left out
+    identifiers.py push-revs REPO             the pre-push stdin as git log arguments, one line
     identifiers.py mask FILE                  copy stdin to stdout, masked
     identifiers.py run-masked FILE CMD...     run CMD with its stdout and stderr masked
 
@@ -263,6 +267,41 @@ def scan_history(repo, entries):
     return scan_objects(repo, entries, refs, objects)
 
 
+def push_revs(repo, lines):
+    """The pre-push hook's stdin ("<local ref> <local sha> <remote ref> <remote sha>" per ref) ->
+    (git log arguments for what the push sends, the remote ref names it creates or updates).
+    A deletion sends nothing. An update sends what the remote ref lacks; a new ref, and an update
+    whose remote commit is not here, what no remote-tracking ref already has."""
+    positive, negative, refs = [], [], []
+    for line in lines:
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) != 4:
+            raise InputError("pre-push input: expected '<local ref> <local sha> <remote ref> <remote sha>'")
+        _, local_sha, remote_ref, remote_sha = fields
+        if not all(re.fullmatch(rb"[0-9a-f]{40}|[0-9a-f]{64}", sha) for sha in (local_sha, remote_sha)):
+            raise InputError("pre-push input: an object id is not hexadecimal")
+        if not local_sha.strip(b"0"):
+            continue
+        positive.append(local_sha.decode())
+        refs.append(remote_ref)
+        if remote_sha.strip(b"0") and has_commit(repo, remote_sha.decode()):
+            negative.append("^" + remote_sha.decode())
+    revs = positive + negative + ["--not", "--remotes"] if positive else []
+    return revs, refs
+
+
+def has_commit(repo, oid):
+    probe = ["git", "-C", repo, "cat-file", "-e", oid + "^{commit}"]
+    return subprocess.run(probe, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def scan_push(repo, entries, lines):
+    revs, refs = push_revs(repo, lines)
+    return scan_objects(repo, entries, refs, rev_list_objects(repo, *revs) if revs else {})
+
+
 def run_masked(entries, cmd):
     """Runs cmd, stdin inherited, copying its stdout and stderr masked, line by line."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -281,6 +320,13 @@ def run_masked(entries, cmd):
     return 128 - code if code < 0 else code
 
 
+SCANS = {
+    "scan-tree": scan_tree,
+    "scan-history": scan_history,
+    "scan-push": lambda repo, entries: scan_push(repo, entries, sys.stdin.buffer.read().splitlines()),
+}
+
+
 def main(argv):
     if len(argv) < 3:
         print(__doc__, file=sys.stderr)
@@ -294,6 +340,10 @@ def main(argv):
         if command == "replace-file" and len(argv) == 4:
             replace_file(load(argv[2]), argv[3])
             return 0
+        if command == "push-revs" and len(argv) == 3:
+            revs, _ = push_revs(argv[2], sys.stdin.buffer.read().splitlines())
+            print(" ".join(revs))
+            return 0
         if command == "mask" and len(argv) == 3:
             entries = load(argv[2])
             for line in sys.stdin.buffer:
@@ -301,9 +351,8 @@ def main(argv):
             return 0
         if command == "run-masked" and len(argv) >= 4:
             return run_masked(load(argv[2]), argv[3:])
-        if command in ("scan-tree", "scan-history") and len(argv) == 4:
-            repo, entries = argv[2], load(argv[3])
-            hits = scan_tree(repo, entries) if command == "scan-tree" else scan_history(repo, entries)
+        if command in SCANS and len(argv) == 4:
+            hits = SCANS[command](argv[2], load(argv[3]))
             for hit in hits:
                 print(hit)
             return 1 if hits else 0
