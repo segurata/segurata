@@ -114,7 +114,8 @@ type Probe struct {
 	KeyID        string // aws-secret-key: the access key id found with it
 	// Recover reads Value (and KeyID) again when the probe has none, and is called only when the
 	// cache has no fresh answer and the run still has time: for git history replayed from the
-	// cache, whose values the scan never read. ok is false when it could not.
+	// cache, whose values the scan never read. ok is false when it could not. It runs on its
+	// provider's goroutine, concurrently with other providers' probes.
 	Recover func(ctx context.Context) (value, keyID string, ok bool)
 }
 

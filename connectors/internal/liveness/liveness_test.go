@@ -499,9 +499,13 @@ func TestRecoverValueAtCheckTime(t *testing.T) {
 	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
 	c.Cache, c.Now = LoadCache(filepath.Join(t.TempDir(), "l.json")), func() time.Time { return now }
 	c.Cache.put([]string{"cached"}, secretrisk.Liveness{State: secretrisk.Dead, CheckedAt: now})
+	// Recover runs on each provider's goroutine, so providers recover concurrently.
+	var mu sync.Mutex
 	calls := map[string]int{}
 	recov := func(name, value, keyID string) func(context.Context) (string, string, bool) {
 		return func(context.Context) (string, string, bool) {
+			mu.Lock()
+			defer mu.Unlock()
 			calls[name]++
 			return value, keyID, value != ""
 		}
