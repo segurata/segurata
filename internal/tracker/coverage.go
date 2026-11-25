@@ -167,7 +167,7 @@ var gaps = []gap{
 		step: "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (docs/plan.md, section 6). Mark this done when checked.",
 		url:  "https://dashboard.stripe.com/apikeys"},
 	{slug: "hibp", title: "Breaches of your email addresses are not checked: the hibp connector is not set up",
-		covered: ranConnector("hibp"),
+		audited: true, unreported: true,
 		step:    "Install the example connector and give it a Have I Been Pwned API key and your addresses (examples/hibp/README.md), then run it.",
 		command: "segurata inventory hibp", url: "https://haveibeenpwned.com/API/Key"},
 	{slug: "password-manager", title: "The password manager's reused and breached password report is not audited by any connector",
@@ -193,18 +193,6 @@ func (t *Tracker) audited(g gap) (covered bool, how string, known bool) {
 		reported = reported || ok
 	}
 	return false, "", reported || g.unreported && !legacy
-}
-
-// ranConnector is covered once an instance of the connector has run.
-func ranConnector(name string) func(*Tracker, map[string]*run) (bool, string, bool) {
-	return func(t *Tracker, _ map[string]*run) (bool, string, bool) {
-		for l := range t.Runs {
-			if l == name || strings.HasPrefix(l, name+":") {
-				return true, l + " ran", true
-			}
-		}
-		return false, "", true
-	}
 }
 
 // CoverageReport counts what a sync did to coverage items.
