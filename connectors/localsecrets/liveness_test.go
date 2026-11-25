@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/sshkey"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/testcorpus"
@@ -279,16 +281,44 @@ func TestLivenessRecoversCachedHistoryValues(t *testing.T) {
 	}
 }
 
-func TestOnlyKeyID(t *testing.T) {
-	a, b := secretrisk.Evidence{Fingerprint: "a"}, secretrisk.Evidence{Fingerprint: "b"}
-	if id, ok := onlyKeyID([]secretrisk.Evidence{a, a}); !ok || id.Fingerprint != "a" {
-		t.Errorf("one key id seen twice: %v %v", id, ok)
+// Secret keys (upper case) pair with key ids (lower case) by proximity, on the side the place
+// writes its key ids, one to one; a place with one key id pairs it however far, as it always did.
+func TestAWSPlacePairs(t *testing.T) {
+	at := func(fp string, line int) awsSighting { return awsSighting{fp, line} }
+	cases := []struct {
+		name         string
+		ids, secrets []awsSighting
+		taken        []string
+		want         map[string]string
+	}{
+		{"key ids above, a setting between", []awsSighting{at("a", 2), at("b", 5)}, []awsSighting{at("A", 4), at("B", 7)}, nil, map[string]string{"A": "a", "B": "b"}},
+		{"secret keys above", []awsSighting{at("a", 3), at("b", 6)}, []awsSighting{at("A", 1), at("B", 4)}, nil, map[string]string{"A": "a", "B": "b"}},
+		{"adjacent blocks", []awsSighting{at("a", 1), at("b", 3), at("c", 5)}, []awsSighting{at("A", 2), at("B", 4), at("C", 6)}, nil, map[string]string{"A": "a", "B": "b", "C": "c"}},
+		{"same line", []awsSighting{at("a", 1), at("b", 2)}, []awsSighting{at("A", 1), at("B", 2)}, nil, map[string]string{"A": "a", "B": "b"}},
+		{"one key id, two secret keys: the nearer", []awsSighting{at("a", 1)}, []awsSighting{at("B", 4), at("A", 2)}, nil, map[string]string{"A": "a"}},
+		{"one key id, far away", []awsSighting{at("a", 1)}, []awsSighting{at("A", 30)}, nil, map[string]string{"A": "a"}},
+		{"one key id seen twice, far away", []awsSighting{at("a", 1), at("a", 40)}, []awsSighting{at("A", 20)}, nil, map[string]string{"A": "a"}},
+		{"two key ids, both far away", []awsSighting{at("a", 1), at("b", 2)}, []awsSighting{at("A", 30)}, nil, map[string]string{}},
+		{"a key id paired elsewhere", []awsSighting{at("a", 1)}, []awsSighting{at("A", 2)}, []string{"a"}, map[string]string{}},
+		{"no key id", nil, []awsSighting{at("A", 2)}, nil, map[string]string{}},
 	}
-	if _, ok := onlyKeyID([]secretrisk.Evidence{a, b}); ok {
-		t.Error("two key ids pair with nothing")
-	}
-	if _, ok := onlyKeyID(nil); ok {
-		t.Error("no key id")
+	for _, tc := range cases {
+		taken := map[string]bool{}
+		for _, fp := range tc.taken {
+			taken[fp] = true
+		}
+		got := map[string]string{}
+		for _, pr := range (awsPlace{ids: tc.ids, secrets: tc.secrets}).pair(taken) {
+			got[pr[0]] = pr[1]
+		}
+		if !maps.Equal(got, tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+		for s, id := range got {
+			if !taken[s] || !taken[id] {
+				t.Errorf("%s: %s and %s not marked taken", tc.name, s, id)
+			}
+		}
 	}
 }
 
@@ -376,30 +406,40 @@ func TestLivenessLookupsAtScanTime(t *testing.T) {
 	}
 }
 
-// pairHistory is a repository with one commit holding an AWS key id and a secret access key on
-// the next line, and a gitleaks that reports both as committed on date.
+// pairHistory is a repository with one commit holding one file, and a gitleaks that reports the
+// leaks given for that file as committed in that commit.
 type pairHistory struct {
 	*historyRepo
 	gl cli.Runner
 }
 
+// newPairHistory commits an AWS key id and a secret access key on the next line, both reported
+// (the secret key by a custom gitleaks rule) as committed on date.
 func newPairHistory(t *testing.T, keyID, secret, date string) pairHistory {
+	return newLeakHistory(t, "creds.env", "AWS_ACCESS_KEY_ID="+keyID+"\naws_secret_access_key="+secret+"\n", date,
+		map[string]any{"RuleID": "aws-access-token", "StartLine": 1, "Secret": keyID},
+		map[string]any{"RuleID": "aws-secret-key", "StartLine": 2, "Secret": secret})
+}
+
+// newLeakHistory commits file with content and a gitleaks that reports leaks (RuleID, StartLine,
+// Secret, Match) in that file and commit, committed on date.
+func newLeakHistory(t *testing.T, file, content, date string, leaks ...map[string]any) pairHistory {
 	r := newHistoryRepo(t)
-	if err := os.WriteFile(filepath.Join(r.dir, "creds.env"), []byte("AWS_ACCESS_KEY_ID="+keyID+"\naws_secret_access_key="+secret+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(r.dir, file), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r.git("add", "creds.env")
+	r.git("add", file)
 	r.git("commit", "-q", "-m", "creds")
 	commit := r.git("rev-parse", "HEAD")
+	for _, l := range leaks {
+		l["File"], l["Commit"], l["Date"] = file, commit, date
+	}
 	gl := cli.RunnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
 		if args[0] == "version" {
 			return []byte("v8.30.1\n"), nil
 		}
 		r.scans = append(r.scans, args)
-		return json.Marshal([]map[string]any{
-			{"RuleID": "aws-access-token", "File": "creds.env", "StartLine": 1, "Secret": keyID, "Commit": commit, "Date": date},
-			{"RuleID": "aws-secret-key", "File": "creds.env", "StartLine": 2, "Secret": secret, "Commit": commit, "Date": date},
-		})
+		return json.Marshal(leaks)
 	})
 	return pairHistory{r, gl}
 }
@@ -407,7 +447,7 @@ func newPairHistory(t *testing.T, keyID, secret, date string) pairHistory {
 // check scans the history (from the gitleaks cache after the first time, replayed says which) and
 // runs the liveness check for mine and unknown secrets against f; it fails if a value reaches the
 // findings or the status line.
-func (h pairHistory) check(t *testing.T, f *fakeProviders, known *attribution.Known, values ...string) (line string, replayed bool) {
+func (h pairHistory) check(t *testing.T, f *fakeProviders, known *attribution.Known, values ...string) (line string, replayed bool, fs []finding.Finding) {
 	t.Helper()
 	c := &Connector{Gitleaks: h.gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
 		Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
@@ -424,7 +464,7 @@ func (h pairHistory) check(t *testing.T, f *fakeProviders, known *attribution.Kn
 	if err := s.gitleaks(h.dir); err != nil {
 		t.Fatal(err)
 	}
-	fs, _ := s.findings()
+	fs, _ = s.findings()
 	line = s.checkLiveness(context.Background(), fs, known)
 	raw, _ := json.Marshal(fs)
 	for _, v := range values {
@@ -432,7 +472,7 @@ func (h pairHistory) check(t *testing.T, f *fakeProviders, known *attribution.Kn
 			t.Fatal("a value reached the output")
 		}
 	}
-	return line, len(h.scans) == 0
+	return line, len(h.scans) == 0, fs
 }
 
 // A secret key committed next to someone else's key id: the pair is never sent to STS, neither
@@ -444,13 +484,13 @@ func TestLivenessNeverSendsAForeignKeyID(t *testing.T) {
 	f := newFakeProviders(t, theirs)
 	theirAccount := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
 	for _, wantReplay := range []bool{false, true} {
-		line, replayed := h.check(t, f, theirAccount, theirs, secret)
+		line, replayed, _ := h.check(t, f, theirAccount, theirs, secret)
 		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "0 asked") || strings.Contains(line, " 0 not allowed") {
 			t.Fatalf("replay %v: someone else's key id was sent (%v): %s", replayed, f.asked, line)
 		}
 	}
 	// The control: the same pair, the owner's, is recovered and tried.
-	line, _ := h.check(t, f, &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"999999999999"}}}, theirs, secret)
+	line, _, _ := h.check(t, f, &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"999999999999"}}}, theirs, secret)
 	if !f.askedAbout(theirs) || !strings.Contains(line, "1 asked") {
 		t.Errorf("the owner's pair was not tried: %s", line)
 	}
@@ -464,20 +504,24 @@ func TestLivenessNeverPairsATemporaryKeyID(t *testing.T) {
 	h := newPairHistory(t, temp, secret, "2026-11-23T20:00:00Z") // within STS's lifetime: not noise
 	f := newFakeProviders(t, temp)
 	for _, wantReplay := range []bool{false, true} {
-		line, replayed := h.check(t, f, &attribution.Known{}, temp, secret)
+		line, replayed, _ := h.check(t, f, &attribution.Known{}, temp, secret)
 		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "1 asked,") || !strings.Contains(line, "1 unsupported") && !strings.Contains(line, "1 without a value") {
 			t.Errorf("replay %v: an ASIA id was paired (%v): %s", replayed, f.asked, line)
 		}
 	}
 }
 
-// One key id and two secret keys in one place: the id goes with one of them, the same one every
-// run, and the other is tried alone (unsupported, or from the cache).
+// One key id and two secret keys in one place, and the same key id in another place beside a
+// third: the id goes with one of them, the nearest, every run, and the others are tried alone
+// (unsupported, or from the cache).
 func TestHeldKeyIDPairsOnce(t *testing.T) {
 	h := heldValues{
-		byFP:       map[string]heldValue{"s2": {"aws-secret-key", "two"}, "s1": {"aws-secret-key", "one"}, "id": {"aws-access-key-id", "AKIA0"}},
-		awsIDs:     map[string]map[string]string{"p": {"id": "AKIA0"}},
-		awsSecrets: map[string][]string{"p": {"s2", "s1"}},
+		byFP:   map[string]heldValue{"s2": {"aws-secret-key", "two"}, "s1": {"aws-secret-key", "one"}, "s3": {"aws-secret-key", "three"}},
+		awsIDs: map[string]string{"id": "AKIA0"},
+		aws: awsPlaces{
+			"p": {ids: []awsSighting{{"id", 1}}, secrets: []awsSighting{{"s2", 3}, {"s1", 2}}},
+			"q": {ids: []awsSighting{{"id", 1}}, secrets: []awsSighting{{"s3", 2}}},
+		},
 	}
 	for range 20 {
 		var paired []string
@@ -602,5 +646,209 @@ func TestLivenessCacheFollowsCacheDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".cache")); err == nil {
 		t.Error("a cache was written under ~/.cache")
+	}
+}
+
+// awsSecret is a synthetic secret access key: 40 characters of the alphabet AWS uses, a slash
+// among them.
+func awsSecret() string {
+	s := fake("", 39)
+	return s[:20] + "/" + s[20:]
+}
+
+// mineKeyID is a synthetic long-term key id of the account the fake STS answers for; n tells
+// several apart.
+func mineKeyID(n byte) string { return testcorpus.AWSKeyID("AKIA", 12345678901, false, n) }
+
+// theirKeyID is a synthetic key id of an account that is not the owner's.
+func theirKeyID(n byte) string { return testcorpus.AWSKeyID("AKIA", 999999999999, false, n) }
+
+// threePairs is an Ansible vars file holding three key id / secret access key pairs, a setting
+// between each id and its secret key, so that the nearest key id of the second secret key is the
+// third's, not its own. The third pair names its secret key only "secret" and belongs to someone
+// else; a commit hash sits next to it under a secret-ish name. Lines are 1-based.
+type threePairs struct {
+	ids, secrets         [3]string
+	sha, content         string
+	idLines, secretLines [3]int
+}
+
+func newThreePairs() threePairs {
+	p := threePairs{ids: [3]string{mineKeyID(1), mineKeyID(2), theirKeyID(3)}, secrets: [3]string{awsSecret(), awsSecret(), awsSecret()},
+		sha: testcorpus.Fake(rng, "", 40, testcorpus.Hex)}
+	lines := []string{
+		"---",
+		`alpha_access_key_id: "` + p.ids[0] + `"`,
+		"alpha_region: eu-west-1",
+		`alpha_secret_access_key: "` + p.secrets[0] + `"`,
+		`beta_access_key_id: "` + p.ids[1] + `"`,
+		"beta_region: eu-west-1",
+		`beta_secret_access_key: "` + p.secrets[1] + `"`,
+		`gamma_key: "` + p.ids[2] + `"`,
+		`gamma_secret: "` + p.secrets[2] + `"`,
+		`deploy_secret: "` + p.sha + `"`,
+	}
+	p.idLines, p.secretLines = [3]int{2, 5, 8}, [3]int{4, 7, 9}
+	p.content = strings.Join(lines, "\n") + "\n"
+	return p
+}
+
+func (p threePairs) values() []string { return append(append(p.ids[:], p.secrets[:]...), p.sha) }
+
+// An AWS secret access key is recognised in the forms it is written in: under any key name that
+// holds secret_access_key (Ansible YAML, env, JS), and under a weaker secret_key or *_secret
+// only with an AWS key id within awsPairLines lines. A commit hash never is one, not even under
+// aws_secret_access_key; a 40-character token under a name that does not say secret, or too far
+// from any key id, is not one either; a lone key id stays alone.
+func TestAWSSecretKeyForms(t *testing.T) {
+	fx := newFixture(t)
+	vars := newThreePairs()
+	// The JS secret key ends in "/", where a word boundary would cut it off before the quote.
+	ini, env, js := [2]string{mineKeyID(4), awsSecret()}, [2]string{mineKeyID(5), awsSecret()}, [2]string{mineKeyID(6), fake("", 39) + "/"}
+	plain, token, far, lone, sha := awsSecret(), awsSecret(), awsSecret(), mineKeyID(9), testcorpus.Fake(rng, "", 40, testcorpus.Hex)
+	fx.secrets = append(fx.secrets, vars.values()...)
+	fx.secrets = append(fx.secrets, ini[0], ini[1], env[0], env[1], js[0], js[1], plain, token, far, lone, sha)
+	fx.write(t, ".config/ansible/group_vars/all.yml", vars.content, 0o600)
+	fx.write(t, ".config/app/settings.ini", "[s3]\naccess_key = "+ini[0]+"\nsecret_key = "+ini[1]+"\n", 0o600)
+	fx.write(t, ".config/app/old.ini", "aws_secret_access_key = "+sha+"\n", 0o600)
+	fx.write(t, "src/shop/.env.aws", "AWS_ACCESS_KEY_ID="+env[0]+"\nAWS_SECRET_ACCESS_KEY="+env[1]+"\n", 0o600)
+	fx.write(t, "src/shop/secrets.js", "module.exports = {\n  accessKeyId: '"+js[0]+"',\n  secretAccessKey: '"+js[1]+"',\n};\n", 0o600)
+	fx.write(t, ".config/other/plain.yml", "plain_secret: "+plain+"\n", 0o600)
+	fx.write(t, ".config/other/token.yml", "access_key: "+mineKeyID(7)+"\napi_token: "+token+"\n", 0o600)
+	fx.write(t, ".config/other/far.yml", "access_key: "+mineKeyID(8)+"\n"+strings.Repeat("setting: on\n", awsPairLines)+"app_secret: "+far+"\n", 0o600)
+	fx.write(t, ".config/lone/env", "AWS_ACCESS_KEY_ID="+lone+"\n", 0o600)
+
+	c := fx.connector(t, "[]")
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"emit_noise": true}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	for _, s := range fx.secrets {
+		if len(s) >= 6 && strings.Contains(string(raw), s) {
+			t.Fatal("a raw secret reached the output")
+		}
+	}
+	got := map[string]string{} // fingerprint -> type
+	for _, f := range rec.findings {
+		if ev, ok := secretrisk.EvidenceOf(f); ok {
+			got[ev.Fingerprint] = ev.Type
+		}
+	}
+	for name, v := range map[string]string{"yaml 1": vars.secrets[0], "yaml 2": vars.secrets[1], "yaml secret": vars.secrets[2],
+		"ini secret_key": ini[1], "env": env[1], "js": js[1]} {
+		if typ := got[fx.fpOf(t, c, v, "aws-secret-key")]; typ != "aws-secret-key" {
+			t.Errorf("%s: %q, want aws-secret-key", name, typ)
+		}
+	}
+	for name, v := range map[string]string{"commit hash near a key id": vars.sha, "commit hash under aws_secret_access_key": sha,
+		"secret-ish name, no key id": plain, "key id near, not a secret-ish name": token, "secret-ish name too far": far} {
+		if typ := got[fx.fpOf(t, c, v, "aws-secret-key")]; typ == "aws-secret-key" {
+			t.Errorf("%s: reported as an AWS secret key", name)
+		}
+	}
+	if typ := got[fx.fpOf(t, c, lone, "aws-access-key-id")]; typ != "aws-access-key-id" {
+		t.Errorf("lone key id: %q", typ)
+	}
+	// The pattern alone, with no key id beside it, takes a value that ends in "/" before its quote.
+	text := "secretAccessKey: '" + js[1] + "'"
+	if cl, ok := classify("x.yml", text, specific); !ok || cl.p != awsSecretKey || cl.subs(text)[1] != js[1] {
+		t.Error("a secret key ending in / is cut off or missed")
+	}
+}
+
+// Several key id / secret key pairs in one working file: each secret key is tried with its own
+// key id, by proximity, and only the pairs whose key id is the owner's (default owners: mine; the
+// secret keys themselves name no account, as the file names two). STS here accepts only the
+// second key id: its secret key, and no other, gets the live result.
+func TestLivenessPairsEachSecretKeyWithItsKeyID(t *testing.T) {
+	fx := newFixture(t)
+	vars := newThreePairs()
+	fx.secrets = append(fx.secrets, vars.values()...)
+	fx.write(t, ".config/ansible/group_vars/all.yml", vars.content, 0o600)
+	f := newFakeProviders(t, vars.ids[1])
+	c := fx.livenessConnector(t, f)
+	known := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
+	req := connector.Request{Known: known, Config: map[string]any{"liveness": map[string]any{"enabled": true, "providers": []any{"aws"}}}}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), req, rec); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	for _, s := range fx.secrets {
+		if len(s) >= 6 && strings.Contains(string(raw), s) {
+			t.Fatal("a raw secret reached the output")
+		}
+	}
+	checkThreePairs(t, f, vars, rec.findings, func(v, typ string) string { return fx.fpOf(t, c, v, typ) })
+}
+
+// checkThreePairs asserts that the owner's two pairs of vars were each tried as a pair, the second
+// found live on both of its findings and the first not, and that someone else's pair was never
+// sent.
+func checkThreePairs(t *testing.T, f *fakeProviders, vars threePairs, fs []finding.Finding, fpOf func(v, typ string) string) {
+	t.Helper()
+	byFP := map[string]*secretrisk.Liveness{}
+	for _, fd := range fs {
+		if ev, ok := secretrisk.EvidenceOf(fd); ok {
+			byFP[ev.Fingerprint] = ev.Liveness
+		}
+	}
+	live := func(v, typ string) bool {
+		l := byFP[fpOf(v, typ)]
+		return l != nil && l.State == secretrisk.Live && l.Account == "aws:012345678901"
+	}
+	if !live(vars.secrets[1], "aws-secret-key") || !live(vars.ids[1], "aws-access-key-id") {
+		t.Errorf("the second pair: secret key %+v, key id %+v", byFP[fpOf(vars.secrets[1], "aws-secret-key")], byFP[fpOf(vars.ids[1], "aws-access-key-id")])
+	}
+	if live(vars.secrets[0], "aws-secret-key") || !f.askedAbout(vars.ids[0]) {
+		t.Errorf("the first secret key was not tried with its own key id: %+v", byFP[fpOf(vars.secrets[0], "aws-secret-key")])
+	}
+	if f.askedAbout(vars.ids[2]) || byFP[fpOf(vars.secrets[2], "aws-secret-key")] != nil {
+		t.Error("someone else's pair was tried")
+	}
+}
+
+// The same file in git history, as gitleaks reports it: the key ids by its aws-access-token rule,
+// the secret keys and the commit hash by generic-api-key. The secret keys become aws-secret-key
+// and pair by proximity, both when the scan holds the values and when the history is replayed
+// from the cache and the values are read again from the commit.
+func TestLivenessPairsHistoryByProximity(t *testing.T) {
+	vars := newThreePairs()
+	var leaks []map[string]any
+	names := []string{"alpha_secret_access_key", "beta_secret_access_key", "gamma_secret"}
+	for i := range 3 {
+		leaks = append(leaks,
+			map[string]any{"RuleID": "aws-access-token", "StartLine": vars.idLines[i], "Secret": vars.ids[i], "Match": vars.ids[i]},
+			map[string]any{"RuleID": "generic-api-key", "StartLine": vars.secretLines[i], "Secret": vars.secrets[i], "Match": names[i] + `: "` + vars.secrets[i]})
+	}
+	leaks = append(leaks, map[string]any{"RuleID": "generic-api-key", "StartLine": 10, "Secret": vars.sha, "Match": `deploy_secret: "` + vars.sha})
+	h := newLeakHistory(t, "all.yml", vars.content, "2026-11-01T00:00:00Z", leaks...)
+	known := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
+	fp := fingerprint.FromBytes(bytes.Repeat([]byte{1}, 32))
+	for _, wantReplay := range []bool{false, true} {
+		f := newFakeProviders(t, vars.ids[1])
+		line, replayed, fs := h.check(t, f, known, vars.values()...)
+		if replayed != wantReplay {
+			t.Fatalf("replayed %v, want %v", replayed, wantReplay)
+		}
+		types := map[string]string{}
+		for _, fd := range fs {
+			if ev, ok := secretrisk.EvidenceOf(fd); ok {
+				types[ev.Fingerprint] = ev.Type
+			}
+		}
+		for i, s := range vars.secrets {
+			if types[fp.Of(s)] != "aws-secret-key" {
+				t.Errorf("replay %v: secret key %d is %q", replayed, i, types[fp.Of(s)])
+			}
+		}
+		if types[fp.Of(vars.sha)] == "aws-secret-key" {
+			t.Errorf("replay %v: a commit hash became an AWS secret key", replayed)
+		}
+		checkThreePairs(t, f, vars, fs, func(v, _ string) string { return fp.Of(v) })
+		if !strings.Contains(line, "2 asked") {
+			t.Errorf("replay %v: %s", replayed, line)
+		}
 	}
 }

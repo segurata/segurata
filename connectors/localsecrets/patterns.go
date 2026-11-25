@@ -27,6 +27,47 @@ type pattern struct {
 // transcripts) or only the header line, in which case the body is read from the file.
 const privateKeyType = "private-key"
 
+// An AWS secret access key is 40 characters of base64's alphabet. Nothing in it says AWS: the key
+// name it is assigned to does, or the key id written next to it.
+const (
+	awsSecretType = "aws-secret-key"
+	awsSecretBody = `[A-Za-z0-9/+=]{40}`
+	awsSecretName = `[A-Za-z0-9_.-]*secret[_-]?access[_-]?key`
+)
+
+var (
+	awsSecretValue = regexp.MustCompile(`^` + awsSecretBody + `$`)
+	hexOnly        = regexp.MustCompile(`^[0-9a-fA-F]+$`)
+	secretishName  = regexp.MustCompile(`(?i)secret`)
+	awsSecretNamed = regexp.MustCompile(`(?i)^` + awsSecretName + `$`)
+)
+
+// awsSecretShaped reports whether v can be an AWS secret access key. A git commit hash (40 hex
+// digits) has the length and alphabet but never is one; a real key, 30 random bytes in base64,
+// is all hex with odds of (22/64)^40, about 10^-19.
+func awsSecretShaped(v string) bool { return awsSecretValue.MatchString(v) && !hexOnly.MatchString(v) }
+
+// awsSecretNearKeyID reports whether a value assigned to name, written within awsPairLines lines
+// of a long-term AWS key id, is that key id's secret access key: a secret-ish name (secret_key,
+// app_secret, SecretKey) and the shape of one. Names that hold secret_access_key need no key id
+// beside them: the aws-secret-key pattern takes them anywhere.
+func awsSecretNearKeyID(name, value string) bool {
+	return secretishName.MatchString(name) && awsSecretShaped(value)
+}
+
+// awsSecretKey is the aws-secret-key pattern, for values that the weaker names make one.
+var awsSecretKey = specificByType(awsSecretType)
+
+// specificByType is the specific pattern of a type, or nil.
+func specificByType(typ string) *pattern {
+	for i := range specific {
+		if specific[i].typ == typ {
+			return &specific[i]
+		}
+	}
+	return nil
+}
+
 // specific patterns are applied everywhere, transcripts included.
 var specific = compile([]pattern{
 	{typ: "anthropic", src: `sk-ant-[A-Za-z0-9_-]{32,}`, prefix: "sk-ant-"},
@@ -45,7 +86,11 @@ var specific = compile([]pattern{
 	{typ: "github", src: `\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}`, prefix: "ghp_|gho_|ghu_|ghs_|ghr_"},
 	{typ: "github-pat", src: `\bgithub_pat_[A-Za-z0-9_]{60,}`, prefix: "github_pat_"},
 	{typ: "gitlab", src: `\bglpat-[A-Za-z0-9_-]{20,}`, prefix: "glpat-"},
-	{typ: "aws-secret-key", src: `(?i)aws_?secret_?access_?key["']?\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})\b`, group: 1},
+	// Any key name that holds secret_access_key (aws_secret_access_key, an Ansible
+	// app_secret_access_key, the SDKs' secretAccessKey) names an AWS secret access key; a weaker
+	// name (secret_key, *_secret) does only next to a key id (awsSecretNearKeyID). The value may
+	// end in "/" or "+", so it ends at a character outside its alphabet, not at a word boundary.
+	{typ: awsSecretType, src: `(?i)` + awsSecretName + `["']?\s*[:=]\s*["']?(` + awsSecretBody + `)(?:[^A-Za-z0-9/+=]|$)`, group: 1},
 	// A pre-signed URL names its key id in X-Amz-Credential (SigV4) or AWSAccessKeyId (SigV2); it
 	// starts before the bare key id, so it wins the leftmost match.
 	{typ: "aws-presigned-url", src: `(?:X-Amz-Credential|AWSAccessKeyId)=((?:AKIA|ASIA)[A-Z0-9]{16})\b`, prefix: "AKIA|ASIA", group: 1},
@@ -196,6 +241,10 @@ func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
 			return verdict{}, false
 		}
 		return verdict{secret: secret, note: name}, true
+	case awsSecretType:
+		if !awsSecretShaped(secret) {
+			return verdict{}, false
+		}
 	case "url-credentials":
 		if defaultPassword.MatchString(secret) {
 			return verdict{}, false

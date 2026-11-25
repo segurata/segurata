@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -173,13 +174,15 @@ func (s *scan) rg(p pass) {
 		line int
 		text string
 	}
+	out := s.rgOutput(args)
+	keyIDs := keyIDLines(out, p.patterns)
 	deferred := map[string][]hit{}
-	eachRGMatch(s.rgOutput(args), func(path string, line int, text string) {
+	eachRGMatch(out, func(path string, line int, text string) {
 		if c, ok := classify(path, text, p.patterns); ok && needsLine[c.p.typ] {
 			deferred[path] = append(deferred[path], hit{line, text})
 			return
 		}
-		s.match(path, line, text, "", p.patterns)
+		s.match(path, line, text, "", p.patterns, keyIDs[path])
 	})
 	for path, hits := range deferred {
 		want := map[int]bool{}
@@ -188,9 +191,28 @@ func (s *scan) rg(p pass) {
 		}
 		lines := linesAt(path, want)
 		for _, h := range hits {
-			s.match(path, h.line, h.text, lines[h.line], p.patterns)
+			s.match(path, h.line, h.text, lines[h.line], p.patterns, keyIDs[path])
 		}
 	}
+}
+
+// keyIDLines are the lines, by file, where a pass found a long-term AWS key id: a secret-ish
+// assignment within awsPairLines lines of one is that key id's secret access key
+// (awsSecretNearKeyID). Only the passes with the assignment pattern have such assignments.
+func keyIDLines(out []byte, patterns []pattern) map[string][]int {
+	if !slices.ContainsFunc(patterns, func(p pattern) bool { return p.typ == assignment.typ }) {
+		return nil
+	}
+	lines := map[string][]int{}
+	eachRGMatch(out, func(path string, line int, text string) {
+		if !strings.Contains(text, "AKIA") {
+			return
+		}
+		if c, ok := classify(path, text, patterns); ok && c.p.typ == "aws-access-key-id" && pairableKeyID(c.subs(text)[c.p.group]) {
+			lines[path] = append(lines[path], line)
+		}
+	})
+	return lines
 }
 
 // needsLine are the types judged with the line around the match.
@@ -292,8 +314,10 @@ func classify(path, text string, patterns []pattern) (classified, bool) {
 }
 
 // match classifies one ripgrep match and records it. context is the whole line when the pattern
-// needs it (needsLine), else "".
-func (s *scan) match(path string, line int, text, context string, patterns []pattern) {
+// needs it (needsLine), else "". keyIDs are the lines of the file that hold an AWS key id: an
+// assignment to a secret-ish name near one is an AWS secret access key, outside trails, whose
+// lines (commands, messages) say nothing about what belongs together.
+func (s *scan) match(path string, line int, text, context string, patterns []pattern, keyIDs []int) {
 	c, ok := classify(path, text, patterns)
 	if !ok || s.fileNotebookOutput(path, line) {
 		return
@@ -305,7 +329,11 @@ func (s *scan) match(path string, line int, text, context string, patterns []pat
 	case "gcp-service-account":
 		s.serviceAccount(path, line, kind)
 	default:
-		s.value(path, line, kind, c.p, c.subs(text), c.varName, context)
+		p, m := c.p, c.subs(text)
+		if p.typ == assignment.typ && !IsTrail(kind) && nearKeyID(keyIDs, line) && awsSecretNearKeyID(c.varName, m[p.group]) {
+			p, m = awsSecretKey, []string{m[0], m[p.group]}
+		}
+		s.value(path, line, kind, p, m, c.varName, context)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -284,6 +285,7 @@ func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	if err := json.Unmarshal(out, &leaks); err != nil {
 		return nil, 0, fmt.Errorf("unreadable report: %v", err)
 	}
+	markAWSSecretLeaks(leaks)
 	var found []cachedLeak
 	omitted := 0
 	for _, l := range leaks {
@@ -308,7 +310,11 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 	if value == "" || value == "REDACTED" {
 		return c, false, false
 	}
-	switch p := classifyValue(value); {
+	p := classifyValue(value)
+	if p == nil && l.RuleID == awsSecretType {
+		p = awsSecretKey
+	}
+	switch {
 	case l.RuleID == "private-key" || strings.Contains(value, "PRIVATE KEY-----"):
 		body := pemBody(value)
 		if len(body) < 40 {
@@ -344,6 +350,42 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 	}
 	c.Evidence = ev
 	return c, true, false
+}
+
+// leakKeyName is the key name a gitleaks match starts with (`app_secret_access_key: "…`,
+// `"secretAccessKey": "…`).
+var leakKeyName = regexp.MustCompile(`^["'\s]*([A-Za-z0-9_.-]+)`)
+
+// markAWSSecretLeaks gives the rule id aws-secret-key to the generic-api-key leaks that are AWS
+// secret access keys, which gitleaks has no rule for: under a name that holds secret_access_key,
+// or under a secret-ish name within awsPairLines lines of a long-term key id reported in the same
+// file and commit (awsSecretNearKeyID), as the working-tree scan judges them.
+func markAWSSecretLeaks(leaks []leak) {
+	for i, l := range leaks {
+		if l.RuleID != "generic-api-key" || !awsSecretShaped(l.Secret) {
+			continue
+		}
+		var name string
+		if m := leakKeyName.FindStringSubmatch(l.Match); m != nil {
+			name = m[1]
+		}
+		if awsSecretNamed.MatchString(name) || awsSecretNearKeyID(name, l.Secret) && keyIDLeakNear(leaks, l) {
+			leaks[i].RuleID = awsSecretType
+		}
+	}
+}
+
+// keyIDLeakNear reports whether a long-term AWS key id was reported within awsPairLines lines of
+// l, in the same file and commit.
+func keyIDLeakNear(leaks []leak, l leak) bool {
+	for _, k := range leaks {
+		if k.File == l.File && k.Commit == l.Commit && pairableKeyID(k.Secret) && nearKeyID([]int{k.StartLine}, l.StartLine) {
+			if p := classifyValue(k.Secret); p != nil && p.typ == "aws-access-key-id" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // errGitUnderGitleaks is a git failure gitleaks logged and then reported as a clean scan.
