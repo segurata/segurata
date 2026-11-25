@@ -1,0 +1,1968 @@
+{
+  "schema_version": 5,
+  "next_id": 44,
+  "last_sync_at": "2026-11-24T12:00:00Z",
+  "sources": {
+    "anthropic": "2026-11-24T11:00:00Z",
+    "aws": "2026-11-24T11:00:00Z",
+    "azure": "2026-11-24T11:00:00Z",
+    "browser-extensions": "2026-11-24T11:00:00Z",
+    "cloudflare": "2026-11-24T11:00:00Z",
+    "connected-apps": "2026-11-24T11:00:00Z",
+    "gcp": "2026-11-24T11:00:00Z",
+    "github": "2026-11-24T11:00:00Z",
+    "google-personal": "2026-11-24T11:00:00Z",
+    "hibp": "2026-11-24T11:00:00Z",
+    "local-secrets": "2026-11-24T11:00:00Z",
+    "macos": "2026-11-24T11:00:00Z",
+    "openai": "2026-11-24T11:00:00Z",
+    "openrouter:work": "2026-11-24T11:00:00Z",
+    "prowler": "2026-11-24T11:00:00Z",
+    "supabase": "2026-11-24T11:00:00Z",
+    "vercel": "2026-11-24T11:00:00Z",
+    "workspace": "2026-11-24T11:00:00Z"
+  },
+  "themes": [
+    {
+      "id": "rotations",
+      "title": "Secrets to rotate",
+      "description": "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."
+    },
+    {
+      "id": "data-dumps",
+      "title": "Data dumps in git",
+      "description": "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."
+    },
+    {
+      "id": "transcripts",
+      "title": "Trail files to redact",
+      "description": "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."
+    },
+    {
+      "id": "mac",
+      "title": "This Mac",
+      "description": "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."
+    },
+    {
+      "id": "browser-extensions",
+      "title": "Browser extensions",
+      "description": "Extensions that can read or drive your pages, one item per extension."
+    },
+    {
+      "id": "github-orgs",
+      "title": "GitHub",
+      "description": "Organizations and repositories you administer: 2FA, default permissions, Actions, secret scanning."
+    },
+    {
+      "id": "connected-apps",
+      "title": "Connected apps",
+      "description": "Third-party apps with access to GitHub, X, Slack, Notion, Facebook and other accounts."
+    },
+    {
+      "id": "google",
+      "title": "Google",
+      "description": "Apps with access to your Google accounts, and Workspace tenants."
+    },
+    {
+      "id": "cloud",
+      "title": "Cloud",
+      "description": "GCP, AWS, Azure, Cloudflare, Vercel and Supabase: keys, roles, budgets."
+    },
+    {
+      "id": "ai-spend",
+      "title": "AI providers",
+      "description": "OpenAI, Anthropic and OpenRouter keys, limits and spend."
+    },
+    {
+      "id": "coverage",
+      "title": "Not audited here",
+      "description": "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."
+    },
+    {
+      "id": "setup",
+      "title": "Setup",
+      "description": "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."
+    },
+    {
+      "id": "decisions",
+      "title": "Decisions",
+      "description": "Questions only you can answer before the related work can go ahead."
+    },
+    {
+      "id": "other",
+      "title": "Other",
+      "description": "Findings of connectors without a theme of their own, and items added by hand."
+    }
+  ],
+  "items": [
+    {
+      "id": "T-0001",
+      "key": "decide:daily-schedule",
+      "kind": "decide",
+      "theme": "decisions",
+      "title": "Install the daily scheduled inventory?",
+      "status": "open",
+      "priority": "P3",
+      "severity": "medium",
+      "next": {
+        "who": "you",
+        "action": "Decide: Install the daily scheduled inventory?",
+        "command": "segurata track decide T-0001 --answer \"…\""
+      },
+      "decision": {
+        "question": "Install the daily scheduled inventory?",
+        "options": [
+          "yes: segurata schedule install --apply",
+          "not now"
+        ]
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "decision to take"
+        }
+      ]
+    },
+    {
+      "id": "T-0002",
+      "key": "group:anthropic|api_key|account:org-1|severity:medium",
+      "kind": "fix",
+      "theme": "ai-spend",
+      "title": "Revoke or limit 1 Anthropic API key",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "0023191c80de1b30",
+          "connector": "anthropic",
+          "account": "org-1",
+          "scope": "org-1",
+          "title": "Key ak-a has no limit",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "api_key",
+          "resource": "ak-a"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Key ak-a has no limit",
+        "command": "segurata track show T-0002",
+        "url": "https://example.com/ak-a"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0003",
+      "key": "finding:fa733b02a3b620ba",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "deploy has an access key 400 days old",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "fa733b02a3b620ba",
+          "connector": "aws",
+          "account": "123456789012",
+          "scope": "123456789012",
+          "title": "deploy has an access key 400 days old",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "iam_user_key",
+          "resource": "AKIA1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: deploy has an access key 400 days old",
+        "command": "segurata track show T-0003",
+        "url": "https://example.com/AKIA1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0004",
+      "key": "group:azure|client_secret|account:sub-1|family:Client secret of app never expires",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Client secret of app never expires",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "c5d119c56ddfc280",
+          "connector": "azure",
+          "account": "sub-1",
+          "scope": "sub-1",
+          "title": "Client secret of app never expires",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "client_secret",
+          "resource": "cs1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Client secret of app never expires",
+        "command": "segurata track show T-0004",
+        "url": "https://example.com/cs1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0005",
+      "key": "finding:fb1cb31cb30ca9bd",
+      "kind": "review",
+      "theme": "browser-extensions",
+      "title": "Grammarly can read every page",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "fb1cb31cb30ca9bd",
+          "connector": "browser-extensions",
+          "account": "brave",
+          "scope": "brave",
+          "title": "Grammarly can read every page",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "extension",
+          "resource": "ext1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Grammarly can read every page",
+        "command": "segurata track show T-0005",
+        "url": "https://example.com/ext1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0006",
+      "key": "group:cloudflare|api_token|account:acc-1|family:Token ci has no expiry",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Token ci has no expiry",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "cf0e27f82a709c12",
+          "connector": "cloudflare",
+          "account": "acc-1",
+          "scope": "acc-1",
+          "title": "Token ci has no expiry",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "api_token",
+          "resource": "t1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Token ci has no expiry",
+        "command": "segurata track show T-0006",
+        "url": "https://example.com/t1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0007",
+      "key": "group:connected-apps|slack_app|account:slack:acme|severity:high",
+      "kind": "review",
+      "theme": "connected-apps",
+      "title": "Review 2 Slack apps with broad permissions in acme",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "2fb6167ec7ba5775",
+          "connector": "connected-apps",
+          "account": "slack:acme",
+          "scope": "slack:acme",
+          "title": "Zapier can read every channel",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "slack_app",
+          "resource": "s1"
+        },
+        {
+          "id": "9233b373da7ba4fc",
+          "connector": "connected-apps",
+          "account": "slack:acme",
+          "scope": "slack:acme",
+          "title": "Polly can read every channel",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "slack_app",
+          "resource": "s2"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Zapier can read every channel",
+        "command": "segurata track show T-0007",
+        "url": "https://example.com/s1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0008",
+      "key": "group:connected-apps|slack_app|account:slack:acme|severity:medium",
+      "kind": "review",
+      "theme": "connected-apps",
+      "title": "Review 1 Slack app with several permissions in acme",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "92b1e226c1f0a80e",
+          "connector": "connected-apps",
+          "account": "slack:acme",
+          "scope": "slack:acme",
+          "title": "Donut can read every channel",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "slack_app",
+          "resource": "s3"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Donut can read every channel",
+        "command": "segurata track show T-0008",
+        "url": "https://example.com/s3"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0009",
+      "key": "group:connected-apps|x_app|account:me@example.com|family:can post and delete posts as you",
+      "kind": "review",
+      "theme": "connected-apps",
+      "title": "2 X apps can post and delete posts as you",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "a8e81902aa8145dd",
+          "connector": "connected-apps",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "Flickr can post and delete posts as you",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "x_app",
+          "resource": "x1"
+        },
+        {
+          "id": "488984fe9bf5e3c4",
+          "connector": "connected-apps",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "Buffer can post and delete posts as you",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "x_app",
+          "resource": "x2"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Flickr can post and delete posts as you",
+        "command": "segurata track show T-0009",
+        "url": "https://example.com/x1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0010",
+      "key": "group:connected-apps|notion_integration|account:me@example.com|family:can read and change the Notion pages shared with it (your own integration)",
+      "kind": "review",
+      "theme": "connected-apps",
+      "title": "2 Notion integrations can read and change the Notion pages shared with them (your own integrations)",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "d9cdfc083a1e9a55",
+          "connector": "connected-apps",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "Sync can read and change the Notion pages shared with it (your own integration)",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "notion_integration",
+          "resource": "n1"
+        },
+        {
+          "id": "b3ea927ebfc6f2b7",
+          "connector": "connected-apps",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "Backup can read and change the Notion pages shared with it (your own integration)",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "notion_integration",
+          "resource": "n2"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Sync can read and change the Notion pages shared with it (your own integration)",
+        "command": "segurata track show T-0010",
+        "url": "https://example.com/n1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0011",
+      "key": "group:connected-apps|zoom_app|account:me@example.com|family:has used your account N times",
+      "kind": "review",
+      "theme": "connected-apps",
+      "title": "2 apps has used your account 3 times",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "e3010b346a714150",
+          "connector": "connected-apps",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "Recorder has used your account 3 times",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "zoom_app",
+          "resource": "z1"
+        },
+        {
+          "id": "320cee93c0accf47",
+          "connector": "connected-apps",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "Notes has used your account 12 times",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "zoom_app",
+          "resource": "z2"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Recorder has used your account 3 times",
+        "command": "segurata track show T-0011",
+        "url": "https://example.com/z1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0012",
+      "key": "group:connected-apps|github_oauth_app|account:me@example.com|family:can read and write all your repositories",
+      "kind": "review",
+      "theme": "connected-apps",
+      "title": "Travis can read and write all your repositories",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "8803928a1dfd749d",
+          "connector": "connected-apps",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "Travis can read and write all your repositories",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "github_oauth_app",
+          "resource": "o1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Travis can read and write all your repositories",
+        "command": "segurata track show T-0012",
+        "url": "https://example.com/o1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0013",
+      "key": "group:gcp|api_key|project:p1",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Restrict 2 API keys in GCP project p1",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "7f5016ae1ef8d747",
+          "connector": "gcp",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "api_key k1 is too broad",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "project": "p1",
+          "type": "api_key",
+          "resource": "k1"
+        },
+        {
+          "id": "415f83dad4f058c4",
+          "connector": "gcp",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "api_key k2 is too broad",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "project": "p1",
+          "type": "api_key",
+          "resource": "k2"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: api_key k1 is too broad",
+        "command": "segurata track show T-0013",
+        "url": "https://example.com/k1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0014",
+      "key": "group:gcp|service_account_key|project:p2",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Rotate or delete 1 user-managed service-account key in GCP project p2",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "b67445465a3ffdc9",
+          "connector": "gcp",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "service_account_key sak1 is too broad",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "project": "p2",
+          "type": "service_account_key",
+          "resource": "sak1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: service_account_key sak1 is too broad",
+        "command": "segurata track show T-0014",
+        "url": "https://example.com/sak1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0015",
+      "key": "group:gcp|service_account_role|project:me@example.com",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Narrow the roles of 1 service account in GCP project me@example.com",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "5ffde00f8a396217",
+          "connector": "gcp",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "service_account_role sa1 is too broad",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "service_account_role",
+          "resource": "sa1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: service_account_role sa1 is too broad",
+        "command": "segurata track show T-0015",
+        "url": "https://example.com/sa1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0016",
+      "key": "group:gcp|billing_budget|account:billing-1|family:has no budget with alerts",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Billing 1 has no budget with alerts",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "52aaa854baa945e8",
+          "connector": "gcp",
+          "account": "billing-1",
+          "scope": "billing-1",
+          "title": "Billing 1 has no budget with alerts",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "billing_budget",
+          "resource": "billing-1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Billing 1 has no budget with alerts",
+        "command": "segurata track show T-0016",
+        "url": "https://example.com/billing-1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0017",
+      "key": "group:github|github_org_setting|check:org-2fa-not-required",
+      "kind": "fix",
+      "theme": "github-orgs",
+      "title": "Two-factor authentication not required in 2 GitHub orgs",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "7d45040fd611bb89",
+          "connector": "github",
+          "account": "acme",
+          "scope": "acme",
+          "title": "acme does not require 2FA",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "github_org_setting",
+          "resource": "org-2fa-not-required"
+        },
+        {
+          "id": "ec9de8e32b94d3f8",
+          "connector": "github",
+          "account": "beta",
+          "scope": "beta",
+          "title": "beta does not require 2FA",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "github_org_setting",
+          "resource": "org-2fa-not-required"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: acme does not require 2FA",
+        "command": "segurata track show T-0017",
+        "url": "https://example.com/org-2fa-not-required"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0018",
+      "key": "group:github|github_org_setting|check:org-some-new-check",
+      "kind": "fix",
+      "theme": "github-orgs",
+      "title": "some new check in 1 GitHub org",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "8a193d8e0966e166",
+          "connector": "github",
+          "account": "acme",
+          "scope": "acme",
+          "title": "acme has a new problem",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "github_org_setting",
+          "resource": "org-some-new-check"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: acme has a new problem",
+        "command": "segurata track show T-0018",
+        "url": "https://example.com/org-some-new-check"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0019",
+      "key": "group:github|github_repo_setting|check:dependabot-security-updates-disabled",
+      "kind": "fix",
+      "theme": "github-orgs",
+      "title": "Repositories without Dependabot security updates in 1 GitHub org",
+      "status": "open",
+      "priority": "P3",
+      "severity": "low",
+      "findings": [
+        {
+          "id": "2fe9100a1a8098e0",
+          "connector": "github",
+          "account": "acme",
+          "scope": "acme",
+          "title": "2 repositories of acme lack Dependabot",
+          "severity": "low",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "github_repo_setting",
+          "resource": "dependabot-security-updates-disabled"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: 2 repositories of acme lack Dependabot",
+        "command": "segurata track show T-0019",
+        "url": "https://example.com/dependabot-security-updates-disabled"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0020",
+      "key": "group:github|github_repo|account:acme",
+      "kind": "fix",
+      "theme": "github-orgs",
+      "title": "Repository security settings off in 2 repositories of acme",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "474a9769d412e074",
+          "connector": "github",
+          "account": "acme",
+          "scope": "acme",
+          "title": "acme/api has secret scanning off",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "repo": "acme/api",
+          "type": "github_repo",
+          "resource": "101"
+        },
+        {
+          "id": "cd1e672fc282b135",
+          "connector": "github",
+          "account": "acme",
+          "scope": "acme",
+          "title": "acme/web has secret scanning off",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "repo": "acme/web",
+          "type": "github_repo",
+          "resource": "102"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: acme/api has secret scanning off",
+        "command": "segurata track show T-0020",
+        "url": "https://example.com/101"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0021",
+      "key": "group:github|github_account|account:me|family:Your account has no NFA",
+      "kind": "fix",
+      "theme": "github-orgs",
+      "title": "Your account has no 2FA",
+      "status": "open",
+      "priority": "P0",
+      "severity": "critical",
+      "findings": [
+        {
+          "id": "69f2fa9ff1a09717",
+          "connector": "github",
+          "account": "me",
+          "scope": "me",
+          "title": "Your account has no 2FA",
+          "severity": "critical",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "github_account",
+          "resource": "two-factor-authentication"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Your account has no 2FA",
+        "command": "segurata track show T-0021",
+        "url": "https://example.com/two-factor-authentication"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0022",
+      "key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:high",
+      "kind": "review",
+      "theme": "google",
+      "title": "Review 1 app with high-risk access to me@gmail.com",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "84d64bd7cec7e688",
+          "connector": "google-personal",
+          "account": "me@gmail.com",
+          "scope": "me@gmail.com",
+          "title": "Mailer can read your mail",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "oauth_grant",
+          "resource": "c1"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Mailer can read your mail",
+        "command": "segurata track show T-0022",
+        "url": "https://example.com/c1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0023",
+      "key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:critical",
+      "kind": "review",
+      "theme": "google",
+      "title": "Review 1 app with high-risk access to me@gmail.com",
+      "status": "open",
+      "priority": "P0",
+      "severity": "critical",
+      "findings": [
+        {
+          "id": "417ad1890c4503f6",
+          "connector": "google-personal",
+          "account": "me@gmail.com",
+          "scope": "me@gmail.com",
+          "title": "Sorter can read your mail",
+          "severity": "critical",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "oauth_grant",
+          "resource": "c2"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Sorter can read your mail",
+        "command": "segurata track show T-0023",
+        "url": "https://example.com/c2"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0024",
+      "key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:low",
+      "kind": "review",
+      "theme": "google",
+      "title": "Review 1 app with limited access to me@gmail.com",
+      "status": "open",
+      "priority": "P3",
+      "severity": "low",
+      "findings": [
+        {
+          "id": "53d00f0ffe266225",
+          "connector": "google-personal",
+          "account": "me@gmail.com",
+          "scope": "me@gmail.com",
+          "title": "Calendar sync can read your mail",
+          "severity": "low",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "oauth_grant",
+          "resource": "c3"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Calendar sync can read your mail",
+        "command": "segurata track show T-0024",
+        "url": "https://example.com/c3"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0025",
+      "key": "group:google-personal|account_setting|account:me@gmail.com|family:are allowed",
+      "kind": "fix",
+      "theme": "google",
+      "title": "Less secure apps are allowed",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "9f5dac656f3f6a4d",
+          "connector": "google-personal",
+          "account": "me@gmail.com",
+          "scope": "me@gmail.com",
+          "title": "Less secure apps are allowed",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "account_setting",
+          "resource": "less-secure"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Less secure apps are allowed",
+        "command": "segurata track show T-0025",
+        "url": "https://example.com/less-secure"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0026",
+      "key": "group:hibp|breach|account:me@example.com|family:me@example.com was in the Adobe breach of N",
+      "kind": "fix",
+      "theme": "other",
+      "title": "me@example.com was in the Adobe breach of 2013",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "f26ad688d5427593",
+          "connector": "hibp",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "me@example.com was in the Adobe breach of 2013",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "breach",
+          "resource": "Adobe"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: me@example.com was in the Adobe breach of 2013",
+        "command": "segurata track show T-0026",
+        "url": "https://example.com/Adobe"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0027",
+      "key": "group:hibp|breach|account:me@example.com|family:me@example.com was in the Canva breach of N",
+      "kind": "fix",
+      "theme": "other",
+      "title": "me@example.com was in the Canva breach of 2019",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "3fcf8aa0464dd4af",
+          "connector": "hibp",
+          "account": "me@example.com",
+          "scope": "me@example.com",
+          "title": "me@example.com was in the Canva breach of 2019",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "breach",
+          "resource": "Canva"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: me@example.com was in the Canva breach of 2019",
+        "command": "segurata track show T-0027",
+        "url": "https://example.com/Canva"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0028",
+      "key": "group:local-secrets|data_dump|repo:~/src/api",
+      "kind": "fix",
+      "theme": "data-dumps",
+      "title": "2 database dumps in the git history of ~/src/api (2.5 MB)",
+      "status": "open",
+      "priority": "P0",
+      "severity": "critical",
+      "findings": [
+        {
+          "id": "f111ae3e20f77543",
+          "connector": "local-secrets",
+          "account": "local",
+          "scope": "local",
+          "title": "Database dump committed to ~/src/api: db/prod.sql",
+          "severity": "critical",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "path": "~/src/api",
+          "type": "data_dump",
+          "resource": "~/src/api:db/prod.sql"
+        },
+        {
+          "id": "54585e45018a05d5",
+          "connector": "local-secrets",
+          "account": "local",
+          "scope": "local",
+          "title": "Database dump committed to ~/src/api: backup.dump",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "path": "~/src/api",
+          "type": "data_dump",
+          "resource": "~/src/api:backup.dump"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Treat the data as exposed to everyone who could clone the repository. Rotate every credential the dumps hold, then purge them from history in one pass: `git filter-repo --invert-paths --path 'db/prod.sql' --path 'backup.dump'` and force-push every branch and tag; collaborators must re-clone. segurata never rewrites history or pushes.\nFiles: db/prod.sql (x, pushed); backup.dump (x, pushed).\nIf they hold personal data of customers or staff, check the GDPR breach notification duty (72 hours): https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales, https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en.",
+        "command": "segurata track show T-0028",
+        "url": "docs/secrets.md#data-dumps-in-git"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0029",
+      "key": "finding:bbc264531d1368b6",
+      "kind": "fix",
+      "theme": "mac",
+      "title": "The firewall is off",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "bbc264531d1368b6",
+          "connector": "macos",
+          "account": "mac",
+          "scope": "mac",
+          "title": "The firewall is off",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "setting",
+          "resource": "firewall"
+        }
+      ],
+      "next": {
+        "who": "segurata",
+        "action": "Fix: The firewall is off",
+        "command": "segurata remediate bbc264531d1368b6",
+        "url": "https://example.com/firewall"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0030",
+      "key": "finding:64aa46053c9659ff",
+      "kind": "fix",
+      "theme": "mac",
+      "title": "FileVault is off",
+      "status": "open",
+      "priority": "P0",
+      "severity": "critical",
+      "findings": [
+        {
+          "id": "64aa46053c9659ff",
+          "connector": "macos",
+          "account": "mac",
+          "scope": "mac",
+          "title": "FileVault is off",
+          "severity": "critical",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "setting",
+          "resource": "filevault"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: FileVault is off",
+        "command": "segurata track show T-0030",
+        "url": "https://example.com/filevault"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0031",
+      "key": "group:openai|api_key|account:org-1|severity:high",
+      "kind": "fix",
+      "theme": "ai-spend",
+      "title": "Revoke or limit 2 OpenAI API keys",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "dc9b7356839bf642",
+          "connector": "openai",
+          "account": "org-1",
+          "scope": "org-1",
+          "title": "Key sk-a has no limit",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "api_key",
+          "resource": "sk-a"
+        },
+        {
+          "id": "b374d366a14eade1",
+          "connector": "openai",
+          "account": "org-1",
+          "scope": "org-1",
+          "title": "Key sk-b has no limit",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "api_key",
+          "resource": "sk-b"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Key sk-a has no limit",
+        "command": "segurata track show T-0031",
+        "url": "https://example.com/sk-a"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0032",
+      "key": "group:openrouter:work|api_key|account:org-1|severity:high",
+      "kind": "fix",
+      "theme": "ai-spend",
+      "title": "Revoke or limit 1 OpenRouter API key (work)",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "a1e120ec492d4112",
+          "connector": "openrouter",
+          "instance": "work",
+          "account": "org-1",
+          "scope": "org-1",
+          "title": "Key or-a has no limit",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "api_key",
+          "resource": "or-a"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Key or-a has no limit",
+        "command": "segurata track show T-0032",
+        "url": "https://example.com/or-a"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0033",
+      "key": "group:prowler|prowler_check|check:logging_audit",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Log metric filter for audit changes fails in 2 projects (Prowler logging_audit) (1 medium, 1 low)",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "53afecbdfc93aac9",
+          "connector": "prowler",
+          "account": "me@example.com",
+          "scope": "p1",
+          "title": "Detail of logging_audit on sink-a",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "prowler_check",
+          "resource": "logging_audit:p1:sink-a"
+        },
+        {
+          "id": "854e0c9c6e60e024",
+          "connector": "prowler",
+          "account": "me@example.com",
+          "scope": "p2",
+          "title": "Detail of logging_audit on sink-b",
+          "severity": "low",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "prowler_check",
+          "resource": "logging_audit:p2:sink-b"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Detail of logging_audit on sink-a",
+        "command": "segurata track show T-0033",
+        "url": "https://example.com/logging_audit:p1:sink-a"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0034",
+      "key": "group:prowler|prowler_check|check:iam_keys",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Service account keys rotated fails in p1 (Prowler iam_keys)",
+      "status": "open",
+      "priority": "P1",
+      "severity": "high",
+      "findings": [
+        {
+          "id": "fda0ea68f644d28e",
+          "connector": "prowler",
+          "account": "me@example.com",
+          "scope": "p1",
+          "title": "Detail of iam_keys on key-a",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "prowler_check",
+          "resource": "iam_keys:p1:key-a"
+        },
+        {
+          "id": "a5123520cd95eef2",
+          "connector": "prowler",
+          "account": "me@example.com",
+          "scope": "p1",
+          "title": "Detail of iam_keys on key-b",
+          "severity": "high",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "prowler_check",
+          "resource": "iam_keys:p1:key-b"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Detail of iam_keys on key-a",
+        "command": "segurata track show T-0034",
+        "url": "https://example.com/iam_keys:p1:key-a"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0035",
+      "key": "group:prowler|prowler_check|check:dns_dnssec",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "dns_dnssec fails in p3 (Prowler dns_dnssec)",
+      "status": "open",
+      "priority": "P3",
+      "severity": "low",
+      "findings": [
+        {
+          "id": "1f965e15b68308ee",
+          "connector": "prowler",
+          "account": "me@example.com",
+          "scope": "p3",
+          "title": "Detail of dns_dnssec on zone-a",
+          "severity": "low",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "prowler_check",
+          "resource": "dns_dnssec:p3:zone-a"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Detail of dns_dnssec on zone-a",
+        "command": "segurata track show T-0035",
+        "url": "https://example.com/dns_dnssec:p3:zone-a"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0036",
+      "key": "group:supabase|project_setting|account:org-1|family:does not enforce SSL",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "db does not enforce SSL",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "bd8ee0c6d291e737",
+          "connector": "supabase",
+          "account": "org-1",
+          "scope": "org-1",
+          "title": "db does not enforce SSL",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "project_setting",
+          "resource": "ssl"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: db does not enforce SSL",
+        "command": "segurata track show T-0036",
+        "url": "https://example.com/ssl"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0037",
+      "key": "group:vercel|token|account:team-1|family:Token \"…\" unused for N days",
+      "kind": "fix",
+      "theme": "cloud",
+      "title": "Token \"deploy\" unused for 120 days, and 1 more like it",
+      "status": "open",
+      "priority": "P3",
+      "severity": "low",
+      "findings": [
+        {
+          "id": "2211bb3719dbd3d6",
+          "connector": "vercel",
+          "account": "team-1",
+          "scope": "team-1",
+          "title": "Token \"deploy\" unused for 120 days",
+          "severity": "low",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "token",
+          "resource": "v1"
+        },
+        {
+          "id": "5cb2f8ace689e2e8",
+          "connector": "vercel",
+          "account": "team-1",
+          "scope": "team-1",
+          "title": "Token \"ci\" unused for 200 days",
+          "severity": "low",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "token",
+          "resource": "v2"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: Token \"deploy\" unused for 120 days",
+        "command": "segurata track show T-0037",
+        "url": "https://example.com/v1"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "2 findings"
+        }
+      ]
+    },
+    {
+      "id": "T-0038",
+      "key": "group:workspace|admin_2sv|account:acme.com|family:N admins have no N-Step Verification",
+      "kind": "fix",
+      "theme": "google",
+      "title": "2 admins have no 2-Step Verification",
+      "status": "open",
+      "priority": "P0",
+      "severity": "critical",
+      "findings": [
+        {
+          "id": "722e247a4942a980",
+          "connector": "workspace",
+          "account": "acme.com",
+          "scope": "acme.com",
+          "title": "2 admins have no 2-Step Verification",
+          "severity": "critical",
+          "last_seen": "2026-11-24T11:00:00Z",
+          "type": "admin_2sv",
+          "resource": "admins"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Fix: 2 admins have no 2-Step Verification",
+        "command": "segurata track show T-0038",
+        "url": "https://example.com/admins"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0039",
+      "key": "coverage:google-recovery",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Google recovery options and passkeys are not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "On every Google account, run Security Checkup (sessions, devices, recovery phone and email) and register a passkey or security key; remove SMS as a second factor (docs/plan.md, section 1). Mark this done when checked.",
+        "url": "https://myaccount.google.com/security-checkup"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0040",
+      "key": "coverage:apple-account",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Apple Account devices and Sign in with Apple apps are not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "Review the devices and the apps using Sign in with Apple, and remove the ones you no longer use (docs/manual-review.md). Mark this done when checked.",
+        "url": "https://account.apple.com/account/manage"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0041",
+      "key": "coverage:stripe-keys",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Stripe API keys are not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (docs/plan.md, section 6). Mark this done when checked.",
+        "url": "https://dashboard.stripe.com/apikeys"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0042",
+      "key": "coverage:password-manager",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "The password manager's reused and breached password report is not audited by any connector",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (docs/plan.md, section 2). Mark this done when checked."
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0043",
+      "key": "coverage:workspace",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Google Workspace administration is not audited: no workspace tenant could be read",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "Set up read-only Admin SDK credentials for each tenant (README.md, \"Google Workspace administration\"), then run the connector.",
+        "command": "segurata inventory workspace"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    }
+  ],
+  "owned": {
+    "aws_accounts": [
+      "123456789012"
+    ]
+  },
+  "runs": {
+    "anthropic": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "aws": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "azure": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "browser-extensions": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "cloudflare": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "connected-apps": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "gcp": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "github": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "google-personal": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "hibp": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "local-secrets": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "macos": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "openai": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "openrouter:work": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "prowler": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "supabase": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "vercel": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    },
+    "workspace": {
+      "at": "2026-11-24T11:00:00Z",
+      "finished": true,
+      "complete": true
+    }
+  }
+}
