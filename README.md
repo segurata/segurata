@@ -19,6 +19,9 @@ go install github.com/segurata/segurata/cmd/segurata@latest     # from source, G
 segurata version
 ```
 
+Until the repository is public at `github.com/segurata/segurata` (the module path), neither line
+works yet: build from a clone with `go build -o segurata ./cmd/segurata`.
+
 Or download an archive from the releases page, verify `checksums.txt` with `cosign verify-blob`
 and the archive with `sha256sum -c`, and put `segurata` on your `PATH`. The exact commands, the
 certificate identity to expect and the caveats while the repository is private:
