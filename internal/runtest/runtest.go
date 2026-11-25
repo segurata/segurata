@@ -20,14 +20,16 @@ type Fingerprints map[string]string
 
 // Write writes one finished run to path. recs are finding.Finding and finding.Status records, plus
 // finding.Skipped for a scope the connector declared skipped, an error for a connector that
-// failed and Fingerprints for the secrets the core resolved. The run counts as having inspected something, so only statuses, skips and errors make
-// it incomplete. Its times are the newest observed_at among the findings.
+// failed, Fingerprints for the secrets the core resolved and a finding.Theme for the theme the
+// connector declared. The run counts as having inspected something, so only statuses, skips and
+// errors make it incomplete. Its times are the newest observed_at among the findings.
 func Write(t testing.TB, path string, recs ...any) {
 	t.Helper()
 	var tally finding.Tally
 	tally.Declare("", true, "")
 	var err error
 	var fps Fingerprints
+	var theme finding.Theme
 	var lines []any
 	var at time.Time
 	connector, instance := strings.TrimSuffix(filepath.Base(path), ".jsonl"), ""
@@ -55,12 +57,14 @@ func Write(t testing.TB, path string, recs ...any) {
 			err = errors.Join(err, r)
 		case Fingerprints:
 			fps = r
+		case finding.Theme:
+			theme = r
 		default:
 			lines = append(lines, r)
 		}
 	}
 	end := tally.End(connector, instance, at, at, err)
-	end.SecretFingerprints = fps
+	end.SecretFingerprints, end.Theme = fps, theme
 	write(t, path, append(lines, end)...)
 }
 

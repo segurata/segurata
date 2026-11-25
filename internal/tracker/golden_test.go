@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/segurata/segurata/connectors" // registers the built-in connectors
+	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runtest"
 	"github.com/segurata/segurata/internal/tracker"
@@ -145,8 +147,9 @@ func dump(repo, path string, sev finding.Severity, size int64) finding.Finding {
 		map[string]any{"source": "data-dump", "repo": repo, "path": path, "size_bytes": float64(size), "size": "x", "remote": true})
 }
 
-// writeGoldenRuns writes the runs under out, each finding passed through stamp first.
-func writeGoldenRuns(t *testing.T, out string, stamp func(*finding.Finding)) {
+// writeGoldenRuns writes the runs under out: as the connectors and the core write them now when
+// declared, as they were written before connectors declared themes and grouping otherwise.
+func writeGoldenRuns(t *testing.T, out string, declared bool) {
 	runs := goldenRuns()
 	names := make([]string, 0, len(runs))
 	for n := range runs {
@@ -156,8 +159,13 @@ func writeGoldenRuns(t *testing.T, out string, stamp func(*finding.Finding)) {
 	for _, n := range names {
 		var recs []any
 		for _, f := range runs[n] {
-			stamp(&f)
+			if declared {
+				stampAsConnectorsDo(&f)
+			}
 			recs = append(recs, f)
+		}
+		if declared && len(runs[n]) > 0 {
+			recs = append(recs, declaredTheme(runs[n][0].Connector))
 		}
 		runtest.Write(t, filepath.Join(out, goldenNow.Format(time.DateOnly), n), recs...)
 	}
@@ -238,7 +246,7 @@ func syncGolden(t *testing.T, tr *tracker.Tracker, out string) tracker.SyncRepor
 // What connectors write now gives the items the golden file holds.
 func TestGoldenItems(t *testing.T) {
 	out := t.TempDir()
-	writeGoldenRuns(t, out, stampAsConnectorsDo)
+	writeGoldenRuns(t, out, true)
 	tr := tracker.New(goldenNow)
 	syncGolden(t, tr, out)
 	compareGolden(t, "items.json", marshal(t, snapshot(tr)))
@@ -263,7 +271,7 @@ func TestGoldenLegacyRunsKeepItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := t.TempDir()
-	writeGoldenRuns(t, out, func(*finding.Finding) {})
+	writeGoldenRuns(t, out, false)
 	rep := syncGolden(t, tr, out)
 	if rep.Created != 0 || rep.Verified != 0 || rep.Reopened != 0 {
 		t.Fatalf("legacy runs changed items: %+v", rep)
@@ -271,5 +279,31 @@ func TestGoldenLegacyRunsKeepItems(t *testing.T) {
 	compareGolden(t, "items.json", marshal(t, snapshot(tr)))
 }
 
-// stampAsConnectorsDo does to a finding what the connectors and the core do before writing it.
-func stampAsConnectorsDo(*finding.Finding) {}
+// builtin is the built-in connector of that name, or nil.
+func builtin(name string) connector.Connector {
+	for _, c := range connector.Builtins() {
+		if c.Describe().Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// stampAsConnectorsDo sets on a finding what its connector declares, as the core does before
+// writing it (internal/run); the prowler plugin's declarations are in the fixture.
+func stampAsConnectorsDo(f *finding.Finding) {
+	if tr, ok := builtin(f.Connector).(connector.Tracker); ok && f.Track == nil {
+		f.Track = tr.Track(*f)
+	}
+}
+
+// declaredTheme is the theme the core writes in a connector's run_end.
+func declaredTheme(name string) finding.Theme {
+	if c := builtin(name); c != nil {
+		return finding.ThemeFor(c.Describe().Theme)
+	}
+	return finding.ThemeFor(pluginThemes[name])
+}
+
+// pluginThemes are the themes the external connectors of the fixture declare.
+var pluginThemes = map[string]finding.Theme{}

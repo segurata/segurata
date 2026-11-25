@@ -28,7 +28,7 @@ func (t *Tracker) recordRuns(folded map[string]*run) {
 		t.Runs = map[string]RunInfo{}
 	}
 	for l, r := range folded {
-		info := RunInfo{At: r.at, Finished: r.cov.Known, Error: r.failed}
+		info := RunInfo{At: r.at, Finished: r.cov.Known, Error: r.failed, Theme: r.theme.ID}
 		// A scope left out by a status the config expects (when the run was written, or by a rule
 		// added since) is left out on purpose: counted, not listed, and not a partial run.
 		expected := map[string]bool{}

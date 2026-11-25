@@ -114,7 +114,9 @@ type Finding struct {
 	Blast     Blast          `json:"blast,omitempty"` // what it puts at stake beyond its severity
 	// Unconfirmed says the connector is not sure the problem is real (a file named like a
 	// database dump whose content does not show one); ranking discounts it.
-	Unconfirmed bool        `json:"unconfirmed,omitempty"`
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	// Track says how the tracker groups and titles the finding; nil for the default (see Track).
+	Track       *Track      `json:"track,omitempty"`
 	CreatedAt   *time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time  `json:"last_used_at"` // nil when the provider does not say
 	Remediation Remediation `json:"remediation"`

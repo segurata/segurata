@@ -25,13 +25,13 @@ func TestProwlerFailuresGroupPerCheckAcrossProjects(t *testing.T) {
 	if r == nil {
 		t.Fatal("no prowler rule")
 	}
-	k1, _ := groupKey(mk("logging_metric_audit", "p1"), r)
-	k2, _ := groupKey(mk("logging_metric_audit", "p2"), r)
-	k3, _ := groupKey(mk("iam_other_check", "p1"), r)
+	k1, _ := groupKey(mk("logging_metric_audit", "p1"), r, "cloud")
+	k2, _ := groupKey(mk("logging_metric_audit", "p2"), r, "cloud")
+	k3, _ := groupKey(mk("iam_other_check", "p1"), r, "cloud")
 	if k1 != k2 || k1 == k3 {
 		t.Fatalf("keys: %q %q %q", k1, k2, k3)
 	}
-	_, p := groupKey(mk("logging_metric_audit", "p1"), r)
+	_, p := groupKey(mk("logging_metric_audit", "p1"), r, "cloud")
 	p.add(mk("logging_metric_audit", "p1"))
 	p.add(mk("logging_metric_audit", "p2"))
 	if got := prowlerCheckTitle(&p); !strings.Contains(got, "fails in 2 projects") || !strings.Contains(got, "Log metric filter") {

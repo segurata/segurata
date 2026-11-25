@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -30,6 +31,12 @@ const (
 	perEvidenceCheck                  // one item per evidence.check_id across scopes (e.g. one Prowler check failing in many projects)
 )
 
+// groupsBy maps a finding.Track group to how it groups.
+var groupsBy = map[string]groupBy{
+	finding.GroupFinding: perFinding, finding.GroupCheck: perCheck, finding.GroupAccount: perAccount,
+	finding.GroupAccountSeverity: perAccountSeverity, finding.GroupProject: perProject, finding.GroupFamily: perFamily,
+}
+
 // rule maps findings of a connector and resource type (and, optionally, some resource ids) to how
 // they group, the kind of item and its title. First match wins.
 type rule struct {
@@ -39,6 +46,7 @@ type rule struct {
 	kind       Kind
 	title      func(p *proposal) string // nil: the finding's title, or the family with a count
 	next       func(p *proposal) *Next  // nil: the worst finding's remediation
+	keep       bool                     // keep the item's title (a finding no rule groups any more)
 }
 
 var rules = []rule{
@@ -78,7 +86,41 @@ var rules = []rule{
 	}},
 	{connectors: []string{"macos", "aws"}, by: perFinding, kind: KindFix},
 	{connectors: []string{"browser-extensions"}, by: perFinding, kind: KindReview},
-	{by: perFamily, kind: KindFix},
+}
+
+// defaultRule groups a finding that declares nothing.
+var defaultRule = &rule{by: perFamily, kind: KindFix}
+
+// declared is the rule a finding's Track declares.
+func declared(tr *finding.Track) *rule {
+	r := &rule{by: perFamily, kind: KindFix}
+	if by, ok := groupsBy[tr.Group]; ok {
+		r.by = by
+	}
+	if tr.Kind == finding.TrackReview {
+		r.kind = KindReview
+	}
+	if tr.Title != "" {
+		r.title = declaredTitle
+	}
+	return r
+}
+
+// declaredTitle is the title the group's first finding declares, with the count in it.
+func declaredTitle(p *proposal) string {
+	tr := p.findings[0].Track
+	n := len(p.findings)
+	switch tr.Count {
+	case finding.CountAccounts:
+		n = len(p.accounts())
+	case finding.CountScopes:
+		n = len(p.scopes())
+	}
+	if n == 1 && tr.TitleOne != "" {
+		return tr.TitleOne
+	}
+	noun, nouns := cmp.Or(tr.Noun, "finding"), cmp.Or(tr.Nouns, "findings")
+	return strings.ReplaceAll(tr.Title, "{count}", textfmt.Count(n, noun, nouns))
 }
 
 // dumpsTitle names a repository's dumps by number and total size: "3 database dumps in the git
@@ -235,7 +277,10 @@ func ruleFor(f finding.Finding) *rule {
 			return &rules[i]
 		}
 	}
-	return &rules[len(rules)-1]
+	if f.Track != nil {
+		return declared(f.Track)
+	}
+	return defaultRule
 }
 
 // proposal is what one sync says an item should hold.
@@ -253,14 +298,17 @@ type proposal struct {
 }
 
 // groupKey is the item key of a finding under its rule.
-func groupKey(f finding.Finding, r *rule) (key string, p proposal) {
+func groupKey(f finding.Finding, r *rule, theme string) (key string, p proposal) {
 	lbl := finding.Label(f.Connector, f.Instance)
-	p = proposal{theme: themeOf(f.Connector, f.Resource.Type), connector: f.Connector, instance: f.Instance,
+	p = proposal{theme: theme, connector: f.Connector, instance: f.Instance,
 		resource: f.Resource.Type, account: f.Account, kind: r.kind, rule: r}
 	base := "group:" + lbl + "|" + f.Resource.Type
 	switch r.by {
 	case perCheck:
 		p.check = f.Resource.ID
+		if f.Track != nil && f.Track.Key != "" {
+			p.check = f.Track.Key
+		}
 		key = base + "|check:" + p.check
 	case perAccount:
 		key = base + "|account:" + f.Account
@@ -268,6 +316,9 @@ func groupKey(f finding.Finding, r *rule) (key string, p proposal) {
 		key = base + "|account:" + f.Account + "|severity:" + string(f.Severity)
 	case perProject:
 		p.project, _ = f.Evidence["project"].(string)
+		if f.Track != nil && f.Track.Key != "" {
+			p.project = f.Track.Key
+		}
 		if p.project == "" {
 			p.project = f.Account
 		}
@@ -310,6 +361,9 @@ func refOf(f finding.Finding) FindingRef {
 	if f.Connector == "gcp" {
 		r.Project = str("project")
 	}
+	if tr := f.Track; tr != nil {
+		r.Repo, r.Project = cmp.Or(tr.Repo, r.Repo), cmp.Or(tr.Project, r.Project)
+	}
 	return r
 }
 
@@ -322,6 +376,15 @@ func (p *proposal) worst() finding.Finding {
 		}
 	}
 	return w
+}
+
+// scopes are the distinct scopes of the findings (finding.ScopeOf).
+func (p *proposal) scopes() map[string]bool {
+	out := map[string]bool{}
+	for _, f := range p.findings {
+		out[finding.ScopeOf(f)] = true
+	}
+	return out
 }
 
 func (p *proposal) accounts() []string {
@@ -357,6 +420,7 @@ func (p *proposal) finish(itemID string) {
 		return
 	}
 	switch {
+	case p.rule.keep:
 	case p.rule.title != nil:
 		p.title = p.rule.title(p)
 	case len(p.findings) == 1:
@@ -365,7 +429,9 @@ func (p *proposal) finish(itemID string) {
 		// A group no rule names: the worst finding's own title, and how many more are like it.
 		p.title = fmt.Sprintf("%s, and %d more like it", p.worst().Title, len(p.findings)-1)
 	}
-	p.title += p.severitySplit()
+	if p.title != "" {
+		p.title += p.severitySplit()
+	}
 	if p.rule.next != nil {
 		p.next = p.rule.next(p)
 		p.next.Command = "segurata track show " + itemID

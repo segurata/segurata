@@ -97,6 +97,7 @@ One JSON object per finding (`internal/finding`):
 | `evidence` | Connector | Whatever backs the finding: scopes, dates, paths, counts. Never a secret value |
 | `blast` | Connector | Optional: what the finding puts at stake beyond its severity, which ranks the tracker's "Do next": `login`, `org-access`, `device`, `mail-and-files`, `browser`, `personal-data`, `all-repositories`, `org-write`, `posts`, `money`, `leftovers` (`internal/finding`, weights in architecture.md, "Do next"). Any other value counts as none |
 | `unconfirmed` | Connector | Optional: `true` when the connector is not sure the problem is real (a file only named like a database dump); ranking discounts it |
+| `track` | Connector | Optional: how the tracker groups and titles the finding (see "Theme and grouping") |
 | `created_at`, `last_used_at` | Connector | What the provider reports, RFC 3339. `null` when it reports nothing, never a made-up date |
 | `remediation` | Connector | `summary` says what to do by hand; `url` is the page where it is done; `action` names an automatable remediation or is empty; `automatable` is computed by the core |
 | `observed_at` | Core | When the record was written; a connector's own value is replaced |
@@ -155,6 +156,44 @@ of an uninspected scope as gone.
 Scope names are the connector's own; keep them stable across runs and distinct from account
 names. The built-in connectors use, for example, `repo:<owner>/<name>` (github), `history:<repo>`
 (local-secrets), the project id (gcp) and the service name (connected-apps).
+
+## Theme and grouping
+
+The tracker turns findings into items, one per thing a person would do, and lists them by theme.
+Both come from the connector.
+
+**Theme.** `describe` declares it (Go: `Description.Theme`). Name a shared theme by its id alone:
+`mac`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`, `ai-spend`
+(`finding.Themes` holds their titles and descriptions and the order the briefing lists them). Or
+declare one of your own, `{"id": "breaches", "title": "Breaches", "description": "…"}`, which
+the tracker adds after its own; the id is lowercase letters, digits and dashes, and the title
+defaults to the id. The core writes the theme into the run's `run_end` record, so the tracker
+reads it from the run. A connector that declares none goes to `other`.
+
+**Grouping.** Each finding may carry a `track` object (Go: `finding.Track`; a built-in connector
+can implement `connector.Tracker` instead, and the core sets it on each finding that has none):
+
+| Field | Meaning |
+|---|---|
+| `group` | What findings share an item by: `finding` (one item each), `check` (one item per `key` across accounts and scopes), `account`, `account-severity`, `project` (one item per `key`), or `family` (the default: account, resource type and the title with the resource's name left out and quoted names and numbers blanked) |
+| `key` | The check or project grouped on; default the resource id (`check`) or the account (`project`) |
+| `kind` | `review` for an item that asks to look at a list and keep or remove each entry; anything else is a fix |
+| `title` | The item's title. `{count}` in it stands for the count of what `count` names, with `noun` or `nouns`: `"Restrict {count} in GCP project shop"` gives "Restrict 2 API keys in GCP project shop". Every finding of one group must give the same title; the tracker reads the first one's |
+| `title_one` | The title when the count is one, when it should not say "1 project" |
+| `count` | What `{count}` counts: `findings` (default), `accounts`, or `scopes` |
+| `noun`, `nouns` | One and several of what is counted; default `finding`, `findings` |
+| `repo`, `project` | Where the finding is (a GitHub `owner/name`, a GCP project id), for the `repo:` and `gcp-project:` scopes of decision rules |
+
+Without `track`, or without `title`, an item of one finding takes the finding's title and a
+larger one the worst finding's title and "and N more like it". An unknown `group`, `kind` or
+`count` counts as the default. The tracker adds the severity split ("(1 medium, 39 low)") and
+the next step (the worst finding's remediation) itself.
+
+The item key is made of the connector instance, the resource type, the group and its key. It is
+persisted in the tracker with the item's history, so keep `group` and `key` stable across
+versions: a changed one opens a new item and leaves the old one behind. Findings of a run written
+before the connector declared any `track` stay in the items that already hold them, under their
+titles, until a run that declares it is folded.
 
 ## Stable IDs
 
@@ -287,6 +326,8 @@ Prints one JSON object:
   name (a stray `segurata-example.orig`), nor one whose name a built-in connector already has.
 - `describe` runs on every command that lists connectors, once per command: it must answer within
   10 seconds and print less than 1 MiB.
+- `theme` (optional): the tracker theme of the connector's items (see "Theme and grouping").
+  A theme id that is not lowercase letters, digits and dashes makes the description ignored.
 - `timeout` (optional): how long one `inventory` may take by default, as a Go duration (`"6h"`),
   for a connector that routinely needs longer than the core's one hour. The owner's config
   `timeout` for the instance overrides it. At the deadline the core kills the process and the run
@@ -389,6 +430,10 @@ external connector on `PATH` is trusting it with them.
 |---|---|---|
 | 1 | `describe`, `inventory` | Speaks it |
 | 2 | `remediates` in `describe`, `plan`, `apply`; `inventory` unchanged | Speaks it |
+
+`theme` in `describe` and `track` in findings are optional fields of both versions: a core that
+does not know them ignores them, and a connector that leaves them out gets the defaults, so
+declaring them needs no new protocol version.
 
 A version 1 connector keeps working unchanged and can never be asked to remediate. To move to
 version 2, change `protocol` to 2 and accept `2` in the requests; add `remediates`, `plan` and

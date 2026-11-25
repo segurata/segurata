@@ -25,13 +25,15 @@ func TestLoadExternalChecksTheDescription(t *testing.T) {
 		"no name":                  `{"protocol":2}`,
 		"not json":                 `nope`,
 		"another file's name":      `{"name":"openai","protocol":2}`,
+		"theme id not a word":      `{"name":"x","protocol":2,"theme":{"id":"My Theme"}}`,
 	}
 	for why, js := range refused {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err == nil {
 			t.Errorf("%s: loaded", why)
 		}
 	}
-	for _, js := range []string{`{"name":"x","protocol":1}`, `{"name":"x","protocol":2,"remediates":["x.fix"]}`} {
+	for _, js := range []string{`{"name":"x","protocol":1}`, `{"name":"x","protocol":2,"remediates":["x.fix"]}`,
+		`{"name":"x","protocol":1,"theme":{"id":"cloud"}}`} {
 		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err != nil {
 			t.Errorf("%s: %v", js, err)
 		}

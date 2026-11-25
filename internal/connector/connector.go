@@ -32,6 +32,9 @@ type Description struct {
 	// connector that routinely needs longer than the core's one hour. The instance's config
 	// `timeout` overrides it.
 	Timeout string `json:"timeout,omitempty"`
+	// Theme is the part of the tracker's briefing the connector's items go to: one of
+	// finding.Themes by id, or a theme of its own with a title and description. Zero: "other".
+	Theme finding.Theme `json:"theme,omitzero"`
 }
 
 // RunTimeout is Timeout parsed, 0 when it is empty or not a positive duration.
@@ -80,6 +83,13 @@ type Connector interface {
 // the one missing_credentials status and does not call Inventory; the hint goes in its detail.
 type SetupHinter interface {
 	SetupHint(secret string) string
+}
+
+// Tracker is optional: a built-in connector that implements it says how the tracker groups and
+// titles each of its findings. The core sets Track on every finding the connector emits without
+// one; an external connector writes `track` in its findings instead. See finding.Track.
+type Tracker interface {
+	Track(f finding.Finding) *finding.Track
 }
 
 // HintFor is the SetupHint of a connector that needs one secret: hint when asked is that secret,

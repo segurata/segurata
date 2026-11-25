@@ -1,34 +1,36 @@
 package tracker
 
 import (
+	"maps"
+	"slices"
 	"time"
 
+	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// themes are created in every tracker, in this order (the briefing follows it).
-var themes = []Theme{
-	{"rotations", "Secrets to rotate", "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."},
-	{"data-dumps", "Data dumps in git", "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."},
-	{"transcripts", "Trail files to redact", "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."},
-	{"mac", "This Mac", "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."},
-	{"browser-extensions", "Browser extensions", "Extensions that can read or drive your pages, one item per extension."},
-	{"github-orgs", "GitHub", "Organizations and repositories you administer: 2FA, default permissions, Actions, secret scanning."},
-	{"connected-apps", "Connected apps", "Third-party apps with access to GitHub, X, Slack, Notion, Facebook and other accounts."},
-	{"google", "Google", "Apps with access to your Google accounts, and Workspace tenants."},
-	{"cloud", "Cloud", "GCP, AWS, Azure, Cloudflare, Vercel and Supabase: keys, roles, budgets."},
-	{"ai-spend", "AI providers", "OpenAI, Anthropic and OpenRouter keys, limits and spend."},
-	{coverageTheme, "Not audited here", "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."},
-	{"setup", "Setup", "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."},
-	{"decisions", "Decisions", "Questions only you can answer before the related work can go ahead."},
-	{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."},
-}
+// themes are created in every tracker, in this order (the briefing follows it): the tracker's own
+// around the ones connectors share. A connector's own theme is added when a run declares it
+// (declareThemes).
+var themes = slices.Concat([]Theme{
+	{ID: "rotations", Title: "Secrets to rotate", Description: "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."},
+	{ID: "data-dumps", Title: "Data dumps in git", Description: "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."},
+	{ID: "transcripts", Title: "Trail files to redact", Description: "Agent transcripts, shell histories and logs that still hold secrets in plaintext: segurata redact cleans the local copies."},
+}, finding.Themes, []Theme{
+	{ID: coverageTheme, Title: "Not audited here", Description: "Areas of the plan no connector checks on this machine, with the step that would cover each: not failures."},
+	{ID: "setup", Title: "Setup", Description: "What keeps segurata from seeing an account: sign-ins, missing credentials, missing scopes, connector errors."},
+	{ID: "decisions", Title: "Decisions", Description: "Questions only you can answer before the related work can go ahead."},
+	{ID: otherTheme, Title: "Other", Description: "Findings of connectors without a theme of their own, and items added by hand."},
+})
 
 // coverageTheme holds the review items for what no connector audits on this machine (coverage.go);
 // status lists them apart from what is failing.
 const coverageTheme = "coverage"
 
-// connectorThemes maps a connector to its theme; local-secrets depends on the resource type.
+// otherTheme holds the items of connectors that declare no theme.
+const otherTheme = "other"
+
+// connectorThemes maps a connector that does not declare its theme yet to it.
 var connectorThemes = map[string]string{
 	"macos": "mac", "browser-extensions": "browser-extensions", "github": "github-orgs",
 	"connected-apps": "connected-apps", "google-personal": "google", "workspace": "google",
@@ -36,17 +38,39 @@ var connectorThemes = map[string]string{
 	"openai": "ai-spend", "anthropic": "ai-spend", "openrouter": "ai-spend",
 }
 
-func themeOf(connector, resourceType string) string {
-	if connector == SecretsConnector {
-		if resourceType == "data_dump" {
+// themeOf is the theme of a finding whose run declared the theme declared ("" for none). The
+// tracker files local-secrets findings itself: data dumps apart from the secrets to rotate.
+func themeOf(f finding.Finding, declared string) string {
+	if f.Connector == SecretsConnector {
+		if f.Resource.Type == "data_dump" {
 			return "data-dumps"
 		}
 		return "rotations"
 	}
-	if th, ok := connectorThemes[connector]; ok {
+	if declared != "" {
+		return declared
+	}
+	if th, ok := connectorThemes[f.Connector]; ok {
 		return th
 	}
-	return "other"
+	return otherTheme
+}
+
+// declareThemes adds, or renames, the themes of their own that the folded runs declare. A theme
+// segurata defines keeps its own title and description.
+func (t *Tracker) declareThemes(folded map[string]*run) {
+	labels := slices.Sorted(maps.Keys(folded))
+	for _, l := range labels {
+		th := folded[l].theme
+		if th.ID == "" || slices.ContainsFunc(themes, func(d Theme) bool { return d.ID == th.ID }) {
+			continue
+		}
+		if i := slices.IndexFunc(t.Themes, func(d Theme) bool { return d.ID == th.ID }); i >= 0 {
+			t.Themes[i] = th
+		} else {
+			t.Themes = append(t.Themes, th)
+		}
+	}
 }
 
 // seedDecision is an open question the owner already knows about.
