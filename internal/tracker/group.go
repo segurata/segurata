@@ -54,7 +54,7 @@ var rules = []rule{
 	// projects is one thing to fix, so it is one item listing the projects.
 	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
 	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-	{connectors: []string{"openai", "anthropic", "openrouter"}, resource: "api_key", by: perAccountSeverity, kind: KindFix, title: func(p *proposal) string {
+	{connectors: []string{"anthropic", "openrouter"}, resource: "api_key", by: perAccountSeverity, kind: KindFix, title: func(p *proposal) string {
 		s := fmt.Sprintf("Revoke or limit %s", textfmt.Count(len(p.findings), providerName(p.connector)+" API key", providerName(p.connector)+" API keys"))
 		if p.instance != "" {
 			s += " (" + p.instance + ")"
@@ -142,7 +142,7 @@ func dumpsNext(p *proposal) *Next {
 }
 
 func providerName(connector string) string {
-	return map[string]string{"openai": "OpenAI", "anthropic": "Anthropic", "openrouter": "OpenRouter"}[connector]
+	return map[string]string{"anthropic": "Anthropic", "openrouter": "OpenRouter"}[connector]
 }
 
 var (
