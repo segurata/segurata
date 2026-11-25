@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/segurata/segurata/connectors" // registers the built-in connectors
-	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runtest"
 	"github.com/segurata/segurata/internal/tracker"
@@ -159,13 +157,10 @@ func writeGoldenRuns(t *testing.T, out string, declared bool) {
 	for _, n := range names {
 		var recs []any
 		for _, f := range runs[n] {
-			if declared {
-				stampAsConnectorsDo(&f)
-			}
 			recs = append(recs, f)
 		}
-		if declared && len(runs[n]) > 0 {
-			recs = append(recs, declaredTheme(runs[n][0].Connector))
+		if declared {
+			recs = tracker.Declare(recs)
 		}
 		runtest.Write(t, filepath.Join(out, goldenNow.Format(time.DateOnly), n), recs...)
 	}
@@ -278,32 +273,3 @@ func TestGoldenLegacyRunsKeepItems(t *testing.T) {
 	}
 	compareGolden(t, "items.json", marshal(t, snapshot(tr)))
 }
-
-// builtin is the built-in connector of that name, or nil.
-func builtin(name string) connector.Connector {
-	for _, c := range connector.Builtins() {
-		if c.Describe().Name == name {
-			return c
-		}
-	}
-	return nil
-}
-
-// stampAsConnectorsDo sets on a finding what its connector declares, as the core does before
-// writing it (internal/run); the prowler plugin's declarations are in the fixture.
-func stampAsConnectorsDo(f *finding.Finding) {
-	if tr, ok := builtin(f.Connector).(connector.Tracker); ok && f.Track == nil {
-		f.Track = tr.Track(*f)
-	}
-}
-
-// declaredTheme is the theme the core writes in a connector's run_end.
-func declaredTheme(name string) finding.Theme {
-	if c := builtin(name); c != nil {
-		return finding.ThemeFor(c.Describe().Theme)
-	}
-	return finding.ThemeFor(pluginThemes[name])
-}
-
-// pluginThemes are the themes the external connectors of the fixture declare.
-var pluginThemes = map[string]finding.Theme{}
