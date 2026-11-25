@@ -30,7 +30,7 @@ func checkRun(t *testing.T, s scripted) Reinventory {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return run.Inventory(ctx, cfg, targets, t.TempDir(), nil, nil)
+		return run.Inventory(ctx, cfg, targets, t.TempDir(), nil, run.Lent{})
 	}
 }
 

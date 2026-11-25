@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -52,6 +53,10 @@ type Request struct {
 	CDPURL   string            `json:"cdp_url,omitempty"`
 	Config   map[string]any    `json:"config,omitempty"`
 	Secrets  map[string]string `json:"secrets,omitempty"`
+	// Known is what the tracker knows about whose each secret is, lent to built-in connectors only
+	// (never sent to an external one): local-secrets' liveness check never tries a secret
+	// attributed to someone else. nil when the run was started without a tracker.
+	Known *attribution.Known `json:"-"`
 }
 
 // Emitter receives records as the connector produces them.

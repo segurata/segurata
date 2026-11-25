@@ -389,12 +389,12 @@ reached the model provider).
   so they take no lock for that; they record their outcome (rotated, a failed attempt, the
   redaction notes) with `tracker.Update`, which loads the tracker fresh under the lock. Without
   `flock` (Windows) the lock is a no-op and the SHA-256 check still refuses lost updates.
-- `schema_version` 5 is the current format. A format change adds an upgrade step from version n
+- `schema_version` 6 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
   `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
   status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
-  the top-level `runs` (see "Coverage"); 5 added a location's `gone`. An older file holds none of them, so it loads as it is and is saved as the current version (the
+  the top-level `runs` (see "Coverage"); 5 added a location's `gone`; 6 added a secret's `liveness`, the history action `dead` and attribution facts' `github_logins`. An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### `segurata status`
@@ -426,8 +426,8 @@ findings)"):
 | impact | the priority: P0 10, P1 6, P2 3, P3 1, none 0.5 |
 | blast | what is at stake beyond one finding's severity, as the connector declares it (the finding's `blast`, see docs/connectors.md), the first of these one of the item's findings declares: `login` (a Google account that is the login for other services) 3, `org-access` (2FA not required, or members without it, in GitHub orgs) 3, `device` (no Time Machine backup) 2.5, `mail-and-files` (high-risk Google OAuth grants) 2.5, `browser` (a remote debugging port) 2, `personal-data` (data dumps) 2, `all-repositories` (apps that can delete or write every repository) 1.5, `org-write` (every org member can write every repository) 1.5, `posts` (X apps) 0.6, `money` (spend limits and budgets) 0.7, `leftovers` (endpoint agents) 0.5; else 1. Titles are never read |
 | exposure (secrets) | worst copy remote 1.5, shared 1, local 0.7 |
-| liveness (secrets) | live and leaked 2 (see "Correlation"), live 1.5, attributed mine 1.3, attributed not-mine 0.3 |
-| confidence | a secret nothing shows still valid 0.8, a review list 0.8, every finding `unconfirmed` (a file only named like a dump) 0.7 |
+| liveness (secrets) | live and leaked 2 (see "Correlation" and "Liveness"), live 1.5, attributed mine 1.3, attributed not-mine 0.3 |
+| confidence | a secret nothing shows still valid (no connector, no liveness check) 0.8, a review list 0.8, every finding `unconfirmed` (a file only named like a dump) 0.7 |
 | effort | rotate with `rotations replace` 1, rotate by hand 1.5, a history rewrite (dumps) 3, a review list 1 + entries/20 (3 at most), else 1; doubled when a pending decision blocks the item |
 | quick win | 1.5 when segurata does it after confirmation, or one fix closes 3 findings or more |
 
@@ -1153,9 +1153,11 @@ places. `rotations next` and the "Rotate N P0 secrets" entry of `status` follow 
 ## Attribution
 
 The owner of old projects wants to rotate only what links to them personally. `internal/attribution`
-decides, for each secret, `mine`, `not-mine` or `unknown`, offline: no provider is asked about a
-leaked secret, not even with `sts get-access-key-info`, which takes only the key id but is still a
-call to AWS about it.
+decides, for each secret, `mine`, `not-mine` or `unknown`, offline: attribution asks no provider
+about a leaked secret, not even with `sts get-access-key-info`, which takes only the key id but is
+still a call to AWS about it. The liveness check (see "Liveness"), off by default, does call
+providers, and only with secrets attribution already allows; what it learns (the AWS account, GitHub
+login or Slack workspace a key signs in as) is one more claim.
 
 **Claims, at scan time.** Only local-secrets has the raw value, so it derives the identifiers there
 (`connectors/localsecrets/attribution.go`) and stores them in the evidence (`aws_account`,
@@ -1169,6 +1171,7 @@ call to AWS about it.
 | `gcp_project` | an OAuth client id (`<number>-….apps.googleusercontent.com`) | the project number it starts with |
 | `gcp_project` | a Google API key, OAuth client secret or service-account key | the file around it: `project_id`, `project_number`, `GCM_SENDER_ID`, or a client id, when it names one project only. An API key alone names none |
 | `author_email` | a git history finding | the author of the commit gitleaks reports |
+| `aws_account`, `github_login`, `slack_team` | the liveness check | the account the provider says the key signs in as (`secret.liveness.account`): STS `Account`, GitHub `login`, Slack `team_id`. A GitHub login is compared with `owned.github` |
 
 History findings replayed from the incremental cache (see "Incremental git history scan") keep
 the claims of the run that first scanned them; ones cached before claims existed gain them at the
@@ -1211,6 +1214,94 @@ listed as hints and never change the verdict.
 `rotations show` prints the verdict, its reasons and the facts; `rotations list --owner
 mine|not-mine|unknown` filters by it and shows an OWNER column; `rotations sync` counts open
 secrets by owner. Decision rules use it through `owners` (see "Decisions and rules").
+
+## Liveness
+
+Most leaked secrets are long dead, so a P0 should mean "leaked and still works". With
+`liveness.enabled` in local-secrets' config, the connector tries each distinct secret once against
+its provider's cheapest read-only identity endpoint and records live, dead or unknown
+(`connectors/internal/liveness`, `connectors/localsecrets/liveness.go`).
+
+```json
+{"connectors": {"local-secrets": {"config": {"liveness": {"enabled": true, "owners": ["mine", "unknown"], "providers": ["github", "aws"]}}}}}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Off unless set |
+| `owners` | `["mine"]` | The attributions whose secrets may be tried; `not-mine` is refused as a config error |
+| `providers` | every provider below | Allowlist of providers to ask |
+
+**When and with what.** The scan is the only moment segurata holds a value, so the check runs at the
+end of the scan, before the findings are emitted, within 10 minutes of the run's deadline. The
+values of secrets of a supported type stay in memory for the run; an AWS secret access key is tried
+with the one key id found in the same file (or commit and file); with none or several it is not
+tried. A secret is tried when the run reports it (noise never is, which leaves copies in other
+people's repositories alone) and its attribution, computed as the next sync would (the tracker's
+facts plus this scan's claims, against the tracker's accounts and config `owned`, lent by the core
+in `connector.Request.Known`, never sent to an external connector), is one of `owners`. A run
+without a tracker gets no attribution and tries nothing. Secrets of history replayed from the git
+history cache have no value in memory: they get a cached result or stay unchecked until the next
+full scan of their repository.
+
+**Safety.** Every call is a GET, except Slack's auth.test, which Slack documents as POST and which
+is sent without a body. None changes state, costs money or sends anything; slack webhooks (trying
+one posts), Twilio and Mailgun keys (they need a second credential or a region segurata cannot
+know) and npm `_authToken` lines (any registry) are not tried. One call at a time per provider and
+at most four a second overall, through `httpx` (credentials are dropped on a redirect to another
+host). Results are cached in `~/.cache/segurata/liveness.json` (0600) by fingerprint: live for 1
+day, dead for 7, unknown never. A result holds the state, the date, the provider, the endpoint,
+segurata's own reason (`HTTP 401`, `invalid_auth`, `InvalidClientTokenId`) and the account the
+provider names; never the value and never the provider's message, which may echo part of the key.
+The status line counts what was asked, read from the cache, refused by owner or provider,
+unsupported, left without a value and interrupted.
+
+**Providers.** Live is a 2xx; dead is the answer the provider documents for an invalid, revoked or
+expired key; anything else (network, 5xx, rate limits, a 403 that may be a region) is unknown,
+except where a 403 or 429 proves the key was accepted.
+
+| Provider (types) | Endpoint | Live | Dead | Docs |
+|---|---|---|---|---|
+| OpenAI (`openai-*`) | `GET api.openai.com/v1/models`; admin keys (`sk-admin-`) `GET /v1/organization/projects?limit=1` | 2xx; 429 (out of quota or over the rate limit: the key was accepted) | 401 | [models](https://developers.openai.com/api/reference/resources/models/methods/list), [error codes](https://developers.openai.com/api/docs/guides/error-codes), [projects](https://developers.openai.com/api/reference/resources/projects/methods/list) |
+| Anthropic (`anthropic`) | `GET api.anthropic.com/v1/models` with `x-api-key`; admin keys (`sk-ant-admin`) `GET /v1/organizations/me` | 2xx; 403 `permission_error` | 401 `authentication_error` (for admin keys by the same error model; the Admin API page does not say) | [models](https://platform.claude.com/docs/en/api/models/list), [errors](https://platform.claude.com/docs/en/api/errors), [Admin API](https://platform.claude.com/docs/en/manage-claude/admin-api) |
+| OpenRouter (`openrouter`) | `GET openrouter.ai/api/v1/key` | 2xx; 402 (no credits) | 401 | [key](https://openrouter.ai/docs/api-reference/limits), [errors](https://openrouter.ai/docs/api-reference/errors) |
+| GitHub (`github`, `github-pat`) | `GET api.github.com/user`; account `github:<login>` | 2xx | 401. A 403 is unknown: installation tokens (`ghs_`) cannot call `/user`, and GitHub may answer 403 to any credential after many invalid ones | [get the authenticated user](https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-the-authenticated-user), [authenticating](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api), [installation token endpoints](https://docs.github.com/en/rest/authentication/endpoints-available-for-github-app-installation-access-tokens) |
+| GitLab (`gitlab`) | `GET gitlab.com/api/v4/user` with `PRIVATE-TOKEN`; account `gitlab:<username>` | 2xx; 403 `insufficient_scope` | never: a 401 is unknown, the token may belong to a self-managed instance | [users](https://docs.gitlab.com/api/users/), [troubleshooting](https://docs.gitlab.com/api/rest/troubleshooting/) |
+| AWS (`aws-secret-key` with its key id) | `GET sts.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15`, Signature Version 4 by hand (us-east-1, `sts`); needs no IAM permission; account `aws:<id>` | 200 | 403 `InvalidClientTokenId`; `SignatureDoesNotMatch` (the pair found is not a pair) is unknown | [GetCallerIdentity](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html), [common errors](https://docs.aws.amazon.com/STS/latest/APIReference/CommonErrors.html), [GET for Query APIs](https://docs.aws.amazon.com/IAM/latest/UserGuide/programming.html), [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html); the signer is tested with AWS's `get-vanilla` vector |
+| Google (`google-api-key`) | `GET generativelanguage.googleapis.com/v1beta/models?pageSize=1` with `x-goog-api-key`; free | 2xx; 403 with an `ErrorInfo` reason (`SERVICE_DISABLED`, a restriction): the key exists | 400 `API_KEY_INVALID` | [API keys](https://aistudio.google.com/docs/api-key), [troubleshooting](https://aistudio.google.com/docs/troubleshooting), [error model](https://google.aip.dev/193) |
+| Slack (`slack-token`) | `POST slack.com/api/auth.test`, no body; account `slack:<team_id>` | `ok: true` | `ok: false` with `invalid_auth`, `not_authed`, `token_revoked`, `token_expired` or `account_inactive` | [auth.test](https://docs.slack.dev/reference/methods/auth.test) |
+| Stripe (`stripe-live`, `stripe-test`) | `GET api.stripe.com/v1/balance` | 2xx; 403 (a restricted key without that permission) | 401 | [retrieve balance](https://docs.stripe.com/api/balance/balance_retrieve), [authentication](https://docs.stripe.com/api/authentication), [keys](https://docs.stripe.com/keys) |
+| SendGrid (`sendgrid`) | `GET api.sendgrid.com/v3/scopes`, then `api.eu.sendgrid.com` when the first says dead | 2xx; 403 | 401 on both hosts | [scopes](https://www.twilio.com/docs/sendgrid/api-reference/api-key-permissions/retrieve-a-list-of-scopes-for-which-this-user-has-access) |
+| Telegram (`telegram-bot`) | `GET api.telegram.org/bot<token>/getMe` (the recorded endpoint hides the token); account `telegram:@<username>` | 2xx | 401 (observed; the Bot API documents the error envelope, not the code) | [getMe](https://core.telegram.org/bots/api#getme) |
+| Hugging Face (`huggingface`) | `GET huggingface.co/api/whoami-v2`; account `huggingface:<name>` | 2xx | 401 (observed, not documented) | [OpenAPI](https://huggingface.co/.well-known/openapi.md) (lists the endpoint, documents only its 200) |
+| npm (`npm-token`) | `GET registry.npmjs.org/-/whoami`; account `npm:<username>` | 2xx | 401 (observed, not documented) | [npm whoami](https://docs.npmjs.com/cli/v10/commands/npm-whoami) (says it calls `/-/whoami`) |
+
+Known gaps: keys of AWS partitions other than the standard one (GovCloud, China) read as dead on
+the global STS endpoint; OpenAI answers 403 from unsupported regions, which reads as unknown.
+
+**In the tracker.** A rotate item keeps the newest result of its sightings in `secret.liveness`
+(`internal/tracker/liveness.go`):
+
+- **Live** is proof the key works, as a connector's report is (see "Correlation"): the reason
+  "live: GET api.github.com/user accepted it on 2026-11-25 as github:octocat", P0 and first among
+  secrets once a copy left the machine (pushed history, a transcript), liveness 1.5 (2 when leaked)
+  in "Do next" and no confidence discount. An ignored item opens again ("proven live by the
+  liveness check of …"), as does a done one when the check is newer than the done.
+- **Dead** closes an open, in-progress or snoozed item as `done` (history action `dead`, "key no
+  longer valid (checked 2026-11-25: GET api.github.com/user answered HTTP 401)"), and its reasons
+  say "dead: … rejected it on …". A key nobody can use is where a rotation ends too, so the item
+  ends the same way instead of staying open at P3: the queue is what still needs the owner, and a
+  copy left in a file is no longer a risk. Copies in working files do not reopen it (they fail for
+  whoever reads them; the one-time history note says so). A later check that finds it live opens it
+  again; the owner reopening it by hand after the check keeps it open. Ignored and accepted items
+  are not touched, nor an item a connector reports live: two sources disagree and the item stays
+  open.
+- **Unknown** changes nothing.
+
+`rotations list` has a LIVE column (live, dead, unknown, unchecked) and ends, like the status
+briefing after its coverage line, with "Liveness checked for N of M secrets: …", where M counts the
+tracked secrets (not noise, not merged) and N those found live or dead. `rotations show` prints the
+answer, its date, endpoint and account.
 
 ## Correlation
 

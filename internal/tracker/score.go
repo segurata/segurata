@@ -182,9 +182,9 @@ func exposureFactor(it *Item) Factor {
 func livenessFactor(it *Item) Factor {
 	switch {
 	case it.LiveAndLeaked():
-		return Factor{"liveness", 2, "a connector shows it works, and it left the machine"}
-	case len(it.live()) > 0:
-		return Factor{"liveness", 1.5, "a connector shows it works"}
+		return Factor{"liveness", 2, "a connector or the provider shows it works, and it left the machine"}
+	case it.provenLive():
+		return Factor{"liveness", 1.5, "a connector or the provider shows it works"}
 	case it.Owner() == attribution.Mine:
 		return Factor{"liveness", 1.3, "attributed to one of your accounts"}
 	case it.Owner() == attribution.NotMine:
@@ -195,7 +195,7 @@ func livenessFactor(it *Item) Factor {
 
 func confidenceFactor(it *Item) Factor {
 	switch {
-	case it.Kind == KindRotate && it.Owner() != attribution.Mine && len(it.live()) == 0:
+	case it.Kind == KindRotate && it.Owner() != attribution.Mine && !it.provenLive():
 		return Factor{"confidence", 0.8, "nothing shows it is still valid"}
 	case it.Kind == KindReview:
 		return Factor{"confidence", 0.8, "some entries may be fine"}

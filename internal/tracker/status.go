@@ -81,6 +81,9 @@ func (t *Tracker) Status(path string, now time.Time, v View) *doc.Doc {
 	if line := t.coverageLine(v.Instances, now); line != "" {
 		d.P(line)
 	}
+	if line := t.LivenessLine(); line != "" {
+		d.P(line)
+	}
 	t.doNext(d, items, now, v.Explain)
 	t.decisions(d, items, now)
 	Blockers(d, items, now, v.Browser)

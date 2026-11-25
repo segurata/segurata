@@ -14,6 +14,7 @@ import (
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -118,19 +119,22 @@ func (c CLI) list(t *tracker.Tracker, args []string, now time.Time) int {
 		items = slices.DeleteFunc(items, func(it *tracker.Item) bool { return !slices.Contains(owners, it.Owner()) })
 	}
 	tw := tabwriter.NewWriter(c.Out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tPRI\tSTATUS\tOWNER\tSERVICE/TYPE\tREDACTED\tEXPOSURE\tLOCS\tFIRST SEEN\tREASON")
+	fmt.Fprintln(tw, "ID\tPRI\tSTATUS\tOWNER\tLIVE\tSERVICE/TYPE\tREDACTED\tEXPOSURE\tLOCS\tFIRST SEEN\tREASON")
 	for _, it := range items {
 		s := it.Secret
 		reason := ""
 		if len(s.Reasons) > 0 {
 			reason = s.Reasons[0]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s/%s\t%s\t%s\t%d\t%s\t%s\n", s.ID, textfmt.OrDash(string(it.EffectivePriority())), it.RotationStatus(),
-			textfmt.OrDash(string(it.Owner())), s.Service, s.Type, textfmt.OrDash(s.Redacted), it.WorstLabel(), len(s.Locations),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\t%s\t%d\t%s\t%s\n", s.ID, textfmt.OrDash(string(it.EffectivePriority())), it.RotationStatus(),
+			textfmt.OrDash(string(it.Owner())), it.LivenessLabel(), s.Service, s.Type, textfmt.OrDash(s.Redacted), it.WorstLabel(), len(s.Locations),
 			s.FirstSeen.Format(time.DateOnly), textfmt.Truncate(reason, 90))
 	}
 	tw.Flush()
 	fmt.Fprintf(c.Out, "%d items\n", len(items))
+	if line := t.LivenessLine(); line != "" {
+		fmt.Fprintln(c.Out, line)
+	}
 	return 0
 }
 
@@ -160,6 +164,7 @@ func (c CLI) show(t *tracker.Tracker, args []string) int {
 		fmt.Fprintf(w, "  - %s\n", r)
 	}
 	printAttribution(w, s.Attribution)
+	printLiveness(w, s.Liveness)
 	fmt.Fprintln(w, "\nput the new value in (used_in):")
 	if len(s.UsedIn) == 0 {
 		fmt.Fprintln(w, "  (no working file holds it: only history, transcripts or logs)")
@@ -181,6 +186,19 @@ func (c CLI) show(t *tracker.Tracker, args []string) int {
 	return 0
 }
 
+// printLiveness says what the provider answered when the secret was tried.
+func printLiveness(w io.Writer, l *secretrisk.Liveness) {
+	if l == nil {
+		fmt.Fprintln(w, "liveness:    unchecked")
+		return
+	}
+	fmt.Fprintf(w, "liveness:    %s, checked %s: %s answered %s", l.State, l.CheckedAt.Format(time.DateOnly), l.Endpoint, l.Reason)
+	if l.Account != "" {
+		fmt.Fprintf(w, " (signs in as %s)", l.Account)
+	}
+	fmt.Fprintln(w)
+}
+
 // printAttribution says whose the secret is and why.
 func printAttribution(w io.Writer, a *attribution.Result) {
 	if a == nil {
@@ -195,7 +213,7 @@ func printAttribution(w io.Writer, a *attribution.Result) {
 	for _, kv := range []struct {
 		k string
 		v []string
-	}{{"AWS accounts", f.AWSAccounts}, {"GCP projects", f.GCPProjects}, {"Slack workspaces", f.SlackTeams},
+	}{{"AWS accounts", f.AWSAccounts}, {"GCP projects", f.GCPProjects}, {"Slack workspaces", f.SlackTeams}, {"GitHub accounts", f.GitHubLogins},
 		{"commit authors", f.AuthorEmails}, {"repository owners", f.RepoOwners}} {
 		if len(kv.v) > 0 {
 			fmt.Fprintf(w, "  %s: %s\n", kv.k, strings.Join(kv.v, ", "))

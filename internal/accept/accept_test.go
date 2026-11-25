@@ -192,7 +192,7 @@ func TestInventoryKeepsAcceptedFindingsInTheJSONLButHidesThemFromSummaryAndList(
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := run.Inventory(context.Background(), cfg, targets, t.TempDir(), nil, tr.Annotator(later))
+	res, err := run.Inventory(context.Background(), cfg, targets, t.TempDir(), nil, run.Lent{Annotate: tr.Annotator(later)})
 	if err != nil || res[0].Err != nil {
 		t.Fatal(err, res[0].Err)
 	}

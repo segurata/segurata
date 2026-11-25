@@ -89,32 +89,44 @@ func State(err error) finding.State {
 
 // Get fetches path (relative to BaseURL) with the query q and decodes the JSON body into out.
 func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) error {
-	u := c.BaseURL + path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	code, body, err := c.Fetch(ctx, http.MethodGet, path, q)
 	if err != nil {
 		return err
 	}
-	req.Header = c.Header.Clone()
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		// url.Error carries only the URL, which holds no credentials.
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &StatusError{Path: path, Code: resp.StatusCode, Message: ErrorMessage(body)}
+	if code < 200 || code > 299 {
+		return &StatusError{Path: path, Code: code, Message: ErrorMessage(body)}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("GET %s: unexpected response: %w", path, err)
 	}
 	return nil
+}
+
+// Fetch sends a request without a body to path (relative to BaseURL) with the query q and returns
+// the HTTP status and the body, whatever the status, for callers that judge the answer
+// themselves. method is GET, or POST for an API that documents only POST for a read-only call
+// (Slack's auth.test).
+func (c *Client) Fetch(ctx context.Context, method, path string, q url.Values) (int, []byte, error) {
+	u := c.BaseURL + path
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header = c.Header.Clone()
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		// url.Error carries the URL: no credential for the connectors that put theirs in headers.
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 // ErrorMessage pulls the message out of the JSON error envelope OpenAI, Anthropic and

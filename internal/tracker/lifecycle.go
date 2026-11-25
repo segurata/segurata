@@ -41,6 +41,7 @@ const (
 	actRule        = "rule"
 	actMerged      = "merged"
 	actProvenLive  = "proven-live"
+	actDead        = "dead" // closed done: the liveness check found the key no longer valid
 	// ActNext, ActReplacePlan and ActReplaceFailed are logged by `segurata rotations`.
 	ActNext          = "next"
 	ActReplacePlan   = "replace-plan"

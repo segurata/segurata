@@ -254,3 +254,16 @@ func TestAttributionMineRestoresFullImpactInThirdPartyRepositories(t *testing.T)
 		t.Error("a noise summary reclassified a key attributed mine")
 	}
 }
+
+func TestKnownLendsAttributionToAScan(t *testing.T) {
+	tr, _ := attributionFixture(t)
+	k := tr.Known(attribution.Owned{GitHub: []string{"octocat"}})
+	if !slices.Contains(k.Owned.AWSAccounts, ownAWS) || !slices.Contains(k.Owned.GitHub, "octocat") {
+		t.Errorf("owned %+v", k.Owned)
+	}
+	for fp, want := range map[string]attribution.Owner{"1111aaaa1111aaaa": attribution.Mine, "2222bbbb2222bbbb": attribution.NotMine, "3333cccc3333cccc": attribution.Unknown} {
+		if got := k.Of(fp, nil); got != want {
+			t.Errorf("%s: %s, want %s", fp, got, want)
+		}
+	}
+}

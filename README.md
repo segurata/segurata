@@ -475,7 +475,8 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   `"only"` runs nothing else, about a minute cold and seconds from the cache), `emit_noise`
   (default false; true emits the noise findings too), `owned_owners` (GitHub users and
   organizations that are yours, added to what `gh api user` and `gh api user/orgs` say; see
-  [repository origin](docs/architecture.md#what-counts-against-the-owner)).
+  [repository origin](docs/architecture.md#what-counts-against-the-owner)), `liveness` (off by
+  default; see "Liveness" below).
 - What to do with each finding: [docs/secrets.md](docs/secrets.md); each finding's `evidence.fix`
   links the section.
 
@@ -524,8 +525,9 @@ unless `sync --include-noise`. Details: [docs/architecture.md](docs/architecture
 
 #### Attribution
 
-Each secret is attributed `mine`, `not-mine` or `unknown`, offline: segurata never sends a leaked
-secret to a provider to ask whose it is. At scan time `local-secrets` reads what the value itself
+Each secret is attributed `mine`, `not-mine` or `unknown`, offline: attribution never sends a
+leaked secret to a provider to ask whose it is (the liveness check below, off by default, asks
+whether it works, and only for owners you allow). At scan time `local-secrets` reads what the value itself
 names (the AWS account an access key id encodes, the Slack workspace of a webhook, the GCP project
 number of an OAuth client id) and, for AWS and Google credentials, what the file around it names
 (the key id next to a secret access key, `project_id` in a credentials file), plus the author of
@@ -544,6 +546,27 @@ ones is `not-mine`; anything else (no account named, or none of the owner's of t
 `unknown`. Who committed it and whose repository holds it are shown as hints and never decide.
 `segurata accounts owned` lists every known account and where it comes from. Details:
 [docs/architecture.md](docs/architecture.md#attribution).
+
+#### Liveness
+
+Most old leaked keys no longer work. With the liveness check on, `local-secrets` tries each
+distinct secret once, at scan time, against its provider's read-only identity endpoint (OpenAI and
+Anthropic models, OpenRouter key, GitHub and GitLab user, AWS `sts:GetCallerIdentity`, Google
+Gemini models, Slack `auth.test`, Stripe balance, SendGrid scopes, Telegram `getMe`, Hugging Face
+and npm whoami), none of which changes, charges or sends anything:
+
+```json
+{"connectors": {"local-secrets": {"config": {"liveness": {"enabled": true, "owners": ["mine", "unknown"]}}}}}
+```
+
+`owners` defaults to `["mine"]`; `not-mine` is refused, so someone else's key is never tried.
+`providers` narrows the list. A live key that left the machine is P0; a dead one (the provider
+rejects it as invalid, revoked or expired) is closed as done, "key no longer valid (checked
+<date>)", and opens again if a later check finds it live; an unknown answer changes nothing.
+Results are cached by fingerprint in `~/.cache/segurata/liveness.json` (live 1 day, dead 7 days)
+and hold no value. `rotations list` shows a LIVE column and, like `status`, "Liveness checked for N
+of M secrets". Endpoints, documentation and limits:
+[docs/architecture.md](docs/architecture.md#liveness).
 
 The guided loop is `next`, rotate at the provider, `replace`, `next` again. `next` prints one item:
 what it is (redacted), why it is urgent, where it leaked, the provider page with a few checked

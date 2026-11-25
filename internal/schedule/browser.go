@@ -86,7 +86,7 @@ func (e Env) recordSkipped(ctx context.Context, selectors []string, reason strin
 		targets[i].Connector = skippedConnector{targets[i].Connector, reason}
 		targets[i].Instance.Secrets = nil
 	}
-	results, err := run.Inventory(ctx, e.Config, targets, e.Paths().Out, nil, nil)
+	results, err := run.Inventory(ctx, e.Config, targets, e.Paths().Out, nil, run.Lent{})
 	if err != nil {
 		fmt.Fprintf(e.IO.Err, "recording the skipped browser connectors: %v\n", err)
 		return

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -47,13 +48,13 @@ func remediateCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	annotate, err := acceptedAnnotator()
+	accepted, err := lent(attribution.Owned{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	for i := range findings {
-		annotate(&findings[i])
+		accepted.Annotate(&findings[i])
 	}
 	if *list {
 		fmt.Printf("Latest run of each connector:\n  %s\n\n", strings.Join(files, "\n  "))
@@ -98,7 +99,11 @@ func remediateCmd(args []string) int {
 		if err != nil {
 			return nil, err
 		}
-		return run.Inventory(ctx, cfg, targets, *out, nil, annotate)
+		l, err := lent(cfg.Owned)
+		if err != nil {
+			return nil, err
+		}
+		return run.Inventory(ctx, cfg, targets, *out, nil, l)
 	}
 	opt := remediate.Options{Apply: *apply, Yes: *yes, TTY: prompt.IsTerminal(os.Stdin),
 		IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, Group: remediate.Members(findings, f)}
