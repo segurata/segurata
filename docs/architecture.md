@@ -627,8 +627,10 @@ which leaves time for the report. At the deadline the inventory gets an interrup
 so an agent installed before that runs with the 24h bound until it is installed again.
 
 1. Runs `segurata inventory --out ~/.segurata/out <connectors>`, which ends in `track sync`.
-   Without `--connectors`, every installed connector except those whose `describe` needs `cdp`:
-   the browser is rarely running with its debugging port when the agent fires.
+   Without `--connectors`, every installed connector. The browser connectors (those whose
+   `describe` needs `cdp`) run only when Brave answers at `cdp_url`; see "Browser connectors in a
+   scheduled run" below. When they were the only ones selected and were skipped, `segurata track
+   sync --out ~/.segurata/out` runs instead.
 2. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three of
    the open P0 and P1 items that sync found or reopened (history `found` or `reopened` since the
    run started), by title: the tracker is the one place runs are compared. Titles never carry
@@ -641,6 +643,31 @@ so an agent installed before that runs with the 24h bound until it is installed 
    each instance and a newer unfinished one, which the tracker, `report` and `remediate` read,
    and the finished run before it, kept in case the latest proves unreadable. Nothing else under `out/` is touched, and empty days are removed.
    `accounts list` reads every remaining run, so it shows accounts seen within that window.
+
+### Browser connectors in a scheduled run
+
+Before the inventory, `cdp.Brave` checks `cdp_url` (from the config, default
+`http://127.0.0.1:9222`, or `SEGURATA_CDP`) under a 15-second bound inside the inventory's
+deadline: `/json/version` with a 3-second timeout, then `navigator.brave.isBrave()` in a hidden
+`about:blank` target that is closed at once. Brave reports itself as `Chrome/…` in the `Browser`
+field and in its user agent (Brave 156, 2026-11-25), so that field cannot tell it from Chrome.
+
+- Brave answers: the browser connectors join the one inventory and scan as they do interactively,
+  in hidden targets (see "Browser connectors"). Each instance keeps its own timeout. A signed-out
+  account or a "verify it's you" wall is a `signedout` or `reauth` status; nothing waits for the
+  owner and `signin` never runs unattended.
+- Nothing answers, or the browser is not Brave: nothing is started in its place (no other browser,
+  no `open`). Each configured instance of each browser connector gets a run file written through
+  `run.Inventory` by a stand-in that inspects nothing and fails with "browser not reachable over
+  CDP" (or "the browser on the debugging port is not Brave"): its `run_end` skips `*` with that
+  reason and carries it as `error`, so `track sync` closes neither its findings nor its statuses,
+  and the report lists the instance as partial. Secrets are not resolved for it. The log has one
+  line, `skipped <connectors>: <reason>`, after the probe's own error.
+- `~/.segurata/schedule-browser.json` holds `not_run_since`, when the browser connectors last ran
+  on schedule (or first were skipped), and `notified`. When a skipped run finds them idle for more
+  than `browser_stale_days` (config, default 7, negative for never), it posts one notification,
+  "browser connectors haven't run in N days", with the reason as subtitle; the next one comes only
+  after they have run again. On Linux the line goes to the log.
 
 Scheduled inventories live apart from the interactive `out/`; `segurata remediate --out
 ~/.segurata/out --list` works from them.

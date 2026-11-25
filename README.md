@@ -818,8 +818,11 @@ own first. `unaccept` takes the finding id or the item id. Details:
 A launchd user agent (`~/Library/LaunchAgents/com.segurata.inventory.plist`) runs an inventory
 every day (or `--every`), writes `~/.segurata/last-report.md`, and posts a macOS
 notification when its tracker sync opens a P0 or P1 item, new or reopened. By default
-it runs every connector except those that need the browser's debugging port; `--connectors
-macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/segurata/`, inventories to
+it runs every connector; `--connectors macos,local-secrets,hibp` picks them. The browser connectors
+(`google-personal`, `connected-apps`) run only when Brave answers at `cdp_url`, in hidden pages that
+never take focus; when it does not, or another browser holds the port, they are recorded as not
+inspected ("browser not reachable over CDP"), nothing they found is closed, and no other browser is
+started. After `"browser_stale_days"` (default 7) of that, one notification says so. Logs go to `~/Library/Logs/segurata/`, inventories to
 `~/.segurata/out`, pruned to the last 30 days after each run (`"keep_runs_days"` in the config; the
 latest run of each connector and the one before it always stay). Install it from the binary you
 will keep: the agent runs that
