@@ -54,15 +54,6 @@ var rules = []rule{
 	// projects is one thing to fix, so it is one item listing the projects.
 	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
 	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-	{connectors: []string{"gcp"}, resource: "api_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Restrict %s in GCP project %s", textfmt.Count(len(p.findings), "API key", "API keys"), p.project)
-	}},
-	{connectors: []string{"gcp"}, resource: "service_account_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Rotate or delete %s in GCP project %s", textfmt.Count(len(p.findings), "user-managed service-account key", "user-managed service-account keys"), p.project)
-	}},
-	{connectors: []string{"gcp"}, resource: "service_account_role", by: perProject, kind: KindFix, title: func(p *proposal) string {
-		return fmt.Sprintf("Narrow the roles of %s in GCP project %s", textfmt.Count(len(p.findings), "service account", "service accounts"), p.project)
-	}},
 	{connectors: []string{"openai", "anthropic", "openrouter"}, resource: "api_key", by: perAccountSeverity, kind: KindFix, title: func(p *proposal) string {
 		s := fmt.Sprintf("Revoke or limit %s", textfmt.Count(len(p.findings), providerName(p.connector)+" API key", providerName(p.connector)+" API keys"))
 		if p.instance != "" {
@@ -225,12 +216,9 @@ func groupKey(f finding.Finding, r *rule, theme string) (key string, p proposal)
 	case perAccountSeverity:
 		key = base + "|account:" + f.Account + "|severity:" + string(f.Severity)
 	case perProject:
-		p.project, _ = f.Evidence["project"].(string)
+		p.project = f.Account
 		if f.Track != nil && f.Track.Key != "" {
 			p.project = f.Track.Key
-		}
-		if p.project == "" {
-			p.project = f.Account
 		}
 		key = base + "|project:" + p.project
 	case perFamily:
@@ -265,11 +253,8 @@ func refOf(f finding.Finding) FindingRef {
 			break
 		}
 	}
-	if f.Connector == "gcp" {
-		r.Project = str("project")
-	}
 	if tr := f.Track; tr != nil {
-		r.Repo, r.Project = cmp.Or(tr.Repo, r.Repo), cmp.Or(tr.Project, r.Project)
+		r.Repo, r.Project = tr.Repo, tr.Project
 	}
 	return r
 }
