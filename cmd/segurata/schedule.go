@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -24,7 +25,7 @@ const scheduleUsage = "usage: segurata schedule install|uninstall|status|run [--
 func scheduleCmd(args []string) int {
 	fs := cliflag.New("schedule", os.Stderr)
 	every := fs.Duration("every", schedule.DefaultEvery, "interval between runs")
-	conns := fs.String("connectors", "", "comma-separated connectors (default: all that do not need the browser)")
+	conns := fs.String("connectors", "", "comma-separated connectors (default: all; the browser ones only when Brave answers at cdp_url)")
 	apply := fs.Bool("apply", false, "write and load the agent after confirmation (default: dry run)")
 	yes := fs.Bool("yes", false, "with --apply, do not ask for confirmation")
 	pos, err := cliflag.Parse(fs, args)
@@ -56,7 +57,7 @@ func scheduleCmd(args []string) int {
 	case "run":
 		var cfg config.Config
 		if cfg, err = config.Load(config.DefaultPath()); err == nil {
-			env.Keep = cfg.RunRetention()
+			env.Config = cfg
 			err = env.Run(ctx, opt)
 		}
 	default:
@@ -82,6 +83,6 @@ func scheduleEnv() (schedule.Env, error) {
 	return schedule.Env{
 		GOOS: runtime.GOOS, Home: home, UID: os.Getuid(), Exe: exe, Path: searchpath.Clean(os.Getenv("PATH")), TmpDir: os.TempDir(),
 		Runner: schedule.System{}, IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr},
-		TTY: prompt.IsTerminal(os.Stdin), Now: time.Now, Connectors: all(),
+		TTY: prompt.IsTerminal(os.Stdin), Now: time.Now, Connectors: all(), Browser: cdp.Brave,
 	}, nil
 }

@@ -103,6 +103,10 @@ func (r *Report) completeness(d *doc.Doc) {
 			items = append(items, doc.Item{Badge: "unfinished", Text: fmt.Sprintf("%s: the run of %s did not finish", run.Label, run.Unfinished),
 				Meta: fmt.Sprintf("no run_end record: killed or still running; the run of %s is shown instead", run.Date)})
 		}
+		if run.InspectedNothing != "" {
+			items = append(items, doc.Item{Badge: "skipped", Text: fmt.Sprintf("%s: the run of %s inspected nothing", run.Label, run.InspectedNothing),
+				Meta: fmt.Sprintf("%s; the run of %s is shown instead", run.InspectedWhy, run.Date)})
+		}
 		switch {
 		case !c.Known:
 			why, _ := c.NoneChecked()

@@ -1,6 +1,7 @@
 package report
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,6 +75,41 @@ func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 			"Run completeness", "2026-11-21 (partial)", "2026-11-21 (no run_end)",
 			"the run of 2026-11-22 did not finish", "repo:acme/b", "completeness unknown",
 		} {
+			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {
+				t.Errorf("%s report lacks %q", f, want)
+			}
+		}
+	}
+}
+
+// A latest run that inspected nothing (the browser was not reachable) does not empty its
+// connector's part of the report: the newest run that inspected something is shown, and the
+// skipped run is named.
+func TestARunThatInspectedNothingShowsTheLastOneThatDid(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	path := func(day string) string { return filepath.Join(out, day, "google-personal.jsonl") }
+	app := mk("google-personal", "", "app1", finding.SevHigh, "App with full Gmail access")
+	drive := mk("google-personal", "", "app2", finding.SevHigh, "App with full Drive access")
+	runtest.Write(t, path("2026-11-01"), app, drive)
+	skip := errors.New("browser not reachable over CDP")
+	runtest.Write(t, path("2026-11-20"), skip)
+	runtest.Write(t, path("2026-11-21"), skip)
+
+	tr := tracker.New(now)
+	if _, err := tr.AcceptFinding(app, "kept on purpose", "", now); err != nil {
+		t.Fatal(err)
+	}
+	r, runs := runsByLabel(t, out, tr)
+	g := runs["google-personal"]
+	if g == nil || g.Date != "2026-11-01" || len(g.Findings) != 2 || g.InspectedNothing != "2026-11-21" {
+		t.Fatalf("google-personal run %+v", g)
+	}
+	if len(r.Accepted) != 1 || r.Accepted[0].Gone {
+		t.Fatalf("accepted %+v", r.Accepted)
+	}
+	for _, f := range []Format{Text, Markdown, HTML} {
+		out := render(t, r, f)
+		for _, want := range []string{"App with full Drive access", "the run of 2026-11-21 inspected nothing", "browser not reachable over CDP", "the run of 2026-11-01 is shown instead"} {
 			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {
 				t.Errorf("%s report lacks %q", f, want)
 			}

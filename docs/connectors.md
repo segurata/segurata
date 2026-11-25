@@ -278,7 +278,8 @@ Prints one JSON object:
 ```
 
 - `needs`: `cdp` (drives the browser over the DevTools protocol), `cli:<tool>`, `secret:<NAME>`.
-  `segurata schedule` leaves out connectors that need `cdp` unless asked for them.
+  `segurata schedule run` runs connectors that need `cdp` only when Brave answers at `cdp_url`,
+  and records them as skipped otherwise.
 - `remediates` (protocol 2 only): the remediation actions this connector plans and applies. A
   finding whose `remediation.action` is not in this list cannot be remediated through it. An action
   the core owns (`file.chmod600`) is always handled by the core.

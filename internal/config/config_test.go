@@ -65,3 +65,16 @@ func TestRunRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserStaleAfter(t *testing.T) {
+	for body, want := range map[string]time.Duration{
+		`{}`:                         7 * 24 * time.Hour,
+		`{"browser_stale_days": 3}`:  3 * 24 * time.Hour,
+		`{"browser_stale_days": -1}`: 0,
+	} {
+		cfg, err := loadBody(t, body)
+		if err != nil || cfg.BrowserStaleAfter() != want {
+			t.Errorf("%s: %s, %v", body, cfg.BrowserStaleAfter(), err)
+		}
+	}
+}
