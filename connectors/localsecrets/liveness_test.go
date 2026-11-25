@@ -496,3 +496,35 @@ func TestHeldKeyIDPairsOnce(t *testing.T) {
 		}
 	}
 }
+
+// A Cloudflare token is the one probed type whose value does not name its provider: it is tried
+// only when its key names Cloudflare, never for a bare CF_TOKEN, which may be anything.
+func TestCloudflareOnlyWhenNamed(t *testing.T) {
+	fx := newFixture(t)
+	named, bare := fake("", 40), fake("", 40)
+	fx.secrets = append(fx.secrets, named, bare)
+	fx.write(t, ".config/cf/env", "CLOUDFLARE_API_TOKEN="+named+"\nCF_API_TOKEN="+bare+"\n", 0o600)
+	f := newFakeProviders(t)
+	c := fx.livenessConnector(t, f)
+	req := connector.Request{Known: &attribution.Known{}, Config: map[string]any{"liveness": map[string]any{"enabled": true, "owners": []any{"unknown"}, "providers": []any{"cloudflare"}}}}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), req, rec); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, fd := range rec.findings {
+		if ev, ok := findingEvidence(fd); ok && ev.Type == "cloudflare-token" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("both tokens found: %d", n)
+	}
+	if !f.askedAbout(named) || f.askedAbout(bare) {
+		t.Errorf("named asked %v, bare asked %v", f.askedAbout(named), f.askedAbout(bare))
+	}
+	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	if strings.Contains(string(raw), named) || strings.Contains(string(raw), bare) {
+		t.Fatal("a token reached the output")
+	}
+}

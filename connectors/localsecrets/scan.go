@@ -337,6 +337,12 @@ func valueEvidence(p *pattern, m []string, varName, context string, now time.Tim
 	case "url-token-param":
 		scheme, host := urlBefore(context, m[0])
 		note = secretrisk.URLNote(scheme, host, queryParam(m[0]))
+	case "cloudflare-token":
+		// The key it is assigned to (CLOUDFLARE_API_TOKEN, CF_KEY): the value alone does not say
+		// whose it is, and the liveness check tries only one the key names (namesCloudflare).
+		note, _, _ = strings.Cut(m[0], "=")
+		note, _, _ = strings.Cut(note, ":")
+		note = strings.Trim(note, "\"' \t")
 	}
 	return secretrisk.Evidence{Source: "scan", Type: p.typ, Redacted: secretrisk.Redact(p.typ, p.prefix, v.secret),
 		Note: note, Public: v.public, Sample: sampleValue(v.secret)}, v.secret, true

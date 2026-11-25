@@ -56,6 +56,8 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 		}
 		h.awsIDs[place][ev.Fingerprint] = value
 		return
+	case ev.Type == "cloudflare-token" && !namesCloudflare(ev):
+		return // CF_TOKEN may be any provider's: it is never sent to Cloudflare
 	case ev.Type == "aws-secret-key":
 		if h.awsSecrets == nil {
 			h.awsSecrets = map[string][]string{}
@@ -210,6 +212,12 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		line += fmt.Sprintf("; liveness cache not saved: %v", err)
 	}
 	return line
+}
+
+// namesCloudflare reports whether a Cloudflare token's context names Cloudflare: gitleaks' rule
+// requires the word, this connector's pattern also takes a bare CF_ key, kept in the note.
+func namesCloudflare(ev secretrisk.Evidence) bool {
+	return ev.Source == "gitleaks" || strings.Contains(strings.ToLower(ev.Note), "cloudflare")
 }
 
 // pairableKeyID reports whether an AWS access key id (or its redacted hint) can be tried with a
