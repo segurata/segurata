@@ -75,6 +75,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "API tokens (expiry, idle, IP restriction, broad edit policies), account 2FA enforcement and super admins, zone SSL/TLS settings and DNSSEC",
 		Needs:    []string{"secret:" + secretName},
+		Theme:    finding.ThemeCloud,
 	}
 }
 
