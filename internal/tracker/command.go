@@ -196,8 +196,8 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 // secretsSynced prints what a sync did to the secrets and what is open.
 func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now time.Time) {
 	r := rep.Secrets
-	fmt.Fprintf(w, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d reclassified as noise, %d noise-only skipped.\n",
-		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Reclassified, r.Skipped)
+	fmt.Fprintf(w, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d reclassified as noise, %d noise-only skipped, %d AWS key ids folded into their secret key.\n",
+		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Reclassified, r.Skipped, r.Paired)
 	if r.HistoryOnly > 0 {
 		fmt.Fprintf(w, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
 			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), HistoryOnly)

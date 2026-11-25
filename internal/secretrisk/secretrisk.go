@@ -53,6 +53,10 @@ type Evidence struct {
 	// Liveness is what the provider said when the secret was tried against it, when the liveness
 	// check is on and allowed to try it.
 	Liveness *Liveness `json:"liveness,omitempty"`
+	// Pair is the fingerprint of the other half of an AWS key pair: on a secret access key, its key
+	// id's; on a key id, its secret key's. Set when the liveness check pairs them (it pairs even
+	// those it may not send), so a run with liveness off leaves it empty.
+	Pair string `json:"pair,omitempty"`
 }
 
 // Impact is how much damage the secret can do in the wrong hands.

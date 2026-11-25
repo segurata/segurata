@@ -283,6 +283,50 @@ func TestAWSKeyIDAloneIsP2(t *testing.T) {
 	}
 }
 
+// A key id paired with its secret access key is one key: its item merges into the secret key's,
+// whose title names it. Paired with another secret key later, it follows; with none whose item
+// stands (noise), it reopens on its own. An unpaired key id stays on its own.
+func TestKeyIDFoldsIntoItsSecretKey(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	const path = "~/src/r/group_vars/all.yml"
+	id := ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", path, "gitleaks", "repo", "", true, true)
+	id.Redacted, id.Pair = "AKIA…WXYZ(20)", "bbbbbbbbbbbbbbbb"
+	secret := ev("bbbbbbbbbbbbbbbb", "aws-secret-key", path, "gitleaks", "repo", "", true, true)
+	secret.Redacted, secret.Pair = "…abcd(40)", "aaaaaaaaaaaaaaaa"
+	lone := ev("cccccccccccccccc", "aws-access-key-id", path, "gitleaks", "repo", "", true, true)
+	lone.Redacted = "AKIA…LONE(20)"
+	rep := l.SyncSecrets([]Sighting{sight(id), sight(secret), sight(lone)}, t0, false)
+	a, _ := l.FindRotate("aaaa")
+	b, _ := l.FindRotate("bbbb")
+	c, _ := l.FindRotate("cccc")
+	if rep.Paired != 1 || a.Status != Merged || a.MergedInto != b.ID || b.Status != Open || c.Status != Open {
+		t.Fatalf("paired %d; key id %s into %q; secret key %s; lone key id %s", rep.Paired, a.Status, a.MergedInto, b.Status, c.Status)
+	}
+	if !strings.Contains(b.Title, "AWS secret access key …abcd(40) (key id AKIA…WXYZ(20)) in ") {
+		t.Errorf("secret key title %q", b.Title)
+	}
+	// The same pair again: nothing changes.
+	events := len(a.History)
+	if rep := l.SyncSecrets([]Sighting{sight(id), sight(secret)}, t0.Add(time.Hour), false); rep.Paired != 0 || len(a.History) != events {
+		t.Errorf("a second sync merged again: paired %d, %d events", rep.Paired, len(a.History)-events)
+	}
+	// Now paired with another secret key: it follows it.
+	other := ev("dddddddddddddddd", "aws-secret-key", path, "gitleaks", "repo", "", true, true)
+	other.Redacted, other.Pair = "…efgh(40)", "aaaaaaaaaaaaaaaa"
+	id.Pair = "dddddddddddddddd"
+	l.SyncSecrets([]Sighting{sight(id), sight(other)}, t0.Add(2*time.Hour), false)
+	d, _ := l.FindRotate("dddd")
+	if a.Status != Merged || a.MergedInto != d.ID || !strings.Contains(d.Title, "(key id AKIA…WXYZ(20))") || strings.Contains(b.Title, "key id") {
+		t.Errorf("key id %s into %q; titles %q and %q", a.Status, a.MergedInto, d.Title, b.Title)
+	}
+	// Its secret key turns out to be noise: the key id stands on its own again.
+	d.Status = Reclassified
+	l.SyncSecrets([]Sighting{sight(id)}, t0.Add(3*time.Hour), false)
+	if a.Status != Open || a.MergedInto != "" {
+		t.Errorf("key id of a noise secret key: %s into %q", a.Status, a.MergedInto)
+	}
+}
+
 // A rule fix that lowers a secret's impact must reach existing items on the next sync.
 func TestSyncLowersImpactWhenTheCurrentSightingIsLess(t *testing.T) {
 	l := &Tracker{NextID: 1}

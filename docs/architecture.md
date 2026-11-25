@@ -997,7 +997,7 @@ Priority is impact × exposure, both table-driven:
 |---|---|---|---|
 | High: Stripe live keys, AWS secret access keys, GCP service-account keys, private and SSH keys, GitHub/GitLab tokens, Google refresh tokens and OAuth client secrets, Cloudflare tokens | P2 | P1 | P0 |
 | Medium: AI provider keys (Anthropic, OpenAI, xAI, OpenRouter…), Notion, Slack, SendGrid, npm, Telegram, Stripe webhook secrets, passwords in URLs | P3 | P2 | P1 |
-| Low: Sentry DSNs, Google API keys, Stripe test keys, JWTs of unknown origin, AWS access key ids (an id signs nothing without its secret key, which is an item of its own when found) | P3 | P3 | P2 |
+| Low: Sentry DSNs, Google API keys, Stripe test keys, JWTs of unknown origin, AWS access key ids (an id signs nothing without its secret key; when that is found too, the id merges into its item) | P3 | P3 | P2 |
 
 - An AWS access key id that liveness finds active in the owner's IAM inventory, or that a
   connector proves live, is P0 once leaked like any live key: its secret key may have leaked with
@@ -1288,6 +1288,13 @@ its own (in a file of two accounts it names none by itself). The checker applies
 provider gates to every fingerprint of a probe before it looks in the cache or recovers a value, so
 someone else's key is neither sent nor answered from the cache. A run without a tracker gets no
 attribution and tries nothing.
+
+Each half of a pair names the other in its evidence (`pair`, the other half's fingerprint), for
+every pair the run makes, someone else's too, so a run with liveness off pairs nothing. The tracker
+merges the key id's item into the secret key's (`foldPairs`): one key to deactivate, one item,
+whose title names the key id (`(key id AKIA…WXYZ(20))`). A key id whose secret key has no item, or
+one reclassified as noise, stands on its own again; one paired later with another secret key
+follows it.
 
 Secrets seen only in history replayed from the git history cache have no value in memory. When the
 liveness cache has no fresh answer for one and the check still has time, its value is read again

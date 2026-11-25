@@ -309,9 +309,13 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	// A pair is the account's its key id names: the secret key, which names none by itself (or two,
 	// in a file of several pairs), is attributed as its key id is, which also keeps a pair whose
 	// key id is someone else's from ever being sent.
+	// Each half of a pair names the other (Evidence.Pair), so the tracker folds the key id into its
+	// secret key's item: one key to deactivate, one item.
+	pairOf := map[string]string{}
 	for _, p := range probes {
 		if p.Type == awsSecretType && len(p.Fingerprints) == 2 {
 			claims[p.Fingerprints[0]] = append(claims[p.Fingerprints[0]], claims[p.Fingerprints[1]]...)
+			pairOf[p.Fingerprints[0]], pairOf[p.Fingerprints[1]] = p.Fingerprints[1], p.Fingerprints[0]
 		}
 	}
 	ch := s.c.checker(s.home, s.cfg.liveness)
@@ -330,10 +334,16 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		if !ok {
 			continue
 		}
-		if r, found := results[ev.Fingerprint]; found {
-			ev.Liveness = &r
-			fs[i].Evidence = ev.Map()
+		r, found := results[ev.Fingerprint]
+		pair := pairOf[ev.Fingerprint]
+		if !found && pair == "" {
+			continue
 		}
+		if found {
+			ev.Liveness = &r
+		}
+		ev.Pair = pair
+		fs[i].Evidence = ev.Map()
 	}
 	line := "; " + st.String()
 	if err := ch.Cache.Save(ch.Now()); err != nil {

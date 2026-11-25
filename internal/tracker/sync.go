@@ -370,6 +370,7 @@ func (s *SecretReport) add(o SecretReport) {
 	s.Skipped += o.Skipped
 	s.Reclassified += o.Reclassified
 	s.HistoryOnly += o.HistoryOnly
+	s.Paired += o.Paired
 }
 
 // trail are the local-secrets location kinds `segurata redact` cleans.

@@ -332,12 +332,19 @@ func (it *Item) moveRefs(moved map[string]string, now time.Time) bool {
 	if into == "" || it.reported() {
 		return false
 	}
+	return it.mergeInto(into, now, "merged into "+into+", which owns it now")
+}
+
+// mergeInto closes the item as merged into the item with id into, unless it is closed already:
+// settled by the owner (ignored, accepted), no problem (reclassified, expected) or merged. It
+// reports whether it merged.
+func (it *Item) mergeInto(into string, now time.Time, detail string) bool {
 	switch it.Status {
 	case Open, InProgress, Snoozed, Done:
 	default:
 		return false
 	}
-	it.setStatus(now, Merged, EvMerged, actMerged, "merged into "+into+", which owns it now")
+	it.setStatus(now, Merged, EvMerged, actMerged, detail)
 	it.MergedInto = into
 	it.Next = &Next{Who: You, Action: "Nothing here: " + into + " owns this now.", Command: "segurata track show " + into}
 	return true

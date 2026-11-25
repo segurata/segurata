@@ -3,6 +3,8 @@ package tracker
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -98,6 +100,11 @@ type Secret struct {
 	Attribution *attribution.Result `json:"attribution,omitempty"`
 	// Liveness is the newest answer of the provider when the secret was tried (see liveness.go).
 	Liveness *secretrisk.Liveness `json:"liveness,omitempty"`
+	// Pair is the fingerprint of the other half of an AWS key pair, from the newest sighting that
+	// names one (secretrisk.Evidence.Pair); KeyID, on a secret access key, the redacted hint of the
+	// key id folded into its item (see foldPairs).
+	Pair  string `json:"pair,omitempty"`
+	KeyID string `json:"key_id,omitempty"`
 }
 
 // Sighting is one finding of a secret, reduced to what a rotate item needs.
@@ -134,6 +141,8 @@ type SecretReport struct {
 	// HistoryOnly counts rotated items seen again only in history, transcripts or logs, noted for
 	// the first time in this sync.
 	HistoryOnly int
+	// Paired counts AWS key ids folded into their secret access key's item in this sync.
+	Paired int
 }
 
 // SyncSecrets folds sightings into rotate items. Secrets whose every sighting is noise (generic
@@ -197,6 +206,9 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		for _, x := range g {
 			it.merge(x.Evidence, seen)
 		}
+		if pair := newestPair(g); pair != "" {
+			s.Pair = pair
+		}
 		switch {
 		case noise:
 			if it.reclassify(now, best.Evidence.Type) {
@@ -211,7 +223,56 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		}
 		it.derive()
 	}
+	rep.Paired = foldPairs(existing, now)
 	return rep
+}
+
+// newestPair is the pair the newest sighting that names one gives, "" when none does.
+func newestPair(g []Sighting) string {
+	pair, at := "", time.Time{}
+	for _, x := range g {
+		if x.Evidence.Pair != "" && !x.Seen.Before(at) {
+			pair, at = x.Evidence.Pair, x.Seen
+		}
+	}
+	return pair
+}
+
+// foldPairs merges each AWS key id's item into its secret access key's (byFP maps fingerprints to
+// rotate items): one key to deactivate, so one item, which names the key id in its title. A key id
+// whose secret key has no item, or one that is noise, stays on its own, and a merged one reopens.
+// It returns how many key ids it merged.
+func foldPairs(byFP map[string]*Item, now time.Time) int {
+	merged := 0
+	keyIDs := map[*Item]string{} // secret key item -> the redacted key id folded into it
+	for _, fp := range slices.Sorted(maps.Keys(byFP)) {
+		it := byFP[fp]
+		s := it.Secret
+		if s == nil || s.Type != "aws-access-key-id" || s.Pair == "" {
+			continue
+		}
+		into, ok := byFP[s.Pair]
+		standing := ok && into.Secret != nil && into.Status != Reclassified
+		if it.Status == Merged && (!standing || it.MergedInto != into.ID) {
+			// Its secret key has no item or is noise, or it pairs with another secret key now.
+			it.reopenMerged(now)
+		}
+		if !standing {
+			continue
+		}
+		keyIDs[into] = s.Redacted
+		// One still merged here is merged into this secret key already, which mergeInto leaves.
+		if it.mergeInto(into.ID, now, "merged into "+into.ID+", its secret access key: deactivating the key closes both") {
+			merged++
+		}
+	}
+	for _, it := range byFP {
+		if it.Secret != nil && it.Secret.KeyID != keyIDs[it] {
+			it.Secret.KeyID = keyIDs[it]
+			it.derive()
+		}
+	}
+	return merged
 }
 
 // mineAfterAll counts in full the copies of a secret attributed mine that sit in someone else's
@@ -667,6 +728,9 @@ func (it *Item) secretTitle() string {
 	title := secretrisk.TypeFor(s.Type, s.Redacted).Label
 	if _, single := secretrisk.ParseHint(s.Redacted); single {
 		title += " " + s.Redacted
+	}
+	if s.KeyID != "" {
+		title += " (key id " + s.KeyID + ")"
 	}
 	title += it.keyFacts()
 	primary, ok := it.primaryLocation()

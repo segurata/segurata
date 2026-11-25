@@ -784,14 +784,22 @@ func TestLivenessPairsEachSecretKeyWithItsKeyID(t *testing.T) {
 }
 
 // checkThreePairs asserts that the owner's two pairs of vars were each tried as a pair, the second
-// found live on both of its findings and the first not, and that someone else's pair was never
-// sent.
+// found live on both of its findings and the first not, that someone else's pair was never sent,
+// and that every pair, someone else's too, names its other half on both findings.
 func checkThreePairs(t *testing.T, f *fakeProviders, vars threePairs, fs []finding.Finding, fpOf func(v, typ string) string) {
 	t.Helper()
 	byFP := map[string]*secretrisk.Liveness{}
+	pairOf := map[string]string{}
 	for _, fd := range fs {
 		if ev, ok := secretrisk.EvidenceOf(fd); ok {
 			byFP[ev.Fingerprint] = ev.Liveness
+			pairOf[ev.Fingerprint] = ev.Pair
+		}
+	}
+	for i := range vars.ids {
+		s, id := fpOf(vars.secrets[i], "aws-secret-key"), fpOf(vars.ids[i], "aws-access-key-id")
+		if pairOf[s] != id || pairOf[id] != s {
+			t.Errorf("pair %d does not name its other half", i)
 		}
 	}
 	live := func(v, typ string) bool {
