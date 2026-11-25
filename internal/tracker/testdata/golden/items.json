@@ -87,6 +87,20 @@
       "Findings": null
     },
     {
+      "Key": "coverage:github-owner-2fa",
+      "Kind": "review",
+      "Theme": "coverage",
+      "Title": "Two-factor authentication of your own GitHub account is not audited",
+      "Severity": "",
+      "Priority": "",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Give gh the read:user scope so the github connector can read whether 2FA is on, then run it again.",
+      "Command": "gh auth refresh -h github.com -s read:user \u0026\u0026 segurata inventory github",
+      "URL": "https://github.com/settings/security",
+      "Findings": null
+    },
+    {
       "Key": "coverage:google-recovery",
       "Kind": "review",
       "Theme": "coverage",
@@ -166,7 +180,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: FileVault is off",
-      "Command": "segurata track show T-0030",
+      "Command": "segurata track show T-0031",
       "URL": "https://example.com/filevault",
       "Findings": [
         "macos repo= project= FileVault is off"
@@ -525,7 +539,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Less secure apps are allowed",
-      "Command": "segurata track show T-0025",
+      "Command": "segurata track show T-0026",
       "URL": "https://example.com/less-secure",
       "Findings": [
         "google-personal repo= project= Less secure apps are allowed"
@@ -541,7 +555,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Sorter can read your mail",
-      "Command": "segurata track show T-0023",
+      "Command": "segurata track show T-0024",
       "URL": "https://example.com/c2",
       "Findings": [
         "google-personal repo= project= Sorter can read your mail"
@@ -557,7 +571,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Mailer can read your mail",
-      "Command": "segurata track show T-0022",
+      "Command": "segurata track show T-0023",
       "URL": "https://example.com/c1",
       "Findings": [
         "google-personal repo= project= Mailer can read your mail"
@@ -573,7 +587,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Calendar sync can read your mail",
-      "Command": "segurata track show T-0024",
+      "Command": "segurata track show T-0025",
       "URL": "https://example.com/c3",
       "Findings": [
         "google-personal repo= project= Calendar sync can read your mail"
@@ -589,7 +603,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: me@example.com was in the Adobe breach of 2013",
-      "Command": "segurata track show T-0026",
+      "Command": "segurata track show T-0027",
       "URL": "https://example.com/Adobe",
       "Findings": [
         "hibp repo= project= me@example.com was in the Adobe breach of 2013"
@@ -605,7 +619,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: me@example.com was in the Canva breach of 2019",
-      "Command": "segurata track show T-0027",
+      "Command": "segurata track show T-0028",
       "URL": "https://example.com/Canva",
       "Findings": [
         "hibp repo= project= me@example.com was in the Canva breach of 2019"
@@ -621,7 +635,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Treat the data as exposed to everyone who could clone the repository. Rotate every credential the dumps hold, then purge them from history in one pass: `git filter-repo --invert-paths --path 'db/prod.sql' --path 'backup.dump'` and force-push every branch and tag; collaborators must re-clone. segurata never rewrites history or pushes.\nFiles: db/prod.sql (x, pushed); backup.dump (x, pushed).\nIf they hold personal data of customers or staff, check the GDPR breach notification duty (72 hours): https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales, https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en.",
-      "Command": "segurata track show T-0028",
+      "Command": "segurata track show T-0029",
       "URL": "docs/secrets.md#data-dumps-in-git",
       "Findings": [
         "local-secrets repo= project= Database dump committed to ~/src/api: backup.dump",
@@ -638,7 +652,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Key sk-a has no limit",
-      "Command": "segurata track show T-0031",
+      "Command": "segurata track show T-0032",
       "URL": "https://example.com/sk-a",
       "Findings": [
         "openai repo= project= Key sk-a has no limit",
@@ -655,7 +669,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Key or-a has no limit",
-      "Command": "segurata track show T-0032",
+      "Command": "segurata track show T-0033",
       "URL": "https://example.com/or-a",
       "Findings": [
         "openrouter repo= project= Key or-a has no limit"
@@ -671,7 +685,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Detail of dns_dnssec on zone-a",
-      "Command": "segurata track show T-0035",
+      "Command": "segurata track show T-0036",
       "URL": "https://example.com/dns_dnssec:p3:zone-a",
       "Findings": [
         "prowler repo= project= Detail of dns_dnssec on zone-a"
@@ -687,7 +701,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Detail of iam_keys on key-a",
-      "Command": "segurata track show T-0034",
+      "Command": "segurata track show T-0035",
       "URL": "https://example.com/iam_keys:p1:key-a",
       "Findings": [
         "prowler repo= project= Detail of iam_keys on key-a",
@@ -704,7 +718,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Detail of logging_audit on sink-a",
-      "Command": "segurata track show T-0033",
+      "Command": "segurata track show T-0034",
       "URL": "https://example.com/logging_audit:p1:sink-a",
       "Findings": [
         "prowler repo= project= Detail of logging_audit on sink-a",
@@ -721,7 +735,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: db does not enforce SSL",
-      "Command": "segurata track show T-0036",
+      "Command": "segurata track show T-0037",
       "URL": "https://example.com/ssl",
       "Findings": [
         "supabase repo= project= db does not enforce SSL"
@@ -737,7 +751,7 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: Token \"deploy\" unused for 120 days",
-      "Command": "segurata track show T-0037",
+      "Command": "segurata track show T-0038",
       "URL": "https://example.com/v1",
       "Findings": [
         "vercel repo= project= Token \"ci\" unused for 200 days",
@@ -754,10 +768,42 @@
       "Status": "open",
       "Who": "you",
       "Action": "Fix: 2 admins have no 2-Step Verification",
-      "Command": "segurata track show T-0038",
+      "Command": "segurata track show T-0039",
       "URL": "https://example.com/admins",
       "Findings": [
         "workspace repo= project= 2 admins have no 2-Step Verification"
+      ]
+    },
+    {
+      "Key": "setup:github|me|noscope",
+      "Kind": "setup",
+      "Theme": "setup",
+      "Title": "github · me: lacks a permission",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "Grant the missing permission with the command below. Then: segurata inventory github. On purpose? segurata track expect T-0022 --reason \"…\".",
+      "Command": "gh auth refresh -h github.com -s read:user",
+      "URL": "",
+      "Findings": [
+        "github repo= project= gh lacks the read:user scope: run gh auth refresh -h github.com -s read:user"
+      ]
+    },
+    {
+      "Key": "setup:workspace|acme.com|error",
+      "Kind": "setup",
+      "Theme": "setup",
+      "Title": "workspace · acme.com: failed",
+      "Severity": "medium",
+      "Priority": "P2",
+      "Status": "open",
+      "Who": "you",
+      "Action": "The credential was denied some reads (see the detail): grant them. On purpose? segurata track expect T-0040 --reason \"…\".",
+      "Command": "segurata inventory workspace",
+      "URL": "",
+      "Findings": [
+        "workspace repo= project= Admin SDK: permission denied"
       ]
     }
   ]

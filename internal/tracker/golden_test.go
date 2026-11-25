@@ -145,6 +145,21 @@ func goldenRuns() map[string][]finding.Finding {
 	}
 }
 
+// goldenStatuses are the statuses of each run, by run file name: what the coverage gaps read.
+func goldenStatuses() map[string][]finding.Status {
+	st := func(connector, account, scope string, state finding.State, detail string) finding.Status {
+		return finding.Status{Type: "status", Connector: connector, Account: account, Scope: scope, State: state, Detail: detail}
+	}
+	return map[string][]finding.Status{
+		"github.jsonl": {
+			st("github", "acme", "", finding.StateOK, ""),
+			st("github", "me", "user:me", finding.StateNoScope, "gh lacks the read:user scope: run gh auth refresh -h github.com -s read:user"),
+		},
+		"workspace.jsonl": {st("workspace", "acme.com", "", finding.StateError, "Admin SDK: permission denied")},
+		"hibp.jsonl":      {st("hibp", "me@example.com", "", finding.StateOK, "2 breaches")},
+	}
+}
+
 func dump(repo, path string, sev finding.Severity, size int64) finding.Finding {
 	return goldenFinding("local-secrets", "", "local", "data_dump", repo+":"+path, path, sev, "Database dump committed to "+repo+": "+path,
 		map[string]any{"source": "data-dump", "repo": repo, "path": path, "size_bytes": float64(size), "size": "x", "remote": true})
@@ -166,6 +181,9 @@ func writeGoldenRuns(t *testing.T, out string, declared bool) {
 				f.Track = nil // the prowler plugin's own declarations
 			}
 			recs = append(recs, f)
+		}
+		for _, st := range goldenStatuses()[n] {
+			recs = append(recs, st)
 		}
 		if declared {
 			recs = tracker.Declare(recs)

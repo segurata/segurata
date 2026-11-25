@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "next_id": 44,
+  "next_id": 47,
   "last_sync_at": "2026-11-24T12:00:00Z",
   "sources": {
     "anthropic": "2026-11-24T11:00:00Z",
@@ -1012,6 +1012,43 @@
     },
     {
       "id": "T-0022",
+      "key": "setup:github|me|noscope",
+      "kind": "setup",
+      "theme": "setup",
+      "title": "github · me: lacks a permission",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "status:setup:github|me|noscope#a16f5f0b",
+          "connector": "github",
+          "account": "me",
+          "scope": "user:me",
+          "title": "gh lacks the read:user scope: run gh auth refresh -h github.com -s read:user",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "Grant the missing permission with the command below. Then: segurata inventory github. On purpose? segurata track expect T-0022 --reason \"…\".",
+        "command": "gh auth refresh -h github.com -s read:user"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0023",
       "key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:high",
       "kind": "review",
       "theme": "google",
@@ -1035,7 +1072,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Mailer can read your mail",
-        "command": "segurata track show T-0022",
+        "command": "segurata track show T-0023",
         "url": "https://example.com/c1"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1051,7 +1088,7 @@
       ]
     },
     {
-      "id": "T-0023",
+      "id": "T-0024",
       "key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:critical",
       "kind": "review",
       "theme": "google",
@@ -1075,7 +1112,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Sorter can read your mail",
-        "command": "segurata track show T-0023",
+        "command": "segurata track show T-0024",
         "url": "https://example.com/c2"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1091,7 +1128,7 @@
       ]
     },
     {
-      "id": "T-0024",
+      "id": "T-0025",
       "key": "group:google-personal|oauth_grant|account:me@gmail.com|severity:low",
       "kind": "review",
       "theme": "google",
@@ -1115,7 +1152,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Calendar sync can read your mail",
-        "command": "segurata track show T-0024",
+        "command": "segurata track show T-0025",
         "url": "https://example.com/c3"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1131,7 +1168,7 @@
       ]
     },
     {
-      "id": "T-0025",
+      "id": "T-0026",
       "key": "group:google-personal|account_setting|account:me@gmail.com|family:are allowed",
       "kind": "fix",
       "theme": "google",
@@ -1155,7 +1192,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Less secure apps are allowed",
-        "command": "segurata track show T-0025",
+        "command": "segurata track show T-0026",
         "url": "https://example.com/less-secure"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1171,7 +1208,7 @@
       ]
     },
     {
-      "id": "T-0026",
+      "id": "T-0027",
       "key": "group:hibp|breach|account:me@example.com|family:me@example.com was in the Adobe breach of N",
       "kind": "fix",
       "theme": "other",
@@ -1195,7 +1232,7 @@
       "next": {
         "who": "you",
         "action": "Fix: me@example.com was in the Adobe breach of 2013",
-        "command": "segurata track show T-0026",
+        "command": "segurata track show T-0027",
         "url": "https://example.com/Adobe"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1211,7 +1248,7 @@
       ]
     },
     {
-      "id": "T-0027",
+      "id": "T-0028",
       "key": "group:hibp|breach|account:me@example.com|family:me@example.com was in the Canva breach of N",
       "kind": "fix",
       "theme": "other",
@@ -1235,7 +1272,7 @@
       "next": {
         "who": "you",
         "action": "Fix: me@example.com was in the Canva breach of 2019",
-        "command": "segurata track show T-0027",
+        "command": "segurata track show T-0028",
         "url": "https://example.com/Canva"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1251,7 +1288,7 @@
       ]
     },
     {
-      "id": "T-0028",
+      "id": "T-0029",
       "key": "group:local-secrets|data_dump|repo:~/src/api",
       "kind": "fix",
       "theme": "data-dumps",
@@ -1288,7 +1325,7 @@
       "next": {
         "who": "you",
         "action": "Treat the data as exposed to everyone who could clone the repository. Rotate every credential the dumps hold, then purge them from history in one pass: `git filter-repo --invert-paths --path 'db/prod.sql' --path 'backup.dump'` and force-push every branch and tag; collaborators must re-clone. segurata never rewrites history or pushes.\nFiles: db/prod.sql (x, pushed); backup.dump (x, pushed).\nIf they hold personal data of customers or staff, check the GDPR breach notification duty (72 hours): https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales, https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en.",
-        "command": "segurata track show T-0028",
+        "command": "segurata track show T-0029",
         "url": "docs/secrets.md#data-dumps-in-git"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1304,7 +1341,7 @@
       ]
     },
     {
-      "id": "T-0029",
+      "id": "T-0030",
       "key": "finding:bbc264531d1368b6",
       "kind": "fix",
       "theme": "mac",
@@ -1344,7 +1381,7 @@
       ]
     },
     {
-      "id": "T-0030",
+      "id": "T-0031",
       "key": "finding:64aa46053c9659ff",
       "kind": "fix",
       "theme": "mac",
@@ -1368,7 +1405,7 @@
       "next": {
         "who": "you",
         "action": "Fix: FileVault is off",
-        "command": "segurata track show T-0030",
+        "command": "segurata track show T-0031",
         "url": "https://example.com/filevault"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1384,7 +1421,7 @@
       ]
     },
     {
-      "id": "T-0031",
+      "id": "T-0032",
       "key": "group:openai|api_key|account:org-1|severity:high",
       "kind": "fix",
       "theme": "ai-spend",
@@ -1419,7 +1456,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Key sk-a has no limit",
-        "command": "segurata track show T-0031",
+        "command": "segurata track show T-0032",
         "url": "https://example.com/sk-a"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1435,7 +1472,7 @@
       ]
     },
     {
-      "id": "T-0032",
+      "id": "T-0033",
       "key": "group:openrouter:work|api_key|account:org-1|severity:high",
       "kind": "fix",
       "theme": "ai-spend",
@@ -1460,7 +1497,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Key or-a has no limit",
-        "command": "segurata track show T-0032",
+        "command": "segurata track show T-0033",
         "url": "https://example.com/or-a"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1476,7 +1513,7 @@
       ]
     },
     {
-      "id": "T-0033",
+      "id": "T-0034",
       "key": "group:prowler|prowler_check|check:logging_audit",
       "kind": "fix",
       "theme": "cloud",
@@ -1511,7 +1548,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Detail of logging_audit on sink-a",
-        "command": "segurata track show T-0033",
+        "command": "segurata track show T-0034",
         "url": "https://example.com/logging_audit:p1:sink-a"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1527,7 +1564,7 @@
       ]
     },
     {
-      "id": "T-0034",
+      "id": "T-0035",
       "key": "group:prowler|prowler_check|check:iam_keys",
       "kind": "fix",
       "theme": "cloud",
@@ -1562,7 +1599,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Detail of iam_keys on key-a",
-        "command": "segurata track show T-0034",
+        "command": "segurata track show T-0035",
         "url": "https://example.com/iam_keys:p1:key-a"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1578,7 +1615,7 @@
       ]
     },
     {
-      "id": "T-0035",
+      "id": "T-0036",
       "key": "group:prowler|prowler_check|check:dns_dnssec",
       "kind": "fix",
       "theme": "cloud",
@@ -1602,7 +1639,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Detail of dns_dnssec on zone-a",
-        "command": "segurata track show T-0035",
+        "command": "segurata track show T-0036",
         "url": "https://example.com/dns_dnssec:p3:zone-a"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1618,7 +1655,7 @@
       ]
     },
     {
-      "id": "T-0036",
+      "id": "T-0037",
       "key": "group:supabase|project_setting|account:org-1|family:does not enforce SSL",
       "kind": "fix",
       "theme": "cloud",
@@ -1642,7 +1679,7 @@
       "next": {
         "who": "you",
         "action": "Fix: db does not enforce SSL",
-        "command": "segurata track show T-0036",
+        "command": "segurata track show T-0037",
         "url": "https://example.com/ssl"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1658,7 +1695,7 @@
       ]
     },
     {
-      "id": "T-0037",
+      "id": "T-0038",
       "key": "group:vercel|token|account:team-1|family:Token \"…\" unused for N days",
       "kind": "fix",
       "theme": "cloud",
@@ -1693,7 +1730,7 @@
       "next": {
         "who": "you",
         "action": "Fix: Token \"deploy\" unused for 120 days",
-        "command": "segurata track show T-0037",
+        "command": "segurata track show T-0038",
         "url": "https://example.com/v1"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1709,7 +1746,7 @@
       ]
     },
     {
-      "id": "T-0038",
+      "id": "T-0039",
       "key": "group:workspace|admin_2sv|account:acme.com|family:N admins have no N-Step Verification",
       "kind": "fix",
       "theme": "google",
@@ -1733,7 +1770,7 @@
       "next": {
         "who": "you",
         "action": "Fix: 2 admins have no 2-Step Verification",
-        "command": "segurata track show T-0038",
+        "command": "segurata track show T-0039",
         "url": "https://example.com/admins"
       },
       "status_at": "2026-11-24T12:00:00Z",
@@ -1749,7 +1786,68 @@
       ]
     },
     {
-      "id": "T-0039",
+      "id": "T-0040",
+      "key": "setup:workspace|acme.com|error",
+      "kind": "setup",
+      "theme": "setup",
+      "title": "workspace · acme.com: failed",
+      "status": "open",
+      "priority": "P2",
+      "severity": "medium",
+      "findings": [
+        {
+          "id": "status:setup:workspace|acme.com|error#38064867",
+          "connector": "workspace",
+          "account": "acme.com",
+          "title": "Admin SDK: permission denied",
+          "severity": "medium",
+          "last_seen": "2026-11-24T11:00:00Z"
+        }
+      ],
+      "next": {
+        "who": "you",
+        "action": "The credential was denied some reads (see the detail): grant them. On purpose? segurata track expect T-0040 --reason \"…\".",
+        "command": "segurata inventory workspace"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "1 finding"
+        }
+      ]
+    },
+    {
+      "id": "T-0041",
+      "key": "coverage:github-owner-2fa",
+      "kind": "review",
+      "theme": "coverage",
+      "title": "Two-factor authentication of your own GitHub account is not audited",
+      "status": "open",
+      "next": {
+        "who": "you",
+        "action": "Give gh the read:user scope so the github connector can read whether 2FA is on, then run it again.",
+        "command": "gh auth refresh -h github.com -s read:user \u0026\u0026 segurata inventory github",
+        "url": "https://github.com/settings/security"
+      },
+      "status_at": "2026-11-24T12:00:00Z",
+      "created_at": "2026-11-24T12:00:00Z",
+      "updated_at": "2026-11-24T12:00:00Z",
+      "history": [
+        {
+          "at": "2026-11-24T12:00:00Z",
+          "event": "found",
+          "action": "found",
+          "detail": "not audited on this machine"
+        }
+      ]
+    },
+    {
+      "id": "T-0042",
       "key": "coverage:google-recovery",
       "kind": "review",
       "theme": "coverage",
@@ -1773,7 +1871,7 @@
       ]
     },
     {
-      "id": "T-0040",
+      "id": "T-0043",
       "key": "coverage:apple-account",
       "kind": "review",
       "theme": "coverage",
@@ -1797,7 +1895,7 @@
       ]
     },
     {
-      "id": "T-0041",
+      "id": "T-0044",
       "key": "coverage:stripe-keys",
       "kind": "review",
       "theme": "coverage",
@@ -1821,7 +1919,7 @@
       ]
     },
     {
-      "id": "T-0042",
+      "id": "T-0045",
       "key": "coverage:password-manager",
       "kind": "review",
       "theme": "coverage",
@@ -1844,7 +1942,7 @@
       ]
     },
     {
-      "id": "T-0043",
+      "id": "T-0046",
       "key": "coverage:workspace",
       "kind": "review",
       "theme": "coverage",
@@ -1912,7 +2010,11 @@
     "github": {
       "at": "2026-11-24T11:00:00Z",
       "finished": true,
-      "complete": true
+      "complete": false,
+      "skipped": [
+        "user:me: noscope: gh lacks the read:user scope: run gh auth refresh -h github.com -s read:user"
+      ],
+      "skipped_count": 1
     },
     "google-personal": {
       "at": "2026-11-24T11:00:00Z",
@@ -1962,7 +2064,11 @@
     "workspace": {
       "at": "2026-11-24T11:00:00Z",
       "finished": true,
-      "complete": true
+      "complete": false,
+      "skipped": [
+        "acme.com: error: Admin SDK: permission denied"
+      ],
+      "skipped_count": 1
     }
   }
 }
