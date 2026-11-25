@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,6 +80,10 @@ func newFx(t *testing.T) *fx {
 			t.Fatal(err)
 		}
 	}
+	// As a sync leaves it; the rotate items below stand for secrets folded before.
+	if _, err := tr.Sync(tracker.SyncOptions{OutDir: x.out}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	for _, r := range []struct {
 		id    string
 		p     secretrisk.Priority
@@ -133,33 +138,38 @@ func ids(fs []finding.Finding) []string {
 	return out
 }
 
-func TestBuildDiffsEachInstanceAgainstItsPreviousRun(t *testing.T) {
+// A tracker that never synced is synced in memory, so the report counts items before the first
+// track sync too, from the same engine; the report saves nothing.
+func TestBuildSyncsANewTrackerInMemory(t *testing.T) {
+	x := newFx(t)
+	home := filepath.Join(x.dir, "fresh")
+	c := CLI{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Paths: tracker.Paths{Tracker: filepath.Join(home, "tracker.json")}, Now: func() time.Time { return now }}
+	var out bytes.Buffer
+	c.Out = &out
+	if code := c.Run([]string{"--dir", x.out}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	for _, want := range []string{"Firewall off", "openrouter:work · org: needs a fresh sign-in", "Changes in the last 7 days"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("report lacks %q:\n%s", want, out.String())
+		}
+	}
+	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the report wrote the tracker: %v", err)
+	}
+}
+
+// Build annotates the latest runs' findings with the tracker's acceptances.
+func TestBuildAnnotatesAcceptances(t *testing.T) {
 	x := newFx(t)
 	r := x.build(t)
-	var labels []string
 	runs := map[string]*Run{}
 	for _, run := range r.Runs {
-		labels = append(labels, run.Label)
 		runs[run.Label] = run
 	}
-	if strings.Join(labels, ",") != "aws,macos,openrouter:work" {
-		t.Fatalf("runs %v", labels)
-	}
 	m := runs["macos"]
-	if m.Date != "2026-11-21" || m.PrevDate != "2026-11-20" {
-		t.Fatalf("macos dates %s vs %s", m.Date, m.PrevDate)
-	}
-	if got := ids(m.New); len(got) != 1 || got[0] != x.e.ID {
-		t.Errorf("new %v", got)
-	}
-	if got := ids(m.Resolved); len(got) != 1 || got[0] != x.d.ID {
-		t.Errorf("resolved %v", got)
-	}
-	if len(m.Changed) != 1 || m.Changed[0].ID != x.b.ID || m.Changed[0].From != finding.SevMedium || m.Changed[0].Severity != finding.SevCritical {
-		t.Errorf("changed %+v", m.Changed)
-	}
-	if runs["aws"].PrevDate != "" || runs["openrouter:work"].PrevDate != "" {
-		t.Error("first runs compared with something")
+	if m.Date != "2026-11-21" {
+		t.Fatalf("macos date %s", m.Date)
 	}
 	for _, f := range m.Findings {
 		switch f.ID {
@@ -216,14 +226,11 @@ func TestRenderEveryFormatSaysTheSame(t *testing.T) {
 		out := render(t, r, f)
 		for _, want := range []string{
 			"segurata remediate " + x.f.ID, // automatable
-			"reauth", "missing_credentials", "segurata inventory aws", "segurata inventory openrouter:work",
-			"Was medium", "Firewall off", // severity change
-			"Gone (was high)", "Port 5000 open", // resolved
-			"New login item",
+			"openrouter:work · org: needs a fresh sign-in", "segurata inventory aws", "segurata inventory openrouter:work",
+			"Firewall off", "New login item", "Changes in the last 7 days",
 			"acceptance expired",
 			"1 accepted findings hidden",
 			"sk_live_…aaaa(40)", "P0 1, P1 1, P2 1, P3 0", "Snoozes due", "cccc3333",
-			"First run, nothing to compare: aws, openrouter:work",
 			"agents need it", "not reported",
 		} {
 			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {
@@ -313,13 +320,10 @@ func TestCLIWritesPrivateFile(t *testing.T) {
 // A status the config expects leaves "Needs attention" and is counted on one line with its reason.
 func TestExpectedStatusesAreOneLine(t *testing.T) {
 	x := newFx(t)
-	tr, err := tracker.Load(x.tracker)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tr := tracker.New(now) // synced in memory with the config's rules
 	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"aws": {Expected: []config.Expected{
 		{State: finding.StateMissingCredentials, Reason: "no AWS account on this Mac"}}}}}
-	r, err := Build(Inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10, Expect: cfg.Expect})
+	r, err := Build(Inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10, Sync: tracker.SyncOptions{Expect: cfg.Expect}})
 	if err != nil {
 		t.Fatal(err)
 	}

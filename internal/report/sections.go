@@ -27,16 +27,11 @@ func (r *Report) document() *doc.Doc {
 		r.Generated.Format("2006-01-02 15:04"), r.OutDir, r.MinSev))
 	r.headline(d)
 	r.completeness(d)
-	if r.tracked() {
-		// The tracker's units, as status shows them: setup items and item history, not the runs'
-		// statuses and file diffs again.
-		tracker.Blockers(d, r.tr.Items, r.Generated, nil)
-		d.H(2, "Changes in the last 7 days")
-		tracker.Changes(d, r.tr.Items, r.Generated.AddDate(0, 0, -7), true)
-	} else {
-		r.attention(d)
-		r.changes(d)
-	}
+	// The tracker's units, as status shows them: setup items and item history, not the runs'
+	// statuses and file diffs again.
+	tracker.Blockers(d, r.tr.Items, r.Generated, nil)
+	d.H(2, "Changes in the last 7 days")
+	tracker.Changes(d, r.tr.Items, r.Generated.AddDate(0, 0, -7), true)
 	r.topFindings(d)
 	r.rotations(d)
 	r.accepted(d)
@@ -45,31 +40,11 @@ func (r *Report) document() *doc.Doc {
 	return d
 }
 
-// tracked reports whether a sync has folded runs into the tracker: then the report counts and
-// lists tracker items, as status does, and the findings come second.
-func (r *Report) tracked() bool { return r.tr != nil && r.tr.LastSyncAt != nil }
-
-// headline counts tracker items when there is a synced tracker, with the runs' findings as a
-// secondary note and table; without one, findings by connector.
+// headline counts tracker items, as status does, with the runs' findings as a secondary note and
+// a table by connector.
 func (r *Report) headline(d *doc.Doc) {
 	d.H(2, "Headline")
-	if r.tracked() {
-		r.tr.Headline(d, r.tr.Items, r.Generated)
-		total := map[finding.Severity]int{}
-		for _, run := range r.Runs {
-			for _, f := range run.Findings {
-				if !f.Hidden() {
-					total[f.Severity]++
-				}
-			}
-		}
-		var parts []string
-		for _, s := range severities {
-			parts = append(parts, fmt.Sprintf("%d %s", total[s], s))
-		}
-		d.P("Findings in the latest runs: " + strings.Join(parts, ", ") + ". An item groups the findings one action fixes, and a secret is one item however many copies of it were found.")
-		d.H(3, "Findings by connector")
-	}
+	r.tr.Headline(d, r.tr.Items, r.Generated)
 	head := []string{"Connector", "Run"}
 	for _, s := range severities {
 		head = append(head, strings.ToUpper(string(s[:1]))+string(s[1:]))
@@ -94,10 +69,16 @@ func (r *Report) headline(d *doc.Doc) {
 		}
 		rows = append(rows, row)
 	}
+	var parts []string
 	row := []doc.Cell{{Text: "Total"}, {Text: ""}}
-	for _, n := range total {
+	for i, n := range total {
+		if i < len(severities) {
+			parts = append(parts, fmt.Sprintf("%d %s", n, severities[i]))
+		}
 		row = append(row, doc.Cell{Text: strconv.Itoa(n), Num: true})
 	}
+	d.P("Findings in the latest runs: " + strings.Join(parts, ", ") + ". An item groups the findings one action fixes, and a secret is one item however many copies of it were found.")
+	d.H(3, "Findings by connector")
 	d.Table(head, append(rows, row))
 }
 
@@ -165,121 +146,6 @@ func needsAttention(sts []finding.Status) []finding.Status {
 	return out
 }
 
-func (r *Report) attention(d *doc.Doc) {
-	d.H(2, "Needs attention")
-	var items []doc.Item
-	expected := map[string]int{}
-	for _, run := range r.Runs {
-		for _, st := range run.Statuses {
-			if st.State == finding.StateExpected {
-				expected[st.Expected]++
-			}
-		}
-		for _, st := range needsAttention(run.Statuses) {
-			action, cmd := tracker.StatusAction(st, run.Label, r.setupItem(run.Label, st))
-			text := run.Label
-			if st.Account != "" {
-				text += " · " + st.Account
-			}
-			it := doc.Item{Badge: string(st.State), Text: text, Meta: st.Detail,
-				Details: []doc.Detail{{Label: "Action", Text: action}, {Label: "Then", Text: cmd, Kind: doc.DCode}}}
-			items = append(items, it)
-		}
-	}
-	line := tracker.ExpectedLine(expected)
-	if len(items) == 0 && line == "" {
-		d.P("Nothing: every connector could inspect every account.")
-	}
-	d.List(items)
-	if line != "" {
-		d.P(line)
-	}
-}
-
-// setupItem is the id of the tracker's setup item for a status, or "".
-func (r *Report) setupItem(lbl string, st finding.Status) string {
-	if r.tr == nil {
-		return ""
-	}
-	if it := r.tr.ByKey(tracker.SetupKey(lbl, st)); it != nil {
-		return it.ID
-	}
-	return ""
-}
-
-func (r *Report) changes(d *doc.Doc) {
-	d.H(2, "Changes since the previous run")
-	var first []string
-	compared := 0
-	for _, run := range r.Runs {
-		if run.PrevDate == "" {
-			first = append(first, run.Label)
-			continue
-		}
-		compared++
-		added := visible(run.New, r.MinSev)
-		resolved := atLeast(run.Resolved, r.MinSev)
-		var unchecked []NotChecked
-		for _, n := range run.NotChecked {
-			if n.Severity.Rank() >= r.MinSev.Rank() {
-				unchecked = append(unchecked, n)
-			}
-		}
-		sort.SliceStable(unchecked, func(i, j int) bool { return unchecked[i].Severity.Rank() > unchecked[j].Severity.Rank() })
-		var changed []Change
-		for _, c := range run.Changed {
-			if !c.Hidden() && max(c.Severity.Rank(), c.From.Rank()) >= r.MinSev.Rank() {
-				changed = append(changed, c)
-			}
-		}
-		sort.SliceStable(changed, func(i, j int) bool { return changed[i].Severity.Rank() > changed[j].Severity.Rank() })
-		d.H(3, fmt.Sprintf("%s: %s to %s", run.Label, run.PrevDate, run.Date))
-		if len(added)+len(resolved)+len(unchecked)+len(changed) == 0 {
-			d.P(fmt.Sprintf("No change at or above %s.", r.MinSev))
-			continue
-		}
-		d.P(fmt.Sprintf("%d new, %d resolved, %d not checked this run, %d with another severity.", len(added), len(resolved), len(unchecked), len(changed)))
-		var items []doc.Item
-		for _, f := range capped(added, r.Top) {
-			items = append(items, doc.Item{Badge: string(f.Severity), Text: "New: " + f.DisplayTitle(), Meta: meta(f)})
-		}
-		items = append(items, more(len(added), r.Top, "new findings"))
-		for _, c := range changed[:min(len(changed), r.Top)] {
-			items = append(items, doc.Item{Badge: string(c.Severity), Text: fmt.Sprintf("Was %s: %s", c.From, c.DisplayTitle()), Meta: meta(c.Finding)})
-		}
-		items = append(items, more(len(changed), r.Top, "severity changes"))
-		for _, f := range capped(resolved, r.Top) {
-			items = append(items, doc.Item{Badge: "resolved", Text: fmt.Sprintf("Gone (was %s): %s", f.Severity, f.Title), Meta: meta(f)})
-		}
-		items = append(items, more(len(resolved), r.Top, "resolved findings"))
-		for _, n := range unchecked[:min(len(unchecked), r.Top)] {
-			items = append(items, doc.Item{Badge: "not checked", Text: fmt.Sprintf("Not checked this run (was %s): %s", n.Severity, n.Title),
-				Meta: meta(n.Finding), Details: []doc.Detail{{Label: "Why", Text: n.Reason}}})
-		}
-		items = append(items, more(len(unchecked), r.Top, "findings not checked this run"))
-		d.List(nonEmpty(items))
-	}
-	if len(first) > 0 {
-		d.P("First run, nothing to compare: " + strings.Join(first, ", ") + ".")
-	}
-	if compared > 0 {
-		d.P("A run is compared with the same connector instance's output in the newest earlier out/<date>/ folder; running a connector twice in one day overwrites that day's file.")
-	}
-}
-
-// atLeast keeps the findings at or above minSev, worst first, hidden or not: a resolved finding
-// is worth knowing about even if it had been accepted.
-func atLeast(fs []finding.Finding, minSev finding.Severity) []finding.Finding {
-	var out []finding.Finding
-	for _, f := range fs {
-		if f.Severity.Rank() >= minSev.Rank() {
-			out = append(out, f)
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Severity.Rank() > out[j].Severity.Rank() })
-	return out
-}
-
 func capped(fs []finding.Finding, n int) []finding.Finding { return fs[:min(len(fs), n)] }
 
 // more is the "and N more" line under a capped list, or an empty item when nothing was cut.
@@ -288,16 +154,6 @@ func more(total, shown int, what string) doc.Item {
 		return doc.Item{}
 	}
 	return doc.Item{Text: fmt.Sprintf("… and %d more %s", total-shown, what)}
-}
-
-func nonEmpty(items []doc.Item) []doc.Item {
-	var out []doc.Item
-	for _, it := range items {
-		if it.Text != "" {
-			out = append(out, it)
-		}
-	}
-	return out
 }
 
 func meta(f finding.Finding) string {

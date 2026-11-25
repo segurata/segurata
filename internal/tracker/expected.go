@@ -16,19 +16,6 @@ import (
 // of keeping it on the to-do list. See config.Expected and docs/architecture.md, "Expected
 // statuses".
 
-// Expectations reads the expected rules of the config file at path for SyncOptions.Expect; "" or
-// a missing file means none.
-func Expectations(path string) (func(*finding.Status), error) {
-	if path == "" {
-		return nil, nil
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		return nil, fmt.Errorf("config: %w", err)
-	}
-	return cfg.Expect, nil
-}
-
 // expectedReasons are the distinct reasons when every status of a setup proposal is expected, or
 // nil when one is not.
 func (p *proposal) expectedReasons() []string {
@@ -63,8 +50,8 @@ func (it *Item) expectedMoves(reasons []string, now time.Time) bool {
 	return false
 }
 
-// ExpectedReasons counts, by reason, the expected setup items whose statuses are still reported.
-func ExpectedReasons(items []*Item) map[string]int {
+// expectedByReason counts, by reason, the expected setup items whose statuses are still reported.
+func expectedByReason(items []*Item) map[string]int {
 	out := map[string]int{}
 	for _, it := range items {
 		if it.Kind != KindSetup || it.Status != Expected || !it.reported() {

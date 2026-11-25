@@ -668,26 +668,21 @@ One page from the latest run of every connector instance (`out/<date>/<name>.jso
 files `remediate` reads), the accepted risks and the secrets to rotate, both from the tracker. The
 report is the per-run view; `segurata status` is the tracker's:
 
-- Headline: once a sync has filled the tracker, the tracker's items counted as `status` counts
-  them (open by priority and theme, done, accepted, merged…), then the findings of the latest runs
-  as a note and a table by connector instance (run date, severities, accepted, statuses needing
-  attention). Before any sync, only that table.
-- Setup blockers: the tracker's setup items, as in `status`. Before any sync, "Needs attention":
-  `reauth`, `signedout`, `missing_credentials`, `unsupported` and `error` statuses, each with what
-  to do and the `segurata inventory <name>` that checks it afterwards.
+- Headline: the tracker's items counted as `status` counts them (open by priority and theme,
+  done, accepted, merged…), then the findings of the latest runs as a note and a table by
+  connector instance (run date, severities, accepted, statuses needing attention).
+- Setup blockers: the tracker's setup items, as in `status`, each with what to do and the
+  `segurata inventory <name>` that checks it afterwards.
 - Changes in the last 7 days: items found, closed, verified by a later run and reopened, from the
-  tracker's history, the latest listed. Before any sync, "Changes since the previous run": new
-  findings, resolved ones and severity changes, comparing each instance's latest file with its own
-  file in the newest earlier `out/<date>/` folder. Finding ids are stable, so a finding is the same
-  across runs. Running a connector twice in a day overwrites that day's file, so the comparison is
-  always with an earlier day.
+  tracker's history, the latest listed. Before the first `track sync` the report syncs a copy of
+  the tracker in memory (nothing is saved), so every item reads as new.
 - Top findings, worst first and grouped by connector, each with its remediation, its page and
   `segurata remediate <id>` when automatable.
 - Rotation ledger: open rotate items by priority, the first P0 items (redacted hint, exposure, reason,
   rotate URL; never a location) and snoozes past their date.
 - Accepted risks, with the expired ones and the ones the latest run no longer reports.
 
-`--min-severity` (default `low`) and `--top` (default 10 per connector and per kind of change)
+`--min-severity` (default `low`) and `--top` (default 10 per connector)
 trim the lists; `--dir` names another inventory directory. The HTML page has no script and no
 external asset, follows the system's light or dark mode and fits a phone. Written to a file, the
 report gets mode 0600: it names accounts, services and paths. It never contains a secret value,
@@ -822,7 +817,7 @@ own first. `unaccept` takes the finding id or the item id. Details:
 
 A launchd user agent (`~/Library/LaunchAgents/com.segurata.inventory.plist`) runs an inventory
 every day (or `--every`), writes `~/.segurata/last-report.md`, and posts a macOS
-notification when a high or critical finding appears that the previous run did not have. By default
+notification when its tracker sync opens a P0 or P1 item, new or reopened. By default
 it runs every connector except those that need the browser's debugging port; `--connectors
 macos,local-secrets,hibp` picks them. Logs go to `~/Library/Logs/segurata/`, inventories to
 `~/.segurata/out`, pruned to the last 30 days after each run (`"keep_runs_days"` in the config; the

@@ -275,7 +275,7 @@ substring of the status detail, or a regular expression between slashes; `reason
   (`auto-reopen`); when the status is gone the item is done like any other, and when only
   expected statuses come back it is expected again, not open.
 - `status` and `report` list them once: "N expected (by your config): <reason> (n); …", under
-  setup blockers (and the report's "Needs attention" before any sync); `inventory` prints one line
+  setup blockers; `inventory` prints one line
   per instance and reason.
 - `segurata track expect <setup-id> --reason "…" [--detail text] [--dry-run]` writes the rule
   that matches the item (its instance's key, the reported state, the account with glob characters
@@ -573,8 +573,8 @@ opens the item again.
 `segurata report [--format text|md|html] [--out file]` (`internal/report`) reads, and never
 changes:
 
-- the latest finished run of every connector instance and the finished run before it, through
-  `run.LatestRuns` and `run.Read` (findings, statuses and `run_end`);
+- the latest finished run of every connector instance, through `run.LatestRuns` and `run.Read`
+  (findings, statuses and `run_end`);
 - the tracker's acceptances, which annotate every finding as `inventory` does, so an acceptance
   made after the run counts and an expired one shows again;
 - the tracker's rotate items.
@@ -582,19 +582,13 @@ changes:
 The only write is the one-time import of the former state files, when the tracker does not exist
 yet.
 
-Once a sync has filled the tracker (`last_sync_at` set), the report counts what `status` counts:
-its headline is the tracker's (`Tracker.Headline`: items by priority and theme), followed by the
-findings of the latest runs as a note ("an item groups the findings one action fixes") and the
-table by connector instance; its setup section is the tracker's setup blockers (`tracker.Blockers`)
-instead of the runs' statuses; and its changes are the items found, closed, verified and reopened
-in the last 7 days (`tracker.Changes`, the same counts `status` gives since the last status)
-instead of the file diff below, which only a report without a synced tracker shows.
-
-The diff is by finding id: an id only in the latest file is new, one only in the previous file is
-resolved if the latest run inspected its scope and "not checked this run" otherwise, one in both
-with another severity changed. That is why ids must stay stable (see
-"Accepted risks"). Runs compare per connector instance, because each connector runs on its own
-schedule.
+The report counts what `status` counts: its headline is the tracker's (`Tracker.Headline`: items
+by priority and theme), followed by the findings of the latest runs as a note ("an item groups the
+findings one action fixes") and the table by connector instance; its setup section is the
+tracker's setup blockers (`tracker.Blockers`); and its changes are the items found, closed,
+verified and reopened in the last 7 days (`tracker.Changes`, the same counts `status` gives since
+the last status). Runs are compared in one place, the tracker's sync: a tracker that never synced
+(`last_sync_at` unset) is synced in memory from the same runs for the report, and not saved.
 
 The report is built once as a small document (headings, paragraphs, lists, tables) and rendered as
 text, Markdown or HTML, so the three formats carry the same content. Markdown escapes markup in
@@ -632,21 +626,20 @@ which leaves time for the report. At the deadline the inventory gets an interrup
 `install` puts an interval other than 24h on the agent's command line (`schedule run --every 6h`),
 so an agent installed before that runs with the 24h bound until it is installed again.
 
-1. Reads the high and critical findings of the latest scheduled run (`~/.segurata/out`),
-   leaving out accepted ones.
-2. Runs `segurata inventory --out ~/.segurata/out <connectors>`. Without
-   `--connectors`, every installed connector except those whose `describe` needs `cdp`: the browser
-   is rarely running with its debugging port when the agent fires.
-3. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three new
-   high or critical findings by title. Titles never carry secrets; evidence is never shown. Each
-   is also written to the log.
-4. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
+1. Runs `segurata inventory --out ~/.segurata/out <connectors>`, which ends in `track sync`.
+   Without `--connectors`, every installed connector except those whose `describe` needs `cdp`:
+   the browser is rarely running with its debugging port when the agent fires.
+2. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three of
+   the open P0 and P1 items that sync found or reopened (history `found` or `reopened` since the
+   run started), by title: the tracker is the one place runs are compared. Titles never carry
+   secrets; evidence is never shown. Each is also written to the log.
+3. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
-5. Once the report is written, prunes `~/.segurata/out` (`run.Prune`): it removes the
+4. Once the report is written, prunes `~/.segurata/out` (`run.Prune`): it removes the
    `<date>/*.jsonl` files and leftover `*.partial` files of days older than `keep_runs_days` in
    the config (default 30; a negative value keeps everything), except the latest finished run of
-   each instance, the one before it and a newer unfinished one, which the tracker, `report` and
-   `remediate` read. Nothing else under `out/` is touched, and empty days are removed.
+   each instance and a newer unfinished one, which the tracker, `report` and `remediate` read,
+   and the finished run before it, kept in case the latest proves unreadable. Nothing else under `out/` is touched, and empty days are removed.
    `accounts list` reads every remaining run, so it shows accounts seen within that window.
 
 Scheduled inventories live apart from the interactive `out/`; `segurata remediate --out

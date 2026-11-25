@@ -9,7 +9,7 @@ import (
 // items of an account it takes out of a connector's config, and `accounts watch` opens again the
 // ones it closed.
 
-// setupPrefix is the start of the keys of an account's setup items (SetupKey), lowercased.
+// setupPrefix is the start of the keys of an account's setup items (setupKey), lowercased.
 func setupPrefix(lbl, account string) string {
 	return strings.ToLower("setup:" + lbl + "|" + account + "|")
 }

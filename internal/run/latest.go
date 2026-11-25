@@ -18,10 +18,11 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Latest is the run of one connector instance that consumers read, and the run it is compared with.
+// Latest is the run of one connector instance that consumers read.
 type Latest struct {
 	File string // out/<date>/<name>.jsonl
-	// Prev is the run before File by the same rule, or "" when File is the first.
+	// Prev is the run before File by the same rule, or "" when File is the first: nothing reads
+	// it, Prune keeps it in case File proves unreadable.
 	Prev string
 	// Unfinished is a newer file without run_end that was passed over for File, or "".
 	Unfinished string

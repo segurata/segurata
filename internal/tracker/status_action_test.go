@@ -31,7 +31,7 @@ func TestStatusActionPutsTheDetailsCommandInNext(t *testing.T) {
 		{finding.Status{Connector: "macos", State: finding.StateError, Detail: "boom"}, "macos", "segurata inventory macos --verbose", "connector logs"},
 	}
 	for _, c := range cases {
-		action, cmd := StatusAction(c.st, c.lbl, "T-0009")
+		action, cmd := statusAction(c.st, c.lbl, "T-0009")
 		if cmd != c.cmd || !strings.Contains(action, c.inAction) {
 			t.Errorf("%s %q:\n got %q, %q\nwant %q, action with %q", c.st.State, c.st.Detail, action, cmd, c.cmd, c.inAction)
 		}
@@ -42,16 +42,16 @@ func TestStatusActionPutsTheDetailsCommandInNext(t *testing.T) {
 }
 
 func TestAdminOnlyChecksAskForNoInstall(t *testing.T) {
-	action, _ := StatusAction(finding.Status{Connector: "macos", State: finding.StateUnsupported, Detail: "remote-login: systemsetup needs admin; the listening ports check covers SSH"}, "macos", "")
+	action, _ := statusAction(finding.Status{Connector: "macos", State: finding.StateUnsupported, Detail: "remote-login: systemsetup needs admin; the listening ports check covers SSH"}, "macos", "")
 	if strings.Contains(action, "Install") || !strings.Contains(action, "administrator rights") || !strings.Contains(action, "On purpose? segurata track expect <item>") {
 		t.Errorf("admin-only: %q", action)
 	}
-	action, _ = StatusAction(finding.Status{Connector: "azure", State: finding.StateUnsupported, Detail: "az not found"}, "azure", "")
+	action, _ = statusAction(finding.Status{Connector: "azure", State: finding.StateUnsupported, Detail: "az not found"}, "azure", "")
 	if !strings.Contains(action, "Install what the detail names") {
 		t.Errorf("unsupported: %q", action)
 	}
 	// A reauth without a fix must not assume a browser connector.
-	if got, _ := StatusAction(finding.Status{State: finding.StateReauth, Detail: "InvalidClientTokenId"}, "aws", ""); strings.Contains(got, "drives over CDP") {
+	if got, _ := statusAction(finding.Status{State: finding.StateReauth, Detail: "InvalidClientTokenId"}, "aws", ""); strings.Contains(got, "drives over CDP") {
 		t.Errorf("aws reauth should not point to the browser only: %q", got)
 	}
 }
