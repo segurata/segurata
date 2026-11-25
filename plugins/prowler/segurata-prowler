@@ -185,6 +185,7 @@ def describe():
         "protocol": PROTOCOL,
         "summary": "Failed Prowler checks per Google Cloud project, run as each gcloud account",
         "needs": ["cli:prowler", "cli:gcloud"],
+        "theme": {"id": "cloud"},
         # Projects run `parallel` at a time, each for up to `timeout` seconds.
         "timeout": "12h",
     }
@@ -557,6 +558,7 @@ def to_finding(rec, account, project, profile=UNKNOWN_PROFILE):
     check_id = meta.get("event_code", "")
     uid = res.get("uid") or project
     name = res.get("name") or uid
+    rid = "%s:%s:%s" % (check_id, project, uid)
     detail = rec.get("status_detail") or rec.get("message") or ""
     title = one_line(detail) or "%s: %s" % (info.get("title", check_id), name)
     remediation = rec.get("remediation") or {}
@@ -566,7 +568,7 @@ def to_finding(rec, account, project, profile=UNKNOWN_PROFILE):
     return {
         "account": account,
         "scope": project,
-        "resource": {"type": "prowler_check", "id": "%s:%s:%s" % (check_id, project, uid), "name": name},
+        "resource": {"type": "prowler_check", "id": rid, "name": name},
         "kind": kind_of(unmapped.get("categories") or []),
         "severity": severity_of(rec),
         "title": title,
@@ -587,6 +589,22 @@ def to_finding(rec, account, project, profile=UNKNOWN_PROFILE):
         "created_at": None,
         "last_used_at": None,
         "remediation": {"summary": one_line((remediation.get("desc") or "").replace("**", ""), 1000), "url": url},
+        "track": track(check_id or rid, info.get("title") or check_id or rid, project),
+    }
+
+
+def track(check, name, project):
+    """One check failing in many projects is one thing to fix: one tracker item per check, titled by
+    the check and how many projects fail it ("… fails in 40 projects (Prowler logging_sink_created)"),
+    or the project when only one does (docs/connectors.md, "Theme and grouping")."""
+    return {
+        "group": "check",
+        "key": check,
+        "count": "scopes",
+        "noun": "project",
+        "nouns": "projects",
+        "title": "%s fails in {count} (Prowler %s)" % (name, check),
+        "title_one": "%s fails in %s (Prowler %s)" % (name, project, check),
     }
 
 

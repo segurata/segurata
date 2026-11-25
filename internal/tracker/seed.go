@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"cmp"
 	"maps"
 	"slices"
 	"time"
@@ -27,11 +28,6 @@ var themes = slices.Concat([]Theme{
 // status lists them apart from what is failing.
 const coverageTheme = "coverage"
 
-// connectorThemes maps a connector that does not declare its theme yet to it.
-var connectorThemes = map[string]string{
-	"prowler": "cloud",
-}
-
 // themeOf is the theme of a finding whose run declared the theme declared ("" for none). The
 // tracker files local-secrets findings itself: data dumps apart from the secrets to rotate.
 func themeOf(f finding.Finding, declared string) string {
@@ -41,13 +37,7 @@ func themeOf(f finding.Finding, declared string) string {
 		}
 		return "rotations"
 	}
-	if declared != "" && declared != finding.ThemeOther.ID {
-		return declared
-	}
-	if th, ok := connectorThemes[f.Connector]; ok {
-		return th
-	}
-	return finding.ThemeOther.ID
+	return cmp.Or(declared, finding.ThemeOther.ID)
 }
 
 // declareThemes adds, or renames, the themes of their own that the folded runs declare. A theme

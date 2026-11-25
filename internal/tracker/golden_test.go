@@ -2,6 +2,7 @@ package tracker_test
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"flag"
 	"os"
@@ -41,6 +42,10 @@ func goldenRuns() map[string][]finding.Finding {
 		f := g("prowler", "", "me@example.com", "prowler_check", check+":"+project+":"+uid, uid, sev, "Detail of "+check+" on "+uid,
 			map[string]any{"check_id": check, "check_title": title, "project": project})
 		f.Scope = project
+		// What plugins/prowler/segurata-prowler declares (track()); its test checks the same shape.
+		name := cmp.Or(title, check)
+		f.Track = &finding.Track{Group: finding.GroupCheck, Key: check, Count: finding.CountScopes, Noun: "project", Nouns: "projects",
+			Title: name + " fails in {count} (Prowler " + check + ")", TitleOne: name + " fails in " + project + " (Prowler " + check + ")"}
 		return f
 	}
 	slack := func(id, name string, sev finding.Severity) finding.Finding {
@@ -157,6 +162,9 @@ func writeGoldenRuns(t *testing.T, out string, declared bool) {
 	for _, n := range names {
 		var recs []any
 		for _, f := range runs[n] {
+			if !declared {
+				f.Track = nil // the prowler plugin's own declarations
+			}
 			recs = append(recs, f)
 		}
 		if declared {

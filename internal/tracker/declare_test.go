@@ -60,4 +60,4 @@ func declaredTheme(name string) finding.Theme {
 
 // pluginThemes are the themes the external connectors of the tests declare; a connector not listed
 // gets none, as in a run written before connectors declared themes.
-var pluginThemes = map[string]finding.Theme{"hibp": {}, "prowler": {}}
+var pluginThemes = map[string]finding.Theme{"hibp": {}, "prowler": {ID: finding.ThemeCloud.ID}}

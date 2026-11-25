@@ -28,7 +28,6 @@ const (
 	perProject                        // one item per evidence.project
 	perFamily                         // one item per account and title family (the title without the resource's name)
 	perRepo                           // one item per evidence.repo
-	perEvidenceCheck                  // one item per evidence.check_id across scopes (e.g. one Prowler check failing in many projects)
 )
 
 // groupsBy maps a finding.Track group to how it groups.
@@ -50,9 +49,6 @@ type rule struct {
 }
 
 var rules = []rule{
-	// Prowler reports one failure per check and project; the same CIS logging check failing in 90
-	// projects is one thing to fix, so it is one item listing the projects.
-	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
 	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
 }
 
@@ -215,12 +211,6 @@ func groupKey(f finding.Finding, r *rule, theme string) (key string, p proposal)
 	case perRepo:
 		p.repo, _ = f.Evidence["repo"].(string)
 		key = base + "|repo:" + p.repo
-	case perEvidenceCheck:
-		p.check, _ = f.Evidence["check_id"].(string)
-		if p.check == "" {
-			p.check = f.Resource.ID
-		}
-		key = base + "|check:" + p.check
 	default:
 		key = pinnedKey(f.ID)
 	}
@@ -369,21 +359,4 @@ func (p *proposal) severitySplit() string {
 		}
 	}
 	return " (" + strings.Join(parts, ", ") + ")"
-}
-
-// prowlerCheckTitle names the Prowler check and how many projects fail it.
-func prowlerCheckTitle(p *proposal) string {
-	f := p.worst()
-	name, _ := f.Evidence["check_title"].(string)
-	if name == "" {
-		name = p.check
-	}
-	scopes := map[string]bool{}
-	for _, x := range p.findings {
-		scopes[finding.ScopeOf(x)] = true
-	}
-	if len(scopes) == 1 {
-		return fmt.Sprintf("%s fails in %s (Prowler %s)", name, finding.ScopeOf(f), p.check)
-	}
-	return fmt.Sprintf("%s fails in %s (Prowler %s)", name, textfmt.Count(len(scopes), "project", "projects"), p.check)
 }
