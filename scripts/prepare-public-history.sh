@@ -12,7 +12,10 @@
 #   --branch NAME          the branch to publish; default: main
 #   --identifiers FILE     default: $SEGURATA_PUBLIC_GATE, else ~/.config/segurata/public-gate.txt
 #   --drop-path-glob GLOB  remove matching files from every commit, e.g. '*.pyc'; repeatable
-#   --mailmap FILE         rewrite author and committer names and emails (git-filter-repo --mailmap)
+#   --mailmap FILE         rewrite author, committer and tagger names and emails (git-filter-repo
+#                          --mailmap)
+#   --keep-authors         publish the authors, committers and taggers as they are; without this or
+#                          --mailmap the authors gate fails. The report lists them either way
 #   --workdir DIR          where to build; must not exist yet; default: a new temporary folder
 #
 # Exit status: 0 every gate passed, 1 a gate failed (the result stays for inspection), 2 usage or
@@ -28,10 +31,12 @@ source=""
 branch=main
 identifiers="${SEGURATA_PUBLIC_GATE:-$HOME/.config/segurata/public-gate.txt}"
 mailmap=""
+keep_authors=false
 workdir=""
 drop=()
 self=("$0" "$@")
 while [ $# -gt 0 ]; do
+  if [ "$1" = --keep-authors ]; then keep_authors=true; shift; continue; fi
   [ $# -ge 2 ] || usage
   case "$1" in
     --source) source="$2" ;;
@@ -45,6 +50,7 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
+if [ -n "$mailmap" ] && $keep_authors; then die "--mailmap and --keep-authors exclude each other"; fi
 for tool in git-filter-repo gitleaks python3; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
@@ -106,6 +112,15 @@ gates() {
     grep -v -x -e "refs/heads/$branch" -e 'refs/tags/.*' || true)"
   if [ -n "$unexpected" ]; then fail "refs other than refs/heads/$branch and tags:"; echo "$unexpected"; else echo "ok"; fi
   if [ -n "$(git -C "$public" remote)" ]; then fail "a remote is configured"; fi
+
+  echo "== authors"
+  { git -C "$public" log --all --format='%an <%ae>%n%cn <%ce>'
+    git -C "$public" for-each-ref refs/tags --format='%(if)%(taggername)%(then)%(taggername) %(taggeremail)%(end)'
+  } | sed '/^$/d' | sort -u
+  if [ -n "$mailmap" ]; then echo "ok: rewritten with --mailmap"
+  elif $keep_authors; then echo "ok: published as listed (--keep-authors)"
+  else fail "authors unchanged: rewrite them with --mailmap FILE, or publish them as listed with --keep-authors"
+  fi
 
   echo "== branch tip"
   # The published tip must be the code that was tested: fix identifiers on the branch first
