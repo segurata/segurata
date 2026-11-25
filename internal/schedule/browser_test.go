@@ -146,3 +146,28 @@ func TestRunNotifiesOnceWhenTheBrowserConnectorsHaveNotRunForDays(t *testing.T) 
 		t.Fatalf("browser_stale_days -1 notified: %d", got)
 	}
 }
+
+// The staleness notice is remembered as sent only once it was: a run that stops before notifying
+// (the inventory failed) leaves it due for the next run.
+func TestTheStalenessNoticeIsNotLostWhenARunStopsEarly(t *testing.T) {
+	env, r, _ := testEnv(t, "darwin")
+	day := time.Date(2026, 11, 1, 3, 0, 0, 0, time.UTC)
+	clock := day
+	env.Now, env.Browser = func() time.Time { return clock }, unreachable
+	if err := env.Run(context.Background(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	clock = day.Add(9 * 24 * time.Hour)
+	r.fail = map[string]error{"inventory": errors.New("inventory crashed")}
+	if err := env.Run(context.Background(), Options{}); err == nil {
+		t.Fatal("a failed inventory must fail the run")
+	}
+	r.fail = nil
+	clock = clock.Add(24 * time.Hour)
+	if err := env.Run(context.Background(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(r.ran(osascript, "-e")); n != 1 {
+		t.Fatalf("%d notifications, want the one the failed run never sent", n)
+	}
+}

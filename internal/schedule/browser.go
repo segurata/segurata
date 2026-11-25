@@ -65,20 +65,23 @@ func (e Env) browserRan(now time.Time) {
 
 // browserSkipped records that a run skipped the browser connectors and returns the text of the
 // one notification due when they have not run for longer than the config's browser_stale_days,
-// "" otherwise.
+// "" otherwise. It stays due until browserNotified says it was sent.
 func (e Env) browserSkipped(now time.Time) string {
 	s := e.loadBrowserState()
 	if s.NotRunSince.IsZero() {
 		s.NotRunSince = now.UTC()
+		e.saveBrowserState(s)
 	}
 	stale, idle := e.Config.BrowserStaleAfter(), now.Sub(s.NotRunSince)
-	due := stale > 0 && idle > stale && !s.Notified
-	if due {
-		s.Notified = true
-	}
-	e.saveBrowserState(s)
-	if !due {
+	if stale <= 0 || idle <= stale || s.Notified {
 		return ""
 	}
 	return fmt.Sprintf("browser connectors haven't run in %d days", int(idle/(24*time.Hour)))
+}
+
+// browserNotified records that the staleness notification was sent.
+func (e Env) browserNotified() {
+	s := e.loadBrowserState()
+	s.Notified = true
+	e.saveBrowserState(s)
 }

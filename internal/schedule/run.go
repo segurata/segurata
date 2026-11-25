@@ -75,7 +75,9 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	}
 	if stale != "" {
 		e.stamp(stale)
-		e.notify(ctx, appleNotification(stale, skipped))
+		if e.notify(ctx, appleNotification(stale, skipped)) {
+			e.browserNotified()
+		}
 	}
 	e.stamp("report " + p.Report)
 	rep := []string{"report", "--format", "md", "--out", p.Report, "--dir", p.Out}
@@ -96,14 +98,17 @@ func (e Env) names() []string {
 	return out
 }
 
-// notify posts a macOS notification; elsewhere the log line before it is all there is.
-func (e Env) notify(ctx context.Context, script string) {
+// notify posts a macOS notification; elsewhere the log line before it is all there is. It reports
+// whether the owner was told, by the notification or by that line.
+func (e Env) notify(ctx context.Context, script string) bool {
 	if e.GOOS != "darwin" {
-		return
+		return true
 	}
 	if err := e.Runner.Run(ctx, osascript, []string{"-e", script}, e.IO.Out, e.IO.Err); err != nil {
 		fmt.Fprintf(e.IO.Err, "notification failed: %v\n", err)
+		return false
 	}
+	return true
 }
 
 // stamp logs one step of the run with the time.
