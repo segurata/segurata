@@ -54,10 +54,6 @@ var rules = []rule{
 	// projects is one thing to fix, so it is one item listing the projects.
 	{connectors: []string{"prowler"}, resource: "prowler_check", by: perEvidenceCheck, kind: KindFix, title: prowlerCheckTitle},
 	{connectors: []string{SecretsConnector}, resource: "data_dump", by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext},
-	{connectors: []string{"google-personal"}, resource: "oauth_grant", by: perAccountSeverity, kind: KindReview, title: func(p *proposal) string {
-		return fmt.Sprintf("Review %s with %s access to %s", textfmt.Count(len(p.findings), "app", "apps"),
-			p.worst().Severity.Pick("high-risk", "broad", "limited"), p.account)
-	}},
 	{connectors: []string{"gcp"}, resource: "api_key", by: perProject, kind: KindFix, title: func(p *proposal) string {
 		return fmt.Sprintf("Restrict %s in GCP project %s", textfmt.Count(len(p.findings), "API key", "API keys"), p.project)
 	}},

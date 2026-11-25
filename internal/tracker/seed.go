@@ -29,8 +29,7 @@ const coverageTheme = "coverage"
 
 // connectorThemes maps a connector that does not declare its theme yet to it.
 var connectorThemes = map[string]string{
-	"google-personal": "google",
-	"gcp":             "cloud", "prowler": "cloud",
+	"gcp": "cloud", "prowler": "cloud",
 	"openai": "ai-spend", "anthropic": "ai-spend", "openrouter": "ai-spend",
 }
 
