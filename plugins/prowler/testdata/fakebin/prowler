@@ -3,7 +3,7 @@
 # $FAKE_DIR, behaves like Prowler 5.51.0 would:
 #   ocsf/<project>.json           copied to <output-directory>/<output-filename>.ocsf.json
 #   deny/<project>/<account>      exits 1 with Prowler's "no accessible projects" error
-#   slow/<project>                sleeps past any test timeout
+#   slow/<project>                sleeps past any test timeout, its pid in slow/<project>.pid
 #   crash/<project>               exits 1 with an unexpected error
 #   unknown/<project>             logs a serviceusage 403 for the compute API
 #   refused/<project>             logs a 403 listing buckets, and one at organization level
@@ -33,6 +33,7 @@ if [ -e "$FAKE_DIR/deny/$project/$account" ]; then
   exit 1
 fi
 if [ -e "$FAKE_DIR/slow/$project" ]; then
+  echo $$ > "$FAKE_DIR/slow/$project.pid"
   sleep 30
 fi
 if [ -e "$FAKE_DIR/crash/$project" ]; then

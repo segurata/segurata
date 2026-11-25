@@ -12,7 +12,7 @@ import (
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
-	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -55,15 +55,15 @@ func (c CLI) Accept(args []string) int {
 		c.list(t, now)
 		return 0
 	}
-	files, err := run.LatestFiles(*out, time.Now())
+	files, err := runfile.LatestFiles(*out, time.Now())
 	if err != nil {
 		return c.fail(err)
 	}
-	all, err := run.Load(files)
+	all, err := runfile.Load(files)
 	if err != nil {
 		return c.fail(err)
 	}
-	f, err := run.Find(all, pos[0])
+	f, err := runfile.Find(all, pos[0])
 	if err != nil {
 		return c.fail(err)
 	}

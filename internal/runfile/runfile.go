@@ -1,4 +1,6 @@
-package run
+// Package runfile reads the run files a connector run leaves under out/<date>/: which run of each
+// connector instance is the latest, what it holds, and which old ones can go.
+package runfile
 
 import (
 	"bufio"
@@ -247,7 +249,22 @@ type Output struct {
 // Coverage is what the run proves about each scope; see finding.Coverage.
 func (r Output) Coverage() finding.Coverage { return finding.CoverageOf(r.End) }
 
-// ReadRun reads one connector instance's output, skipping log records. A file without run_end
+// Label names the connector instance from the run's records, which carry the exact connector
+// name and instance label; a run with none falls back to the name of its file.
+func (r Output) Label(file string) string {
+	switch {
+	case r.End != nil:
+		return finding.Label(r.End.Connector, r.End.Instance)
+	case len(r.Findings) > 0:
+		return finding.Label(r.Findings[0].Connector, r.Findings[0].Instance)
+	case len(r.Statuses) > 0:
+		return finding.Label(r.Statuses[0].Connector, r.Statuses[0].Instance)
+	}
+	base := filepath.Base(file)
+	return base[:len(base)-len(filepath.Ext(base))]
+}
+
+// Read reads one connector instance's output, skipping log records. A file without run_end
 // may end in a half-written line (the run was killed mid-record): that line is dropped.
 func Read(name string) (Output, error) {
 	var r Output

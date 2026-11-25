@@ -13,7 +13,7 @@ import (
 const self = "github.com/segurata/segurata/internal/remediate"
 
 // The remediation core serves the remediate verb alone. What other packages share with it lives
-// elsewhere: the run store in internal/run, the confirmation prompt in internal/prompt, and the
+// elsewhere: the run files in internal/runfile, the confirmation prompt in internal/prompt, and the
 // remediator contract (Plan, Allowlist, Executor, the generic actions) in internal/connector. So
 // no connector, the tracker or any other package depends on the core; only cmd/segurata does.
 func TestOnlyTheCommandImportsTheCore(t *testing.T) {

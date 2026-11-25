@@ -52,7 +52,7 @@ func (System) Run(ctx context.Context, s Step, io IO) error {
 	if s.Sudo {
 		name, args = sudoPath, s.Argv
 	}
-	cmd := proc.Command(ctx, name, args...)
+	cmd := proc.Interactive(ctx, name, args...) // sudo reads the password from the terminal
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = io.In, io.Out, io.Err
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s: %w", s, err)

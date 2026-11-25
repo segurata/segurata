@@ -199,7 +199,8 @@ type PlanReply struct {
 const maxPlanBytes = 1 << 20
 
 // RequestPlan runs `segurata-<name> plan` and decodes its reply strictly: an unknown field or
-// trailing data is an error, never ignored. It vets nothing else; the core does.
+// trailing data is an error, never ignored, and so is a plan that carries one of the request's
+// secret values. It vets nothing else; the core does.
 func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (PlanReply, error) {
 	if e.desc.Protocol < RemediationProtocol {
 		return PlanReply{}, fmt.Errorf("%s speaks protocol %d, which has no remediation", e.desc.Name, e.desc.Protocol)
@@ -213,8 +214,9 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &limitedWriter{w: &stderr, n: maxStderrBytes}
+	scrub := newScrubber(req.Secrets)
 	if err := cmd.Run(); err != nil {
-		return PlanReply{}, fmt.Errorf("%s plan: %w: %s", e.desc.Name, err, strings.TrimSpace(stderr.String()))
+		return PlanReply{}, fmt.Errorf("%s plan: %w: %s", e.desc.Name, err, scrub.String(strings.TrimSpace(stderr.String())))
 	}
 	dec := json.NewDecoder(&stdout)
 	dec.DisallowUnknownFields()
@@ -225,11 +227,15 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	if dec.More() {
 		return PlanReply{}, fmt.Errorf("%s plan: unexpected data after the plan", e.desc.Name)
 	}
+	if scrub.Carries(reply) {
+		return PlanReply{}, fmt.Errorf("%s plan: the plan carries a secret the core handed the connector", e.desc.Name)
+	}
 	return reply, nil
 }
 
 // RequestApply runs `segurata-<name> apply` with the confirmed plan. Its `log` records go to
-// out, its stderr to errw; a non-zero exit is a failed apply.
+// out, its stderr to errw, both with the request's secret values redacted; a non-zero exit is a
+// failed apply.
 func (e *External) RequestApply(ctx context.Context, req RemediationRequest, out, errw io.Writer) error {
 	if e.desc.Protocol < RemediationProtocol {
 		return fmt.Errorf("%s speaks protocol %d, which has no remediation", e.desc.Name, e.desc.Protocol)
@@ -238,7 +244,9 @@ func (e *External) RequestApply(ctx context.Context, req RemediationRequest, out
 		return errors.New("apply needs the confirmed plan")
 	}
 	req.Protocol = e.desc.Protocol
-	err := e.stream(ctx, "apply", req, errw, func(line []byte) {
+	scrub := newScrubber(req.Secrets)
+	stderr := &lineScrubber{w: errw, s: scrub}
+	err := e.stream(ctx, "apply", req, stderr, func(line []byte) {
 		var rec struct {
 			Type string `json:"type"`
 			Msg  string `json:"msg"`
@@ -247,10 +255,11 @@ func (e *External) RequestApply(ctx context.Context, req RemediationRequest, out
 			fmt.Fprintf(out, "  %s: non-log line ignored\n", e.desc.Name)
 			return
 		}
-		fmt.Fprintf(out, "  %s: %s\n", e.desc.Name, rec.Msg)
+		fmt.Fprintf(out, "  %s: %s\n", e.desc.Name, scrub.String(rec.Msg))
 	})
+	stderr.Flush()
 	if err != nil {
-		return fmt.Errorf("%s apply: %w", e.desc.Name, err)
+		return fmt.Errorf("%s apply: %w", e.desc.Name, scrub.Error(err))
 	}
 	return nil
 }
@@ -263,14 +272,28 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	}
 	cmd := command(ctx, e.Path, sub)
 	cmd.Stdin = bytes.NewReader(raw)
-	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	errPipe, err := cmd.StderrPipe()
 	if err != nil {
 		return err
 	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	// A child the plugin left behind can hold its pipes open after the plugin is killed, and the
+	// reads below would wait for that child however short ctx was: WaitDelay bounds only Wait.
+	// Closing both pipes when ctx ends releases them at once.
+	stop := context.AfterFunc(ctx, func() { _ = stdout.Close(); _ = errPipe.Close() })
+	defer stop()
+	copied := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(stderr, errPipe)
+		_ = errPipe.Close() // a writer that failed (too much output) ends the plugin's writes too
+		copied <- err
+	}()
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
@@ -280,8 +303,12 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	if scanErr != nil {
 		_, _ = io.Copy(io.Discard, stdout) // let the process finish writing before Wait
 	}
+	copyErr := <-copied
 	if err := cmd.Wait(); err != nil {
 		return err
+	}
+	if ctx.Err() == nil && copyErr != nil {
+		return copyErr
 	}
 	return scanErr
 }

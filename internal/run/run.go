@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -196,26 +197,70 @@ type Lent struct {
 	Known *attribution.Known
 }
 
-// Inventory runs the given targets concurrently and returns their results in input order.
+// BraveCheck checks that Brave answers at a CDP address (cdp.Brave). It never starts a browser;
+// tests replace it, so that none reaches a real one.
+var BraveCheck = cdp.Brave
+
+// BrowserProbeTimeout bounds the check that Brave answers before the browser connectors run.
+const BrowserProbeTimeout = 15 * time.Second
+
+// Reasons the browser connectors do not run, the start of their run_end error.
+const (
+	ReasonUnreachable = "browser not reachable over CDP"
+	ReasonNotBrave    = "the browser on the debugging port is not Brave"
+)
+
+// BrowserProblem says why the browser connectors cannot run now, with check's error; "" when
+// Brave answers at cdpURL. Only Brave is driven: another browser on the port, or none, stops them,
+// and nothing is ever started in its place.
+func BrowserProblem(ctx context.Context, cdpURL string, check func(context.Context, string) (cdp.Version, error)) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, BrowserProbeTimeout)
+	defer cancel()
+	_, err := check(ctx, cdpURL)
+	switch {
+	case err == nil:
+		return "", nil
+	case errors.Is(err, cdp.ErrNotBrave):
+		return ReasonNotBrave, err
+	}
+	return ReasonUnreachable, err
+}
+
+// Inventory runs the given targets concurrently and returns their results in input order. When
+// a target drives the browser over CDP, Brave is checked once first (BrowserProblem); if it does
+// not answer, each such target's run ends at once with the reason as its error: its run_end skips
+// every scope ("*"), so it proves neither a finding nor a status gone.
 func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer, lent Lent) ([]*Result, error) {
 	dir := filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	var noBrowser error
+	if slices.ContainsFunc(targets, func(t Target) bool { return t.Connector.Describe().NeedsCDP() }) {
+		if reason, err := BrowserProblem(ctx, cfg.CDPURL, BraveCheck); reason != "" {
+			noBrowser = fmt.Errorf("%s: %w", reason, err)
+		}
+	}
 	results := make([]*Result, len(targets))
 	var wg sync.WaitGroup
 	for i, t := range targets {
+		var refused error
+		if t.Connector.Describe().NeedsCDP() {
+			refused = noBrowser
+		}
 		wg.Add(1)
 		go func(i int, t Target) {
 			defer wg.Done()
-			results[i] = runOne(ctx, cfg, t, dir, verbose, lent)
+			results[i] = runOne(ctx, cfg, t, dir, verbose, lent, refused)
 		}(i, t)
 	}
 	wg.Wait()
 	return results, nil
 }
 
-func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, lent Lent) *Result {
+// runOne runs one target and writes its run file. A refused target does not run and its secrets
+// are not resolved: its run ends at once with refused as its error.
+func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, lent Lent, refused error) *Result {
 	name, label := t.Connector.Describe().Name, t.Label()
 	timeout := t.Timeout()
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timed out after %s (raise connectors.%s.timeout)", timeout, label))
@@ -238,10 +283,16 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		theme: finding.ThemeFor(d.Theme), covers: d.Covers}
 	s.tracker, _ = t.Connector.(connector.Tracker)
 
-	req, errs := NewRequest(ctx, cfg, t.Instance)
-	req.Known = lent.Known
-	if missing := unresolved(t.Connector, errs, s); !missing {
-		res.Err = t.Connector.Inventory(ctx, req, s)
+	var req connector.Request
+	if res.Err = refused; refused == nil {
+		var errs []error
+		req, errs = NewRequest(ctx, cfg, t.Instance)
+		req.Known = lent.Known
+		if missing := unresolved(t.Connector, errs, s); !missing {
+			// What the connector prints never carries a secret value the core handed it.
+			scrub := connector.NewScrubEmitter(s, req.Secrets)
+			res.Err = scrub.Err(t.Connector.Inventory(ctx, req, scrub))
+		}
 	}
 	ended, werr := s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
 	res.Err = errors.Join(res.Err, werr)

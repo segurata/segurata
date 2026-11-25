@@ -47,7 +47,7 @@ type Client struct {
 // anywhere but the URL the plan showed.
 func New(baseURL string, header http.Header, routes ...Route) *Client {
 	base := httpx.New(baseURL, header)
-	base.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	base.HTTP.CheckRedirect = httpx.NoRedirect
 	return &Client{BaseURL: base.BaseURL, Header: base.Header, HTTP: base.HTTP, Routes: routes}
 }
 

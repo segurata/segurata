@@ -1,4 +1,4 @@
-// Package statefile writes files atomically, so a crash never leaves half a file: segurata's
+// Package statefile reads segurata's own JSON state (ReadJSON) and writes files atomically, so a crash never leaves half a file: segurata's
 // own files (rotation ledger, accepted risks, reports) with mode 0600 in a 0700 directory, and the
 // user's files that `segurata rotations replace` and `segurata redact` edit, keeping their mode.
 package statefile
@@ -12,6 +12,20 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// ReadJSON decodes the JSON file at path into v. A missing file is found false with no error; a
+// file that cannot be read is found false with the error, one that cannot be decoded found true
+// with it. Each caller checks what it decoded and decides what an error costs it.
+func ReadJSON(path string, v any) (found bool, err error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, json.Unmarshal(raw, v)
+}
 
 // WriteJSON writes v as indented JSON to path.
 func WriteJSON(path string, v any) error {

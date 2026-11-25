@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -298,15 +297,12 @@ func (s *scan) dumpCacheDir() string {
 }
 
 func (s *scan) loadDumpCache(path, repo string) *dumpCache {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			s.emit.Log("data dump cache " + path + ": " + err.Error())
-		}
-		return nil
-	}
 	var c dumpCache
-	if err := json.Unmarshal(raw, &c); err != nil || c.Version != dumpCacheVersion || c.Repo != repo {
+	found, err := statefile.ReadJSON(path, &c)
+	if err != nil {
+		s.emit.Log("data dump cache " + path + ": " + err.Error())
+	}
+	if !found || err != nil || c.Version != dumpCacheVersion || c.Repo != repo {
 		return nil
 	}
 	if c.Blobs == nil {

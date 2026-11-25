@@ -3,10 +3,7 @@ package localsecrets
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -259,16 +256,12 @@ func repoCacheFile(dir, repo string) string {
 // loadCache returns the cache at path when it matches want's version, repository, rules and key,
 // or nil (missing, unreadable or stale), which means a full scan.
 func (s *scan) loadCache(path string, want *historyCache) *historyCache {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			s.emit.Log("gitleaks cache " + path + ": " + err.Error())
-		}
-		return nil
-	}
 	var c historyCache
-	if err := json.Unmarshal(raw, &c); err != nil {
+	found, err := statefile.ReadJSON(path, &c)
+	if err != nil {
 		s.emit.Log("gitleaks cache " + path + ": " + err.Error())
+	}
+	if !found || err != nil {
 		return nil
 	}
 	if c.Version != want.Version || c.Repo != want.Repo || c.Rules != want.Rules || want.Rules == "" || c.Key != want.Key {

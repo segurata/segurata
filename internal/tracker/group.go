@@ -38,25 +38,26 @@ var groupsBy = map[string]groupBy{
 	finding.GroupAccountSeverity: perAccountSeverity, finding.GroupProject: perProject, finding.GroupFamily: perFamily,
 }
 
-// rule says how findings group, the kind of item and its title: what a finding declares
-// (finding.Track), or the tracker's own rule for local-secrets' data dumps.
-type rule struct {
-	by    groupBy
-	kind  Kind
-	title func(p *proposal) string // nil: the finding's title, or the worst finding's with a count
-	next  func(p *proposal) *Next  // nil: the worst finding's remediation
-	keep  bool                     // keep the item's title (a run from before declarations)
+// grouping says how findings group, the kind of item and its title: what a finding declares
+// (finding.Track), or the tracker's own grouping for local-secrets' data dumps. Not to be confused
+// with Rule, a decision about items (rules.go).
+type grouping struct {
+	by        groupBy
+	kind      Kind
+	title     func(p *proposal) string // nil: the finding's title, or the worst finding's with a count
+	next      func(p *proposal) *Next  // nil: the worst finding's remediation
+	keepTitle bool                     // keep the item's title (a run from before declarations)
 }
 
-// dumpsRule makes one item of a repository's data dumps, purged in one history rewrite.
-var dumpsRule = &rule{by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext}
+// dumpsGrouping makes one item of a repository's data dumps, purged in one history rewrite.
+var dumpsGrouping = &grouping{by: perRepo, kind: KindFix, title: dumpsTitle, next: dumpsNext}
 
-// defaultRule groups a finding that declares nothing.
-var defaultRule = &rule{by: perFamily, kind: KindFix}
+// defaultGrouping groups a finding that declares nothing.
+var defaultGrouping = &grouping{by: perFamily, kind: KindFix}
 
-// declared is the rule a finding's Track declares.
-func declared(tr *finding.Track) *rule {
-	r := *defaultRule
+// declared is the grouping a finding's Track declares.
+func declared(tr *finding.Track) *grouping {
+	r := *defaultGrouping
 	if by, ok := groupsBy[tr.Group]; ok {
 		r.by = by
 	}
@@ -149,15 +150,15 @@ func family(f finding.Finding) string {
 	return digits.ReplaceAllString(quoted.ReplaceAllString(stripName(f), `"…"`), "N")
 }
 
-// ruleFor is the rule a finding groups by.
-func ruleFor(f finding.Finding) *rule {
+// groupingFor is the grouping a finding follows.
+func groupingFor(f finding.Finding) *grouping {
 	switch {
 	case f.Connector == SecretsConnector && f.Resource.Type == "data_dump":
-		return dumpsRule
+		return dumpsGrouping
 	case f.Track != nil:
 		return declared(f.Track)
 	}
-	return defaultRule
+	return defaultGrouping
 }
 
 // proposal is what one sync says an item should hold.
@@ -165,7 +166,7 @@ type proposal struct {
 	key, theme, connector, instance, account string
 	repo                                     string // perRepo: the repository the dumps are in
 	kind                                     Kind
-	rule                                     *rule
+	grouping                                 *grouping
 	findings                                 []finding.Finding
 	refs                                     []FindingRef
 	maxSeverity                              finding.Severity // "" for no cap
@@ -174,10 +175,10 @@ type proposal struct {
 	statuses                                 []finding.Status // setup proposals: one per ref
 }
 
-// groupKey is the item key of a finding under its rule.
-func groupKey(f finding.Finding, r *rule, theme string) (key string, p proposal) {
+// groupKey is the item key of a finding under its grouping.
+func groupKey(f finding.Finding, r *grouping, theme string) (key string, p proposal) {
 	lbl := finding.Label(f.Connector, f.Instance)
-	p = proposal{theme: theme, connector: f.Connector, instance: f.Instance, account: f.Account, kind: r.kind, rule: r}
+	p = proposal{theme: theme, connector: f.Connector, instance: f.Instance, account: f.Account, kind: r.kind, grouping: r}
 	base := "group:" + lbl + "|" + f.Resource.Type
 	var declaredKey string
 	if f.Track != nil {
@@ -284,13 +285,13 @@ func (p *proposal) severity() finding.Severity {
 
 // finish sets the title and next step of a proposal made of findings by a rule.
 func (p *proposal) finish(itemID string) {
-	if p.rule == nil {
+	if p.grouping == nil {
 		return
 	}
 	switch {
-	case p.rule.keep:
-	case p.rule.title != nil:
-		p.title = p.rule.title(p)
+	case p.grouping.keepTitle:
+	case p.grouping.title != nil:
+		p.title = p.grouping.title(p)
 	case len(p.findings) == 1:
 		p.title = p.findings[0].Title
 	default:
@@ -300,8 +301,8 @@ func (p *proposal) finish(itemID string) {
 	if p.title != "" {
 		p.title += p.severitySplit()
 	}
-	if p.rule.next != nil {
-		p.next = p.rule.next(p)
+	if p.grouping.next != nil {
+		p.next = p.grouping.next(p)
 		p.next.Command = "segurata track show " + itemID
 		return
 	}

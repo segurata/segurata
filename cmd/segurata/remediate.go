@@ -17,6 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/runfile"
 )
 
 // remediateCmd is `segurata remediate --list | <finding-id> [--apply] [--yes]`. Without --apply
@@ -38,12 +39,12 @@ func remediateCmd(args []string) int {
 		return 2
 	}
 
-	files, err := run.LatestFiles(*out, time.Now())
+	files, err := runfile.LatestFiles(*out, time.Now())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	findings, err := run.Load(files)
+	findings, err := runfile.Load(files)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -65,7 +66,7 @@ func remediateCmd(args []string) int {
 		remediate.List(os.Stdout, findings, minSev)
 		return 0
 	}
-	f, err := run.Find(findings, id)
+	f, err := runfile.Find(findings, id)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

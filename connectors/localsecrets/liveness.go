@@ -3,7 +3,6 @@ package localsecrets
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -117,7 +116,7 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	history := map[string]secretrisk.Evidence{}      // fingerprint -> a sighting in git history
 	historyIDs := map[string][]secretrisk.Evidence{} // place -> AWS key ids committed there
 	for _, f := range fs {
-		ev, ok := findingEvidence(f)
+		ev, ok := secretrisk.EvidenceOf(f)
 		if !ok || isNoise(f) {
 			continue
 		}
@@ -194,12 +193,13 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	results, st := ch.Check(lctx, probes)
 	st.NotAllowed += refused
 	for i := range fs {
-		ev, ok := findingEvidence(fs[i])
+		ev, ok := secretrisk.EvidenceOf(fs[i])
 		if !ok {
 			continue
 		}
 		if r, found := results[ev.Fingerprint]; found {
-			fs[i].Evidence["liveness"] = r
+			ev.Liveness = &r
+			fs[i].Evidence = ev.Map()
 		}
 	}
 	line := "; " + st.String()
@@ -280,14 +280,4 @@ func (c *Connector) checker(home string, cfg liveness.Config) *liveness.Checker 
 	}
 	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(liveness.DefaultCachePath(home)),
 		Owner: liveness.Owner{AWS: c.AWS, GH: c.GH, SSH: c.SSH, Home: home}}
-}
-
-// findingEvidence reads a secret finding's evidence back.
-func findingEvidence(f finding.Finding) (secretrisk.Evidence, bool) {
-	raw, _ := json.Marshal(f.Evidence)
-	var ev secretrisk.Evidence
-	if json.Unmarshal(raw, &ev) != nil || ev.Fingerprint == "" {
-		return ev, false
-	}
-	return ev, true
 }
