@@ -1257,12 +1257,21 @@ tried. A secret is tried when the run reports it (noise never is, which leaves c
 people's repositories alone) and its attribution, computed as the next sync would (the tracker's
 facts plus this scan's claims, against the tracker's accounts and config `owned`, lent by the core
 in `connector.Request.Known`, never sent to an external connector), is one of `owners`. A run
-without a tracker gets no attribution and tries nothing. Secrets of history replayed from the git
-history cache have no value in memory: they get a cached result or stay unchecked until the next
-full scan of their repository.
+without a tracker gets no attribution and tries nothing.
 
-**Safety.** Every call is a GET, except Slack's auth.test, which Slack documents as POST and which
-is sent without a body. None changes state, costs money or sends anything; slack webhooks (trying
+Secrets seen only in history replayed from the git history cache have no value in memory. When the
+liveness cache has no fresh answer for one and the check still has time, its value is read again
+at check time: `git cat-file -s` and `git cat-file blob <commit>:<path>` (files up to 8 MiB) give
+the file as committed, and on the line gitleaks reported, or the one before or after, the window
+that fits the redacted hint and has the secret's fingerprint is the value
+(`fingerprint.Key.Find`, the search `rotations replace` uses to locate an old value). An AWS secret
+key brings the one key id committed in the same file and commit. The value lives in the probe for
+that one call. One that cannot be read (a commit gone, a file too big, a hint without a length)
+stays unchecked, counted as "without a value at hand".
+
+**Safety.** Every call is a GET, except two POSTs: Slack's auth.test, which Slack documents as POST,
+sent without a body, and Linear's GraphQL endpoint, whose documentation shows only POST, sent the
+fixed query `{ viewer { id } }` (a query, never a mutation). None changes state, costs money or sends anything; slack webhooks (trying
 one posts), Twilio and Mailgun keys (they need a second credential or a region segurata cannot
 know) and npm `_authToken` lines (any registry) are not tried. One call at a time per provider and
 at most four a second overall, through `httpx` (credentials are dropped on a redirect to another
@@ -1270,8 +1279,8 @@ host). Results are cached in `~/.cache/segurata/liveness.json` (0600) by fingerp
 day, dead for 7, unknown never. A result holds the state, the date, the provider, the endpoint,
 segurata's own reason (`HTTP 401`, `invalid_auth`, `InvalidClientTokenId`) and the account the
 provider names; never the value and never the provider's message, which may echo part of the key.
-The status line counts what was asked, read from the cache, refused by owner or provider,
-unsupported, left without a value and interrupted.
+The status line counts what was asked, read from the cache, recovered from git history, refused by
+owner or provider, unsupported, left without a value and interrupted.
 
 **Providers.** Live is a 2xx; dead is the answer the provider documents for an invalid, revoked or
 expired key; anything else (network, 5xx, rate limits, a 403 that may be a region) is unknown,
@@ -1292,6 +1301,13 @@ except where a 403 or 429 proves the key was accepted.
 | Telegram (`telegram-bot`) | `GET api.telegram.org/bot<token>/getMe` (the recorded endpoint hides the token); account `telegram:@<username>` | 2xx | 401 (observed; the Bot API documents the error envelope, not the code) | [getMe](https://core.telegram.org/bots/api#getme) |
 | Hugging Face (`huggingface`) | `GET huggingface.co/api/whoami-v2`; account `huggingface:<name>` | 2xx | 401 (observed, not documented) | [OpenAPI](https://huggingface.co/.well-known/openapi.md) (lists the endpoint, documents only its 200) |
 | npm (`npm-token`) | `GET registry.npmjs.org/-/whoami`; account `npm:<username>` | 2xx | 401 (observed, not documented) | [npm whoami](https://docs.npmjs.com/cli/v10/commands/npm-whoami) (says it calls `/-/whoami`) |
+| xAI (`xai`) | `GET api.x.ai/v1/api-key` | 2xx with no flag set; 403 (lacks a permission) | 401; 200 with `api_key_blocked`, `api_key_disabled` or `team_blocked` true | [API key](https://docs.x.ai/developers/rest-api-reference/inference/other), [errors](https://docs.x.ai/developers/debugging) |
+| Groq (`groq`) | `GET api.groq.com/openai/v1/models` | 2xx | 401 | [API reference](https://console.groq.com/docs/api-reference), [errors](https://console.groq.com/docs/errors) |
+| Notion (`notion`) | `GET api.notion.com/v1/users/me` with `Notion-Version: 2026-03-11`; account `notion:<workspace_id>` | 2xx; 403 `restricted_resource` | 401 `unauthorized` | [retrieve your bot user](https://developers.notion.com/reference/get-self), [status codes](https://developers.notion.com/reference/status-codes) |
+| Cloudflare (`cloudflare-token`) | `GET api.cloudflare.com/client/v4/user/tokens/verify` | `result.status` `active` | `result.status` `disabled` or `expired`. Any error is unknown: account-owned tokens verify at `/accounts/{account_id}/tokens/verify` and a Global API Key needs the account email | [verify user token](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/), [account-owned tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) |
+| DigitalOcean (`digitalocean`) | `GET api.digitalocean.com/v2/account`; account `digitalocean:<uuid>` | 2xx | 401 `unauthorized` | [account](https://docs.digitalocean.com/reference/api/reference/account/index.html.md) |
+| Sentry (`sentry-token`) | `GET sentry.io/api/0/organizations/` | 2xx | never: a token of a self-hosted Sentry or of another region may be refused by sentry.io, so any error is unknown | [list your organizations](https://docs.sentry.io/api/users/list-your-organizations/), [data storage location](https://docs.sentry.io/organization/data-storage-location/) |
+| Linear (`linear`) | `POST api.linear.app/graphql`, query `{ viewer { id } }`, the key in `Authorization` without `Bearer`; account `linear:<id>` | `data.viewer.id` | an `AUTHENTICATION_ERROR` in `errors`, or 401 (observed, not documented) | [GraphQL API](https://linear.app/developers/graphql) |
 
 Known gaps: keys of AWS partitions other than the standard one (GovCloud, China) read as dead on
 the global STS endpoint; OpenAI answers 403 from unsupported regions, which reads as unknown.

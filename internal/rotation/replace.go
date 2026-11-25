@@ -187,17 +187,7 @@ func (f *fileEdit) has(n int) bool {
 // find returns the substring of line whose fingerprint is the item's, or "". The hint gives the
 // value's length, prefix and last characters, so only windows that fit it are fingerprinted.
 func (r *replacement) find(line string) string {
-	return findFP(line, r.hint.Len, r.item.Fingerprint, r.key, r.hint.Fits)
-}
-
-func findFP(line string, n int, fp string, key fingerprint.Key, fits func(string) bool) string {
-	for i := 0; i+n <= len(line); i++ {
-		w := line[i : i+n]
-		if fits(w) && key.Of(w) == fp {
-			return w
-		}
-	}
-	return ""
+	return r.key.Find(line, r.hint.Len, r.item.Fingerprint, r.hint.Fits)
 }
 
 // checkNew validates the new value and fixes the edits. The value is never part of an error.

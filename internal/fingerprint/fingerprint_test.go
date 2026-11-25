@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +62,21 @@ func TestOpenNeverCreates(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err == nil {
 		t.Error("Open created a key")
+	}
+}
+
+func TestFindLocatesAValueByItsFingerprint(t *testing.T) {
+	k := FromBytes([]byte("a fixed test key, not a secret!!"))
+	value := "tok_" + strings.Repeat("Ab3", 8)
+	line := `KEY="` + value + `" # other tok_` + strings.Repeat("Zz9", 8)
+	fits := func(w string) bool { return strings.HasPrefix(w, "tok_") }
+	if got := k.Find(line, len(value), k.Of(value), fits); got != value {
+		t.Errorf("found %q", got)
+	}
+	if got := k.Find(line, len(value), k.Of("tok_"+strings.Repeat("x", 24)), fits); got != "" {
+		t.Errorf("found %q for a value that is not there", got)
+	}
+	if got := k.Find(line, 0, k.Of(value), fits); got != "" {
+		t.Error("a zero length finds nothing")
 	}
 }

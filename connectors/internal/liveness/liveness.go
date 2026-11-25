@@ -112,6 +112,11 @@ type Probe struct {
 	Type         string // a secretrisk catalog type
 	Value        string
 	KeyID        string // aws-secret-key: the access key id found with it
+	// Recover reads Value (and KeyID) again when the probe has none, and is called only when the
+	// cache has no fresh answer and the run still has time: for git history replayed from the
+	// cache, whose values the scan never read. ok is false when it could not. It runs on its
+	// provider's goroutine, concurrently with other providers' probes.
+	Recover func(ctx context.Context) (value, keyID string, ok bool)
 }
 
 // Stats count what one run of the check did, for the connector's status line.
@@ -120,12 +125,13 @@ type Stats struct {
 	Unsupported                        int // no provider endpoint for the type, or a key without its pair
 	NotAllowed                         int // attributed to an owner the config leaves out, or a provider it leaves out
 	Interrupted                        int // not asked: the run's time ran out
-	NoValue                            int // not asked: the run did not read its value (cached git history)
+	NoValue                            int // not asked: no value, read or recovered (cached git history)
+	Recovered                          int // values read again from git history at check time
 }
 
 func (s Stats) String() string {
-	return fmt.Sprintf("liveness: %d asked, %d from cache; %d live, %d dead, %d unknown; %d unsupported, %d not allowed, %d without a value at hand, %d interrupted",
-		s.Asked, s.Cached, s.Live, s.Dead, s.Unknown, s.Unsupported, s.NotAllowed, s.NoValue, s.Interrupted)
+	return fmt.Sprintf("liveness: %d asked, %d from cache, %d values recovered from git history; %d live, %d dead, %d unknown; %d unsupported, %d not allowed, %d without a value at hand, %d interrupted",
+		s.Asked, s.Cached, s.Recovered, s.Live, s.Dead, s.Unknown, s.Unsupported, s.NotAllowed, s.NoValue, s.Interrupted)
 }
 
 // Checker runs the check. Zero values are the defaults: real endpoints, no cache, the real clock,
@@ -159,11 +165,11 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 			st.Cached++
 			continue
 		}
-		pv := forProbe(p)
+		pv := forType(p.Type)
 		switch {
-		case p.Value == "":
+		case p.Value == "" && p.Recover == nil:
 			st.NoValue++
-		case pv == nil:
+		case pv == nil, p.Recover == nil && forProbe(p) == nil: // an AWS secret key without its key id
 			st.Unsupported++
 		case !c.Config.allowsProvider(pv.name):
 			st.NotAllowed++
@@ -174,15 +180,35 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	lim := &limiter{every: c.interval()}
+	count := func(n *int) {
+		mu.Lock()
+		*n++
+		mu.Unlock()
+	}
 	for pv, queue := range queues {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for _, p := range queue {
+				if ctx.Err() != nil {
+					count(&st.Interrupted)
+					continue
+				}
+				if p.Value == "" {
+					v, id, ok := p.Recover(ctx)
+					if !ok {
+						count(&st.NoValue)
+						continue
+					}
+					p.Value, p.KeyID = v, id
+					count(&st.Recovered)
+				}
+				if forProbe(p) == nil {
+					count(&st.Unsupported)
+					continue
+				}
 				if lim.wait(ctx) != nil {
-					mu.Lock()
-					st.Interrupted++
-					mu.Unlock()
+					count(&st.Interrupted)
 					continue
 				}
 				r := c.ask(ctx, pv, p)

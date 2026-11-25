@@ -67,6 +67,35 @@ func opensshBlob(cipher string) []byte {
 	return b
 }
 
+// A short random body scores less entropy than a long one: an AWS key id's 16 characters fell
+// under the 3.2 floor about 3 times in 100, and the key was silently dropped.
+func TestJudgeKeepsShortRandomKeyIDs(t *testing.T) {
+	r := rand.New(rand.NewPCG(3, 5))
+	const base32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+	dropped := 0
+	for range 5000 {
+		b := make([]byte, 16)
+		for i := range b {
+			b[i] = base32[r.IntN(len(base32))]
+		}
+		for _, id := range []string{"AKIA" + string(b), "ASIA" + string(b)} {
+			if p := classifyValue(id); p == nil {
+				t.Fatalf("%s not classified", id)
+			} else if _, ok := judge(p, id, "", time.Now()); !ok {
+				dropped++
+			}
+		}
+	}
+	if dropped > 0 {
+		t.Errorf("%d of 10000 random AWS key ids dropped as low entropy", dropped)
+	}
+	if p := classifyValue("AKIAAAAABBBBCCCCDDDD"); p == nil {
+		t.Fatal("not classified")
+	} else if _, ok := judge(p, "AKIAAAAABBBBCCCCDDDD", "", time.Now()); ok {
+		t.Error("a key id of four repeated letters accepted")
+	}
+}
+
 func TestJudgeRejectsPlaceholdersAndLowEntropy(t *testing.T) {
 	p := classifyValue(fake("sk-ant-", 40))
 	if p == nil || p.typ != "anthropic" {
@@ -183,6 +212,10 @@ func TestGuards(t *testing.T) {
 	}
 	if refused(gitList, "--git-dir=/r/.git", "--work-tree=/r", "ls-files", "-z") || !refused(gitList, "--git-dir=/r/.git", "config", "x") {
 		t.Error("git check")
+	}
+	if refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-s", "0123456789:a/b.env") || refused(gitCheck, "--git-dir=/r/.git", "cat-file", "blob", "0123456789:a/b.env") ||
+		!refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-p", "0123456789:a/b.env") || !refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-s", "HEAD:x") {
+		t.Error("git cat-file: the size and content of a file as committed, nothing else")
 	}
 	if refused(sshKeygenCheck, "-y", "-P", "", "-f", "k") || refused(sshKeygenCheck, "-l", "-f", "k.pub") {
 		t.Error("ssh-keygen read-only shapes refused")

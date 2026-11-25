@@ -3,6 +3,7 @@ package liveness
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,8 @@ const (
 	deadKey  = "DEAD-0000-fake-key-for-tests-only-bbbb"
 	flakyKey = "FLAKY-000-fake-key-for-tests-only-cccc"
 	keyID    = "AKIAEXAMPLEFAKE00000"
+	// disabledKey is a key the provider still recognises but reports disabled or expired.
+	disabledKey = "DISABLED-fake-key-for-tests-only-dddd"
 )
 
 // fake is every provider at once: it answers each endpoint as the provider documents, by the
@@ -69,7 +72,16 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(body))
 	}
 	cred := credential(r)
-	if r.Method != http.MethodGet && !(r.Method == http.MethodPost && r.URL.Path == "/api/auth.test" && r.ContentLength <= 0) {
+	switch {
+	case r.Method == http.MethodGet:
+	case r.Method == http.MethodPost && r.URL.Path == "/api/auth.test" && r.ContentLength <= 0:
+	case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != `{"query":"{ viewer { id } }"}` || r.Header.Get("Content-Type") != "application/json" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			reply(http.StatusBadRequest, `{}`)
+			return
+		}
+	default:
 		reply(http.StatusMethodNotAllowed, `{}`)
 		return
 	}
@@ -93,6 +105,45 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	live := cred == liveKey || strings.HasSuffix(cred, liveKey)
 	switch r.URL.Path {
+	case "/v1/api-key": // xAI: a disabled key still answers 200
+		switch {
+		case live:
+			reply(http.StatusOK, `{"team_id":"team-1","api_key_blocked":false,"api_key_disabled":false,"team_blocked":false}`)
+		case strings.HasSuffix(cred, disabledKey):
+			reply(http.StatusOK, `{"team_id":"team-1","api_key_blocked":false,"api_key_disabled":true,"team_blocked":false}`)
+		default:
+			reply(http.StatusUnauthorized, `{"code":"Unauthenticated","error":"No authorization header or an invalid authorization token was provided"}`)
+		}
+	case "/v1/users/me": // Notion
+		switch {
+		case r.Header.Get("Notion-Version") == "":
+			reply(http.StatusBadRequest, `{}`)
+		case live:
+			reply(http.StatusOK, `{"type":"bot","bot":{"workspace_id":"ws-1","workspace_name":"Mine"}}`)
+		default:
+			reply(http.StatusUnauthorized, `{"object":"error","status":401,"code":"unauthorized","message":"API token is invalid."}`)
+		}
+	case "/client/v4/user/tokens/verify": // Cloudflare: an account token fails here too
+		switch {
+		case live:
+			reply(http.StatusOK, `{"success":true,"result":{"id":"t1","status":"active"}}`)
+		case strings.HasSuffix(cred, disabledKey):
+			reply(http.StatusOK, `{"success":true,"result":{"id":"t1","status":"expired"}}`)
+		default:
+			reply(http.StatusUnauthorized, `{"success":false,"errors":[{"code":1000,"message":"Invalid API Token"}]}`)
+		}
+	case "/v2/account": // DigitalOcean
+		if live {
+			reply(http.StatusOK, `{"account":{"uuid":"do-uuid-1","status":"active"}}`)
+		} else {
+			reply(http.StatusUnauthorized, `{"id":"unauthorized","message":"Unable to authenticate you."}`)
+		}
+	case "/graphql": // Linear
+		if live {
+			reply(http.StatusOK, `{"data":{"viewer":{"id":"lin-user-1"}}}`)
+		} else {
+			reply(http.StatusBadRequest, `{"errors":[{"message":"Authentication required, not authenticated","extensions":{"code":"AUTHENTICATION_ERROR"}}]}`)
+		}
 	case "/api/auth.test": // Slack: 200 either way
 		if live {
 			reply(http.StatusOK, `{"ok":true,"team_id":"T0FAKE","user_id":"U0FAKE"}`)
@@ -162,6 +213,13 @@ func TestEveryProviderLiveAndDead(t *testing.T) {
 		{"telegram-bot", "123456789:AA", "telegram:@fake_bot", secretrisk.Dead, "HTTP 200"},
 		{"huggingface", "hf_", "huggingface:hf-me", secretrisk.Dead, "HTTP 200"},
 		{"npm-token", "npm_", "npm:npm-me", secretrisk.Dead, "HTTP 200"},
+		{"xai", "xai-", "", secretrisk.Dead, "HTTP 200"},
+		{"groq", "gsk_", "", secretrisk.Dead, "HTTP 200"},
+		{"notion", "ntn_", "notion:ws-1", secretrisk.Dead, "HTTP 200"},
+		{"cloudflare-token", "", "", secretrisk.Unknown, "active"},
+		{"digitalocean", "dop_v1_", "digitalocean:do-uuid-1", secretrisk.Dead, "HTTP 200"},
+		{"sentry-token", "sntryu_", "", secretrisk.Unknown, "HTTP 200"},
+		{"linear", "lin_api_", "linear:lin-user-1", secretrisk.Dead, "HTTP 200"},
 	}
 	for _, tc := range cases {
 		probes := []Probe{
@@ -189,8 +247,8 @@ func TestEveryProviderLiveAndDead(t *testing.T) {
 		}
 	}
 	for i, m := range f.methods {
-		if m != http.MethodGet && f.paths[i] != "/api/auth.test" {
-			t.Errorf("sent %s %s: only GET is allowed, and POST without a body to Slack's auth.test", m, f.paths[i])
+		if m != http.MethodGet && f.paths[i] != "/api/auth.test" && f.paths[i] != "/graphql" {
+			t.Errorf("sent %s %s: only GET is allowed, POST without a body to Slack's auth.test and a query to Linear's GraphQL", m, f.paths[i])
 		}
 	}
 }
@@ -298,10 +356,11 @@ func TestUnsupportedAndAllowlist(t *testing.T) {
 		{Fingerprints: []string{"a"}, Type: "slack-webhook", Value: liveKey},   // trying it would post
 		{Fingerprints: []string{"b"}, Type: "npm-authtoken", Value: liveKey},   // any registry
 		{Fingerprints: []string{"c"}, Type: "aws-access-key-id", Value: keyID}, // needs its secret
+		{Fingerprints: []string{"f"}, Type: "aws-secret-key", Value: liveKey},  // needs its key id, whatever the allowlist
 		{Fingerprints: []string{"d"}, Type: "openai-project", Value: liveKey},  // not in the allowlist
 		{Fingerprints: []string{"e"}, Type: "github", Value: "ghp_" + liveKey}, // allowed
 	})
-	if st.Unsupported != 3 || st.NotAllowed != 1 || st.Asked != 1 || len(got) != 1 {
+	if st.Unsupported != 4 || st.NotAllowed != 1 || st.Asked != 1 || len(got) != 1 {
 		t.Errorf("stats %+v, results %v", st, got)
 	}
 	if len(f.paths) != 1 {
@@ -429,5 +488,70 @@ func TestGitHubForbiddenIsUnknown(t *testing.T) {
 	got, _ := c.Check(context.Background(), []Probe{{Fingerprints: []string{"g"}, Type: "github", Value: "ghs_" + liveKey}})
 	if got["g"].State != secretrisk.Unknown {
 		t.Errorf("403: %+v", got["g"])
+	}
+}
+
+// A probe without its value (git history replayed from the cache) recovers it only when the cache
+// has no fresh answer and only within the run's time; one that cannot is counted, never asked.
+func TestRecoverValueAtCheckTime(t *testing.T) {
+	f := newFake(t)
+	c := f.checker()
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	c.Cache, c.Now = LoadCache(filepath.Join(t.TempDir(), "l.json")), func() time.Time { return now }
+	c.Cache.put([]string{"cached"}, secretrisk.Liveness{State: secretrisk.Dead, CheckedAt: now})
+	// Recover runs on each provider's goroutine, so providers recover concurrently.
+	var mu sync.Mutex
+	calls := map[string]int{}
+	recov := func(name, value, keyID string) func(context.Context) (string, string, bool) {
+		return func(context.Context) (string, string, bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls[name]++
+			return value, keyID, value != ""
+		}
+	}
+	got, st := c.Check(context.Background(), []Probe{
+		{Fingerprints: []string{"cached"}, Type: "github", Recover: recov("cached", "ghp_"+liveKey, "")},
+		{Fingerprints: []string{"gh"}, Type: "github", Recover: recov("gh", "ghp_"+liveKey, "")},
+		{Fingerprints: []string{"aws", "aws-id"}, Type: "aws-secret-key", Recover: recov("aws", "fake/secret/for/tests/only/0000000000000", keyID)},
+		{Fingerprints: []string{"lost"}, Type: "github", Recover: recov("lost", "", "")},
+		{Fingerprints: []string{"aws-alone"}, Type: "aws-secret-key", Recover: recov("aws-alone", "fake/secret/for/tests/only/4444444444444", "")},
+		{Fingerprints: []string{"none"}, Type: "github"},
+	})
+	if calls["cached"] != 0 || got["cached"].State != secretrisk.Dead {
+		t.Errorf("a fresh cached answer needs no value: %d recoveries, %+v", calls["cached"], got["cached"])
+	}
+	if got["gh"].State != secretrisk.Live || got["aws"].State != secretrisk.Live || got["aws-id"] != got["aws"] {
+		t.Errorf("recovered: %+v %+v %+v", got["gh"], got["aws"], got["aws-id"])
+	}
+	if _, ok := got["lost"]; ok {
+		t.Errorf("a value not recovered was asked: %+v", got["lost"])
+	}
+	if st.Recovered != 3 || st.NoValue != 2 || st.Unsupported != 1 || st.Asked != 2 || st.Cached != 1 {
+		t.Errorf("stats %+v", st)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	n := 0
+	_, st = c.Check(ctx, []Probe{{Fingerprints: []string{"late"}, Type: "github", Recover: func(context.Context) (string, string, bool) { n++; return "ghp_" + liveKey, "", true }}})
+	if n != 0 || st.Interrupted != 1 {
+		t.Errorf("out of time: %d recoveries, %+v", n, st)
+	}
+}
+
+// A key the provider recognises but reports disabled or expired is dead: xAI's flags, Cloudflare's
+// token status.
+func TestDisabledOrExpiredIsDead(t *testing.T) {
+	f := newFake(t)
+	got, _ := f.checker().Check(context.Background(), []Probe{
+		{Fingerprints: []string{"x"}, Type: "xai", Value: "xai-" + disabledKey},
+		{Fingerprints: []string{"c"}, Type: "cloudflare-token", Value: disabledKey},
+	})
+	if got["x"].State != secretrisk.Dead || got["x"].Reason != "api_key_disabled" {
+		t.Errorf("xAI disabled key: %+v", got["x"])
+	}
+	if got["c"].State != secretrisk.Dead || got["c"].Reason != "token expired" {
+		t.Errorf("Cloudflare expired token: %+v", got["c"])
 	}
 }
