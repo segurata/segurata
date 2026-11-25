@@ -132,8 +132,8 @@ access to it, for example `gh release download v0.1.0 --repo segurata/segurata`.
 ## Going public
 
 The code goes public as a new history in `github.com/segurata/segurata`, a repository that exists
-today, private and empty. The private `example-org/segurata` repository is only read from: its
-history is never rewritten in place and never force-pushed. Its clones cannot pull from the public
+today, private and empty. The private repository the code comes from is only read from: its history
+is never rewritten in place and never force-pushed. Its clones cannot pull from the public
 repository afterwards (every commit id changes), so open branches move over by `git format-patch`
 and `git am` or by cherry-pick.
 
@@ -156,15 +156,19 @@ rewrites.
 ### 2. Build the public history
 
 ```bash
-scripts/prepare-public-history.sh --workdir ~/segurata-public --drop-path-glob '*.pyc'
+scripts/prepare-public-history.sh --workdir ~/segurata-public --drop-path-glob '*.pyc' --keep-authors
 ```
 
 It clones `main` and its tags from `origin` into `~/segurata-public/public.git`, replaces every
 identifier in file contents and commit and tag messages, and writes `~/segurata-public/report.txt`.
 Its gates: no identifier left anywhere in the new history (paths, binary files and authors
 included, which the replacement does not touch: `--drop-path-glob` removes such files, `--mailmap`
-rewrites authors), gitleaks clean, the tip's files identical to `main`'s, and no ref but `main` and
-tags. `--drop-path-glob '*.pyc'` drops the Python bytecode an early commit added, which holds local
+rewrites authors), gitleaks clean, the tip's files identical to `main`'s, no ref but `main` and
+tags, and a decision on authors. The report lists every author, committer and tagger name and
+email in the new history; the gate fails unless `--mailmap FILE` rewrites them or `--keep-authors`
+publishes them as listed. The command above keeps them: drop `--keep-authors` and pass `--mailmap`
+to publish under other names. Nothing the script prints, the report included, shows an
+identifier: each one reads `<identifier N>`, N being its line in the identifiers file. `--drop-path-glob '*.pyc'` drops the Python bytecode an early commit added, which holds local
 paths. Run it again with a new `--workdir` until the report ends in `ALL GATES PASSED`, then read
 the result once by eye: `git -C ~/segurata-public/public.git log --stat`.
 
@@ -194,5 +198,5 @@ private:
 
 5. Check `go install github.com/segurata/segurata/cmd/segurata@main` from a machine without a
    clone, then cut `v0.1.0` as in [Cutting a release](#cutting-a-release).
-6. Archive the private repository (`gh repo archive example-org/segurata`) once nothing is left
-   to move over.
+6. Archive the private repository (`gh repo archive <owner>/<repository>`) once nothing is left to
+   move over.
