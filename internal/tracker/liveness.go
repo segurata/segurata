@@ -29,14 +29,15 @@ import (
 
 // updateLiveness keeps the newest result among the sightings, so a run that did not check the
 // secret (or a cached result older than the one held) leaves the item's as it is. Unknown never
-// replaces a held live or dead result: it tells nothing. A dead verdict of older rules is no
-// result: held, it is dropped; seen, it is skipped.
-func (s *Secret) updateLiveness(g []Sighting) {
-	if s.Liveness != nil && !s.Liveness.Trusted() {
+// replaces a held live or dead result: it tells nothing. A dead verdict of older rules, or a result
+// dated after now (a clock that jumped forward), is no result: held, it is dropped; seen, skipped.
+func (s *Secret) updateLiveness(g []Sighting, now time.Time) {
+	usable := func(l *secretrisk.Liveness) bool { return l.Trusted() && !l.CheckedAt.After(now) }
+	if s.Liveness != nil && !usable(s.Liveness) {
 		s.Liveness = nil
 	}
 	for _, x := range g {
-		if l := x.Evidence.Liveness; l != nil && l.Trusted() && supersedes(*l, s.Liveness) {
+		if l := x.Evidence.Liveness; l != nil && usable(l) && supersedes(*l, s.Liveness) {
 			c := *l
 			s.Liveness = &c
 		}

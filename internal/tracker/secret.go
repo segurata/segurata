@@ -197,7 +197,7 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		// out to be a temporary credential) can lower it as well as raise it.
 		s.Type, s.Redacted, s.Impact = best.Evidence.Type, best.Evidence.Redacted, impact.String()
 		s.LastSeen = seen.UTC()
-		s.updateLiveness(g)
+		s.updateLiveness(g, now)
 		for _, x := range g {
 			it.merge(x.Evidence, seen)
 		}

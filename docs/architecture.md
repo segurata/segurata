@@ -1282,7 +1282,8 @@ one posts), Twilio and Mailgun keys (they need a second credential or a region s
 know) and npm `_authToken` lines (any registry) are not tried. One call at a time per provider and
 at most four a second overall, through `httpx` (credentials are dropped on a redirect to another
 host). Results are cached in `~/.cache/segurata/liveness.json` (0600) by fingerprint: live for 1
-day, dead for 7, unknown never. A result holds the state, the date, the provider, the endpoint,
+day, dead for 7, unknown never; a result dated after now (a clock that jumped forward) is never
+fresh, and the tracker drops one too. A result holds the state, the date, the provider, the endpoint,
 segurata's own reason (`HTTP 401`, `invalid_auth`, `InvalidClientTokenId`) and the account the
 provider names; never the value and never the provider's message, which may echo part of the key.
 The status line counts what was asked, read from the cache, recovered from git history, refused by

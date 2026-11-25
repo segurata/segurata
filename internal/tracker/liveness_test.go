@@ -374,3 +374,24 @@ func TestUnknownNeverOverwrites(t *testing.T) {
 		}
 	}
 }
+
+// A result dated after the sync (a clock that jumped forward) never sticks: seen, it is skipped;
+// held, it is dropped, so it neither beats later checks nor re-closes the item on every sync.
+func TestFutureLivenessNeverSticks(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	tr := New(t0)
+	future := t0.Add(30 * 24 * time.Hour)
+	writeSecrets(t, out, t0, ghHistory(t0, checked(secretrisk.Dead, future, ""))...)
+	syncOrDie(t, tr, out, t0.Add(time.Minute))
+	gh := mustRotate(t, tr, ghFP[:8])
+	if gh.Status != Open || gh.Secret.Liveness != nil {
+		t.Fatalf("a future dead result: %s %+v", gh.Status, gh.Secret.Liveness)
+	}
+	gh.Secret.Liveness = checked(secretrisk.Dead, future, "") // held by an older segurata
+	day2 := t0.Add(24 * time.Hour)
+	writeSecrets(t, out, day2, ghHistory(day2, checked(secretrisk.Live, day2, ""))...)
+	syncOrDie(t, tr, out, day2.Add(time.Minute))
+	if gh.Status != Open || gh.LivenessLabel() != "live" {
+		t.Errorf("a held future result beat a real check: %s %s", gh.Status, gh.LivenessLabel())
+	}
+}

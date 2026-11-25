@@ -715,3 +715,14 @@ func TestGatesEveryFingerprint(t *testing.T) {
 		}
 	}
 }
+
+// A result dated after now (a clock that jumped forward) is never fresh: its age would be
+// negative, and it would stand for any later check.
+func TestFutureResultIsNotFresh(t *testing.T) {
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	c := LoadCache(filepath.Join(t.TempDir(), "l.json"))
+	c.put([]string{"x"}, secretrisk.Liveness{State: secretrisk.Dead, CheckedAt: now.Add(time.Hour)})
+	if _, ok := c.fresh([]string{"x"}, now); ok {
+		t.Error("a result from the future answered")
+	}
+}

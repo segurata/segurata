@@ -96,7 +96,11 @@ func (c *Cache) put(fps []string, r secretrisk.Liveness) {
 }
 
 // withinTTL reports whether a live or dead result is still young enough to stand for a new check.
+// One dated after now (a clock that jumped forward) never is.
 func withinTTL(r secretrisk.Liveness, now time.Time) bool {
+	if r.CheckedAt.After(now) {
+		return false
+	}
 	switch r.State {
 	case secretrisk.Live, secretrisk.Unregistered:
 		return now.Sub(r.CheckedAt) < LiveTTL
