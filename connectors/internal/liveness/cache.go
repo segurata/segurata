@@ -39,7 +39,7 @@ type Cache struct {
 func LoadCache(path string) *Cache {
 	c := &Cache{path: path}
 	raw, err := os.ReadFile(path)
-	if err == nil && json.Unmarshal(raw, c) == nil && c.Version == cacheVersion {
+	if err == nil && json.Unmarshal(raw, c) == nil && c.Version == cacheVersion && c.Results != nil {
 		return c
 	}
 	return &Cache{path: path, Results: map[string]secretrisk.Liveness{}}

@@ -354,6 +354,13 @@ func TestCache(t *testing.T) {
 	if LoadCache(filepath.Join(t.TempDir(), "missing.json")).Results == nil {
 		t.Error("a missing cache is an empty one")
 	}
+	broken := filepath.Join(t.TempDir(), "broken.json")
+	_ = os.WriteFile(broken, []byte(`{"version":1,"results":null}`), 0o600)
+	bc := LoadCache(broken)
+	bc.put([]string{"x"}, secretrisk.Liveness{State: secretrisk.Live, CheckedAt: now})
+	if _, ok := bc.fresh([]string{"x"}, now); !ok {
+		t.Error("a cache file without results is an empty cache")
+	}
 }
 
 func TestInterruptedAndRateLimited(t *testing.T) {
