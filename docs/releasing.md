@@ -1,6 +1,7 @@
 # Releasing
 
-A `v*` tag pushed to GitHub runs [`.github/workflows/release.yml`](../.github/workflows/release.yml),
+Releases are cut only from `github.com/segurata/segurata`, where the cosign identity, the cask and
+`go install` below expect them. A `v*` tag pushed there runs [`.github/workflows/release.yml`](../.github/workflows/release.yml),
 which runs the tests and then [GoReleaser](../.goreleaser.yaml):
 
 | Output | Detail |
@@ -10,10 +11,16 @@ which runs the tests and then [GoReleaser](../.goreleaser.yaml):
 | SBOM | `<archive>.sbom.json`, SPDX, one per archive (syft) |
 | Checksums | `checksums.txt`, SHA-256 of every archive and SBOM |
 | Signature | `checksums.txt.sigstore.json`, a Sigstore bundle: keyless cosign signature with the workflow's GitHub OIDC identity, logged in the Rekor transparency log |
-| Homebrew cask | `Casks/segurata.rb` pushed to the tap, when the tap token is configured |
+| Homebrew cask | `Casks/segurata.rb` pushed to the `segurata/homebrew-tap` repository, when the tap token is configured |
 
 A second job downloads `checksums.txt` and its bundle from the published release and verifies
 them as below, so a release with a broken signature fails visibly.
+
+Signing is keyless cosign rather than minisign: there is no long-lived private key to store as a
+secret, rotate or lose, and a leaked key could sign a forged release that verifies. The signature
+names the workflow, the repository and the tag that produced it, and the Rekor transparency log
+records every signature made with that identity, so a forged release would leave a public trace.
+The cost is on the verifier's side: cosign, and trust in Sigstore's public instance.
 
 ## Cutting a release
 
@@ -37,8 +44,8 @@ To check the GoReleaser config locally: `goreleaser check`, and `goreleaser rele
 
 | Setting | Where | Needed for |
 |---|---|---|
-| `HOMEBREW_TAP_GITHUB_TOKEN` | Actions secret | Pushing the cask. A fine-grained token with Contents read and write on the tap repository only. Without it the release still publishes, with the tap step skipped |
-| `HOMEBREW_TAP_OWNER` | Actions variable | Optional. Owner of the `homebrew-tap` repository; `example-org` when unset |
+| `HOMEBREW_TAP_GITHUB_TOKEN` | Actions secret | Pushing the cask. A fine-grained token with the `segurata` organization as resource owner, access to the `homebrew-tap` repository only, and Contents read and write. Without it the release still publishes, with the tap step skipped |
+| `HOMEBREW_TAP_OWNER` | Actions variable | Optional. Owner of the `homebrew-tap` repository; `segurata` when unset |
 | `homebrew-tap` repository | GitHub | Must exist (public, with a default branch) before the first release with the token set |
 
 The workflow uses no other secret. The default `GITHUB_TOKEN` creates the release; `id-token:
@@ -64,7 +71,7 @@ v3 or later:
 ```bash
 TAG=v0.1.0
 cosign verify-blob \
-  --certificate-identity "https://github.com/example-org/segurata/.github/workflows/release.yml@refs/tags/$TAG" \
+  --certificate-identity "https://github.com/segurata/segurata/.github/workflows/release.yml@refs/tags/$TAG" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --bundle checksums.txt.sigstore.json \
   checksums.txt
@@ -78,16 +85,12 @@ sha256sum --ignore-missing -c checksums.txt          # Linux
 shasum -a 256 --ignore-missing -c checksums.txt      # macOS
 ```
 
-When the repository moves to `segurata/segurata`, the identity becomes
-`https://github.com/segurata/segurata/.github/workflows/release.yml@refs/tags/$TAG`. Releases made
-before the move keep verifying only with the `example-org/segurata` identity.
-
 ## Installing
 
 ### Homebrew
 
 ```bash
-brew install --cask example-org/tap/segurata
+brew install --cask segurata/tap/segurata
 segurata version
 ```
 
@@ -103,8 +106,16 @@ go install github.com/segurata/segurata/cmd/segurata@latest   # or @v0.1.0
 ```
 
 Builds from source with your Go toolchain (the version in `go.mod` or newer). `segurata version`
-then shows the module version without a commit or date. This works once the module is published at
-`github.com/segurata/segurata`; until then, clone the repository and run `go build ./cmd/segurata`.
+then shows the module version without a commit or date.
+
+This works only once the code is public at `https://github.com/segurata/segurata`, because the
+module path is `github.com/segurata/segurata`. The go command maps a `github.com/<owner>/<repo>`
+path straight to `https://github.com/<owner>/<repo>` with no lookup that could point elsewhere
+(`vcsPaths` in the Go source, `src/cmd/go/internal/vcs/vcs.go`), the module proxy fetches it the
+same way, and a `go.mod` whose module path differs from the path asked for is rejected. A
+repository living anywhere else cannot serve this module path;
+a vanity path (`segurata.dev/segurata`) could, but would change the module path. Until then, clone
+the repository and run `go build ./cmd/segurata`.
 
 ### Release binaries
 
@@ -116,7 +127,7 @@ install -m 0755 segurata ~/.local/bin/
 ```
 
 While the repository is private, release downloads (and so the cask) need a GitHub token with read
-access to it, for example `gh release download v0.1.0 --repo example-org/segurata`.
+access to it, for example `gh release download v0.1.0 --repo segurata/segurata`.
 
 ## Moving to segurata/segurata
 
