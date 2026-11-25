@@ -317,9 +317,7 @@ func (b gcpBudget) neutral(currency string, ids map[string]string) budget.Budget
 	}
 	// Folders and organizations cannot be matched to projects without more calls: like services,
 	// they narrow what is counted but are not taken as leaving any linked project out.
-	for _, a := range f.ResourceAncestors {
-		nb.Scope.Filters = append(nb.Scope.Filters, a)
-	}
+	nb.Scope.Filters = append(nb.Scope.Filters, f.ResourceAncestors...)
 	var detail []string
 	for _, list := range []struct {
 		noun  string

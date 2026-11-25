@@ -1,7 +1,6 @@
 package localsecrets
 
 import (
-	"fmt"
 	"math/rand/v2"
 	"reflect"
 	"regexp/syntax"
@@ -119,7 +118,7 @@ func FuzzMatcherAgreesWithAlternation(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		for i, m := range ms {
 			if got, want := m.findAll(s), refs[i](s); !reflect.DeepEqual(got, want) {
-				t.Fatal(fmt.Sprintf("%q: matcher %v, alternation %v", s, got, want))
+				t.Fatalf("%q: matcher %v, alternation %v", s, got, want)
 			}
 		}
 	})

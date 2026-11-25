@@ -579,14 +579,14 @@ func TestReplaceRefusesItemsItCannotLocate(t *testing.T) {
 
 func TestNext(t *testing.T) {
 	fx := newReplaceFixture(t)
-	o, e, code := fx.run(t, "", true, "next")
+	_, e, code := fx.run(t, "", true, "next")
 	if code != 0 {
 		t.Fatalf("next: %s", e)
 	}
 	if fx.lastAction(t) == tracker.ActNext {
 		t.Error("next without --log wrote to the history")
 	}
-	o, e, code = fx.run(t, "", true, "next", "--log")
+	o, e, code := fx.run(t, "", true, "next", "--log")
 	if code != 0 {
 		t.Fatalf("next: %s", e)
 	}

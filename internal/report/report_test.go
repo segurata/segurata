@@ -130,14 +130,6 @@ func (x *fx) build(t *testing.T) *Report {
 	return r
 }
 
-func ids(fs []finding.Finding) []string {
-	var out []string
-	for _, f := range fs {
-		out = append(out, f.ID)
-	}
-	return out
-}
-
 // A tracker that never synced is synced in memory, so the report counts items before the first
 // track sync too, from the same engine; the report saves nothing.
 func TestBuildSyncsANewTrackerInMemory(t *testing.T) {
