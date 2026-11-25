@@ -432,8 +432,9 @@ func (it *Item) live() []FindingRef {
 	return out
 }
 
-// LiveAndLeaked reports whether a connector or the liveness check shows the secret is live and a copy of it left the
-// machine (pushed git history, an agent transcript): the most urgent kind of secret.
+// LiveAndLeaked reports whether a connector or the liveness check shows the secret is live and a
+// copy of it left the machine (pushed git history, an agent transcript): the most urgent kind of
+// secret.
 func (it *Item) LiveAndLeaked() bool {
 	return it.provenLive() && it.worst().Level == secretrisk.Remote
 }

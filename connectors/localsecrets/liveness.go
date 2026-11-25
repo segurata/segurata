@@ -27,8 +27,8 @@ func newChecker(home string, cfg liveness.Config) *liveness.Checker {
 	return &liveness.Checker{Config: cfg, Cache: liveness.LoadCache(liveness.DefaultCachePath(home))}
 }
 
-// heldValues are the values of the secrets the check may try, by fingerprint, and the AWS key ids
-// found next to each secret access key.
+// heldValues are the values of the secrets the check may try, by fingerprint, and the AWS access
+// key ids, which are tried only with a secret access key found in the same place.
 type heldValues struct {
 	byFP map[string]heldValue
 	// awsIDs are the access key ids by place (path and commit), by fingerprint.
@@ -39,8 +39,7 @@ type heldValues struct {
 
 type heldValue struct{ typ, value string }
 
-// hold keeps the value of a prepared secret the check could try. The caller holds s.mu or is the
-// only goroutine.
+// hold keeps the value of a prepared secret the check could try. The caller holds s.mu.
 func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 	if !s.cfg.liveness.Enabled || ev.Public || ev.Encrypted {
 		return
@@ -56,6 +55,7 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 			h.awsIDs[place] = map[string]string{}
 		}
 		h.awsIDs[place][ev.Fingerprint] = value
+		return
 	case ev.Type == "aws-secret-key":
 		if h.awsSecrets == nil {
 			h.awsSecrets = map[string][]string{}
@@ -70,26 +70,34 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 	h.byFP[ev.Fingerprint] = heldValue{ev.Type, value}
 }
 
-// probes are the secrets to try: one per fingerprint whose value is held, an AWS secret access key
-// with the one key id found in the same place (both fingerprints get the result).
+// probes are the held secrets to try, one per fingerprint: an AWS secret access key with the one
+// key id found in the same place (both fingerprints get the result). A secret key without its key
+// id and a key id without its secret key are probes too, which the checker answers from its cache
+// or counts as unsupported.
 func (h heldValues) probes() []liveness.Probe {
 	var out []liveness.Probe
 	paired := map[string]bool{}
 	for place, secrets := range h.awsSecrets {
-		ids := h.awsIDs[place]
-		if len(ids) != 1 {
-			continue
-		}
-		for idFP, id := range ids {
-			for _, fp := range secrets {
-				out = append(out, liveness.Probe{Fingerprints: []string{fp, idFP}, Type: "aws-secret-key", Value: h.byFP[fp].value, KeyID: id})
-				paired[fp], paired[idFP] = true, true
+		if ids := h.awsIDs[place]; len(ids) == 1 {
+			for idFP, id := range ids {
+				for _, fp := range secrets {
+					out = append(out, liveness.Probe{Fingerprints: []string{fp, idFP}, Type: "aws-secret-key", Value: h.byFP[fp].value, KeyID: id})
+					paired[fp], paired[idFP] = true, true
+				}
 			}
 		}
 	}
 	for fp, v := range h.byFP {
-		if !paired[fp] && v.typ != "aws-access-key-id" && v.typ != "aws-secret-key" {
+		if !paired[fp] {
 			out = append(out, liveness.Probe{Fingerprints: []string{fp}, Type: v.typ, Value: v.value})
+		}
+	}
+	for _, ids := range h.awsIDs {
+		for fp, id := range ids {
+			if !paired[fp] {
+				paired[fp] = true
+				out = append(out, liveness.Probe{Fingerprints: []string{fp}, Type: "aws-access-key-id", Value: id})
+			}
 		}
 	}
 	return out

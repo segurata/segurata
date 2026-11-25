@@ -50,22 +50,28 @@ func byName(name string) *provider {
 	return nil
 }
 
-// forType is the provider that can try the probe, or nil: an AWS secret key needs the key id
-// found with it.
-func forType(p Probe) *provider {
+// forType is the provider that takes secrets of the type, or nil.
+func forType(typ string) *provider {
 	for _, pv := range providers {
-		for _, t := range pv.types {
-			if t == p.Type && (pv.name != "aws" || p.KeyID != "") {
-				return pv
-			}
+		if slices.Contains(pv.types, typ) {
+			return pv
 		}
 	}
 	return nil
 }
 
-// Supported reports whether some provider can try a secret of this type (an AWS secret key only
-// with its key id).
-func Supported(typ string) bool { return forType(Probe{Type: typ, KeyID: "-"}) != nil }
+// forProbe is the provider that can try the probe, or nil: an AWS secret key needs the key id
+// found with it.
+func forProbe(p Probe) *provider {
+	if pv := forType(p.Type); pv != nil && (pv.name != "aws" || p.KeyID != "") {
+		return pv
+	}
+	return nil
+}
+
+// Supported reports whether some provider takes secrets of this type. An AWS secret key is
+// supported, though tried only with its key id (forProbe).
+func Supported(typ string) bool { return forType(typ) != nil }
 
 // judge turns an HTTP answer into a state and segurata's own reason.
 type judge func(code int, body []byte) (secretrisk.LiveState, string)
@@ -112,12 +118,13 @@ func account(provider, field string) func([]byte) string {
 	}
 }
 
-// call GETs base+path with header and judges the answer. A failed call (network, timeout) is
-// unknown, its error never kept: it may carry the URL.
+// call GETs base+path with header and judges the answer.
 func call(ctx context.Context, base, path string, header http.Header, j judge, acct func([]byte) string) secretrisk.Liveness {
 	return send(ctx, http.MethodGet, base, path, header, j, acct)
 }
 
+// send makes the request and judges the answer. A failed call (network, timeout) is unknown, its
+// error never kept: it may carry the URL.
 func send(ctx context.Context, method, base, path string, header http.Header, j judge, acct func([]byte) string) secretrisk.Liveness {
 	u, _ := url.Parse(base)
 	host := base
@@ -148,10 +155,15 @@ func endpointPath(path string) string {
 	return path
 }
 
+// bearerAuth is the header that sends the secret as a bearer token.
+func bearerAuth(value string) http.Header {
+	return http.Header{"Authorization": {"Bearer " + value}}
+}
+
 // bearer is a check that sends the secret as a bearer token to one path.
 func bearer(path string, j judge, acct func([]byte) string) func(context.Context, string, Probe) secretrisk.Liveness {
 	return func(ctx context.Context, base string, p Probe) secretrisk.Liveness {
-		return call(ctx, base, path, http.Header{"Authorization": {"Bearer " + p.Value}}, j, acct)
+		return call(ctx, base, path, bearerAuth(p.Value), j, acct)
 	}
 }
 
@@ -162,7 +174,7 @@ func askOpenAI(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	if strings.HasPrefix(p.Value, "sk-admin-") {
 		path = "/v1/organization/projects?limit=1"
 	}
-	return call(ctx, base, path, http.Header{"Authorization": {"Bearer " + p.Value}}, accepted(byStatus(false), http.StatusTooManyRequests), nil)
+	return bearer(path, accepted(byStatus(false), http.StatusTooManyRequests), nil)(ctx, base, p)
 }
 
 // askAnthropic lists models with an API key, or reads the organization with an Admin API key
@@ -179,7 +191,8 @@ func askAnthropic(ctx context.Context, base string, p Probe) secretrisk.Liveness
 // askGitHub reads the user a token signs in as. A 403 tells nothing: an installation token (ghs_)
 // cannot call /user, and GitHub may answer 403 to any credential after many invalid ones.
 func askGitHub(ctx context.Context, base string, p Probe) secretrisk.Liveness {
-	h := http.Header{"Authorization": {"Bearer " + p.Value}, "X-Github-Api-Version": {"2022-11-28"}}
+	h := bearerAuth(p.Value)
+	h.Set("X-Github-Api-Version", "2022-11-28")
 	return call(ctx, base, "/user", h, byStatus(false), account("github", "login"))
 }
 
@@ -258,7 +271,7 @@ func askSlack(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 		}
 		return secretrisk.Unknown, safeCode(r.Error)
 	}
-	res := send(ctx, http.MethodPost, base, "/api/auth.test", http.Header{"Authorization": {"Bearer " + p.Value}}, j, nil)
+	res := send(ctx, http.MethodPost, base, "/api/auth.test", bearerAuth(p.Value), j, nil)
 	if res.State == secretrisk.Live && team != "" {
 		res.Account = "slack:" + team
 	}

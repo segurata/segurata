@@ -32,8 +32,17 @@ func (s *Secret) updateLiveness(g []Sighting) {
 	}
 }
 
+// liveness is the latest check's result, nil when the item has no secret or it was never checked.
+func (it *Item) liveness() *secretrisk.Liveness {
+	if it.Secret == nil {
+		return nil
+	}
+	return it.Secret.Liveness
+}
+
 func (it *Item) livenessIs(st secretrisk.LiveState) bool {
-	return it.Secret != nil && it.Secret.Liveness != nil && it.Secret.Liveness.State == st
+	l := it.liveness()
+	return l != nil && l.State == st
 }
 
 // checkedLive reports whether the latest liveness check found the secret live.
@@ -44,15 +53,16 @@ func (it *Item) provenLive() bool { return len(it.live()) > 0 || it.checkedLive(
 
 // LivenessLabel is the latest check's state for listings: live, dead, unknown, or unchecked.
 func (it *Item) LivenessLabel() string {
-	if it.Secret == nil || it.Secret.Liveness == nil {
+	l := it.liveness()
+	if l == nil {
 		return "unchecked"
 	}
-	return string(it.Secret.Liveness.State)
+	return string(l.State)
 }
 
 // livenessReason says what the latest check found, "" when it found nothing that tells.
 func (it *Item) livenessReason() string {
-	l := it.Secret.Liveness
+	l := it.liveness()
 	if l == nil {
 		return ""
 	}
@@ -105,10 +115,11 @@ func (it *Item) closedDead() bool {
 
 // livenessClaims are the claims of the account the latest check says the secret signs in as.
 func (it *Item) livenessClaims() attribution.Claims {
-	if it.Secret == nil || it.Secret.Liveness == nil {
+	l := it.liveness()
+	if l == nil {
 		return attribution.Claims{}
 	}
-	return attribution.FromAccount(it.Secret.Liveness.Account)
+	return attribution.FromAccount(l.Account)
 }
 
 // LivenessLine is the coverage of the check over the tracked secrets (not noise, not merged): how

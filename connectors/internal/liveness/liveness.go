@@ -159,7 +159,7 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 			st.Cached++
 			continue
 		}
-		pv := forType(p)
+		pv := forProbe(p)
 		switch {
 		case p.Value == "":
 			st.NoValue++

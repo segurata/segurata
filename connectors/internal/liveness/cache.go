@@ -53,7 +53,7 @@ func (c *Cache) Save(now time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for fp, r := range c.Results {
-		if !fresh(r, now) {
+		if !withinTTL(r, now) {
 			delete(c.Results, fp)
 		}
 	}
@@ -70,11 +70,11 @@ func (c *Cache) fresh(fps []string, now time.Time) (secretrisk.Liveness, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	first, ok := c.Results[fps[0]]
-	if !ok || !fresh(first, now) {
+	if !ok || !withinTTL(first, now) {
 		return first, false
 	}
 	for _, fp := range fps[1:] {
-		if r, ok := c.Results[fp]; !ok || r.State != first.State || !fresh(r, now) {
+		if r, ok := c.Results[fp]; !ok || r.State != first.State || !withinTTL(r, now) {
 			return first, false
 		}
 	}
@@ -92,7 +92,8 @@ func (c *Cache) put(fps []string, r secretrisk.Liveness) {
 	}
 }
 
-func fresh(r secretrisk.Liveness, now time.Time) bool {
+// withinTTL reports whether a live or dead result is still young enough to stand for a new check.
+func withinTTL(r secretrisk.Liveness, now time.Time) bool {
 	switch r.State {
 	case secretrisk.Live:
 		return now.Sub(r.CheckedAt) < LiveTTL
