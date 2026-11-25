@@ -24,8 +24,23 @@ import (
 // of it gets the result in its evidence. Values stay in memory for the length of the run. See
 // docs/architecture.md, "Liveness".
 
-// livenessTimeout bounds the whole check, so a slow provider never costs the scan its findings.
-const livenessTimeout = 10 * time.Minute
+// livenessTimeout bounds the whole check, and livenessMargin is the time it leaves before the
+// run's deadline: the findings are emitted after it, and a slow provider never costs the scan
+// them (livenessDeadline).
+const (
+	livenessTimeout = 10 * time.Minute
+	livenessMargin  = time.Minute
+)
+
+// livenessDeadline is when the check stops: livenessTimeout from now, or livenessMargin before the
+// run's deadline when that comes first.
+func livenessDeadline(ctx context.Context, now time.Time) time.Time {
+	at := now.Add(livenessTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Add(-livenessMargin).Before(at) {
+		at = d.Add(-livenessMargin)
+	}
+	return at
+}
 
 // heldValues are the values of the secrets the check may try, by fingerprint, and the AWS access
 // key ids, which are tried only with a secret access key found in the same place.
@@ -195,7 +210,7 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		c, reported := claims[fp]
 		return known.Of(fp, c), reported
 	}
-	lctx, cancel := context.WithTimeout(ctx, livenessTimeout)
+	lctx, cancel := context.WithDeadline(ctx, livenessDeadline(ctx, time.Now()))
 	defer cancel()
 	results, st := ch.Check(lctx, probes)
 	for i := range fs {

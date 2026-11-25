@@ -1252,7 +1252,9 @@ its provider's cheapest read-only identity endpoint and records live, dead or un
 | `providers` | every provider below | Allowlist of providers to ask |
 
 **When and with what.** The scan is the only moment segurata holds a value, so the check runs at the
-end of the scan, before the findings are emitted, within 10 minutes of the run's deadline. The
+end of the scan, before the findings are emitted, for at most 10 minutes and ending a minute before
+the run's deadline. The findings are emitted whatever happens to the check: a run cancelled or out
+of time while it probes still reports the scan, and is marked interrupted. The
 values of secrets of a supported type stay in memory for the run; an AWS secret access key is tried
 with the one long-term (AKIA) key id found in the same file (or commit and file); with none or
 several it is not tried. A temporary (ASIA) key id never pairs: it needs its session token. One key

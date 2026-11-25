@@ -528,3 +528,65 @@ func TestCloudflareOnlyWhenNamed(t *testing.T) {
 		t.Fatal("a token reached the output")
 	}
 }
+
+// hangingProviders never answers until the request is abandoned; called runs at the first request.
+func hangingProviders(t *testing.T, called func()) *fakeProviders {
+	var once sync.Once
+	f := &fakeProviders{}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.asked = append(f.asked, r.Header.Get("Authorization")+r.Header.Get("X-Api-Key"))
+		f.mu.Unlock()
+		once.Do(called)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+// The liveness phase never costs the scan its findings: it ends a minute before the run's deadline
+// (so a deadline closer than livenessTimeout leaves it no time at all), and a run cancelled while
+// it probes still emits every finding before it returns.
+func TestLivenessNeverDiscardsTheScan(t *testing.T) {
+	req := connector.Request{Known: &attribution.Known{}, Config: map[string]any{"liveness": map[string]any{"enabled": true, "owners": []any{"unknown"}}}}
+	reported := func(rec *recorder) int {
+		n := 0
+		for _, f := range rec.findings {
+			if _, ok := findingEvidence(f); ok {
+				n++
+			}
+		}
+		return n
+	}
+
+	fx := newFixture(t)
+	f := hangingProviders(t, func() {})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rec := &recorder{}
+	start := time.Now()
+	if err := fx.livenessConnector(t, f).Inventory(ctx, req, rec); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 20*time.Second || reported(rec) == 0 || len(f.asked) != 0 || !strings.Contains(rec.statuses[0].Detail, "interrupted") {
+		t.Errorf("deadline in 30s: took %s, %d findings, %d asked; %v", d, reported(rec), len(f.asked), rec.statuses)
+	}
+
+	fx = newFixture(t)
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	f = hangingProviders(t, cancel) // Ctrl-C while the first provider is asked
+	rec = &recorder{}
+	if err := fx.livenessConnector(t, f).Inventory(ctx, req, rec); err == nil {
+		t.Error("a cancelled run reported success")
+	}
+	if reported(rec) == 0 || len(f.asked) == 0 {
+		t.Errorf("cancelled while probing: %d findings, %d asked", reported(rec), len(f.asked))
+	}
+	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	for _, s := range fx.secrets {
+		if len(s) >= 6 && strings.Contains(string(raw), s) {
+			t.Fatal("a raw secret reached the output")
+		}
+	}
+}
