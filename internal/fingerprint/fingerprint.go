@@ -90,7 +90,7 @@ func create(path string) (Key, error) {
 	if err := os.Link(tmp.Name(), path); errors.Is(err, fs.ErrExist) {
 		return Open(path)
 	} else if err != nil {
-		return Key{}, err
+		return Key{}, fmt.Errorf("linking the new key into place as %s, which needs a filesystem with hard links: %w", path, err)
 	}
 	return Key{key: key}, nil
 }

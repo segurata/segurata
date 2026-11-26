@@ -385,8 +385,15 @@ reached the model provider).
 
 ### Restart resistance
 
-- Writes are atomic (`statefile`: temporary file, fsync, rename), mode 0600 in a 0700 folder.
-- Before each write the file being replaced is copied to `tracker.json.bak` (one copy, 0600). The
+- Writes are atomic (`statefile`: temporary file, fsync, rename), private from creation: mode
+  0600 in a 0700 folder on Unix; on Windows a protected DACL granting only the user and SYSTEM,
+  owned by the user, set as the file or folder is created (`fileacl`). A folder that already
+  exists is left as it is; `doctor` reports it. On Windows a rename that meets another process
+  holding the old file open without delete sharing (an antivirus scanner, the indexer) is retried
+  for up to two seconds, and segurata's own readers open state files with delete sharing, so they
+  never block a writer. A user's file that `redact` or `rotations replace` rewrites goes into
+  place with `ReplaceFileW`, which keeps its DACL.
+- Before each write the file being replaced is copied to `tracker.json.bak` (one copy, private). The
   tracker holds no secret value (rotate items carry redacted hints and HMAC fingerprints, findings
   none), so the backup holds none either.
 - Load validates: JSON with no unknown field, a known `schema_version`, unique `T-` ids below
@@ -397,14 +404,14 @@ reached the model provider).
   SHA-256): another command saved it in between, and writing would drop that change silently.
   The command fails with "changed since this command loaded it; … run it again" and writes
   nothing, the backup included. `track sync` alone folds its runs once more into that version.
-- Commands that change the tracker hold a lock from load to save: an exclusive `flock` on
-  `tracker.json.lock` (released by the system if the process dies), waiting up to two minutes for
-  another command, so the scheduled `inventory` → `track sync` and an interactive command run one
-  after the other. Views (`status` without `--mark-seen`, `track list|show`, `report`) take no
+- Commands that change the tracker hold a lock from load to save: an exclusive lock on the private
+  `tracker.json.lock` (`flock` on Unix, `LockFileEx` on Windows; the system releases it if the
+  process dies), waiting up to two minutes for another command, so the scheduled `inventory` →
+  `track sync` and an interactive command run one after the other. Views (`status` without `--mark-seen`, `track list|show`, `report`) take no
   lock. `rotations replace` and `redact` hold the tracker across a confirmation and file rewrites,
   so they take no lock for that; they record their outcome (rotated, a failed attempt, the
-  redaction notes) with `tracker.Update`, which loads the tracker fresh under the lock. Without
-  `flock` (Windows) the lock is a no-op and the SHA-256 check still refuses lost updates.
+  redaction notes) with `tracker.Update`, which loads the tracker fresh under the lock. The
+  SHA-256 check above still refuses a lost update from an edit made outside segurata.
 - `schema_version` 7 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
@@ -752,7 +759,9 @@ connector or instance (the config and state are always checked).
 - State: the fingerprint key exists (a warning before the first `local-secrets` run), is a valid
   key and has mode 0600; `tracker.json` loads and has mode 0600 when present; the tracker
   folder and the output directory (`--out`) have mode 0700 (a warning otherwise, since their files
-  are 0600).
+  are 0600). On Windows the same checks read the DACL: a file or folder another account than the
+  user, SYSTEM and Administrators can read or change fails (a folder warns), and the fix is an
+  `icacls … /inheritance:r /grant:r "%USERNAME%:F" "SYSTEM:F"` that names no account.
 
 ## External connector protocol (v1, v2)
 

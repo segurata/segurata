@@ -15,10 +15,6 @@ import (
 	"github.com/segurata/segurata/internal/fileacl"
 )
 
-// errKeptTemp marks a failed replace whose new content survives only in the temporary file, which
-// is then left in place.
-var errKeptTemp = errors.New("the new content is kept in the temporary file")
-
 // ReadFile reads one of segurata's files through Open, so the read never blocks a writer.
 func ReadFile(path string) ([]byte, error) {
 	f, err := Open(path)
@@ -70,12 +66,7 @@ func write(path string, data []byte, mode fs.FileMode, rename func(src, dst stri
 	if err != nil {
 		return err
 	}
-	keep := false
-	defer func() {
-		if !keep {
-			os.Remove(tmp.Name())
-		}
-	}()
+	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
@@ -91,9 +82,7 @@ func write(path string, data []byte, mode fs.FileMode, rename func(src, dst stri
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	err = rename(tmp.Name(), path)
-	keep = errors.Is(err, errKeptTemp)
-	return err
+	return rename(tmp.Name(), path)
 }
 
 // Backup writes data, path's content before an edit, to a new private <path>.segurata-bak-<UTC time>

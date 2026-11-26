@@ -65,6 +65,11 @@ func helper(exe, behavior string) int {
 			return 1
 		}
 		return 0
+	case "last-path-error":
+		if len(os.Args) > 1 {
+			fmt.Fprintf(os.Stderr, "rg: %s: %s\n", os.Args[len(os.Args)-1], arg)
+		}
+		return 2
 	}
 	fmt.Fprintf(os.Stderr, "proctest: unknown helper %q\n", behavior)
 	return 2

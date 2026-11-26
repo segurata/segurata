@@ -375,7 +375,13 @@ func TestReplaceDryRunChangesNothing(t *testing.T) {
 		t.Fatalf("dry run: %d %s", code, e)
 	}
 	after := secretrisk.Redact("anthropic", "sk-ant-", fx.new)
-	for _, want := range []string{fx.item(t).Secret.Redacted + " → " + after, "~/.zshrc", "mode 640", "line 2:", "~/src/app/.env", "mode 600", "line 1:", "line 3:", "No backup", "Dry run"} {
+	wants := []string{fx.item(t).Secret.Redacted + " → " + after, "~/.zshrc", "line 2:", "~/src/app/.env", "line 1:", "line 3:", "No backup", "Dry run"}
+	if runtime.GOOS == "windows" {
+		wants = append(wants, "Windows ACL verified")
+	} else {
+		wants = append(wants, "mode 640", "mode 600")
+	}
+	for _, want := range wants {
 		if !strings.Contains(o, want) {
 			t.Errorf("plan lacks %q:\n%s", want, o)
 		}

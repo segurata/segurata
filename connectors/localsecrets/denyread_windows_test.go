@@ -17,10 +17,11 @@ func denyRead(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := syscall.CreateFile(name, winsys.WriteDAC, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+	const readControl = 0x20000
+	h, err := syscall.CreateFile(name, readControl|winsys.WriteDAC, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
 		nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("opening fixture for ACL update: %v", err)
 	}
 	info := uint32(winsys.DaclSecurityInformation | winsys.ProtectedDaclSecurityInformation)
 	allow := "(A;;FA;;;" + user + ")(A;;FA;;;SY)"
@@ -32,6 +33,6 @@ func denyRead(t *testing.T, path string) {
 	})
 	// Deny FILE_READ_DATA while retaining access to restore the fixture ACL.
 	if err := winsys.SetSecurityDescriptor(h, "D:P(D;;0x1;;;"+user+")"+allow, info); err != nil {
-		t.Fatal(err)
+		t.Fatalf("setting the fixture's deny ACE: %v", err)
 	}
 }

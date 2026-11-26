@@ -332,7 +332,11 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 			where += ", also " + strings.Join(f.also, ", ")
 		}
 		fmt.Fprintln(w)
-		textfmt.Line(w, "%s  mode %o", where, f.mode)
+		if runtime.GOOS == "windows" {
+			textfmt.Line(w, "%s  Windows ACL verified", where)
+		} else {
+			textfmt.Line(w, "%s  mode %o", where, f.mode)
+		}
 		for _, le := range f.lines {
 			if le.keychain {
 				textfmt.Line(w, "  line %d: %s%s → %s%s", le.n, le.head, before, le.head, lookupLine(r.service))

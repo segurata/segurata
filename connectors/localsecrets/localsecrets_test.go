@@ -179,7 +179,7 @@ func TestSettings(t *testing.T) {
 	if s, err := parseSettings(map[string]any{"git_cache": false}, "/h"); err != nil || s.gitCache {
 		t.Errorf("git_cache false: %+v %v", s, err)
 	}
-	if s, err := parseSettings(nil, "/h"); err != nil || s.reposRoot != "/h/src" || !s.gitCache || s.workers != defaultWorkers || s.timeout != defaultTimeout {
+	if s, err := parseSettings(nil, home); err != nil || s.reposRoot != filepath.Join(home, "src") || !s.gitCache || s.workers != defaultWorkers || s.timeout != defaultTimeout {
 		t.Errorf("defaults: %+v %v", s, err)
 	}
 	for _, tc := range []struct {

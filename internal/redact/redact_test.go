@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/proc/proctest"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/testcorpus"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -72,14 +74,23 @@ func (fx *fixture) secret(name, value string) string {
 func (fx *fixture) write(rel, content string, mode os.FileMode) string {
 	fx.t.Helper()
 	p := filepath.Join(fx.home, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		fx.t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(content), mode); err != nil {
-		fx.t.Fatal(err)
-	}
-	if err := os.Chmod(p, mode); err != nil {
-		fx.t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		if err := statefile.Write(p, []byte(content)); err != nil {
+			fx.t.Fatal(err)
+		}
+		if mode&0o077 != 0 {
+			fileacltest.Expose(fx.t, p)
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			fx.t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), mode); err != nil {
+			fx.t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			fx.t.Fatal(err)
+		}
 	}
 	if err := os.Chtimes(p, fx.old, fx.old); err != nil {
 		fx.t.Fatal(err)

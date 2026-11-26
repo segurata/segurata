@@ -2,12 +2,13 @@ package statefile
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/winsys"
 )
 
@@ -15,20 +16,42 @@ import (
 // scanner, the indexer) to let go of the file it replaces.
 var retryFor = 2 * time.Second
 
-// Rename is os.Rename (MoveFileEx with MOVEFILE_REPLACE_EXISTING), retried while dst is held open
-// without FILE_SHARE_DELETE.
+// Rename replaces dst in the same directory. Readers that share delete keep their old handles.
 func Rename(src, dst string) error {
-	return retrying(dst, func() error { return os.Rename(src, dst) })
+	abs, err := filepath.Abs(dst)
+	if err != nil {
+		return err
+	}
+	const deleteAccess = 0x10000
+	return retrying(dst, func() error {
+		f, err := open(src, deleteAccess)
+		if err != nil {
+			return err
+		}
+		err = winsys.RenameFile(syscall.Handle(f.Fd()), abs)
+		f.Close()
+		if errors.Is(err, winsys.ErrorInvalidParameter) || errors.Is(err, winsys.ErrorNotSupported) {
+			return os.Rename(src, dst)
+		}
+		if err != nil {
+			return &os.LinkError{Op: "rename", Old: src, New: dst, Err: err}
+		}
+		return nil
+	})
 }
 
 // Open opens name for reading and shares it for deleting too, so a reader never makes a writer's
 // rename fail.
 func Open(name string) (*os.File, error) {
+	return open(name, syscall.GENERIC_READ)
+}
+
+func open(name string, access uint32) (*os.File, error) {
 	p, err := syscall.UTF16PtrFromString(name)
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
-	h, err := syscall.CreateFile(p, syscall.GENERIC_READ, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+	h, err := syscall.CreateFile(p, access, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
 		nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
@@ -36,25 +59,14 @@ func Open(name string) (*os.File, error) {
 	return os.NewFile(uintptr(h), name), nil
 }
 
-// replaceFile puts src in place of the user's file dst with ReplaceFileW, which keeps dst's DACL
-// (and creation time and streams) where a rename would give the file src's private descriptor.
+// replaceFile preserves the destination DACL and changes the path with a single rename.
 func replaceFile(src, dst string) error {
-	if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
-		return Rename(src, dst)
-	}
-	err := retrying(dst, func() error { return winsys.ReplaceFile(dst, src, winsys.ReplacefileIgnoreMergeErrors) })
-	if !errors.Is(err, winsys.ErrorUnableToMoveReplacement) {
-		if err != nil {
-			return &fs.PathError{Op: "replace", Path: dst, Err: err}
+	if err := fileacl.CopyAccess(dst, src); err != nil {
+		if pathErr, ok := errors.AsType[*fs.PathError](err); !ok || pathErr.Path != dst || !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
-		return nil
 	}
-	// Without a backup name this error means dst is gone and src still holds the new content under
-	// its own name; it takes dst's place with src's private descriptor.
-	if err := Rename(src, dst); err != nil {
-		return fmt.Errorf("replacing %s: %w; %w at %s", dst, err, errKeptTemp, src)
-	}
-	return nil
+	return Rename(src, dst)
 }
 
 // retrying runs op until it succeeds, fails for good, or retryFor passes. Only the errors another
@@ -76,7 +88,7 @@ func retrying(dst string, op func() error) error {
 }
 
 func transient(err error) bool {
-	for _, e := range []syscall.Errno{syscall.ERROR_ACCESS_DENIED, winsys.ErrorSharingViolation, winsys.ErrorLockViolation, winsys.ErrorUnableToRemoveReplaced} {
+	for _, e := range []syscall.Errno{syscall.ERROR_ACCESS_DENIED, winsys.ErrorSharingViolation, winsys.ErrorLockViolation} {
 		if errors.Is(err, e) {
 			return true
 		}

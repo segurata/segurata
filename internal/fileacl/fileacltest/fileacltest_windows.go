@@ -51,11 +51,11 @@ func access(path string) (string, error) {
 
 const readControl = 0x20000
 
-func open(path string, access uint32) (syscall.Handle, error) {
+func open(path string, rights uint32) (syscall.Handle, error) {
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err
 	}
-	return syscall.CreateFile(p, readControl|access, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+	return syscall.CreateFile(p, readControl|rights, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
 		nil, syscall.OPEN_EXISTING, syscall.FILE_FLAG_BACKUP_SEMANTICS, 0)
 }

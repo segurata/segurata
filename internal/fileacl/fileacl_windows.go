@@ -263,6 +263,36 @@ func Describe(path string) (string, error) {
 // Fingerprint changes whenever the file's access does: its owner and DACL as SDDL.
 func Fingerprint(path string) (string, error) { return sddlOf(path, true) }
 
+// CopyAccess sets the staged file's DACL to match the destination before an edit is published.
+func CopyAccess(from, to string) error {
+	sddl, err := sddlOf(from, false)
+	if err != nil {
+		return err
+	}
+	current, err := sddlOf(to, false)
+	if err != nil || sddl == current {
+		return err
+	}
+	dacl, ok := sections(sddl)['D']
+	if !ok || strings.Contains(dacl, "NO_ACCESS_CONTROL") {
+		return &fs.PathError{Op: "copy access list", Path: from, Err: errors.New("no access list to preserve")}
+	}
+	flags, _, _ := strings.Cut(dacl, "(")
+	info := uint32(winsys.DaclSecurityInformation | winsys.UnprotectedDaclSecurityInformation)
+	if strings.Contains(flags, "P") {
+		info = winsys.DaclSecurityInformation | winsys.ProtectedDaclSecurityInformation
+	}
+	h, err := open(to, false, readControl|winsys.WriteDAC)
+	if err != nil {
+		return err
+	}
+	defer syscall.CloseHandle(h)
+	if err := winsys.SetSecurityDescriptor(h, sddl, info); err != nil {
+		return &fs.PathError{Op: "copy access list", Path: to, Err: err}
+	}
+	return nil
+}
+
 // HasPrivateDescriptor reports whether path carries exactly the descriptor MakePrivate writes.
 func HasPrivateDescriptor(path string) (bool, error) {
 	d, user, err := read(path, true)

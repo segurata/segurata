@@ -205,6 +205,9 @@ or sync it with cloud clipboard, so clear it there afterwards. To avoid the clip
 value from another program with `--stdin`. Typing the value into a console is refused. On Linux
 use `env:` or `op://` references and `--stdin`.
 
+To restrict access to an exposed file on Windows, use the file's Security settings. The
+`file.chmod600` action in older inventories applies only on Unix.
+
 Better still, do not export it to every shell; fetch it where it is used:
 `ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)" command`. With 1Password, the same with
 `op read op://…` or `op run`. The first read from a new binary asks for Keychain permission.
