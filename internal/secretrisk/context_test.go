@@ -20,6 +20,12 @@ func TestRoleOf(t *testing.T) {
 		"~/src/tcpdf/examples/data/cert/tcpdf.crt":      RoleExample,
 		"~/src/app/.env.example":                        RoleExample,
 		"~/src/app/config/database.yml.sample":          RoleExample,
+		"~/src/app/config.example.yml":                  RoleExample,
+		"~/src/app/phpunit.xml.dist":                    RoleExample,
+		"~/src/app/settings.templates.py":               RoleExample,
+		"~/src/cdn/app.distribution.yml":                RoleNone, // a name that merely starts with an example marker
+		"~/src/audio/mixer.samplerate.conf":             RoleNone,
+		"~/src/shop/stripe.templated.yml":               RoleNone,
 		"~/src/php-jwt/README.md":                       RoleDoc,
 		"~/src/site/docs/setup.html":                    RoleDoc,
 		"~/src/app/vendor/firebase/php-jwt/src/JWT.php": RoleVendor,

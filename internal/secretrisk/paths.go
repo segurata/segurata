@@ -2,6 +2,7 @@ package secretrisk
 
 import (
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -29,7 +30,7 @@ var (
 		"gemfile.lock", "poetry.lock", "pipfile.lock", "uv.lock", "cargo.lock", "composer.lock", "mix.lock",
 		"podfile.lock", "package.resolved", "pubspec.lock", "flake.lock", "go.sum", "gradle.lockfile", "packages.lock.json")
 	testNames    = []string{"_test.", ".test.", ".spec.", "_spec."} // foo_test.go, Register.test.tsx, user_spec.rb
-	exampleNames = []string{".example", ".sample", ".template", ".dist"}
+	exampleNames = set("example", "examples", "sample", "samples", "template", "templates", "dist") // .env.example, config.yml.dist
 	docExts      = []string{".md", ".markdown", ".rst", ".adoc"}
 )
 
@@ -75,7 +76,7 @@ func RoleOf(p string) PathRole {
 		return RoleVendor
 	case dirs.test || contains(base, testNames) || strings.HasPrefix(base, "test_"):
 		return RoleTest
-	case dirs.example || contains(base, exampleNames):
+	case dirs.example || slices.ContainsFunc(strings.Split(base, ".")[1:], func(ext string) bool { return exampleNames[ext] }):
 		return RoleExample
 	case dirs.doc || strings.HasPrefix(base, "readme") || hasSuffix(base, docExts):
 		return RoleDoc
