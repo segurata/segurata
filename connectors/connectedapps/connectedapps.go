@@ -1,11 +1,7 @@
-// Package connectedapps inventories the third-party apps connected to accounts outside Google:
-// GitHub, X, Slack, Notion, Microsoft (personal and work accounts), Dropbox, Facebook, Instagram
-// and LinkedIn. It reads each service's own settings pages over CDP, in hidden targets of the
-// browser the user is already signed in to, and lists GitHub keys with the `gh` CLI.
-//
-// Read-only by construction: it only navigates and reads. It never clicks a button (not even
-// "See more"), never submits a form, loads each listing page once per run, and closes every
-// target it opens.
+// Package connectedapps inventories the third-party apps connected to accounts outside Google,
+// reading each service's settings pages in the signed-in browser, and GitHub keys with `gh`.
+// It only navigates and reads: it never clicks, never submits a form, and loads each listing
+// page once per run.
 package connectedapps
 
 import (
@@ -29,13 +25,12 @@ const name = "connected-apps"
 
 func init() { connector.Register(&Connector{}) }
 
-// Connector is the built-in connected-apps connector. Its fields are seams for tests; the zero
-// value talks to the real browser and the real `gh`.
+// Connector's zero value talks to the real browser and the real `gh`.
 type Connector struct {
 	browser browser
 	gh      cli.Runner
 	now     func() time.Time
-	exec    connector.Executor // runs a confirmed remediation; nil is connector.System
+	exec    connector.Executor // nil is connector.System
 }
 
 func (*Connector) Describe() connector.Description {
@@ -49,13 +44,12 @@ func (*Connector) Describe() connector.Description {
 	}
 }
 
-// service is one site whose connected apps this connector reads.
 type service struct {
 	name string
 	run  func(ctx context.Context, e *env)
 }
 
-// services in the order they run. The config key "services" picks a subset.
+// services in the order they run; config "services" picks a subset.
 var services = []service{
 	{"github", github},
 	{"x", xService},
@@ -69,7 +63,6 @@ var services = []service{
 	{"linkedin", linkedinPage.run},
 }
 
-// selectServices reads config "services": a list of service names, all of them when absent.
 func selectServices(cfg map[string]any) ([]service, error) {
 	v, ok := cfg["services"]
 	if !ok || v == nil {
@@ -131,7 +124,6 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return nil
 }
 
-// ghRunner is the injected gh, or the real one behind the read-only allowlist.
 func (c *Connector) ghRunner() cli.Runner {
 	if c.gh != nil {
 		return c.gh
@@ -139,19 +131,17 @@ func (c *Connector) ghRunner() cli.Runner {
 	return cli.Guard(ghAllowlist, cli.Exec{Path: "gh", Timeout: 60 * time.Second})
 }
 
-// env is what a service reads with and reports to.
 type env struct {
 	service string
 	b       browser
 	gh      cli.Runner
 	emit    connector.Emitter
 	now     time.Time
-	seen    map[string]int // resource keys already used, for ordinals
+	seen    map[string]int // resource key -> times used, for ordinals
 }
 
-// account labels a service account: "github:octocat", or just "github" when the page did not
-// say who is signed in. Findings are scoped to the service, so a status for the bare service name
-// (signed out, nobody known) leaves every finding of that service uninspected.
+// account is "github:octocat", or "github" when nobody is known. A status for the bare service
+// name leaves every finding of that service uninspected.
 func (e *env) account(who string) string {
 	if who == "" {
 		return e.service
@@ -167,31 +157,31 @@ func (e *env) fail(who string, err error) {
 	e.status(who, finding.StateError, "%v", err)
 }
 
-// grant is one thing a service reports: a connected app, a session or a key.
+// grant is a connected app, a session or a key.
 type grant struct {
-	who        string       // service account, see env.account
-	scope      string       // what keeps names apart within the service: a Slack workspace, a Notion workspace
-	resType    string       // resource type, such as "github_oauth_app"
-	kind       finding.Kind // grant for apps, credential for keys and sessions
+	who        string // see env.account
+	scope      string // keeps names apart within the service: a Slack or Notion workspace
+	resType    string
+	kind       finding.Kind // "" is KindGrant
 	name       string
-	key        string   // what identifies it when the name can change (a session's IP); defaults to name
-	scopes     []string // permissions as the service words them (a Slack app's bot scopes)
-	userScopes []string // a Slack app's user-token scopes: it acts as the person who installed it
-	count      int      // number of scopes when only the count is shown (Slack)
+	key        string   // identity when the name can change; defaults to name
+	scopes     []string // as the service words them
+	userScopes []string // Slack: the app acts as the person who installed it
+	count      int      // when only the count is shown
 	publisher  string
-	orgs       []string // GitHub organizations the app can reach
+	orgs       []string // GitHub organizations it can reach
 	created    *time.Time
 	lastUsed   *time.Time
-	usedText   string // last use as the page words it ("Last used within the last 11 months")
-	stale      bool   // last used more than a year ago, from a date or the page's wording
-	url        string // page where the owner revokes it
-	revoke     string // what to do on that page
+	usedText   string // "Last used within the last 11 months"
+	stale      bool   // unused for over a year
+	url        string // where the owner revokes it
+	revoke     string // how
 	note       string
 	extra      map[string]any
 }
 
-// report turns a grant into a finding with a stable id: service, resource type and name, plus an
-// ordinal for repeated names. Per-load ids (Slack, Facebook and GitHub all have them) never enter it.
+// report emits a grant with an id stable across runs: service, type, name and an ordinal for
+// repeated names. Per-load ids never enter it.
 func (e *env) report(g grant) {
 	ident := g.key
 	if ident == "" {
@@ -278,10 +268,9 @@ func (e *env) report(g grant) {
 	})
 }
 
-// staleAfter is how long without use raises a grant's severity one level.
 const staleAfter = 365 * 24 * time.Hour
 
-// browser is *cdp.Client; tests replace it with synthetic pages.
+// browser is *cdp.Client, or synthetic pages in tests.
 type browser interface {
 	Load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error)
 	Capture(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int, re *regexp.Regexp) (json.RawMessage, *cdp.Response, error)
@@ -297,7 +286,7 @@ func decode[T any](raw json.RawMessage) T {
 	return v
 }
 
-// readyWhen is match over decoded page values; every match is false on the zero value.
+// readyWhen is match over decoded page values. Every match must be false on the zero value.
 func readyWhen[T any](match func(T) bool) func(json.RawMessage) bool {
 	return func(raw json.RawMessage) bool { return match(decode[T](raw)) }
 }
@@ -315,26 +304,24 @@ func capture[T any](ctx context.Context, e *env, url, expr string, ready func(T)
 }
 
 // pageHelpers are injected into every listing page. rowOf climbs from a link to the largest
-// container that links only to that target (one target can have an icon link and a name link),
-// stopping at the first row-like element, so a one-item list does not climb up to <body>. uniq
-// drops repeated and empty links. Text-based: no CSS classes beyond GitHub's stable .Box-row.
+// container linking only to its target, stopping at a row-like element so a one-item list does
+// not climb to <body>. No CSS classes beyond GitHub's stable .Box-row.
 const pageHelpers = `
   const lines = (el) => (el?.innerText || "").split("\n").map((s) => s.trim()).filter(Boolean);
   const hrefs = (el, sel) => new Set([...el.querySelectorAll(sel)].map((x) => x.href)).size;
   const ROW = "li, tr, [role=row], [role=listitem], .Box-row";
   const rowOf = (a, sel) => { let r = a; while (!r.matches(ROW) && r.parentElement && hrefs(r.parentElement, sel) === 1) r = r.parentElement; return r; };
   const uniq = (sel) => { const m = new Map(); for (const a of document.querySelectorAll(sel)) if (a.innerText.trim() && !m.has(a.href)) m.set(a.href, a); return [...m.values()]; };
-  const rows = (sel) => uniq(sel).map((a) => ({name: a.innerText.trim(), href: a.href, lines: lines(rowOf(a, sel))}));
+  const row = (sel) => (a) => ({name: a.innerText.trim(), href: a.href, lines: lines(rowOf(a, sel))});
+  const rows = (sel) => uniq(sel).map(row(sel));
+  const everyRow = (sel) => [...document.querySelectorAll(sel)].map(row(sel));
   const page = {url: location.href, title: document.title, text: document.body ? document.body.innerText : ""};
 `
 
-// pageTextJS reads only the page URL and its text.
 const pageTextJS = `({url: location.href, text: document.body ? document.body.innerText : ""})`
 
-// inPage wraps an expression body that returns an object built from pageHelpers.
 func inPage(body string) string { return "(() => {" + pageHelpers + body + "})()" }
 
-// listPage is the common shape of what a listing page's expression returns.
 type listPage struct {
 	URL   string `json:"url"`
 	Title string `json:"title"`
@@ -344,30 +331,27 @@ type listPage struct {
 	Next  string `json:"next"`
 }
 
-// row is one link and the lines of the row it sits in.
 type row struct {
 	Name  string   `json:"name"`
 	Href  string   `json:"href"`
 	Lines []string `json:"lines"`
 }
 
-// fetchedJS reads the page URL, its text, and whether the page has fetched a URL containing path,
-// from the page's own resource timing: it sends nothing. An entry appears once the response has
-// arrived, for pages whose list comes from one call that capture reads.
+// fetchedJS also says whether the page has fetched a URL containing path, from its own resource
+// timing, so nothing is sent.
 func fetchedJS(path string) string {
 	return `(() => ({url: location.href, text: document.body ? document.body.innerText : "",
   fetched: performance.getEntriesByType("resource").some((e) => e.name.includes(` + strconv.Quote(path) + `))}))()`
 }
 
-// fetchPage is what fetchedJS returns.
 type fetchPage struct {
 	URL     string `json:"url"`
 	Text    string `json:"text"`
 	Fetched bool   `json:"fetched"`
 }
 
-// twice passes once ready has accepted two values in a row, for pages that pass a moment before
-// they are done (a response still finishing, a redirect still under way).
+// twice passes once ready has accepted two values in a row: some pages pass a moment before a
+// response or a redirect is done.
 func twice[T any](ready func(T) bool) func(T) bool {
 	n := 0
 	return func(p T) bool {

@@ -8,10 +8,8 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// SignInPage is where the owner clears a signedout or reauth status: the page the service's run
-// reads, which the service replaces with its sign-in or confirmation page until the owner is
-// through. Each page is through on the same tests the run applies (signed-out URL gone, list or
-// empty message shown). A status about the gh CLI has no page: its detail names the command.
+// SignInPage is the page the service's run reads, done on the same tests the run applies. A
+// status about the gh CLI has no page: its detail names the command.
 func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
 	if st.State != finding.StateSignedOut && st.State != finding.StateReauth {
 		return connector.SignInPage{}, false
@@ -93,21 +91,17 @@ func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
 
 var pageOnlyServices = map[string]pageOnly{"instagram": instagramPage, "linkedin": linkedinPage, "microsoft": microsoftPage}
 
-// msSignIn is a Microsoft page, through once it has left the sign-in host and through accepts it.
 func msSignIn(u, do, expr string, through func(fetchPage) bool) connector.SignInPage {
 	return connector.SignInPage{URL: u, Do: do, Expr: expr, Done: readyWhen(func(p fetchPage) bool {
 		return p.URL != "" && msLoginState(p) == "" && through(p)
 	})}
 }
 
-// listSignIn is a sign-in page whose expression returns a listPage: through once the URL is set and
-// through accepts it.
 func listSignIn(u, do, expr string, through func(listPage) bool) connector.SignInPage {
 	return connector.SignInPage{URL: u, Do: do, Expr: expr, Done: readyWhen(func(p listPage) bool { return p.URL != "" && through(p) })}
 }
 
-// ghOnSettings reports whether the page is one of GitHub's settings pages, not the sign-in or
-// sudo form it redirects to.
+// ghOnSettings: not the sign-in or sudo form a settings page redirects to.
 func ghOnSettings(p listPage) bool {
 	u, err := url.Parse(p.URL)
 	return err == nil && u.Host == "github.com" && strings.HasPrefix(u.Path, "/settings/") && !ghSignedOut(p)

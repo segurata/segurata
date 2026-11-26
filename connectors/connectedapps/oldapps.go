@@ -10,25 +10,23 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// oldAfter is the approval age past which a service's apps are revoked as one batch: most apps
-// authorized that long ago belong to defunct services (on X: Posterous, Vine, Klout, Delicious),
-// and nobody reviews them one by one.
+// oldAfter: apps approved that long ago mostly belong to defunct services, and nobody reviews
+// them one by one, so they are revoked as one batch.
 const oldAfter = 10 * 365 * 24 * time.Hour
 
-// oldBatch is how a service words the batch of its apps approved more than oldAfter ago.
+// oldBatch is how a service words its batch of old apps.
 type oldBatch struct {
-	title    string // the service as the owner knows it: "X", "Dropbox"
-	verb     string // what the owner does to each app: "Revoke", "Disconnect"
-	approved string // how the service words approval: "authorized", "linked"
-	note     string // appended to the batch title, such as " (services mostly defunct)"
-	url      string // the page listing the apps
+	title    string // "X"
+	verb     string // "Revoke"
+	approved string // "authorized"
+	note     string // appended to the title
+	url      string
 	each     string // how to remove one app on that page
 	again    string // what happens to an app still in use
 }
 
-// reportByAge reports apps oldest approval first, so apps of one severity are listed by age
-// (undated ones last), and folds every app approved more than oldAfter ago into one finding.
-// It records each dated app's age in years in its evidence.
+// reportByAge reports apps oldest first, undated last, and folds those older than oldAfter into
+// one finding.
 func (e *env) reportByAge(who string, apps []grant, b oldBatch) {
 	sort.SliceStable(apps, func(i, j int) bool {
 		a, c := apps[i].created, apps[j].created
@@ -53,8 +51,7 @@ func (e *env) reportByAge(who string, apps []grant, b oldBatch) {
 	}
 }
 
-// oldAppsFinding is one finding for every app in old, as bad as the worst of them, listing each
-// with its date and what it can do.
+// oldAppsFinding is as bad as the worst of the apps it lists.
 func (e *env) oldAppsFinding(who string, old []grant, b oldBatch) finding.Finding {
 	worst := finding.SevInfo
 	var names []string

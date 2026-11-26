@@ -30,7 +30,6 @@ func (c *Connector) ghActive(ctx context.Context) (ghAccount, error) {
 	return a, nil
 }
 
-// removable are the scopes of ghRemovable the token holds now, in ghRemovable's order.
 func (a ghAccount) removable() []string {
 	var out []string
 	for _, r := range ghRemovable {
@@ -51,7 +50,7 @@ func (c *Connector) Plan(ctx context.Context, f finding.Finding) (connector.Plan
 	return p, err
 }
 
-// planNow plans from gh's token as it is now and returns the scopes it read.
+// planNow plans from gh's live token and returns the scopes to remove.
 func (c *Connector) planNow(ctx context.Context, f finding.Finding) (connector.Plan, []string, error) {
 	if f.Remediation.Action != actionGHDropScopes {
 		return connector.Plan{}, nil, fmt.Errorf("connected-apps has no remediation %q", f.Remediation.Action)

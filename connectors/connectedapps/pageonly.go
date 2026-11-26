@@ -7,15 +7,14 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// pageOnly is a service whose app list has never been seen with apps in it. It tells a signed-out
-// browser and a verified empty list apart; anything else is reported as unverified, with the
-// page to review by hand, rather than parsed by guesswork.
+// pageOnly is a service whose app list has never been seen with apps in it: anything but signed
+// out or a verified empty list is unverified, never parsed by guesswork.
 type pageOnly struct {
-	title     string // the service as the owner knows it
+	title     string
 	url       string
-	signedOut *regexp.Regexp // matches the URL a signed-out browser lands on
-	empty     *regexp.Regexp // matches the empty list's text; nil when it was never seen
-	loaded    *regexp.Regexp // matches text present once the page has rendered
+	signedOut *regexp.Regexp // URL
+	empty     *regexp.Regexp // text; nil when never seen
+	loaded    *regexp.Regexp // text once rendered
 	hint      string         // appended to the signed-out detail
 }
 
@@ -38,8 +37,7 @@ func (s pageOnly) run(ctx context.Context, e *env) {
 }
 
 var (
-	// Checked 2026-11-24, signed in with no apps: "Apps and websites", tabs Active, Expired,
-	// Removed, then the empty message.
+	// checked 2026-11-24 with no apps
 	instagramPage = pageOnly{
 		title:     "Instagram",
 		url:       "https://www.instagram.com/accounts/manage_access/",
@@ -48,8 +46,7 @@ var (
 		loaded:    regexp.MustCompile(`(?i)No has autorizado|authorized any|Estos son los sitios web|These are (the )?(apps|websites)`),
 	}
 
-	// /mypreferences/d/permitted-services now redirects to data-sharing-for-permitted-services,
-	// which is where the list of permitted services lives. Checked 2026-11-24 with none granted.
+	// checked 2026-11-24 with none granted
 	linkedinPage = pageOnly{
 		title:     "LinkedIn",
 		url:       "https://www.linkedin.com/mypreferences/d/data-sharing-for-permitted-services",
@@ -58,11 +55,8 @@ var (
 		loaded:    regexp.MustCompile(`(?i)Permitted services|Servicios permitidos`),
 	}
 
-	// Personal Microsoft accounts only. Signed out whenever checked (last 2026-11-24, with only a
-	// work account signed in): account.live.com sends the browser to login.live.com, whose form
-	// cannot tell a missing account from a signed-out one without typing an address. So the owner
-	// with no personal account leaves "microsoft" out of the services config; microsoft-work reads
-	// work and school accounts.
+	// Personal accounts only. login.live.com cannot tell a missing account from a signed-out one
+	// without typing an address, hence the hint.
 	microsoftPage = pageOnly{
 		title:     "your Microsoft account",
 		url:       "https://account.live.com/consent/Manage",

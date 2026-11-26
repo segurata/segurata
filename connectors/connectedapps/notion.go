@@ -10,14 +10,12 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Notion has no URL for Settings › Connections (a dialog). The page with a URL is the active
-// workspace's developer connections: internal integrations, their capabilities and owners.
+// Settings › Connections is a dialog with no URL; the developer connections page has one.
 const (
 	notionURL    = "https://www.notion.so/profile/integrations"
 	notionRevoke = `Open the page, pick the integration and delete it (or remove it from the pages it can reach). Its API token stops working.`
 )
 
-// Each table row becomes its cells, each cell its lines.
 const notionJS = `(() => ({
   url: location.href, text: document.body ? document.body.innerText : "",
   cells: [...document.querySelectorAll("tr")].map((r) => [...r.querySelectorAll("td")].map((td) => (td.innerText || "").split("\n").map((s) => s.trim()).filter(Boolean))).filter((c) => c.length >= 4 && c[0].length)
@@ -40,8 +38,8 @@ type notionIntegration struct {
 	scopes                                []string
 }
 
-// parseNotionRow reads the cells connection, authorization, owner and created. The first line of
-// the connection cell can be the avatar's initial.
+// parseNotionRow reads connection, authorization, owner and created. The connection cell can start
+// with the avatar's initial.
 func parseNotionRow(cells [][]string) notionIntegration {
 	conn, auth, owner, created := cells[0], cells[1], cells[2], cells[3]
 	if len(conn) > 2 && len([]rune(conn[0])) == 1 {
@@ -63,7 +61,6 @@ func parseNotionRow(cells [][]string) notionIntegration {
 	return n
 }
 
-// notionListed reports whether the page shows the connections table or its empty message.
 func notionListed(p notionPage) bool { return len(p.Cells) > 0 || notionEmptyRE.MatchString(p.Text) }
 
 func notion(ctx context.Context, e *env) {

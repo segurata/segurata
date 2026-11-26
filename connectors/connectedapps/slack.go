@@ -21,7 +21,6 @@ const (
 	slackRevoke = `Open the page, then "Configuration" › "Remove app" (needs a workspace admin if you are not one).`
 )
 
-// slack.com/signin lists the workspaces this browser is signed in to.
 var slackSigninJS = inPage(`
   return {...page, rows: [...document.querySelectorAll('a[href*=".slack.com/"]')].map((a) => ({href: a.href}))};`)
 
@@ -30,15 +29,13 @@ const (
 	slackListPath = "/api/admin.apps.installed.list"
 )
 
-// slackAppsJS reads the app rows when the list renders, and whether the page has fetched its app
-// list (from its resource timing: it sends nothing). In a hidden target the list may never render
-// (checked 2026-11-24), so the fetched list is what counts.
+// In a hidden target the app list may never render (checked 2026-11-24), so the list the page
+// fetched is what counts.
 var slackAppsJS = inPage(`return {...page, rows: rows('` + slackAppSel + `'),
   fetched: performance.getEntriesByType("resource").some((e) => e.name.includes(` + strconv.Quote(slackListPath) + `))};`)
 
 var slackListRE = regexp.MustCompile(regexp.QuoteMeta(slackListPath))
 
-// slackPage is what slackAppsJS returns.
 type slackPage struct {
 	listPage
 	Fetched bool `json:"fetched"`
@@ -53,7 +50,6 @@ var (
 	slackServiceHostRE = regexp.MustCompile(`^(app|api|www|status|slack)\.`)
 )
 
-// slackWorkspaces returns the workspace hosts linked from the sign-in page, sorted.
 func slackWorkspaces(rows []row) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -74,14 +70,11 @@ func slackWorkspaces(rows []row) []string {
 type slackApp struct {
 	id, name, href, note string
 	count                int
-	pending              bool // approval required or restricted: requested, not installed
+	pending              bool // requested, not installed
 }
 
-// slackAppIDRE reads an app's id from its link: …/integrations/profile/<app>/….
 var slackAppIDRE = regexp.MustCompile(`/integrations/profile/(A[A-Z0-9]+)`)
 
-// parseSlackApp reads a row of <workspace>/apps/manage: the list shows how many scopes each app
-// has and whether it waits for approval.
 func parseSlackApp(r row) slackApp {
 	a := slackApp{name: r.Name, href: r.Href}
 	if m := slackAppIDRE.FindStringSubmatch(r.Href); m != nil {
@@ -101,9 +94,7 @@ func parseSlackApp(r row) slackApp {
 	return a
 }
 
-// slackInstalled is one app of the admin.apps.installed.list response the manage page fetches:
-// the scopes declared for this workspace, the bot's and the user token's. Fields not named here
-// are discarded by the decoder.
+// slackInstalled is one app of the admin.apps.installed.list response the manage page fetches.
 type slackInstalled struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -112,7 +103,6 @@ type slackInstalled struct {
 	Internal   bool     `json:"is_internal"`
 }
 
-// parseSlackInstalled reads the captured app list.
 func parseSlackInstalled(resp *cdp.Response) ([]slackInstalled, error) {
 	if resp == nil {
 		return nil, errors.New("the page did not fetch its app list")
@@ -134,18 +124,15 @@ func parseSlackInstalled(resp *cdp.Response) ([]slackInstalled, error) {
 	return v.Apps, nil
 }
 
-// slackListed reports whether a workspace's app page shows its apps or its empty message.
 func slackListed(p listPage) bool { return len(p.Rows) > 0 || slackEmptyRE.MatchString(p.Text) }
 
-// slackReady passes once the page is a sign-in page, or has fetched its app list or shown its rows
-// for two reads in a row (the response can finish a moment after its timing entry appears).
+// slackReady: the response can finish a moment after its timing entry appears.
 func slackReady() func(slackPage) bool {
 	return twice(func(p slackPage) bool {
 		return p.URL != "" && (slackSignedOutRE.MatchString(p.URL) || p.Fetched || slackListed(p.listPage))
 	})
 }
 
-// slackSignedIn reports whether the sign-in page lists a workspace this browser is signed in to.
 func slackSignedIn(p listPage) bool { return len(slackWorkspaces(p.Rows)) > 0 }
 
 func slack(ctx context.Context, e *env) {
@@ -167,9 +154,8 @@ func slack(ctx context.Context, e *env) {
 	}
 }
 
-// slackWorkspace reports the apps of one workspace: those in the app list the manage page fetches,
-// classified by their declared scopes, and the rows the page shows that the list lacks (apps
-// waiting for approval), by their scope count. The page is loaded once; no app page is opened.
+// slackWorkspace grades the apps of the fetched list by their declared scopes, and the rows the
+// list lacks (waiting for approval) by their scope count.
 func slackWorkspace(ctx context.Context, e *env, host string) {
 	manage := "https://" + host + "/apps/manage"
 	p, resp, err := capture(ctx, e, manage, slackAppsJS, slackReady(), 40, slackListRE)
@@ -225,7 +211,6 @@ func slackWorkspace(ctx context.Context, e *env, host string) {
 	e.status(host, finding.StateOK, "%d apps", n)
 }
 
-// nonNil is s, or an empty list for nil: an app the list declares no scopes of has none.
 func nonNil(s []string) []string {
 	if s == nil {
 		return []string{}
@@ -233,10 +218,8 @@ func nonNil(s []string) []string {
 	return s
 }
 
-// slackTeamRE reads the workspace id from an app's link: app.slack.com/apps-manage/<team>/integrations/….
 var slackTeamRE = regexp.MustCompile(`/apps-manage/(T[A-Z0-9]{6,})/`)
 
-// slackTeam is the workspace id the page's URL or its apps' links name, or "".
 func slackTeam(pageURL string, rows []row) string {
 	if m := slackTeamRE.FindStringSubmatch(pageURL); m != nil {
 		return m[1]
@@ -249,8 +232,7 @@ func slackTeam(pageURL string, rows []row) string {
 	return ""
 }
 
-// slackWorkspaceFinding records, as an info finding, the id of a workspace signed in to, so
-// attribution knows which workspace a leaked webhook belongs to.
+// slackWorkspaceFinding records a workspace's id so attribution knows whose a leaked webhook is.
 func slackWorkspaceFinding(account, host, team string) finding.Finding {
 	return finding.Finding{Account: account, Scope: host, Resource: finding.Resource{Type: attribution.SlackWorkspaceType, ID: team, Name: host},
 		Kind: finding.KindSetting, Severity: finding.SevInfo, Title: "Slack workspace " + host + " is " + team,
