@@ -164,11 +164,8 @@ func TestAllowlistRefusesEverythingElse(t *testing.T) {
 			t.Errorf("command allowed: %q (%v)", bad, err)
 		}
 	}
-}
-
-func TestEmptyEntryAllowsNothing(t *testing.T) {
 	if err := (Allowlist{""}).Check([]string{"anything"}); !errors.Is(err, ErrRefused) {
-		t.Fatalf("an empty entry must not allow every command: %v", err)
+		t.Errorf("an empty entry must not allow every command: %v", err)
 	}
 }
 
