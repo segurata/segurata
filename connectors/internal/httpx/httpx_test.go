@@ -155,3 +155,24 @@ func TestAssessmentKeepsTheWorstSeverity(t *testing.T) {
 		t.Errorf("nothing raised: %+v", fine)
 	}
 }
+
+func TestCursorListFollowsLastIDAndStopsOnAStuckCursor(t *testing.T) {
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		switch r.URL.Query().Get("after_id") {
+		case "":
+			_, _ = w.Write([]byte(`{"data":["a","b"],"has_more":true,"last_id":"b"}`))
+		default: // the same cursor again: a server bug that must not loop
+			_, _ = w.Write([]byte(`{"data":["c"],"has_more":true,"last_id":"b"}`))
+		}
+	}))
+	defer srv.Close()
+	got, err := CursorList[string](context.Background(), New(srv.URL, http.Header{}), "/items", url.Values{"kind": {"x"}}, 2, "after_id")
+	if err != nil || strings.Join(got, ",") != "a,b,c" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if want := []string{"kind=x&limit=2", "after_id=b&kind=x&limit=2"}; strings.Join(queries, " ") != strings.Join(want, " ") {
+		t.Errorf("queries %q, want %q", queries, want)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,6 +208,36 @@ func ParseTime(s *string) *time.Time {
 		}
 	}
 	return nil
+}
+
+// CursorList reads every page of a {data, has_more, last_id} listing, limit items a page, sending
+// the last id seen as afterParam. A cursor that does not move ends the listing.
+func CursorList[T any](ctx context.Context, api *Client, path string, q url.Values, limit int, afterParam string) ([]T, error) {
+	var out []T
+	after := ""
+	for range 10000 {
+		qq := url.Values{"limit": {strconv.Itoa(limit)}}
+		for k, v := range q {
+			qq[k] = v
+		}
+		if after != "" {
+			qq.Set(afterParam, after)
+		}
+		var p struct {
+			Data    []T     `json:"data"`
+			HasMore bool    `json:"has_more"`
+			LastID  *string `json:"last_id"`
+		}
+		if err := api.Get(ctx, path, qq, &p); err != nil {
+			return out, err
+		}
+		out = append(out, p.Data...)
+		if !p.HasMore || p.LastID == nil || *p.LastID == "" || *p.LastID == after {
+			return out, nil
+		}
+		after = *p.LastID
+	}
+	return out, fmt.Errorf("GET %s: pagination did not end", path)
 }
 
 func Days(now, t time.Time) int { return int(now.Sub(t).Hours() / 24) }

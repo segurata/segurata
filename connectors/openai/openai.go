@@ -150,34 +150,8 @@ func (s *scan) run() {
 	}
 }
 
-type page[T any] struct {
-	Data    []T     `json:"data"`
-	HasMore bool    `json:"has_more"`
-	LastID  *string `json:"last_id"`
-}
-
 func list[T any](s *scan, path string, q url.Values) ([]T, error) {
-	var out []T
-	after := ""
-	for range 10000 {
-		qq := url.Values{"limit": {"100"}}
-		for k, v := range q {
-			qq[k] = v
-		}
-		if after != "" {
-			qq.Set("after", after)
-		}
-		var p page[T]
-		if err := s.api.Get(s.ctx, path, qq, &p); err != nil {
-			return out, err
-		}
-		out = append(out, p.Data...)
-		if !p.HasMore || p.LastID == nil || *p.LastID == "" || *p.LastID == after {
-			return out, nil
-		}
-		after = *p.LastID
-	}
-	return out, fmt.Errorf("GET %s: pagination did not end", path)
+	return httpx.CursorList[T](s.ctx, s.api, path, q, 100, "after")
 }
 
 type project struct {
