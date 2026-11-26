@@ -194,7 +194,7 @@ func TestDoctorUnconfiguredSecretAndOneConnector(t *testing.T) {
 	wantLines(t, out,
 		"WARN  config  "+fx.env.ConfigPath+": not found",
 		"WARN  api     secret API_KEY: not configured: the connector is skipped",
-		`fix: add "secrets": {"API_KEY": "keychain:segurata-api"} to connectors.api in the config, and the item (`+keychain.Default("").Hint("segurata-api")+")",
+		"fix: "+keychainFix("api", "API_KEY", "api", keychain.Available),
 	)
 	for _, other := range []string{"plugin", "cdp", "cloud"} {
 		if strings.Contains(out, other) {
@@ -252,11 +252,11 @@ func TestDoctorStateModes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		want = []string{
 			"FAIL  state   fingerprint key " + fx.env.KeyPath + `: readable by BUILTIN\Users`,
-			`fix: icacls "` + fx.env.KeyPath + `" /inheritance:r /grant:r "%USERNAME%:F" "SYSTEM:F"`,
+			"fix: " + connector.MakePrivateCommand("windows", fx.env.KeyPath, false),
 			"FAIL  state   tracker " + fx.env.Tracker.Tracker + ": unreadable:",
 			"OK    state   tracker dir " + trackerDir + ": private (owner, SYSTEM and Administrators)",
 			"WARN  state   output dir " + fx.env.OutDir + `: readable by BUILTIN\Users`,
-			`fix: icacls "` + fx.env.OutDir + `" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F" "SYSTEM:(OI)(CI)F"`,
+			"fix: " + connector.MakePrivateCommand("windows", fx.env.OutDir, true),
 		}
 	}
 	wantLines(t, out, want...)
@@ -277,5 +277,17 @@ func TestKeychainServiceMatchesConnectorMessages(t *testing.T) {
 		if got := keychainService(in[0], in[1]); got != want {
 			t.Errorf("%v: got %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestKeychainFixSuggestsAReferenceThatResolvesHere(t *testing.T) {
+	where := keychainFix("api", "API_KEY", "api", true)
+	if want := `add "secrets": {"API_KEY": "keychain:segurata-api"} to connectors.api in the config, and the item (` + keychain.Default("").Hint("segurata-api") + ")"; where != want {
+		t.Errorf("with a credential store: %q", where)
+	}
+	elsewhere := keychainFix("api", "API_KEY", "api", false)
+	if !strings.Contains(elsewhere, `{"API_KEY": "env:SEGURATA_API"}`) || !strings.Contains(elsewhere, "export SEGURATA_API") ||
+		!strings.Contains(elsewhere, "op://") || strings.Contains(elsewhere, `"keychain:`) {
+		t.Errorf("without one: %q", elsewhere)
 	}
 }

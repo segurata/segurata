@@ -675,6 +675,12 @@ OUTDIRS = set()
 
 
 def kill_group(pgid):
+    if not hasattr(os, "killpg"):  # Windows: Prowler is in segurata's job object, which ends the rest
+        try:
+            os.kill(pgid, signal.SIGTERM)
+        except OSError:
+            pass
+        return
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
@@ -898,6 +904,8 @@ def main(argv, stdin=sys.stdin, stdout=sys.stdout):
             sys.stderr.write("segurata-prowler: unsupported protocol %r\n" % req.get("protocol"))
             return 2
         signal.signal(signal.SIGTERM, on_sigterm)
+        if hasattr(signal, "SIGBREAK"):  # what segurata sends on Windows
+            signal.signal(signal.SIGBREAK, on_sigterm)
         inventory(req, Emitter(stdout))
         return 0
     sys.stderr.write("segurata-prowler: unknown subcommand %r\n" % argv[1])

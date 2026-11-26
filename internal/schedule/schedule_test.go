@@ -54,6 +54,12 @@ func (r *fakeRunner) Run(ctx context.Context, name string, args []string, _, _ i
 		r.loaded = true
 	case name == launchctl && args[0] == "bootout":
 		r.loaded = false
+	case name == testSchTasks && args[0] == "/Query" && !r.loaded:
+		return errors.New("exit status 1")
+	case name == testSchTasks && args[0] == "/Create":
+		r.loaded = true
+	case name == testSchTasks && args[0] == "/Delete":
+		r.loaded = false
 	case name == r.exe && args[0] == "track":
 		return r.sync(args[3])
 	case name == r.exe && args[0] == "inventory":
@@ -101,6 +107,12 @@ func (desc) Inventory(context.Context, connector.Request, connector.Emitter) err
 	return nil
 }
 
+const (
+	testSchTasks = `C:\Windows\System32\schtasks.exe`
+	testConhost  = `C:\Windows\System32\conhost.exe`
+	testSID      = "S-1-5-21-1000-2000-3000-1001" // synthetic
+)
+
 func testEnv(t *testing.T, goos string) (Env, *fakeRunner, *bytes.Buffer) {
 	t.Helper()
 	home := t.TempDir()
@@ -115,6 +127,7 @@ func testEnv(t *testing.T, goos string) (Env, *fakeRunner, *bytes.Buffer) {
 		GOOS: goos, Home: home, UID: 501, Exe: exe, Path: "/opt/homebrew/bin:/usr/bin:/bin", TmpDir: filepath.Join(home, "tmp"),
 		Runner: r, IO: connector.IO{In: strings.NewReader(""), Out: out, Err: &bytes.Buffer{}}, TTY: false,
 		Now: now, Tracker: paths, Browser: unreachable,
+		UserSID: testSID, LocalAppData: filepath.Join(home, "AppData", "Local"), SchTasks: testSchTasks, Conhost: testConhost,
 		Connectors: []connector.Connector{
 			desc{Name: "macos"}, desc{Name: "google-personal", Needs: []string{"cdp"}},
 			desc{Name: "connected-apps", Needs: []string{"cdp", "cli:gh"}}, desc{Name: "hibp", Needs: []string{"secret:HIBP_API_KEY"}},
@@ -271,11 +284,11 @@ func TestLinuxPrintsSystemdUnitsAndNeverApplies(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", want, s)
 		}
 	}
-	if err := env.Install(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, errDarwinOnly) {
-		t.Fatalf("want errDarwinOnly, got %v", err)
+	if err := env.Install(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, errApplyUnsupported) {
+		t.Fatalf("want errApplyUnsupported, got %v", err)
 	}
-	if err := env.Uninstall(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, errDarwinOnly) {
-		t.Fatalf("want errDarwinOnly, got %v", err)
+	if err := env.Uninstall(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, errApplyUnsupported) {
+		t.Fatalf("want errApplyUnsupported, got %v", err)
 	}
 	if len(r.calls) != 0 {
 		t.Fatalf("ran %v on Linux", r.calls)

@@ -23,18 +23,16 @@ func (a Allowlist) Check(action string, s Step) error {
 	return fmt.Errorf("%w: %s: %s", ErrRefused, action, s)
 }
 
-// ActionChmod600 is the core's own action (remediate.files) for the file at evidence.path (absolute
-// or ~/): 600, or 700 when its owner could execute it. Any connector may attach it; with
-// Remediation.Group, one plan closes every file of the group.
+// ActionChmod600 is the core's own action (remediate.files) that makes the file at evidence.path
+// (absolute or ~/) private: 600, or 700 when its owner could execute it, and on Windows the
+// protected DACL fileacl.MakePrivate writes. The id stays for trackers and plans. Any connector may
+// attach it; with Remediation.Group, one plan closes every file of the group.
 const ActionChmod600 = "file.chmod600"
 
 // Executor runs one step on the terminal; System is the real one.
 type Executor interface {
 	Run(ctx context.Context, s Step, io IO) error
 }
-
-// sudoPath is absolute so a sudo earlier in PATH cannot intercept the password prompt.
-const sudoPath = "/usr/bin/sudo"
 
 // System runs steps as real processes on the terminal. sudo reads the password from the terminal
 // itself; nothing here reads, stores or pipes it.
@@ -44,9 +42,9 @@ func (System) Run(ctx context.Context, s Step, io IO) error {
 	if len(s.Argv) == 0 {
 		return errors.New("empty command")
 	}
-	name, args := s.Argv[0], s.Argv[1:]
-	if s.Sudo {
-		name, args = sudoPath, s.Argv
+	name, args, err := commandLine(s)
+	if err != nil {
+		return err
 	}
 	cmd := proc.Interactive(ctx, name, args...) // sudo reads the password from the terminal itself
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = io.In, io.Out, io.Err

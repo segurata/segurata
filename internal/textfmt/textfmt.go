@@ -173,3 +173,9 @@ func Clip(s string, n int) (head, rest string) {
 	cut := len([]rune(t)) - 1
 	return t, join("…"+string(r[cut:]), more)
 }
+
+// UTF16 reports whether b starts with a UTF-16 byte order mark, as Windows PowerShell 5.1's Out-File
+// and > write. ripgrep decodes such a file, so a scan finds what a byte-wise rewrite cannot.
+func UTF16(b []byte) bool {
+	return len(b) >= 2 && (b[0] == 0xff && b[1] == 0xfe || b[0] == 0xfe && b[1] == 0xff)
+}

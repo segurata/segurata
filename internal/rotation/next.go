@@ -124,9 +124,9 @@ func printNext(w io.Writer, it *tracker.Item, queue []*tracker.Item) {
 				break
 			}
 		}
-		if offerToKeychain && secretrisk.IsShellRC(p) {
+		if toKeychain != nil && toKeychain.is(p) {
 			rc = true
-			line += "  (shell rc: --to-keychain keeps the new value out of it)"
+			line += "  (" + toKeychain.kind + ": --to-keychain keeps the new value out of it)"
 		}
 		fmt.Fprintf(w, "  %s\n", line)
 	}

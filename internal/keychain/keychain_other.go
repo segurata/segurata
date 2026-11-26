@@ -9,6 +9,9 @@ import (
 
 var errUnsupported = errors.New("keychain: references need the macOS Keychain or Windows Credential Manager; use env: or op:// here")
 
+// Available: keychain: references do not resolve here.
+const Available = false
+
 // Default is a Store that refuses every call: this platform has no credential store segurata
 // supports.
 func Default(string) Store { return unsupported{} }

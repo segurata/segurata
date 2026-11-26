@@ -210,7 +210,8 @@ service accounts:
    endpoint and the user list that the credentials belong to the configured domain.
 
 - Without stored credentials the instance reports `missing_credentials` with these same steps and
-  the tenant's path.
+  the tenant's path. On Windows the steps are written for PowerShell: `$env:CLOUDSDK_CONFIG` is set
+  for the sign-in and removed after it, so later gcloud commands keep the usual config.
 - A token from elsewhere: set the `WORKSPACE_ACCESS_TOKEN` secret reference on the instance
   (`"secrets": {"WORKSPACE_ACCESS_TOKEN": "keychain:..."}`); gcloud is then not used.
 
@@ -238,9 +239,15 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   `config/master.key` and keystores under `repos_root` (default `~/src`, skipping `node_modules`,
   `deps`, `_build`, `vendor`); known credential files (`~/.aws`, `~/.config/**`, `~/.npmrc`,
   `~/.netrc`, `~/.docker`, `~/.mcp`, `~/.claude.json`, `~/.claude/**/*.json`, `~/.codex`,
-  `~/.cursor`, `~/.gemini`, `~/.zshrc` and friends); shell histories; logs (`*.log` under
-  `repos_root`, `~/Library/Logs`, `~/.local/log`); agent transcripts (`~/.claude/projects`,
-  `~/.codex/sessions`, `~/.cursor/projects`, `~/.gemini/tmp`).
+  `~/.cursor`, `~/.gemini`, `~/.zshrc` and friends), plus the gcloud and gh folders wherever
+  `CLOUDSDK_CONFIG`, `GH_CONFIG_DIR` or `XDG_CONFIG_HOME` put them (on Windows, by default under
+  `%APPDATA%`: `gcloud` and `GitHub CLI`), and on Windows `~/_netrc`, the PowerShell profiles
+  under the Documents folder and the user environment variables in `HKCU\Environment`; shell histories, PowerShell's PSReadLine history included; logs
+  (`*.log` under `repos_root`, `~/Library/Logs`, `~/.local/log`, and on Windows under
+  `%LOCALAPPDATA%`); agent transcripts (`~/.claude/projects`, `~/.codex/sessions`,
+  `~/.cursor/projects`, `~/.gemini/tmp`). On Windows a file another program holds open
+  (`NTUSER.DAT`, a running browser's databases) is skipped as unreadable, like a file the
+  account may not read.
 - Git history: `gitleaks git` over every repository under `repos_root` and over `~/.claude`, six
   at a time, each with a 10-minute timeout. Without gitleaks it scans the whole working tree under
   `repos_root` with its own patterns instead, but not history; install gitleaks respecting the
@@ -413,9 +420,11 @@ reads the new value from the clipboard (or a pipe with `--stdin`; never an argum
 fingerprint that it is new and that the old value is still where the scan saw it, shows a plan
 with redacted values and, with `--apply` and a confirmation, rewrites each `used_in` file
 atomically, checks the result, marks the item rotated and clears the clipboard. With
-`--to-keychain <service>` (macOS) the new value goes to the Keychain and rc lines become
+`--to-keychain <service>` the new value goes to the macOS Keychain and rc lines become
 `export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`, as
-[docs/secrets.md](secrets.md#shell-variables-from-the-keychain) recommends. No backup unless
+[docs/secrets.md](secrets.md#shell-variables-from-the-keychain) recommends; on Windows it goes
+to Credential Manager and `$env:NAME = '…'` lines in PowerShell profiles read it from there
+([docs/secrets.md](secrets.md#shell-variables-from-credential-manager)). Linux refuses it. No backup unless
 `--backup`: a backup is one more plaintext copy of the old value.
 
 ### Redacting trails
@@ -428,13 +437,14 @@ atomically, checks the result, marks the item rotated and clears the clipboard. 
 
 Agent transcripts, shell histories and logs keep pasted secrets in plaintext. Rotation is still
 needed (a transcript already reached the model provider), but the local copy can go: `redact`
-replaces each secret `local-secrets` reports as non-noise with `[REDACTED:<type>:<fingerprint8>]`,
-which still points at its rotation item. Without `--apply` it only lists files, match counts per
-file and per type, and bytes replaced. With `--apply` it asks for confirmation, rewrites each
-file atomically keeping its mode and modification time, scans the result again and notes
-"redacted from N trail files" on each rotation item. It never touches working files (config,
-`.env`, rc), files modified in the last two hours (`--min-age`) or files a running `claude` or
-`codex` has open; JSONL lines stay valid JSON, zsh history keeps its `: <ts>:<d>;cmd` format. No
+replaces each secret `local-secrets` reports as non-noise with
+`[REDACTED:<type>:<fingerprint8>]`, which still points at its rotation item. Without `--apply`
+it only lists files, match counts per file and per type, and bytes replaced. With `--apply` it
+asks for confirmation, rewrites each file atomically keeping its mode (on Windows its access
+list) and modification time, scans the result again and notes "redacted from N trail files" on
+each rotation item. It never touches working files (config, `.env`, rc), files modified in the
+last two hours (`--min-age`) or files a running `claude` or `codex` has open (on Windows, any
+running process); JSONL lines stay valid JSON, zsh history keeps its `: <ts>:<d>;cmd` format. No
 backup unless `--backup`. Details: [docs/architecture.md](architecture.md#redaction).
 
 ## macOS and Brave posture (`macos`)
@@ -518,9 +528,10 @@ flagging those without a developer signature), and whether Brave runs with
 ./segurata inventory browser-extensions
 ```
 
-Reads every Brave and Chrome profile (Preferences, Secure Preferences, Local State, and the
-manifest of unpacked extensions) and emits one `grant` finding per extension and browser, with:
-name, id, the profiles it is in, and per profile its version, install date (`first_install_time`),
+Reads every Brave and Chrome profile on macOS, Linux and Windows (under
+`%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data` and `%LOCALAPPDATA%\Google\Chrome\User Data`
+there): Preferences, Secure Preferences, Local State, and the manifest of unpacked extensions. It
+emits one `grant` finding per extension and browser, with: name, id, the profiles it is in, and per profile its version, install date (`first_install_time`),
 last update (`last_update_time`) and source (web store, unpacked in developer mode, or sideloaded);
 its permissions as risk capabilities (read and change all sites, debugger, cookies, webRequest,
 nativeMessaging, clipboard read, history, downloads, management); a category hint (password

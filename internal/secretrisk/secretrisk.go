@@ -164,7 +164,33 @@ func Reason(t Type, s Spot) string { return t.Label + "; " + s.Phrase }
 // ShellRC are the shell start-up files: an `export NAME=value` there reaches every process.
 var ShellRC = []string{".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile"}
 
-// IsShellRC reports whether path (~/ or absolute) names one of ShellRC.
+// IsShellRC reports whether path (~/ or absolute, either separator) names one of ShellRC.
 func IsShellRC(path string) bool {
-	return slices.Contains(ShellRC, path[strings.LastIndexByte(path, '/')+1:])
+	return slices.Contains(ShellRC, path[strings.LastIndexAny(path, `/\`)+1:])
+}
+
+// PowerShellProfiles are the current user's PowerShell profiles below the Documents folder, which
+// may be redirected (OneDrive): Windows PowerShell and PowerShell 7, for all hosts and for the
+// console host. `$env:NAME = 'value'` there reaches every PowerShell session.
+var PowerShellProfiles = []string{
+	"WindowsPowerShell/profile.ps1", "WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
+	"PowerShell/profile.ps1", "PowerShell/Microsoft.PowerShell_profile.ps1",
+}
+
+// UserEnvKey is the registry key of the Windows user's persistent environment variables, which
+// setx writes and every new process inherits. A finding there has the path UserEnvKey\NAME.
+const UserEnvKey = `HKCU\Environment`
+
+// IsUserEnv reports whether path names a variable under UserEnvKey.
+func IsUserEnv(path string) bool { return strings.HasPrefix(path, UserEnvKey+`\`) }
+
+// IsPowerShellProfile reports whether path (~/ or absolute, either separator) ends in one of
+// PowerShellProfiles, ignoring case as Windows does.
+func IsPowerShellProfile(path string) bool {
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(parts) < 2 {
+		return false
+	}
+	tail := parts[len(parts)-2] + "/" + parts[len(parts)-1]
+	return slices.ContainsFunc(PowerShellProfiles, func(p string) bool { return strings.EqualFold(p, tail) })
 }

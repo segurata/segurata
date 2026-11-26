@@ -61,8 +61,10 @@ These are the properties segurata promises. Breaking one is a vulnerability.
 - **Allowlisted commands.** Built-in remediations run only exact argument lists from a
   hand-written allowlist, never through a shell. Plugin plans run as the user; a plugin plan that
   needs sudo is refused.
-- **Private files.** On Unix, inventories and state files are written with mode 0600. On Windows,
-  run preview builds with configuration and output directories restricted by Windows ACLs.
+- **Private files.** Inventories, state files and logs are private from creation: mode 0600 in
+  0700 folders on Unix; on Windows a protected DACL granting access only to the user and SYSTEM,
+  owned by the user. `segurata doctor` reports a config file or state folder another account can
+  reach ([docs/architecture.md](docs/architecture.md#platforms)).
 - **System libraries by path.** On Windows every Win32 DLL is loaded from the System32 directory
   by its absolute path, never through the DLL search order, where a planted DLL could take its
   place.

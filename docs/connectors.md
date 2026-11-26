@@ -316,7 +316,15 @@ subscriber kinds need one call per notification and are not read).
 
 An external connector is a `segurata-<name>` executable in an absolute `PATH` directory; relative
 entries (`bin`, `./node_modules/.bin`) are skipped, so the working directory never adds a connector
-and an interactive run finds the same ones a scheduled run does. The core runs it with one
+and an interactive run finds the same ones a scheduled run does. On Windows executable means an
+extension in `PATHEXT` that Windows can start (`.exe`, `.com`, `.cmd`, `.bat`), and the extension
+is not part of the name: `segurata-hibp.cmd` is the connector `hibp`. A script needs a `.cmd` shim
+next to it, such as `segurata-hibp.cmd` in this repository, which sets
+`NoDefaultCurrentDirectoryInExePath=1` before it runs `py`: without it `cmd.exe` would run a
+`py.bat` from the current directory before the launcher on `PATH`. The core sets that variable for
+every program it starts as well. A `.cmd` or `.bat` file runs under `cmd.exe`, which reads `% ^ & | < > ! "`, line breaks and a trailing backslash as
+syntax even inside quotes, so the core refuses to pass it an argument holding one; the
+subcommands it passes a connector never do. The core runs it with one
 subcommand and, except for `describe`, one JSON request on stdin. The core speaks protocol 1 and
 protocol 2; a connector declares the one it speaks in `describe`, and every request carries that
 number.
@@ -374,7 +382,10 @@ can refuse someone else's. It is never part of an external connector's request.
   the run.
 - On a timeout or Ctrl-C the core sends SIGTERM to the connector's process group, and SIGKILL 3
   seconds later. Clean up on SIGTERM, and stop anything you started in a session of its own: it
-  is outside the group. On Windows only the connector process is killed.
+  is outside the group. On Windows the connector runs in a job object, which every process it
+  starts joins: the core sends CTRL_BREAK to its process group (Go receives it as `os.Interrupt`,
+  Python as `SIGBREAK`), ends the whole job 3 seconds later, and ends whatever is left in the job
+  once the connector exits.
 - The core takes the connector name from `describe`, never from the records, and computes ids.
 - Every stdout line must be a `finding`, `status`, `scope` or `log` record whose fields have the
   documented types, and every finding needs one of the five severities, in lowercase. The core

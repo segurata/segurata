@@ -1,6 +1,7 @@
-// Package schedule is `segurata schedule`: a launchd user agent (on Linux, a printed systemd timer)
-// that runs an inventory and a report on an interval and notifies about new P0 and P1 items.
-// Install and uninstall are dry runs unless --apply. See docs/architecture.md, "Scheduled runs".
+// Package schedule is `segurata schedule`: a launchd user agent on macOS, a Task Scheduler task on
+// Windows (on Linux, a printed systemd timer) that runs an inventory and a report on an interval
+// and notifies about new P0 and P1 items. Install and uninstall are dry runs unless --apply. See
+// docs/architecture.md, "Scheduled runs".
 package schedule
 
 import (
@@ -22,6 +23,7 @@ import (
 	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/prompt"
+	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -36,6 +38,9 @@ const (
 	osascript = "/usr/bin/osascript"
 )
 
+// taskName is the Task Scheduler task; a variable so the Windows test registers its own.
+var taskName = `segurata\inventory`
+
 // Runner runs one external command; System is the real one.
 type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error
@@ -48,7 +53,7 @@ var stopGrace = 2 * time.Minute
 
 // Run interrupts a cancelled command and gives it stopGrace to stop.
 func (System) Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error {
-	cmd := proc.Command(ctx, name, args...)
+	cmd := scheduledCommand(ctx, name, args...)
 	cmd.Cancel = func() error { return proc.Interrupt(cmd) }
 	cmd.WaitDelay = stopGrace
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -59,14 +64,20 @@ func (System) Run(ctx context.Context, name string, args []string, stdout, stder
 type Env struct {
 	GOOS   string
 	Home   string
-	UID    int
+	UID    int    // macOS: the launchd domain gui/<uid>
 	Exe    string // absolute path of the segurata binary the agent runs
 	Path   string // PATH the agent runs with, so connectors find their CLIs and external connectors
 	TmpDir string // a binary under it was built by `go run` and will not survive
-	Runner Runner
-	IO     connector.IO
-	TTY    bool
-	Now    func() time.Time
+	// Windows (LoadTaskHost): the account the task runs as, the local application data folder that
+	// holds its log, and schtasks.exe and conhost.exe by absolute path.
+	UserSID      string
+	LocalAppData string
+	SchTasks     string
+	Conhost      string
+	Runner       Runner
+	IO           connector.IO
+	TTY          bool
+	Now          func() time.Time
 	// Connectors are the installed connectors: the default selection, and which drive the browser.
 	Connectors []connector.Connector
 	Config     config.Config
@@ -75,29 +86,41 @@ type Env struct {
 	Tracker tracker.Paths
 }
 
-// Paths are the files the schedule uses, all under the owner's home.
+// Paths are the files the schedule uses, all the owner's.
 type Paths struct {
-	Plist        string
+	Plist        string // macOS
+	Task         string // Windows: the task definition schtasks registers
 	Logs         string
 	State        string // the agent's working directory
 	Out          string
 	Report       string
 	BrowserState string
-	SystemdTo    string
+	SystemdTo    string // Linux
 }
 
 func (e Env) Paths() Paths {
 	state := filepath.Join(e.Home, ".segurata")
-	return Paths{
-		Plist:        filepath.Join(e.Home, "Library", "LaunchAgents", agentLabel+".plist"),
-		Logs:         filepath.Join(e.Home, "Library", "Logs", "segurata"),
+	p := Paths{
 		State:        state,
 		Out:          filepath.Join(state, "out"),
 		Report:       filepath.Join(state, "last-report.md"),
 		BrowserState: filepath.Join(state, "schedule-browser.json"),
-		SystemdTo:    filepath.Join(e.Home, ".config", "systemd", "user"),
 	}
+	switch e.GOOS {
+	case "windows":
+		p.Task = filepath.Join(state, "schedule-task.xml")
+		p.Logs = filepath.Join(e.LocalAppData, "segurata", "Logs")
+	case "darwin":
+		p.Plist = filepath.Join(e.Home, "Library", "LaunchAgents", agentLabel+".plist")
+		p.Logs = filepath.Join(e.Home, "Library", "Logs", "segurata")
+	default:
+		p.SystemdTo = filepath.Join(e.Home, ".config", "systemd", "user")
+	}
+	return p
 }
+
+// logFile is where a Windows task's run writes, Task Scheduler keeping no output.
+func (p Paths) logFile() string { return filepath.Join(p.Logs, "schedule.log") }
 
 type Options struct {
 	Every      time.Duration
@@ -124,6 +147,9 @@ func (e Env) runArgs(o Options) []string {
 	}
 	if len(o.Connectors) > 0 {
 		args = append(args, "--connectors", strings.Join(o.Connectors, ","))
+	}
+	if e.GOOS == "windows" {
+		args = append(args, "--log", e.Paths().logFile())
 	}
 	return args
 }
@@ -221,17 +247,83 @@ func systemdQuote(s string) string {
 	return `"` + r.Replace(s) + `"`
 }
 
-var errDarwinOnly = errors.New("--apply works on macOS only; on this system, install the printed units by hand")
+var errApplyUnsupported = errors.New("--apply works on macOS and Windows only; on this system, install the printed units by hand")
 
 func (e Env) checkExe() error {
 	if !filepath.IsAbs(e.Exe) {
 		return fmt.Errorf("cannot tell where the segurata binary lives (%q)", e.Exe)
 	}
-	if e.TmpDir != "" && strings.HasPrefix(e.Exe, filepath.Clean(e.TmpDir)+string(filepath.Separator)) {
+	if e.TmpDir != "" && e.under(e.Exe, e.TmpDir) {
 		return fmt.Errorf("%s is in a temporary directory (go run?): build segurata and run it from where it will stay", e.Exe)
 	}
 	return nil
 }
+
+// under reports whether path lies inside dir; Windows paths compare without case.
+func (e Env) under(path, dir string) bool {
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	if e.GOOS == "windows" {
+		return len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+	}
+	return strings.HasPrefix(path, prefix)
+}
+
+// agent is what one OS's scheduler needs: the file that defines the job and the commands that
+// load, query and unload it.
+type agent struct {
+	noun       string // "agent", "task"
+	file       string
+	definition string // printed in the dry run
+	access     string // how the file is written, for the dry run
+	write      func() error
+	load       []string // replaces a loaded job when replaces is set
+	replaces   bool
+	unload     []string
+	query      []string // succeeds while the job is loaded
+	loadedAs   string   // "loaded", "registered"
+}
+
+func (e Env) agent(o Options) (agent, error) {
+	p := e.Paths()
+	if e.GOOS == "windows" {
+		xml, err := e.TaskXML(o)
+		if err != nil {
+			return agent{}, err
+		}
+		return agent{
+			noun: "task", file: p.Task, definition: xml, access: "private",
+			write:    func() error { return statefile.Write(p.Task, utf16File(xml)) },
+			load:     []string{e.SchTasks, "/Create", "/TN", taskName, "/XML", p.Task, "/F"},
+			replaces: true,
+			unload:   []string{e.SchTasks, "/Delete", "/TN", taskName, "/F"},
+			query:    []string{e.SchTasks, "/Query", "/TN", taskName},
+			loadedAs: "registered",
+		}, nil
+	}
+	plist, err := e.Plist(o)
+	if err != nil {
+		return agent{}, err
+	}
+	return agent{
+		noun: "agent", file: p.Plist, definition: plist, access: "mode 644",
+		write: func() error {
+			if err := os.MkdirAll(filepath.Dir(p.Plist), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(p.Plist, []byte(plist), 0o644); err != nil {
+				return err
+			}
+			return os.Chmod(p.Plist, 0o644) // WriteFile keeps an existing file's mode
+		},
+		load:     []string{launchctl, "bootstrap", e.domain(), p.Plist},
+		unload:   []string{launchctl, "bootout", e.service()},
+		query:    []string{launchctl, "print", e.service()},
+		loadedAs: "loaded",
+	}, nil
+}
+
+// scheduler is the OS's own scheduler; Linux prints systemd units instead.
+func (e Env) scheduler() bool { return e.GOOS == "darwin" || e.GOOS == "windows" }
 
 // Install prints the agent and how it is loaded and, with --apply and a confirmation, writes and
 // loads it.
@@ -239,35 +331,35 @@ func (e Env) Install(ctx context.Context, o Options) error {
 	if err := e.checkExe(); err != nil {
 		return err
 	}
-	out := e.IO.Out
-	if e.GOOS != "darwin" {
+	if !e.scheduler() {
 		return e.printSystemd(o)
 	}
-	plist, err := e.Plist(o)
+	a, err := e.agent(o)
 	if err != nil {
 		return err
 	}
-	every, _ := o.every() // Plist validated it
+	out := e.IO.Out
+	every, _ := o.every() // agent validated it
 	p := e.Paths()
-	fmt.Fprintf(out, "Agent    %s\nRuns     %s\nEvery    %s\nReport   %s\nLogs     %s\n",
-		p.Plist, strings.Join(e.runArgs(o), " "), every, p.Report, p.Logs)
-	fmt.Fprintf(out, "\n%s\n", plist)
-	loaded := e.loaded(ctx)
+	fmt.Fprintf(out, "%-8s %s\nRuns     %s\nEvery    %s\nReport   %s\nLogs     %s\n",
+		title(a.noun), a.file, strings.Join(e.runArgs(o), " "), every, p.Report, p.Logs)
+	fmt.Fprintf(out, "\n%s\n", a.definition)
+	loaded := e.loaded(ctx, a)
 	fmt.Fprintln(out, "Commands:")
-	if loaded {
-		fmt.Fprintf(out, "  %s bootout %s   (the agent is loaded now; it is replaced)\n", launchctl, e.service())
+	if loaded && !a.replaces {
+		fmt.Fprintf(out, "  %s   (the %s is %s now; it is replaced)\n", strings.Join(a.unload, " "), a.noun, a.loadedAs)
 	}
-	fmt.Fprintf(out, "  write %s (mode 644)\n  %s bootstrap %s %s\n", p.Plist, launchctl, e.domain(), p.Plist)
-	fmt.Fprintf(out, "\nUndo: segurata schedule uninstall --apply\n")
+	fmt.Fprintf(out, "  write %s (%s)\n  %s", a.file, a.access, strings.Join(a.load, " "))
+	if loaded && a.replaces {
+		fmt.Fprintf(out, "   (the %s is %s now; it is replaced)", a.noun, a.loadedAs)
+	}
+	fmt.Fprintf(out, "\n\nUndo: segurata schedule uninstall --apply\n")
 	if !o.Apply {
-		fmt.Fprintln(out, "\nDry run: nothing was changed. Run again with --apply to install this agent.")
+		fmt.Fprintf(out, "\nDry run: nothing was changed. Run again with --apply to install this %s.\n", a.noun)
 		return nil
 	}
 	ok, err := e.confirm(o)
 	if err != nil || !ok {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(p.Plist), 0o755); err != nil {
 		return err
 	}
 	for _, dir := range []string{p.Logs, p.State} {
@@ -275,50 +367,51 @@ func (e Env) Install(ctx context.Context, o Options) error {
 			return err
 		}
 	}
-	if loaded {
-		if err := e.launchctl(ctx, "bootout", e.service()); err != nil {
+	if loaded && !a.replaces {
+		if err := e.command(ctx, a.unload); err != nil {
 			return err
 		}
 	}
-	if err := os.WriteFile(p.Plist, []byte(plist), 0o644); err != nil {
+	if err := a.write(); err != nil {
 		return err
 	}
-	if err := os.Chmod(p.Plist, 0o644); err != nil { // WriteFile keeps an existing file's mode
-		return err
-	}
-	if err := e.launchctl(ctx, "bootstrap", e.domain(), p.Plist); err != nil {
+	if err := e.command(ctx, a.load); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Installed. The first run starts in %s; logs in %s.\n", every, p.Logs)
 	return nil
 }
 
-// Uninstall unloads the agent and removes its plist. Reports, logs and inventories stay.
+func title(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
+
+// Uninstall unloads the agent and removes its file. Reports, logs and inventories stay.
 func (e Env) Uninstall(ctx context.Context, o Options) error {
-	out := e.IO.Out
-	if e.GOOS != "darwin" {
-		p := e.Paths()
+	out, p := e.IO.Out, e.Paths()
+	if !e.scheduler() {
 		fmt.Fprintf(out, "Commands:\n  systemctl --user disable --now %s.timer\n  rm %s %s\n  systemctl --user daemon-reload\n",
 			unit, filepath.Join(p.SystemdTo, unit+".service"), filepath.Join(p.SystemdTo, unit+".timer"))
 		if o.Apply {
-			return errDarwinOnly
+			return errApplyUnsupported
 		}
 		return nil
 	}
-	p := e.Paths()
-	_, statErr := os.Stat(p.Plist)
+	a, err := e.agent(Options{})
+	if err != nil {
+		return err
+	}
+	_, statErr := os.Stat(a.file)
 	exists := statErr == nil
-	loaded := e.loaded(ctx)
+	loaded := e.loaded(ctx, a)
 	if !exists && !loaded {
-		fmt.Fprintln(out, "No segurata agent is installed.")
+		fmt.Fprintf(out, "No segurata %s is installed.\n", a.noun)
 		return nil
 	}
 	fmt.Fprintln(out, "Commands:")
 	if loaded {
-		fmt.Fprintf(out, "  %s bootout %s\n", launchctl, e.service())
+		fmt.Fprintf(out, "  %s\n", strings.Join(a.unload, " "))
 	}
 	if exists {
-		fmt.Fprintf(out, "  rm %s\n", p.Plist)
+		fmt.Fprintf(out, "  rm %s\n", a.file)
 	}
 	fmt.Fprintf(out, "Kept: %s and %s.\n", p.State, p.Logs)
 	if !o.Apply {
@@ -330,12 +423,12 @@ func (e Env) Uninstall(ctx context.Context, o Options) error {
 		return err
 	}
 	if loaded {
-		if err := e.launchctl(ctx, "bootout", e.service()); err != nil {
+		if err := e.command(ctx, a.unload); err != nil {
 			return err
 		}
 	}
 	if exists {
-		if err := os.Remove(p.Plist); err != nil {
+		if err := os.Remove(a.file); err != nil {
 			return err
 		}
 	}
@@ -343,20 +436,31 @@ func (e Env) Uninstall(ctx context.Context, o Options) error {
 	return nil
 }
 
-// Status says whether the agent is installed and loaded, and when the last report was written.
+// Status says whether the agent is installed and loaded, and when the last report was written. On
+// Windows it adds Task Scheduler's own view: the last run and its result.
 func (e Env) Status(ctx context.Context) error {
 	out, p := e.IO.Out, e.Paths()
-	if e.GOOS == "darwin" {
+	if e.scheduler() {
+		a, err := e.agent(Options{})
+		if err != nil {
+			return err
+		}
 		installed := "not installed"
-		if _, err := os.Stat(p.Plist); err == nil {
+		if _, err := os.Stat(a.file); err == nil {
 			installed = "installed"
 		}
-		loaded := "not loaded"
-		if e.loaded(ctx) {
-			loaded = "loaded"
+		loaded := e.loaded(ctx, a)
+		state := "not " + a.loadedAs
+		if loaded {
+			state = a.loadedAs
 		}
-		fmt.Fprintf(out, "Agent    %s: %s, %s\n", p.Plist, installed, loaded)
+		fmt.Fprintf(out, "%-8s %s: %s, %s\n", title(a.noun), a.file, installed, state)
 		fmt.Fprintf(out, "Logs     %s\n", p.Logs)
+		if loaded && e.GOOS == "windows" {
+			if err := e.Runner.Run(ctx, e.SchTasks, []string{"/Query", "/TN", taskName, "/V", "/FO", "LIST"}, out, io.Discard); err != nil {
+				fmt.Fprintf(e.IO.Err, "schtasks /Query: %v\n", err)
+			}
+		}
 	} else {
 		fmt.Fprintf(out, "Timer    check with: systemctl --user list-timers %s.timer\n", unit)
 	}
@@ -378,7 +482,7 @@ func (e Env) printSystemd(o Options) error {
 		filepath.Join(p.SystemdTo, unit+".service"), svc, filepath.Join(p.SystemdTo, unit+".timer"), timer, p.SystemdTo, p.State, unit)
 	fmt.Fprintln(e.IO.Out, "\nLogs: journalctl --user -u "+unit+". Notifications are macOS only; on Linux new findings go to the log.")
 	if o.Apply {
-		return errDarwinOnly
+		return errApplyUnsupported
 	}
 	return nil
 }
@@ -391,15 +495,21 @@ func (e Env) confirm(o Options) (bool, error) {
 	return ok, err
 }
 
-func (e Env) loaded(ctx context.Context) bool {
-	return e.Runner.Run(ctx, launchctl, []string{"print", e.service()}, io.Discard, io.Discard) == nil
+func (e Env) loaded(ctx context.Context, a agent) bool {
+	return e.Runner.Run(ctx, a.query[0], a.query[1:], io.Discard, io.Discard) == nil
 }
 
-func (e Env) launchctl(ctx context.Context, args ...string) error {
+// command runs argv, echoing it first, as the dry run printed it.
+func (e Env) command(ctx context.Context, argv []string) error {
 	var stderr bytes.Buffer
-	fmt.Fprintf(e.IO.Err, "$ %s %s\n", launchctl, strings.Join(args, " "))
-	if err := e.Runner.Run(ctx, launchctl, args, e.IO.Out, &stderr); err != nil {
-		return fmt.Errorf("launchctl %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+	fmt.Fprintf(e.IO.Err, "$ %s\n", strings.Join(argv, " "))
+	if err := e.Runner.Run(ctx, argv[0], argv[1:], e.IO.Out, &stderr); err != nil {
+		return fmt.Errorf("%s %s: %w: %s", toolName(argv[0]), argv[1], err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// toolName is the last element of a macOS or Windows path, whatever the host.
+func toolName(path string) string {
+	return strings.TrimSuffix(path[strings.LastIndexAny(path, `/\`)+1:], ".exe")
 }

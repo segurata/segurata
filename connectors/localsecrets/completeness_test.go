@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -29,6 +30,16 @@ func writeExe(t *testing.T, name, body string) string {
 	return proctest.Script(t, "", name, body+"\n")
 }
 
+// ripgrep's messages on this host: a file it may not read, one another process holds or that a
+// Unix sandbox denies, a vanished one, and an I/O error.
+var rgMessages = map[bool][4]string{
+	false: {"Permission denied (os error 13)", "Operation not permitted (os error 1)", "No such file or directory (os error 2)", "Input/output error (os error 5)"},
+	true: {"Access is denied. (os error 5)", "The process cannot access the file because it is being used by another process. (os error 32)",
+		"The system cannot find the file specified. (os error 2)", "The request could not be performed because of an I/O device error. (os error 1117)"},
+}[runtime.GOOS == "windows"]
+
+var denied, notPermitted, vanished, ioError = rgMessages[0], rgMessages[1], rgMessages[2], rgMessages[3]
+
 func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {
 	for _, tc := range []struct {
 		name, script string
@@ -38,18 +49,18 @@ func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {
 	}{
 		{"regex error", `echo "rg: regex parse error" >&2; exit 2`, time.Minute, true, nil},
 		{"partial output, then an error", `printf '%s\0001:x\n' "$HOME/.zshrc"; echo "rg: something broke" >&2; exit 2`, time.Minute, true, nil},
-		{"unreadable files and an I/O error", `echo "rg: /x/a: Permission denied (os error 13)" >&2
-echo "rg: /x/b: Input/output error (os error 5)" >&2; exit 2`, time.Minute, true, nil},
-		{"unreadable root", "last-path-error Permission denied (os error 13)", time.Minute, true, nil},
+		{"unreadable files and an I/O error", `echo "rg: /x/a: ` + denied + `" >&2
+echo "rg: /x/b: ` + ioError + `" >&2; exit 2`, time.Minute, true, nil},
+		{"unreadable root", "last-path-error " + denied, time.Minute, true, nil},
 		{"exit 2 without a message", `exit 2`, time.Minute, true, nil},
 		{"killed", `kill -9 $$`, time.Minute, true, nil},
 		{"timed out", `exec sleep 5`, 100 * time.Millisecond, true, nil},
-		{"unreadable files only", `echo "rg: /x/Mail: Operation not permitted (os error 1)" >&2
-echo "rg: /x/a: Permission denied (os error 13)" >&2
-echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, false, []string{"/x/Mail", "/x/a"}},
-		{"unreadable and vanished files", `echo "rg: /x/a: Permission denied (os error 13)" >&2
-echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, time.Minute, false, []string{"/x/a"}},
-		{"vanished root", "last-path-error No such file or directory (os error 2)", time.Minute, true, nil},
+		{"unreadable files only", `echo "rg: /x/Mail: ` + notPermitted + `" >&2
+echo "rg: /x/a: ` + denied + `" >&2
+echo "rg: /x/a: ` + denied + `" >&2; exit 2`, time.Minute, false, []string{"/x/Mail", "/x/a"}},
+		{"unreadable and vanished files", `echo "rg: /x/a: ` + denied + `" >&2
+echo "rg: /x/gone.jsonl: ` + vanished + `" >&2; exit 2`, time.Minute, false, []string{"/x/a"}},
+		{"vanished root", "last-path-error " + vanished, time.Minute, true, nil},
 		{"no match", `exit 1`, time.Minute, false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,7 +142,7 @@ func runCoverage(rec *recorder) finding.Coverage {
 func TestTooManyUnreadablePathsProveNothing(t *testing.T) {
 	fx := newFixture(t)
 	c := fx.connector(t, "[]")
-	c.RG = cli.Exec{Path: writeExe(t, "rg", `i=0; while [ $i -le 200 ]; do echo "rg: /x/f$i: Permission denied (os error 13)" >&2; i=$((i+1)); done; exit 2`), Timeout: time.Minute}
+	c.RG = cli.Exec{Path: writeExe(t, "rg", `i=0; while [ $i -le 200 ]; do echo "rg: /x/f$i: `+denied+`" >&2; i=$((i+1)); done; exit 2`), Timeout: time.Minute}
 	rec := &recorder{}
 	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
 		t.Fatal(err)
@@ -152,6 +163,13 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 	c := fx.connector(t, "[]")
 	locked := fx.write(t, ".config/locked.env", "TOKEN="+fx.stripe+"\n", 0o600)
 	denyRead(t, locked)
+	assertOnlySkipped(t, c, "~/.config/locked.env")
+}
+
+// assertOnlySkipped runs c and checks that the files scope skipped the one unreadable path, as
+// expected, and that the rest was searched.
+func assertOnlySkipped(t *testing.T, c *Connector, path string) {
+	t.Helper()
 	rec := &recorder{}
 	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
 		t.Fatal(err)
@@ -162,7 +180,7 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 			files = append(files, s)
 		}
 	}
-	if want := []string{finding.PathScope(secretrisk.FilesScope, "~/.config/locked.env") + ": " + finding.UnreadableReason}; !slices.Equal(files, want) {
+	if want := []string{finding.PathScope(secretrisk.FilesScope, path) + ": " + finding.UnreadableReason}; !slices.Equal(files, want) {
 		t.Errorf("files skipped %q, want %q", files, want)
 	}
 	var detail string
@@ -272,6 +290,7 @@ func TestRepositoryConfigRunsNothing(t *testing.T) {
 	r, marker := hostileRepo(t)
 	c := New()
 	c.Home = func() (string, error) { return r.home, nil }
+	c.Getenv = nil // the user's own CLOUDSDK_CONFIG or GH_CONFIG_DIR stays out of the test
 	c.KeyPath = func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") }
 	c.GH = nil
 	rec := &recorder{}
@@ -349,5 +368,47 @@ func TestIndexListingIgnoresTheWorkingDirectory(t *testing.T) {
 	dumps, err := s.trackedDumps(r.dir)
 	if _, ok := dumps["db/backup.sql"]; err != nil || !ok {
 		t.Errorf("tracked dumps from a subdirectory: %v, %v", dumps, err)
+	}
+}
+
+// ripgrep's messages as each OS words them, the Windows ones in English and Spanish: only paths it
+// may not read below the roots, or that vanished, leave the rest of the search complete.
+func TestUnreadableBelowReadsEachOSMessages(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		e      rgErrors
+		roots  []string
+		stderr string
+		paths  []string
+		ok     bool
+	}{
+		{"unix denied and not permitted", unixRGErrors, []string{"/h/.config"},
+			"rg: /h/.config/a: Permission denied (os error 13)\nrg: /h/.config/Mail: b: Operation not permitted (os error 1)\n", []string{"/h/.config/a", "/h/.config/Mail: b"}, true},
+		{"unix vanished", unixRGErrors, []string{"/h/.config"}, "rg: /h/.config/gone: No such file or directory (os error 2)", nil, true},
+		{"unix I/O error", unixRGErrors, []string{"/h"}, "rg: /h/a: Input/output error (os error 5)", nil, false},
+		{"unix unreadable root", unixRGErrors, []string{"/h/.config/"}, "rg: /h/.config: Permission denied (os error 13)", nil, false},
+		{"unix path not rooted", unixRGErrors, []string{"/h"}, "rg: IO error for operation on /h/a: Permission denied (os error 13)", nil, false},
+		{"unix Windows code", unixRGErrors, []string{"/h"}, "rg: /h/a: The process cannot access the file because it is being used by another process. (os error 32)", nil, false},
+		{"windows denied, in use and locked", windowsRGErrors, []string{`C:\Users\ana\.config`},
+			"rg: C:\\Users\\ana\\.config\\a: Access is denied. (os error 5)\r\n" +
+				"rg: C:\\Users\\ana\\.config\\NTUSER.DAT: The process cannot access the file because it is being used by another process. (os error 32)\r\n" +
+				"rg: C:\\Users\\ana\\.config\\db: The process cannot access the file because another process has locked a portion of the file. (os error 33)\r\n",
+			[]string{`C:\Users\ana\.config\a`, `C:\Users\ana\.config\NTUSER.DAT`, `C:\Users\ana\.config\db`}, true},
+		{"windows in Spanish", windowsRGErrors, []string{`C:\Users\ana`}, "rg: C:\\Users\\ana\\a: Acceso denegado. (os error 5)", []string{`C:\Users\ana\a`}, true},
+		{"windows vanished file and folder", windowsRGErrors, []string{`C:\Users\ana`},
+			"rg: C:\\Users\\ana\\a: The system cannot find the file specified. (os error 2)\nrg: C:\\Users\\ana\\b\\c: The system cannot find the path specified. (os error 3)", nil, true},
+		{"windows UNC", windowsRGErrors, []string{`\\srv\share`}, `rg: \\srv\share\a: Access is denied. (os error 5)`, []string{`\\srv\share\a`}, true},
+		{"windows root in another case", windowsRGErrors, []string{`C:\Users\ana\.config`}, `rg: c:\users\ANA\.config: Access is denied. (os error 5)`, nil, false},
+		{"windows path not rooted", windowsRGErrors, []string{`C:\Users\ana`}, `rg: IO error for operation on C:\Users\ana\a: Access is denied. (os error 5)`, nil, false},
+		{"windows other error", windowsRGErrors, []string{`C:\Users\ana`}, `rg: C:\Users\ana\a: The request could not be performed because of an I/O device error. (os error 1117)`, nil, false},
+		{"windows regex error", windowsRGErrors, []string{`C:\Users\ana`}, "rg: regex parse error", nil, false},
+		{"empty", windowsRGErrors, nil, "", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			paths, ok := tc.e.unreadableBelow(tc.stderr, tc.roots)
+			if ok != tc.ok || !slices.Equal(paths, tc.paths) {
+				t.Errorf("got %q %v, want %q %v", paths, ok, tc.paths, tc.ok)
+			}
+		})
 	}
 }

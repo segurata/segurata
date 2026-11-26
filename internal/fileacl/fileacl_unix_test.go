@@ -64,6 +64,43 @@ func TestExposureAndEffectiveOnUnix(t *testing.T) {
 	}
 }
 
+// A file is closed to others only by its own mode or by a folder of the user's that lets neither
+// group nor others through. A 0750 folder with a 0604 file of another group is open to a member
+// of the folder's group, which Effective's per-class walk would hide.
+func TestClosedToOthersNeverMixesClassesAcrossFolders(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "d")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "f")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		dir, file fs.FileMode
+		closed    bool
+	}{
+		{0o750, 0o600, true}, {0o700, 0o644, true}, {0o740, 0o604, true},
+		{0o750, 0o604, false}, {0o701, 0o640, false}, {0o711, 0o644, false},
+	} {
+		if err := os.Chmod(dir, c.dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, c.file); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := ClosedToOthers(path, dir); err != nil || got != c.closed {
+			t.Errorf("folder %o, file %o: closed = %v %v, want %v", c.dir, c.file, got, err, c.closed)
+		}
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ClosedToOthers(filepath.Join(dir, "missing"), dir); err == nil {
+		t.Error("a missing file counted as closed")
+	}
+}
+
 func TestChangeableByOthersOnUnix(t *testing.T) {
 	dir := t.TempDir()
 	for _, c := range []struct {

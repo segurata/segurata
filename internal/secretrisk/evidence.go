@@ -25,7 +25,7 @@ const (
 type Evidence struct {
 	attribution.Claims
 
-	Source      string `json:"source"`              // scan | gitleaks | name | ssh
+	Source      string `json:"source"`              // scan | gitleaks | name | ssh | registry
 	Kind        string `json:"kind"`                // config | repo | transcript | history | log
 	Type        string `json:"type"`                // a catalog key, or a gitleaks rule id
 	Redacted    string `json:"redacted"`            // Redact's format: "sk_live_…a1b2(107)"

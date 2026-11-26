@@ -56,6 +56,11 @@ segurata connectors | grep prowler                                             #
 segurata doctor -connector prowler                                             # prowler and gcloud found
 ```
 
+On Windows, where a script runs by its extension, copy `segurata-prowler` and its shim
+`segurata-prowler.cmd` (which runs it through the Python launcher `py` on `PATH`, never one in the
+current directory) into the same directory on `PATH`. The shim passes on only the subcommand the
+core gives it.
+
 ## Authentication
 
 Prowler's GCP provider reads `CLOUDSDK_AUTH_ACCESS_TOKEN` before it falls back to Application

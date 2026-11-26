@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,6 +62,30 @@ func (s *scan) hs(rels []string) []string {
 	return out
 }
 
+// windowsCredFiles are where Windows builds of curl and git look for netrc credentials.
+var windowsCredFiles = []string{"_netrc"}
+
+// configRoots are credFiles and the gcloud and gh folders where they lie outside them: under
+// %APPDATA% on Windows, or wherever CLOUDSDK_CONFIG, GH_CONFIG_DIR or XDG_CONFIG_HOME put them
+// (gcloud's default folder included, which may still hold an earlier login).
+func (s *scan) configRoots() []string {
+	roots := s.hs(credFiles)
+	if s.dirs.GOOS == "windows" {
+		roots = append(roots, s.hs(windowsCredFiles)...)
+	}
+	for _, d := range append(s.dirs.GcloudFolders(), s.dirs.GitHubCLI()) {
+		if !slices.ContainsFunc(roots, func(r string) bool { return within(d, r) }) {
+			roots = append(roots, d)
+		}
+	}
+	return roots
+}
+
+func within(p, root string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // passes are the ripgrep runs. Without gitleaks, the whole tree under repos_root is searched
 // instead of its secret files only.
 func (s *scan) passes(history bool) []pass {
@@ -74,20 +99,29 @@ func (s *scan) passes(history bool) []pass {
 		srcExtra = globs(srcSecretGlobs...)
 	}
 	return append([]pass{
-		{withAssignment, s.hs(credFiles), noCode},
+		{withAssignment, s.configRoots(), noCode},
+		{withAssignment, s.dirs.PowerShellProfiles(), slices.Concat(limit, []string{"--max-depth", "1", "--iglob", "*profile.ps1"})},
 		{withAssignment, []string{s.h(".claude")}, slices.Concat(limit, globs("*.json", "!projects", "!plugins/cache"))},
 		{withAssignment, []string{s.src}, slices.Concat(limit, srcExtra)},
 	}, s.trailPasses()...)
 }
 
 func (s *scan) trailPasses() []pass {
-	return []pass{
-		{withAssignment, s.hs(historyFiles), nil},
+	ps := []pass{
+		{withAssignment, s.historyRoots(), nil},
 		{specific, []string{s.src}, globs("*.log")},
-		{specific, s.hs([]string{"Library/Logs", ".local/log"}), nil},
+		{specific, s.hs(logDirs), nil},
 		{specific, s.hs(transcriptDirs), nil},
 	}
+	if s.dirs.GOOS == "windows" {
+		// Windows has no logs folder: applications write theirs under %LOCALAPPDATA%.
+		ps = append(ps, pass{specific, []string{s.dirs.LocalAppData()}, []string{"--max-filesize", strconv.Itoa(maxFileSize), "--iglob", "*.log"}})
+	}
+	return ps
 }
+
+// historyRoots are the shell and REPL histories, PowerShell's included.
+func (s *scan) historyRoots() []string { return append(s.hs(historyFiles), s.dirs.PSReadLine()) }
 
 // patternsFor leaves the noisy assignment pattern out of transcripts and logs.
 func patternsFor(kind string) []pattern {
@@ -140,15 +174,62 @@ func (s *scan) rgOutput(args []string) []byte {
 	return out
 }
 
-// ripgrep's message endings for a path it may not read, and for one removed while it searched.
+// rgErrors are ripgrep's OS error codes for a path it may not read and for one removed while it
+// searched. Windows also refuses a file another process holds open without sharing (32) or has
+// locked (33), and words its messages in the system's language, so lines are matched by code: a
+// Windows path holds no ": ", a Unix message holds none.
+type rgErrors struct {
+	unreadable, vanished []int
+	windows              bool
+}
+
 var (
-	unreadableErrs = []string{": Permission denied (os error 13)", ": Operation not permitted (os error 1)", ": Access is denied. (os error 5)"}
-	vanishedErr    = ": No such file or directory (os error 2)"
+	unixRGErrors    = rgErrors{unreadable: []int{13, 1}, vanished: []int{2}}
+	windowsRGErrors = rgErrors{unreadable: []int{5, 32, 33}, vanished: []int{2, 3}, windows: true}
+	hostRGErrors    = map[bool]rgErrors{false: unixRGErrors, true: windowsRGErrors}[runtime.GOOS == "windows"]
 )
+
+// parse reads one `path: message (os error N)` line; the path must be rooted, as the roots are.
+func (e rgErrors) parse(msg string) (path string, code int, ok bool) {
+	i := strings.LastIndex(msg, " (os error ")
+	if i < 0 || !strings.HasSuffix(msg, ")") {
+		return "", 0, false
+	}
+	code, err := strconv.Atoi(msg[i+len(" (os error ") : len(msg)-1])
+	if err != nil {
+		return "", 0, false
+	}
+	head := msg[:i]
+	j := strings.LastIndex(head, ": ")
+	if e.windows {
+		j = strings.Index(head, ": ")
+	}
+	if j <= 0 {
+		return "", 0, false
+	}
+	path = head[:j]
+	return path, code, strings.HasPrefix(path, "/") || e.windows && windowsRooted(path)
+}
+
+// windowsRooted is a drive path (C:\x) or a UNC one (\\server\share), spelled out so the rule
+// holds on every host the tests run on.
+func windowsRooted(p string) bool {
+	letter := len(p) >= 3 && ('A' <= p[0]&^0x20 && p[0]&^0x20 <= 'Z') && p[1] == ':' && (p[2] == '\\' || p[2] == '/')
+	return letter || strings.HasPrefix(p, `\\`)
+}
+
+func (e rgErrors) sameRoot(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	return a == b || e.windows && strings.EqualFold(a, b)
+}
 
 // unreadableBelow is the unreadable paths in ripgrep's stderr, and whether stderr reports only
 // unreadable or vanished paths below its roots.
 func unreadableBelow(stderr string, roots []string) ([]string, bool) {
+	return hostRGErrors.unreadableBelow(stderr, roots)
+}
+
+func (e rgErrors) unreadableBelow(stderr string, roots []string) ([]string, bool) {
 	var paths []string
 	lines := 0
 	for line := range strings.Lines(strings.TrimSpace(stderr)) {
@@ -156,15 +237,12 @@ func unreadableBelow(stderr string, roots []string) ([]string, bool) {
 		if !ok {
 			return nil, false
 		}
-		path, vanished := strings.CutSuffix(msg, vanishedErr)
-		if !vanished {
-			i := slices.IndexFunc(unreadableErrs, func(e string) bool { return strings.HasSuffix(msg, e) })
-			if i < 0 {
-				return nil, false
-			}
-			path = strings.TrimSuffix(msg, unreadableErrs[i])
+		path, code, ok := e.parse(msg)
+		vanished := slices.Contains(e.vanished, code)
+		if !ok || !vanished && !slices.Contains(e.unreadable, code) {
+			return nil, false
 		}
-		if slices.ContainsFunc(roots, func(root string) bool { return filepath.Clean(root) == filepath.Clean(path) }) {
+		if slices.ContainsFunc(roots, func(root string) bool { return e.sameRoot(root, path) }) {
 			return nil, false
 		}
 		if !vanished {
@@ -505,7 +583,9 @@ func (s *scan) byName() {
 			}
 		}
 	}
-	files = append(files, existing(s.hs([]string{".config/gcloud/credentials.db", ".config/gcloud/access_tokens.db"}))...)
+	for _, gcloud := range s.dirs.GcloudFolders() {
+		files = append(files, existing([]string{filepath.Join(gcloud, "credentials.db"), filepath.Join(gcloud, "access_tokens.db")})...)
+	}
 	for _, f := range files {
 		ev := secretrisk.Evidence{Source: "name"}
 		var value string

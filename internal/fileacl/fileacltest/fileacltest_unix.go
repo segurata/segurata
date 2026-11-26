@@ -33,3 +33,6 @@ func access(path string) (string, error) {
 	}
 	return fmt.Sprintf("%04o", st.Mode().Perm()), nil
 }
+
+// giveAway chowns path to nobody's uid. Only root can.
+func giveAway(path string) error { return os.Lchown(path, 65534, -1) }

@@ -29,7 +29,7 @@ segurata inventory browser-extensions
 segurata status
 ```
 
-On macOS or Linux, this first scan reads local Brave or Chrome profiles without provider credentials.
+This first scan reads local Brave or Chrome profiles without provider credentials.
 Run `segurata connectors` to see the other connectors available on your machine.
 
 Inventories are read-only on the systems they inspect. Findings and tracker state stay on disk.
@@ -51,4 +51,4 @@ to preview a finding's fix and verify an authorized change.
 
 [Apache License 2.0](LICENSE)
 
-Proudly brought to you by [DjinnFoundry](https://github.com/DjinnFoundry).
+Proudly brought to you by [DjinnFoundry](https://djinnfoundry.com).

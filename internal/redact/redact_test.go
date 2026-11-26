@@ -10,9 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/attribution"
@@ -102,7 +104,7 @@ func (fx *fixture) cli(in string, tty bool) (CLI, *bytes.Buffer, *bytes.Buffer) 
 	var out, errb bytes.Buffer
 	return CLI{Out: &out, Err: &errb, In: strings.NewReader(in), TTY: tty,
 		Trails: func(ctx context.Context) (*localsecrets.Trails, error) { return fx.conn.Trails(ctx, nil) },
-		Lsof: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		OpenFiles: Lsof(func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name != "lsof" || strings.Join(args, " ") != "-Fn -c claude -c codex" {
 				fx.t.Errorf("lsof called as %s %v", name, args)
 			}
@@ -115,7 +117,7 @@ func (fx *fixture) cli(in string, tty bool) (CLI, *bytes.Buffer, *bytes.Buffer) 
 				b.WriteString("n" + f + "\n")
 			}
 			return []byte(b.String()), fx.lsofErr
-		},
+		}),
 		Paths: tracker.Paths{Tracker: fx.state}, Now: time.Now}, &out, &errb
 }
 
@@ -582,5 +584,62 @@ func TestAFileChangedAfterThePlanIsLeftAlone(t *testing.T) {
 	}
 	if !strings.Contains(fx.read(p), fx.secrets["anthropic"]) || !strings.HasSuffix(fx.read(p), `{"uuid":"6"}`+"\n") {
 		t.Error("a file changed after the plan was rewritten")
+	}
+}
+
+func TestAFileOfAnotherAccountIsLeftAlone(t *testing.T) {
+	fx := newFixture(t)
+	p := fx.write(".claude/projects/a/theirs.jsonl", fx.transcript(), 0o600)
+	before := fx.read(p)
+	fileacltest.GiveAway(t, p)
+	code, out := fx.run("", false, "--trails", "--apply", "--yes")
+	if code != 0 || !strings.Contains(out, "1 file "+skipOwner) {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if fx.read(p) != before {
+		t.Error("a file owned by another account was rewritten")
+	}
+}
+
+// A UTF-16 file, which the scan decodes but a byte-wise rewrite cannot match, is reported as left
+// alone instead of silently keeping its secrets.
+func TestAUTF16FileIsReportedAndLeftAlone(t *testing.T) {
+	fx := newFixture(t)
+	p := fx.write(".claude/projects/a/s.jsonl", utf16LE(fx.transcript()), 0o600)
+	before := fx.read(p)
+	code, out := fx.run("", false, "--trails", "--apply", "--yes")
+	if code != 0 || !strings.Contains(out, skipUTF16) {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if fx.read(p) != before {
+		t.Error("a UTF-16 file was rewritten")
+	}
+}
+
+func utf16LE(s string) string {
+	b := []byte{0xff, 0xfe}
+	for _, u := range utf16.Encode([]rune(s)) {
+		b = append(b, byte(u), byte(u>>8))
+	}
+	return string(b)
+}
+
+// The open-files check is asked about exactly the trail files in scope, at the plan and again
+// before applying.
+func TestOpenFilesIsAskedAboutTheFilesInScope(t *testing.T) {
+	fx := newFixture(t)
+	in := fx.write(".claude/projects/a/s.jsonl", fx.transcript(), 0o600)
+	fx.write(".codex/sessions/2026/out.jsonl", fx.transcript(), 0o600)
+	c, _, _ := fx.cli("", false)
+	var asked [][]string
+	c.OpenFiles = func(_ context.Context, paths []string) (map[string]bool, error) {
+		asked = append(asked, slices.Clone(paths))
+		return nil, nil
+	}
+	if code := c.Run(context.Background(), []string{"--path", filepath.Dir(in), "--apply", "--yes"}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(asked) != 2 || !slices.Equal(asked[0], []string{in}) || !slices.Equal(asked[1], []string{in}) {
+		t.Fatalf("asked about %v", asked)
 	}
 }

@@ -129,3 +129,32 @@ func TestChangeableByOthersOnWindows(t *testing.T) {
 		t.Fatalf("Users may delete entries: %v %v", got, err)
 	}
 }
+
+// A group owner's grants count as exposure: only a user account owns with owner bits.
+func TestUserAccountTellsUsersFromGroups(t *testing.T) {
+	if !userAccount(currentUser(t)) {
+		t.Error("the current user is not a user account")
+	}
+	for _, sid := range []string{"S-1-5-32-545", "S-1-5-11", "S-1-1-0"} {
+		if userAccount(sid) {
+			t.Errorf("%s counted as a user account", sid)
+		}
+	}
+}
+
+// On Windows only the file's own access list decides whether others can reach it.
+func TestClosedToOthersReadsTheDACL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	user := currentUser(t)
+	setDACL(t, path, "(A;;FA;;;"+user+")(A;;FA;;;SY)(A;;FA;;;BA)")
+	if closed, err := ClosedToOthers(path, ""); err != nil || !closed {
+		t.Fatalf("a file of the user, SYSTEM and Administrators: %v %v", closed, err)
+	}
+	setDACL(t, path, "(A;;FA;;;"+user+")(A;;FR;;;BU)")
+	if closed, err := ClosedToOthers(path, ""); err != nil || closed {
+		t.Fatalf("a file BUILTIN\\Users can read: %v %v", closed, err)
+	}
+}

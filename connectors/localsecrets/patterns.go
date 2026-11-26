@@ -115,7 +115,7 @@ var specific = compile([]pattern{
 	{typ: "telegram-bot", src: `\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b`},
 	{typ: "docker-auth", src: `"auth"\s*:\s*"([A-Za-z0-9+/=]{16,})"`, group: 1},
 	{typ: "kube-client-key", src: `client-key-data:\s*([A-Za-z0-9+/=]{40,})`, group: 1},
-	{typ: "netrc-password", src: `\bpassword\s+(\S{6,})`, group: 1, files: regexp.MustCompile(`\.netrc$`)},
+	{typ: "netrc-password", src: `\bpassword\s+(\S{6,})`, group: 1, files: regexp.MustCompile(`[._]netrc$`)},
 	{typ: "url-credentials", src: `\b[a-z][a-z0-9+.-]{1,20}://[^\s:/@"'<>]+:([^\s@/"'<>]{3,})@[A-Za-z0-9.-]+`, group: 1},
 	{typ: "url-token-param", src: `(?i)[?&](?:access_token|token|api_key|apikey|key|secret|password)=([A-Za-z0-9._~%-]{16,})`, group: 1},
 	{typ: "jwt", src: `\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`, prefix: "eyJ"},

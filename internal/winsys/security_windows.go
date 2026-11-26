@@ -112,5 +112,8 @@ func fromSDDL(sddl string) (uintptr, error) {
 	return sd, nil
 }
 
-// WriteDAC is the access right to change a DACL.
-const WriteDAC = 0x40000
+// WriteDAC is the access right to change a DACL, WriteOwner the one to change the owner.
+const (
+	WriteDAC   = 0x40000
+	WriteOwner = 0x80000
+)

@@ -3,13 +3,16 @@
 package keychain
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"runtime"
 	"syscall"
+	"unicode"
 	"unicode/utf16"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/segurata/segurata/internal/winsys"
@@ -18,6 +21,7 @@ import (
 const (
 	credTypeGeneric         = 1    // CRED_TYPE_GENERIC
 	credPersistLocalMachine = 2    // CRED_PERSIST_LOCAL_MACHINE: this user on this machine, never roaming
+	credPersistEnterprise   = 3    // CRED_PERSIST_ENTERPRISE: what cmdkey writes; roams with the profile
 	maxBlob                 = 2560 // CRED_MAX_CREDENTIAL_BLOB_SIZE
 
 	errorNotFound           syscall.Errno = 1168 // ERROR_NOT_FOUND
@@ -25,6 +29,9 @@ const (
 )
 
 var errNoLogonSession = errors.New("Credential Manager is not available in this logon session (a scheduled task must run as the logged-on user)")
+
+// Available: keychain: references resolve here.
+const Available = true
 
 // Default is the Windows Credential Manager, storing generic credentials under account.
 func Default(account string) Store { return CredentialManager{Account: account} }
@@ -57,13 +64,45 @@ func (CredentialManager) Read(_ context.Context, service string) (string, error)
 		return "", fmt.Errorf("reading %s from Credential Manager: %w", service, err)
 	}
 	defer clear(c.blob)
-	if len(c.blob)%2 != 0 {
-		return "", fmt.Errorf("reading %s from Credential Manager: the item is not UTF-16 text (odd length)", service)
+	v, err := decodeBlob(c.blob)
+	if err != nil {
+		return "", fmt.Errorf("reading %s from Credential Manager: %w", service, err)
 	}
-	u := make([]uint16, len(c.blob)/2)
+	return v, nil
+}
+
+// decodeBlob reads the UTF-16LE text cmdkey and PowerShell write. Other writers (Go keyring
+// libraries, docker-credential-wincred) store UTF-8, whose even-length ASCII would decode without
+// error into unrelated characters, so a blob that holds no NUL byte, is valid UTF-8 and decodes
+// to non-ASCII is refused; so are unpaired surrogates and control characters. One trailing NUL
+// terminator is dropped.
+func decodeBlob(blob []byte) (string, error) {
+	if len(blob)%2 != 0 {
+		return "", errors.New("the item is not UTF-16 text (odd length)")
+	}
+	u := make([]uint16, len(blob)/2)
 	defer clear(u)
+	ascii := true
 	for i := range u {
-		u[i] = binary.LittleEndian.Uint16(c.blob[2*i:])
+		u[i] = binary.LittleEndian.Uint16(blob[2*i:])
+		ascii = ascii && u[i] < 0x80
+	}
+	if n := len(u); n > 0 && u[n-1] == 0 {
+		u = u[:n-1]
+	}
+	if !ascii && !bytes.Contains(blob, []byte{0}) && utf8.Valid(blob) {
+		return "", errors.New("the item looks like UTF-8 text; segurata reads UTF-16LE, as cmdkey writes it: store it again with cmdkey")
+	}
+	for i := 0; i < len(u); i++ {
+		switch c := rune(u[i]); {
+		case utf16.IsSurrogate(c):
+			if i+1 == len(u) || utf16.DecodeRune(c, rune(u[i+1])) == unicode.ReplacementChar {
+				return "", errors.New("the item is not UTF-16 text (unpaired surrogate)")
+			}
+			i++
+		case unicode.IsControl(c):
+			return "", errors.New("the item holds NUL or control characters, which no key has")
+		}
 	}
 	return string(utf16.Decode(u)), nil
 }

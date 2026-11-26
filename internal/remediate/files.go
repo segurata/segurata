@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/homepath"
 )
@@ -19,8 +19,6 @@ type files struct {
 	home func() (string, error) // nil means os.UserHomeDir
 }
 
-var errChmodOnWindows = errors.New("this action changes Unix file modes; use Windows file security settings to restrict access")
-
 func (fs files) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
 	return fs.PlanGroup(ctx, []finding.Finding{f})
 }
@@ -29,13 +27,10 @@ func (fs files) Apply(ctx context.Context, f finding.Finding, p connector.Plan, 
 	return fs.ApplyGroup(ctx, []finding.Finding{f}, p, io)
 }
 
-// PlanGroup plans a mode change for each file the group names (once per file) that other accounts
+// PlanGroup plans making private each file the group names (once per file) that other accounts
 // can still open. A file that cannot be changed is left out with the reason; when none can, that is
 // the error.
 func (fs files) PlanGroup(_ context.Context, group []finding.Finding) (connector.Plan, error) {
-	if runtime.GOOS == "windows" {
-		return connector.Plan{}, errChmodOnWindows
-	}
 	p := connector.Plan{Action: connector.ActionChmod600}
 	var left []string
 	seen := map[string]bool{}
@@ -51,15 +46,19 @@ func (fs files) PlanGroup(_ context.Context, group []finding.Finding) (connector
 			seen[path] = true
 		}
 		var c connector.FileChange
+		var u connector.Step
 		if err == nil {
 			c, err = change(path)
+		}
+		if err == nil {
+			u, err = undo(c)
 		}
 		if err != nil {
 			left = append(left, err.Error())
 			continue
 		}
 		p.Files = append(p.Files, c)
-		p.Undo = append(p.Undo, connector.Step{Argv: []string{"/bin/chmod", fmt.Sprintf("%o", c.Was), c.Path}})
+		p.Undo = append(p.Undo, u)
 	}
 	switch {
 	case len(p.Files) == 0 && len(left) == 1:
@@ -79,7 +78,7 @@ func (fs files) PlanGroup(_ context.Context, group []finding.Finding) (connector
 	return p, nil
 }
 
-// change closes one file to other accounts, keeping the owner's execute bit.
+// change closes one file to other accounts.
 func change(path string) (connector.FileChange, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -88,19 +87,19 @@ func change(path string) (connector.FileChange, error) {
 	if !fi.Mode().IsRegular() {
 		return connector.FileChange{}, fmt.Errorf("%s is not a regular file (symlinks are not followed)", path)
 	}
-	was := fi.Mode().Perm()
-	if was&0o077 == 0 {
-		return connector.FileChange{}, fmt.Errorf("%s is already private (mode %o): nothing to do", path, was)
+	was, err := fileacl.Exposure(path)
+	if err != nil {
+		return connector.FileChange{}, err
 	}
-	return connector.FileChange{Path: path, Mode: 0o600 | was&0o100, Was: was}, nil
+	if !fileacl.Exposed(was) {
+		return connector.FileChange{}, fmt.Errorf("%s is already private (%s): nothing to do", path, describe(was))
+	}
+	return private(path, fi, was)
 }
 
 func (files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan, _ connector.IO) error {
-	if runtime.GOOS == "windows" {
-		return errChmodOnWindows
-	}
 	for _, c := range p.Files {
-		if err := os.Chmod(c.Path, c.Mode); err != nil {
+		if err := makePrivate(c); err != nil {
 			return err
 		}
 	}

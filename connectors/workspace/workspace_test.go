@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -278,20 +279,42 @@ func TestMissingCredentialsGivesTheOneTimeSetup(t *testing.T) {
 	if st.State != finding.StateMissingCredentials || st.Account != domain {
 		t.Fatalf("status: %+v", st)
 	}
-	for _, want := range append([]string{
+	signIn := []string{`CLOUDSDK_CONFIG="` + DefaultConfigDir(home, domain) + `" gcloud auth application-default login`,
+		"--client-id-file=$HOME/Downloads/client_secret.json",
+		"--scopes=openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,"}
+	if runtime.GOOS == "windows" {
+		signIn = []string{"$env:CLOUDSDK_CONFIG = '" + DefaultConfigDir(home, domain) + "'; gcloud auth application-default login `",
+			"--scopes='openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,"}
+	}
+	for _, want := range slices.Concat([]string{
 		"No admin credentials for example.com with the read-only Admin SDK scopes.",
 		`enable "Admin SDK API" and create an OAuth client ID`,
-		`CLOUDSDK_CONFIG="` + DefaultConfigDir(home, domain) + `" gcloud auth application-default login`,
-		"--client-id-file=$HOME/Downloads/client_secret.json",
-		"--scopes=openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,",
 		"set the WORKSPACE_ACCESS_TOKEN secret",
-	}, Scopes...) {
+	}, signIn, Scopes) {
 		if !strings.Contains(st.Detail, want) {
 			t.Errorf("setup steps lack %q:\n%s", want, st.Detail)
 		}
 	}
 	if len(g.calls) != 0 {
 		t.Fatal("must never run gcloud (let alone a login) without stored credentials")
+	}
+}
+
+// In PowerShell the tenant's config folder is set for the sign-in only: an env prefix does not exist
+// there, and a $env: left set would send every later gcloud command to the tenant.
+func TestLoginHelpInPowerShell(t *testing.T) {
+	help := loginHelpFor("windows", settings{domain: domain, cloudsdkConfig: `C:\Users\it's\.config\segurata\gcloud-example.com`})
+	for _, want := range []string{
+		`$env:CLOUDSDK_CONFIG = 'C:\Users\it''s\.config\segurata\gcloud-example.com'; gcloud auth application-default login ` + "`",
+		`--client-id-file="$HOME\Downloads\client_secret.json" ` + "`",
+		"; Remove-Item Env:CLOUDSDK_CONFIG",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("PowerShell sign-in lacks %q:\n%s", want, help)
+		}
+	}
+	if strings.Contains(help, `CLOUDSDK_CONFIG="`) || strings.Contains(help, " \\\n") {
+		t.Errorf("POSIX syntax in the PowerShell steps:\n%s", help)
 	}
 }
 

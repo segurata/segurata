@@ -12,6 +12,9 @@ ln -s "$PWD/examples/hibp/segurata-hibp" ~/.local/bin/segurata-hibp   # any dire
 segurata connectors | grep hibp                                         # describe loaded
 ```
 
+On Windows copy `segurata-hibp` and its shim `segurata-hibp.cmd` into the same directory on
+`PATH`.
+
 The HIBP breach search needs a paid API key (<https://haveibeenpwned.com/API/Key>). Keep it in the
 Keychain, never in the config:
 

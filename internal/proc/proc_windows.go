@@ -92,6 +92,7 @@ func (c *Cmd) beforeStart() error {
 	if err := checkBatchArgs(c.resolved(), c.Args[1:]); err != nil {
 		return err
 	}
+	c.Env = noCurrentDirLookup(c.Env)
 	h, err := winsys.NewKillOnCloseJob()
 	if err != nil {
 		return fmt.Errorf("%s: job object: %w", c.Path, err)
@@ -105,6 +106,16 @@ func (c *Cmd) beforeStart() error {
 		c.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP
 	}
 	return nil
+}
+
+// noCurrentDirLookup stops cmd.exe, and CreateProcess in the child, from resolving a bare command
+// name in the current directory before PATH: a batch wrapper's "py" would otherwise run a py.bat
+// planted in whatever folder segurata was started from. exec keeps the last of duplicate names.
+func noCurrentDirLookup(env []string) []string {
+	if env == nil {
+		env = os.Environ()
+	}
+	return append(env, "NoDefaultCurrentDirectoryInExePath=1")
 }
 
 // resolved is the file Start will run: exec adds the PATHEXT extension of a path given without

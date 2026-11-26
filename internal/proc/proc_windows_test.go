@@ -107,3 +107,24 @@ func TestBatchWrapperRefusesBeforeStarting(t *testing.T) {
 		t.Fatalf("%q %v", out, err)
 	}
 }
+
+// A batch wrapper's bare command name never resolves to a file planted in the working directory
+// segurata was started from.
+func TestBatchWrapperSkipsTheCurrentDirectory(t *testing.T) {
+	cwd, bin := t.TempDir(), t.TempDir()
+	marker := filepath.Join(bin, "planted-ran")
+	if err := os.WriteFile(filepath.Join(cwd, "planted.bat"), []byte("@echo x> \""+marker+"\"\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(bin, "tool.cmd")
+	if err := os.WriteFile(wrapper, []byte("@planted\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NoDefaultCurrentDirectoryInExePath", "restored after the test")
+	os.Unsetenv("NoDefaultCurrentDirectoryInExePath")
+	t.Chdir(cwd)
+	_, _ = proc.Command(context.Background(), wrapper).CombinedOutput()
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the wrapper ran the planted planted.bat from the working directory")
+	}
+}

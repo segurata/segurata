@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,6 +32,48 @@ func ReadEnv() []string {
 		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, kv[1]))
 	}
 	return env
+}
+
+// UnsafeRepositoryError is Git refusing a repository another account owns (safe.directory), as Git
+// for Windows does for a folder created by an administrator or another user. segurata never
+// overrides the check (-c safe.directory=* would hand that account's hooks and config our run).
+type UnsafeRepositoryError struct {
+	Repo string // empty when Git did not name it
+	Err  error
+
+	arg string // Repo quoted the way Git printed it in its hint
+}
+
+func (e *UnsafeRepositoryError) Error() string {
+	repo, arg := e.Repo, e.arg
+	if repo == "" {
+		repo, arg = "<repository>", "<repository>"
+	}
+	return fmt.Sprintf("git refuses %s: it is owned by another account (dubious ownership). If you trust it, "+
+		"run `git config --global --add safe.directory %s`; segurata never bypasses this check", repo, arg)
+}
+
+func (e *UnsafeRepositoryError) Unwrap() error { return e.Err }
+
+// unsafeHint is the command Git suggests with its refusal. The sentence before it is translated;
+// the command is not.
+var unsafeHint = regexp.MustCompile(`git config --global --add safe\.directory ('[^'\n]*'|[^\n]*)`)
+
+// Classify returns err as an *UnsafeRepositoryError when stderr, the failed git command's, says Git
+// refused the repository for its owner, in any language, and err unchanged otherwise.
+func Classify(err error, stderr string) error {
+	if err == nil {
+		return err
+	}
+	m := unsafeHint.FindStringSubmatch(stderr)
+	if m == nil {
+		if strings.Contains(stderr, "dubious ownership") {
+			return &UnsafeRepositoryError{Err: err}
+		}
+		return err
+	}
+	arg := strings.TrimSpace(m[1])
+	return &UnsafeRepositoryError{Repo: strings.Trim(arg, "'"), Err: err, arg: arg}
 }
 
 // WholeTree ends a `git ls-files` command line so it lists the whole index by repository-relative
@@ -72,6 +116,9 @@ func indexContains(ctx context.Context, root, dot, path string) (bool, error) {
 	}
 	cmd.Env = append(cmd.Env, ReadEnv()...)
 	out, err := cmd.Output()
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+		return false, Classify(err, string(ee.Stderr))
+	}
 	if err != nil {
 		return false, err
 	}

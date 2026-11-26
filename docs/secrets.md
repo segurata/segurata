@@ -24,16 +24,17 @@ quarantine: `~/.claude/scripts/safe-update.sh`, or check the release date before
 | A database dump in a repository or its history (`data_dump`) | [Data dumps in git](#data-dumps-in-git) |
 | `.env*` under `~/src` | [.env files](#env-files) |
 | `export X=...` in `~/.zshrc` and friends | [Shell variables from the Keychain](#shell-variables-from-the-keychain) |
+| `$env:X = '...'` in a PowerShell profile, `HKCU\Environment\X` (setx) | [Shell variables from Credential Manager](#shell-variables-from-credential-manager) |
 | MCP `env` blocks in `~/.claude.json`, `~/.mcp`, `~/.codex`, `~/.cursor` | [MCP servers and agents](#mcp-servers-and-agents) |
 | `~/.aws/credentials`, `AKIA…` | [AWS](#aws) |
 | `~/.config/gcloud`, service account JSON, `refresh_token`, `AIza…` | [Google Cloud and OAuth](#google-cloud-and-oauth) |
-| `ghp_…`, `~/.netrc`, `~/.config/gh` | [GitHub and git](#github-and-git) |
+| `ghp_…`, `~/.netrc` (`~/_netrc` on Windows), `~/.config/gh` | [GitHub and git](#github-and-git) |
 | `~/.npmrc`, `~/.docker/config.json`, PyPI, RubyGems | [Package registries and Docker](#package-registries-and-docker) |
 | `config/master.key`, `*.secret.exs`, `*.pem`, keystores | [Files that must live in the repo](#files-that-must-live-in-the-repo) |
 | Keys in `~/.ssh` without a passphrase | [SSH keys](#ssh-keys) |
-| `~/.zsh_history`, `~/.zsh_sessions` | [Shell history](#shell-history) |
+| `~/.zsh_history`, `~/.zsh_sessions`, PSReadLine's `ConsoleHost_history.txt` | [Shell history](#shell-history) |
 | `~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects` | [Agent transcripts](#agent-transcripts) |
-| `*.log`, `~/Library/Logs` | [Logs](#logs) |
+| `*.log`, `~/Library/Logs`, `*.log` under `%LOCALAPPDATA%` | [Logs](#logs) |
 
 ## In git: always rotate
 
@@ -187,26 +188,9 @@ identity or contents changed after preview.
 On macOS, it also requires ACLs on the file and its parent directories to contain only deny
 entries.
 
-**On Windows** there is no `security`: `--to-keychain` is refused, because no Windows shell
-runs the lookup it writes. Store each key in Credential Manager instead, from `cmd.exe` (the
-command prompts for the value, so it stays out of history):
-
-```bat
-cmdkey /generic:ANTHROPIC_API_KEY /user:%USERNAME% /pass
-```
-
-segurata reads that item for a `keychain:ANTHROPIC_API_KEY` reference in its config. The item is
-stored per user on this machine and does not roam. Delete the plaintext line from your PowerShell
-profile or other scripts by hand. A scheduled task that resolves `keychain:` references must run
-as the logged-on user: Credential Manager is not available in other logon sessions.
-`segurata rotations replace` checks the Windows access lists of the target and its parent folders.
-It can read the value from the clipboard. Windows may keep a copy in Clipboard history (Win+V)
-or sync it with cloud clipboard, so clear it there afterwards. To avoid the clipboard, pipe the
-value from another program with `--stdin`. Typing the value into a console is refused. On Linux
-use `env:` or `op://` references and `--stdin`.
-
-To restrict access to an exposed file on Windows, use the file's Security settings. The
-`file.chmod600` action in older inventories applies only on Unix.
+On Linux `--to-keychain` is refused: no supported credential store backs it there. Use `env:`
+or `op://` references and `--stdin`. For Windows, see
+[Shell variables from Credential Manager](#shell-variables-from-credential-manager).
 
 Better still, do not export it to every shell; fetch it where it is used:
 `ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)" command`. With 1Password, the same with
@@ -214,6 +198,68 @@ Better still, do not export it to every shell; fetch it where it is used:
 
 After moving the keys, delete the `export` lines, `chmod 600 ~/.zshrc`, and check whether the file
 lives in a dotfiles repo: if it was committed with keys, [rotate](#in-git-always-rotate).
+
+## Shell variables from Credential Manager
+
+On Windows the same applies to `$env:NAME = '…'` lines in your PowerShell profiles (`$PROFILE`
+for Windows PowerShell and PowerShell 7, both the all-hosts `profile.ps1` and the console host's
+`Microsoft.PowerShell_profile.ps1`, under your Documents folder, OneDrive included).
+`segurata rotations replace <id> --apply --to-keychain ANTHROPIC_API_KEY` stores the new value
+in Credential Manager as a generic credential with local-machine persistence, which never leaves
+this machine, reads it back to check, and rewrites the line to
+
+```powershell
+$env:ANTHROPIC_API_KEY = $(if (-not ('Segurata.Cred' -as [type])) { Add-Type -TypeDefinition '…CredReadW…' }; [Segurata.Cred]::Read('ANTHROPIC_API_KEY'))
+```
+
+The line declares the Win32 `CredReadW` call with `Add-Type` (compiled once per session, no
+module to install) and reads the credential when the shell starts; a missing item leaves the
+variable unset. Only `$env:NAME = 'value'` and `$env:NAME = "value"` lines holding exactly the
+old value are rewritten (a double-quoted value must not contain `` ` `` or `$`). Any other shape
+(a trailing comment, `[Environment]::SetEnvironmentVariable`, `Set-Item env:`) is left alone and
+the command stops and names the line, so you can edit it by hand. CRLF line endings and a UTF-8
+byte order mark are kept. A profile saved as UTF-16 (what `>` writes in Windows PowerShell) is
+refused with a request to save it as UTF-8 first (`Set-Content -Encoding utf8`), and
+`segurata redact` leaves such a file alone and says why. `Add-Type` does not run under
+Constrained Language Mode (AppLocker or WDAC policies), so before anything is stored the command
+asks each PowerShell that reads the profiles (`powershell.exe` from System32, `pwsh` when
+installed) for its language mode and refuses unless it is `FullLanguage`; there, store the key by
+hand and read it from the script that needs it.
+
+A variable set with `setx` or the Environment Variables dialog is kept in the registry under
+`HKCU\Environment`, in plain text, and every new process inherits it. `local-secrets` reads those
+values and reports a secret there as `HKCU\Environment\NAME`. `rotations replace` does not edit the
+registry: delete the variable (`reg delete HKCU\Environment /v NAME /f`), store the key in
+Credential Manager and read it from your profile as above.
+
+To store a key for a `keychain:ANTHROPIC_API_KEY` reference in segurata's own config, run this
+from `cmd.exe` (it prompts for the value, so it stays out of history):
+
+```bat
+cmdkey /generic:ANTHROPIC_API_KEY /user:%USERNAME% /pass
+```
+
+cmdkey stores the item with enterprise persistence: on a domain with roaming profiles or
+credential roaming it follows your account to other machines. segurata reads generic
+credentials as UTF-16LE text, the way cmdkey and `--to-keychain` write them. It refuses an item
+that looks like UTF-8, as some Go keyring libraries write it, rather than decode it into the
+wrong characters. A scheduled task that resolves `keychain:` references must run
+as the logged-on user: Credential Manager is not available in other logon sessions. The task
+`segurata schedule install` registers does
+([docs/architecture.md](architecture.md#scheduled-runs)).
+
+`segurata rotations replace` checks the Windows access lists of the target and its parent folders:
+the target must be owned by you and readable by no account other than you, SYSTEM and
+Administrators, since a closed parent folder does not keep anyone out on Windows. It can read the
+value from the clipboard, and clears it once the replacement is done or any later step fails.
+Windows may keep a copy in Clipboard history (Win+V) or sync it with cloud clipboard, so clear it
+there afterwards. To avoid the clipboard, pipe the
+value from another program with `--stdin`. Typing the value into a console is refused.
+
+A file other accounts can read on Windows carries the `file.chmod600` action like on Unix:
+`segurata remediate <finding-id>` gives it a protected access list with full control for you and
+SYSTEM only. It refuses a file another account owns, and the undo it shows is a Windows
+PowerShell command that puts the old owner and access list back.
 
 ## MCP servers and agents
 
@@ -261,14 +307,15 @@ a malicious package.
   and delete that profile's section from `~/.aws/credentials`.
 - `aws-vault` does the same with rotation and temporary sessions (`aws-vault add`,
   `aws-vault exec`), but it is not installed.
-- In the meantime: `chmod 600 ~/.aws/credentials` and rotate keys older than 90 days
-  (`aws iam list-access-keys`).
+- In the meantime: `chmod 600 ~/.aws/credentials` (on Windows, the `Set-Acl` command the finding
+  prints) and rotate keys older than 90 days (`aws iam list-access-keys`).
 
 ## Google Cloud and OAuth
 
 - `gcloud auth login` and `gcloud auth application-default login` store user *refresh tokens* in
-  `~/.config/gcloud` (`credentials.db`, `application_default_credentials.json`). That is how gcloud
-  works; FileVault protects them, and you revoke the ones you no longer need: `gcloud auth list`,
+  `~/.config/gcloud` (`%APPDATA%\gcloud` on Windows, `$CLOUDSDK_CONFIG` when set: `credentials.db`,
+  `application_default_credentials.json`). That is how gcloud works; disk encryption (FileVault,
+  BitLocker) protects them, and you revoke the ones you no longer need: `gcloud auth list`,
   `gcloud auth revoke ACCOUNT`, `gcloud auth application-default revoke`.
 - Service account JSON keys never expire. Replace them with impersonation:
   `gcloud auth application-default login --impersonate-service-account=sa@project.iam.gserviceaccount.com`.
@@ -287,14 +334,18 @@ a malicious package.
   `GITHUB_TOKEN="$(gh auth token)"` instead of a PAT pasted into a file.
 - `git config --global credential.helper` is already `osxkeychain`. `~/.netrc` is read in plaintext
   by curl, git and other tools: move those credentials to the Keychain or `op` and delete the file.
+- On Windows, Git for Windows installs Git Credential Manager (`credential.helper` is
+  `manager`), which keeps git credentials in Credential Manager, and `gh` keeps its token there
+  too. `~/_netrc` is the Windows name curl and git read; treat it like `~/.netrc`.
 - Any PAT you still need: *fine-grained*, one repo, with an expiry date.
 
 ## Package registries and Docker
 
 - npm: in `~/.npmrc` keep `//registry.npmjs.org/:_authToken=${NPM_TOKEN}` and export `NPM_TOKEN`
   from the Keychain. Use *granular* tokens with an expiry.
-- Docker: in `~/.docker/config.json`, `"credsStore": "osxkeychain"` (or `"desktop"` with Docker
-  Desktop), then `docker logout && docker login` so the `"auth"` entries go away.
+- Docker: in `~/.docker/config.json`, `"credsStore": "osxkeychain"` on macOS or `"wincred"` on
+  Windows (or `"desktop"` with Docker Desktop), then `docker logout && docker login` so the
+  `"auth"` entries go away.
 - PyPI and RubyGems: per-project tokens; `chmod 600` on `~/.gem/credentials` and `~/.pypirc`, or
   `keyring` for PyPI.
 
@@ -359,6 +410,16 @@ setopt HIST_IGNORE_SPACE            # a command starting with a space is not sav
 HISTORY_IGNORE="(*_KEY=*|*TOKEN=*|*SECRET=*|*PASSWORD=*|*sk-*|*ghp_*)"
 ```
 
+PowerShell keeps its history in PSReadLine's folder, one file per host
+(`%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt` on Windows,
+`~/.local/share/powershell/PSReadLine/` elsewhere). `segurata redact --trails` rewrites it like
+the zsh history; close the other PowerShell windows first, since each one appends to it. To keep
+secret-looking lines out of it, in your profile:
+
+```powershell
+Set-PSReadLineOption -AddToHistoryHandler { param($line) $line -notmatch '_KEY|TOKEN|SECRET|PASSWORD|sk-|ghp_' }
+```
+
 Whatever was typed with the key already went through the shell: if it was also pasted into an agent
 or uploaded somewhere, [rotate](#in-git-always-rotate).
 
@@ -389,7 +450,8 @@ To keep them from piling up:
 
 - Truncate or delete logs with secrets (`: > log/development.log`), or replace just the secrets:
   `segurata redact --path ~/src/app/log/development.log --apply` (the logs `local-secrets` scans:
-  `*.log` under `repos_root`, `~/Library/Logs`, `~/.local/log`).
+  `*.log` under `repos_root`, `~/Library/Logs`, `~/.local/log`, and on Windows `*.log` under
+  `%LOCALAPPDATA%`).
 - Filter parameters: Rails `config.filter_parameters += [:token, :api_key, :password, :secret]`;
   Phoenix `config :phoenix, :filter_parameters, ["password", "token", "api_key", "secret"]`.
 - If the log was uploaded somewhere (Sentry, CI, an issue), [rotate](#in-git-always-rotate).

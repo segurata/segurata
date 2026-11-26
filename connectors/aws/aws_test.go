@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -513,6 +514,9 @@ func TestCredentialsFileReportsLongLivedKeysWithoutSecrets(t *testing.T) {
 			}
 			if rec.Statuses[0].State != finding.StateUnsupported {
 				t.Fatalf("missing CLI should be a status: %+v", rec.Statuses)
+			}
+			if fix := connector.MakePrivateCommand(runtime.GOOS, path, false); strings.Contains(got[0].Remediation.Summary, fix) != (tc.mode == 0o644) {
+				t.Errorf("this platform's make-private command only for an exposed file: %s", got[0].Remediation.Summary)
 			}
 		})
 	}

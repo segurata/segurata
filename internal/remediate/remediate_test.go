@@ -291,6 +291,10 @@ func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
 		SideEffects: []string{"Prompts appear."},
 		Undo:        []connector.Step{{Argv: []string{"/bin/echo", "off"}}},
 	}
+	change := "chmod 600 '/tmp/a b' (now 644)"
+	if runtime.GOOS == "windows" {
+		change = "make '/tmp/a b' private: protected access list, full control for you and SYSTEM only (now readable by other accounts)"
+	}
 	var out bytes.Buffer
 	printPlan(&out, f, p)
 	want := "Finding  abc123 [" + string(finding.SevMedium) + "] macos · mac · Firewall off\n" +
@@ -299,7 +303,7 @@ func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
 		"\nRuns (sudo asks for your password on this terminal; segurata never sees it):\n" +
 		"  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on\n" +
 		"\nChanges:\n" +
-		"  chmod 600 '/tmp/a b' (now 644)\n" +
+		"  " + change + "\n" +
 		"\nSide effects:\n" +
 		"  - Prompts appear.\n" +
 		"\nUndo:\n" +

@@ -74,10 +74,27 @@ type ace struct {
 // descriptor is the owner and DACL of a security descriptor. A missing or NULL DACL lets everyone
 // in.
 type descriptor struct {
-	owner     string
-	dacl      bool
-	protected bool
-	aces      []ace
+	owner      string
+	groupOwner bool // the owner is a group or alias, whose grants reach every member
+	dacl       bool
+	protected  bool
+	aces       []ace
+}
+
+// groupSID reports whether sid names a group as far as its text tells: a well-known SID outside a
+// domain, an unresolved alias, or a domain RID Windows reserves for groups (498, 512-999). A
+// domain RID from 1000 up may be either, which only the platform can tell.
+func groupSID(sid string) bool {
+	rest, ok := strings.CutPrefix(sid, "S-1-5-21-")
+	if !ok {
+		return true
+	}
+	i := strings.LastIndexByte(rest, '-')
+	rid, err := strconv.ParseUint(rest[i+1:], 10, 32)
+	if i < 0 || err != nil {
+		return true
+	}
+	return rid == 498 || rid >= 512 && rid < 1000
 }
 
 // parseSDDL reads the owner and DACL parts of an SDDL string. resolve maps an alias outside
@@ -102,6 +119,7 @@ func parseSDDL(s string, resolve func(string) (string, bool)) (descriptor, error
 		switch tag {
 		case 'O':
 			d.owner = sid(value)
+			d.groupOwner = groupSID(d.owner)
 		case 'D':
 			if err := d.parseDACL(value, sid); err != nil {
 				return descriptor{}, err
@@ -262,17 +280,19 @@ func (d descriptor) exposure(user string, dir bool) fs.FileMode {
 }
 
 // trustedForAccess is the owner (whose rights are the owner bits), the user, SYSTEM and
-// Administrators.
+// Administrators. An owner that is a group, which Unix cannot have, gets no owner bits: its grants
+// reach every member.
 func (d descriptor) trustedForAccess(user string) func(string) bool {
 	trusted := trustedAccount(user)
+	owner := d.owner == user || !d.groupOwner
 	return func(sid string) bool {
-		return sid == d.owner || sid == sidOwnerRights || trusted(sid)
+		return owner && (sid == d.owner || sid == sidOwnerRights) || trusted(sid)
 	}
 }
 
 func trustedAccount(user string) func(string) bool {
 	return func(sid string) bool {
-		return sid == user || sid == sidSystem || sid == sidAdministrators || sid == sidTrustedInstaller
+		return sid == user || sid == sidSystem || sid == sidAdministrators
 	}
 }
 
@@ -281,7 +301,10 @@ func trustedAccount(user string) func(string) bool {
 // subfolders alone, which Authenticated Users hold on C:\, is allowed: it is the analogue of a
 // sticky /tmp.
 func (d descriptor) changeable(user string) bool {
-	trusted := trustedAccount(user)
+	// TrustedInstaller owns C:\ and the system folders, so it may hold a folder in the chain; it
+	// never counts for who can read a file.
+	account := trustedAccount(user)
+	trusted := func(sid string) bool { return account(sid) || sid == sidTrustedInstaller }
 	if !d.dacl || !trusted(d.owner) {
 		return true
 	}

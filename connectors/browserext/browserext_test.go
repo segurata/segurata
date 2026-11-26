@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
+	"github.com/segurata/segurata/connectors/internal/userdirs"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -36,10 +37,16 @@ func ext(loc int, name string, installedDaysAgo, updatedDaysAgo int, api, hosts 
 		loc, loc != locUnpacked, name, ago(installedDaysAgo), ago(updatedDaysAgo), api, hosts, extra)
 }
 
+// profiles is where the fixture's browser keeps its profiles: a Mac home.
+func profiles(home string, b browser) string {
+	dir, _ := b.dataDir(userdirs.Env{GOOS: "darwin", Home: home})
+	return dir
+}
+
 // fixture builds Brave with a daily profile and one untouched for two years, and a Chrome profile.
 func fixture(t *testing.T) *Connector {
 	home := t.TempDir()
-	brave := filepath.Join(home, browsers[0].dirs["darwin"])
+	brave := profiles(home, browsers[0])
 	mustWrite(t, filepath.Join(brave, "Local State"), fmt.Sprintf(`{"profile":{"info_cache":{"Default":{"active_time":%d},"Profile 4":{"active_time":%d}}}}`,
 		now.Add(-time.Hour).Unix(), now.AddDate(-2, 0, 0).Unix()))
 	unpacked := filepath.Join(home, "src", "tool")
@@ -62,7 +69,7 @@ func fixture(t *testing.T) *Connector {
 	mustWrite(t, filepath.Join(brave, "Profile 4", "Secure Preferences"), `{"extensions":{"settings":{
 		"nngceckbapebfimnlniiiahkandclblb":`+ext(1, "Bitwarden", 950, 700, `"storage"`, `"<all_urls>"`, "")+`,
 		"nkbihfbeogaeaoehlefnkodbefgpgknn":`+ext(1, "MetaMask", 950, 700, `"storage"`, `"<all_urls>"`, "")+`}}}`)
-	chrome := filepath.Join(home, browsers[1].dirs["darwin"])
+	chrome := profiles(home, browsers[1])
 	mustWrite(t, filepath.Join(chrome, "Default", "Secure Preferences"), `{"extensions":{"settings":{
 		"reactdev":`+ext(1, "React Developer Tools", 100, 10, `"debugger"`, `"<all_urls>"`, "")+`}}}`)
 	return &Connector{Home: func() (string, error) { return home, nil }, Now: func() time.Time { return now }, OS: "darwin"}
@@ -234,7 +241,7 @@ func TestUnreadablePreferencesKeepTheBrowserUninspected(t *testing.T) {
 	c := fixture(t)
 	home, _ := c.Home()
 	b := browsers[0]
-	mustWrite(t, filepath.Join(home, b.dirs[c.OS], "Profile 4", "Secure Preferences"), "{")
+	mustWrite(t, filepath.Join(profiles(home, b), "Profile 4", "Secure Preferences"), "{")
 	rec := run(t, c)
 	rec.ByResource(t, "browser_extension", "reactdev")
 	if len(rec.Findings) != 1 {
@@ -254,7 +261,7 @@ func TestAProfileWithoutPreferencesIsAbsent(t *testing.T) {
 	c := fixture(t)
 	home, _ := c.Home()
 	b := browsers[1]
-	if err := os.MkdirAll(filepath.Join(home, b.dirs[c.OS], "Profile 3"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(profiles(home, b), "Profile 3"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	rec := run(t, c)
@@ -274,5 +281,46 @@ func TestChromeTime(t *testing.T) {
 		if !chromeTime(s).IsZero() {
 			t.Errorf("%q parsed", s)
 		}
+	}
+}
+
+func TestProfileFoldersPerOS(t *testing.T) {
+	home := filepath.Join("home", "ana")
+	local := filepath.Join("C", "AppData", "Local")
+	vars := map[string]string{"LOCALAPPDATA": local}
+	for _, c := range []struct {
+		goos string
+		b    browser
+		want string
+	}{
+		{"darwin", browsers[0], filepath.Join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser")},
+		{"darwin", browsers[1], filepath.Join(home, "Library", "Application Support", "Google", "Chrome")},
+		{"linux", browsers[0], filepath.Join(home, ".config", "BraveSoftware", "Brave-Browser")},
+		{"linux", browsers[1], filepath.Join(home, ".config", "google-chrome")},
+		{"windows", browsers[0], filepath.Join(local, "BraveSoftware", "Brave-Browser", "User Data")},
+		{"windows", browsers[1], filepath.Join(local, "Google", "Chrome", "User Data")},
+	} {
+		got, ok := c.b.dataDir(userdirs.Env{GOOS: c.goos, Home: home, Getenv: func(k string) string { return vars[k] }})
+		if !ok || got != c.want {
+			t.Errorf("%s %s: %s %v, want %s", c.goos, c.b.name, got, ok, c.want)
+		}
+	}
+	if _, ok := browsers[0].dataDir(userdirs.Env{GOOS: "plan9", Home: home}); ok {
+		t.Error("an OS no browser keeps profiles for was searched")
+	}
+}
+
+// On Windows the profiles live under %LOCALAPPDATA%, and the same extension records are read there.
+func TestWindowsProfilesAreRead(t *testing.T) {
+	home, local := t.TempDir(), t.TempDir()
+	c := &Connector{Home: func() (string, error) { return home, nil }, Now: func() time.Time { return now }, OS: "windows",
+		Getenv: func(k string) string { return map[string]string{"LOCALAPPDATA": local}[k] }}
+	chrome := filepath.Join(local, "Google", "Chrome", "User Data")
+	mustWrite(t, filepath.Join(chrome, "Default", "Secure Preferences"), `{"extensions":{"settings":{
+		"reactdev":`+ext(1, "React Developer Tools", 100, 10, `"debugger"`, `"<all_urls>"`, "")+`}}}`)
+	rec := run(t, c)
+	rec.ByResource(t, "browser_extension", "reactdev")
+	if !strings.Contains(c.Describe().Needs[0], "windows") {
+		t.Errorf("doctor would report Windows unsupported: %v", c.Describe().Needs)
 	}
 }

@@ -60,6 +60,34 @@ func Effective(path, root string) (fs.FileMode, error) {
 	}
 }
 
+// ClosedToOthers reports whether no other account can reach path through the folders up to root
+// ("" for all of them): its mode gives them nothing, or a folder the user owns lets neither its
+// group nor others through. Effective is laxer, so it serves reporting but not a gate before a
+// secret is written: it closes a class at any folder lacking that class's bit, while group and
+// other are relative to each inode's own group, so one who passes a folder as its group may read
+// a file with another group as other. A folder that cannot be read is an error.
+func ClosedToOthers(path, root string) (bool, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	if st.Mode().Perm()&0o077 == 0 {
+		return true, nil
+	}
+	for d := filepath.Dir(path); ; d = filepath.Dir(d) {
+		ds, err := os.Stat(d)
+		if err != nil {
+			return false, err
+		}
+		if mine, err := OwnedByMe(d, ds); err == nil && mine && ds.Mode().Perm()&0o011 == 0 {
+			return true, nil
+		}
+		if d == root || filepath.Dir(d) == d {
+			return false, nil
+		}
+	}
+}
+
 // ChangeableByOthers reports whether another account could rename or replace what dir holds: it
 // is owned by someone other than root and the user, or others can write to it without the sticky
 // bit, which keeps them to their own entries.

@@ -5,6 +5,7 @@
 package localsecrets
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +22,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/liveness"
+	"github.com/segurata/segurata/connectors/internal/userdirs"
 	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fileacl"
@@ -42,7 +45,16 @@ type Connector struct {
 	RG, Gitleaks, Git, SSHKeygen cli.Runner
 	LookPath                     func(string) (string, error)
 	Home                         func() (string, error)
-	KeyPath                      func(home string) string
+	// Getenv finds the gcloud and gh folders a variable moves; nil reads no variable.
+	Getenv func(string) string
+	// GOOS is the OS whose folders are searched; "" is this one.
+	GOOS string
+	// Documents is the Documents folder, where Windows PowerShell profiles live; nil is ~/Documents.
+	Documents func(home string) string
+	// UserEnv is the user's persistent environment variables, which Windows keeps in the registry
+	// (secretrisk.UserEnvKey); nil reads none.
+	UserEnv func() (map[string]string, error)
+	KeyPath func(home string) string
 	// CacheDir holds the git history caches; the other caches sit beside it.
 	CacheDir func(home string) string
 	Now      func() time.Time
@@ -72,6 +84,9 @@ func New() *Connector {
 		SSH:        cli.Exec{Path: "ssh", Timeout: 30 * time.Second},
 		LookPath:   exec.LookPath,
 		Home:       os.UserHomeDir,
+		Getenv:     os.Getenv,
+		Documents:  userdirs.DocumentsFolder,
+		UserEnv:    userEnvironment,
 		KeyPath:    fingerprint.DefaultPath,
 		CacheDir:   defaultCacheDir,
 		Now:        time.Now,
@@ -193,6 +208,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		wg.Go(func() { s.rg(pass) })
 	}
 	wg.Go(s.byName)
+	wg.Go(s.userEnv)
 	if cfg.dumps == dumpsOn {
 		wg.Go(s.dumpsAll)
 	}
@@ -245,6 +261,7 @@ type scan struct {
 	ctx  context.Context
 	c    *Connector
 	home string
+	dirs userdirs.Env
 	src  string
 	cfg  settings
 	fp   fingerprint.Key
@@ -273,7 +290,11 @@ type scan struct {
 }
 
 func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprint.Key, emit connector.Emitter) *scan {
-	return &scan{ctx: ctx, c: c, home: home, src: cfg.reposRoot, cfg: cfg, fp: fp, now: c.Now(), emit: emit,
+	dirs := userdirs.Env{GOOS: cmp.Or(c.GOOS, runtime.GOOS), Home: home, Getenv: c.Getenv}
+	if c.Documents != nil {
+		dirs.Documents = c.Documents(home)
+	}
+	return &scan{ctx: ctx, c: c, home: home, dirs: dirs, src: cfg.reposRoot, cfg: cfg, fp: fp, now: c.Now(), emit: emit,
 		rows: map[string]*secretrisk.Evidence{}, git: gitCache{roots: map[string]string{}, files: map[string]map[string]bool{}, remote: map[string]bool{}}}
 }
 
@@ -282,26 +303,36 @@ func (s *scan) h(p string) string { return filepath.Join(s.home, p) }
 func (s *scan) tilde(p string) string { return homepath.Shorten(p, s.home) }
 
 var transcriptDirs = []string{".claude/projects", ".claude/history.jsonl", ".codex/sessions", ".codex/history.jsonl", ".cursor/projects", ".gemini/tmp"}
+var logDirs = []string{"Library/Logs", ".local/log"}
 var historyFiles = []string{".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".node_repl_history", ".psql_history", ".mysql_history", ".irb_history", ".sqlite_history", ".lesshst"}
 
-func (s *scan) under(p string, rels []string) bool {
-	for _, r := range rels {
-		if strings.HasPrefix(p, s.h(r)) {
-			return true
-		}
+const windowsHost = runtime.GOOS == "windows"
+
+// slashed is p as the path rules read it: ~/… for the home, forward slashes on every OS, and
+// lower case on Windows, so one set of patterns serves every OS.
+func slashed(p string) string {
+	p = filepath.ToSlash(p)
+	if windowsHost { // its file systems ignore case
+		p = strings.ToLower(p)
 	}
-	return false
+	return p
+}
+
+// under reports whether p starts with one of the absolute roots.
+func (s *scan) under(p string, roots []string) bool {
+	n := slashed(s.tilde(p))
+	return slices.ContainsFunc(roots, func(r string) bool { return strings.HasPrefix(n, slashed(s.tilde(r))) })
 }
 
 func (s *scan) kindOf(p string) string {
 	switch {
-	case s.under(p, transcriptDirs):
+	case s.under(p, s.hs(transcriptDirs)):
 		return "transcript"
-	case s.under(p, historyFiles):
+	case s.under(p, s.historyRoots()):
 		return "history"
-	case strings.HasSuffix(p, ".log") || s.under(p, []string{"Library/Logs", ".local/log"}):
+	case strings.HasSuffix(slashed(p), ".log") || s.under(p, s.hs(logDirs)):
 		return "log"
-	case strings.HasPrefix(p, s.src+string(filepath.Separator)):
+	case s.under(p, []string{s.src + string(filepath.Separator)}):
 		return "repo"
 	}
 	return "config"
@@ -340,7 +371,7 @@ func bucketOf(ev secretrisk.Evidence) string {
 }
 
 func fixFor(ev secretrisk.Evidence) string {
-	t, p := ev.Type, ev.Path
+	t, p := ev.Type, slashed(ev.Path)
 	hasAny := func(subs ...string) bool {
 		for _, x := range subs {
 			if strings.Contains(p, x) {
@@ -374,12 +405,14 @@ func fixFor(ev secretrisk.Evidence) string {
 		a = "aws"
 	case hasAny("gcloud", ".gemini") || pre("google", "oauth", "gcp"):
 		a = "google-cloud-and-oauth"
-	case pre("github", "gitlab") || strings.HasSuffix(p, ".netrc") || hasAny("/gh/"):
+	case pre("github", "gitlab") || strings.HasSuffix(p, ".netrc") || strings.HasSuffix(p, "/_netrc") || hasAny("/gh/", "/github cli/"):
 		a = "github-and-git"
 	case pre("npm", "pypi", "rubygems", "docker") || strings.HasSuffix(p, ".npmrc") || hasAny(".docker/"):
 		a = "package-registries-and-docker"
 	case rc:
 		a = "shell-variables-from-the-keychain"
+	case ev.Source == registrySource || windowsHost && secretrisk.IsPowerShellProfile(p):
+		a = "shell-variables-from-credential-manager"
 	case hasAny(".claude", ".mcp", ".codex", ".cursor", ".config/opencode"):
 		a = "mcp-servers-and-agents"
 	case t == privateKeyType || t == "keystore" || t == "rails-master-key":
@@ -412,9 +445,14 @@ func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secret
 	if ev.Kind == "" {
 		ev.Kind = s.kindOf(abs)
 	}
-	if ev.Source != "gitleaks" {
+	switch ev.Source {
+	case registrySource:
+		// Not a file: no mode, no repository, no age.
+	case "gitleaks":
+		secretrisk.ExpireTemporaryAWS(&ev, commitDay(ev.Date), s.now)
+	default:
 		ev.Mode, ev.FileMode = modeOf(abs, s.home)
-		if !strings.Contains(abs, "/.git/") {
+		if !strings.Contains(slashed(abs), "/.git/") {
 			ev.Tracked, ev.Remote = s.trackedFile(abs)
 		}
 		if ev.Tracked {
@@ -423,8 +461,6 @@ func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secret
 		if st, err := os.Stat(abs); err == nil {
 			secretrisk.ExpireTemporaryAWS(&ev, st.ModTime(), s.now)
 		}
-	} else {
-		secretrisk.ExpireTemporaryAWS(&ev, commitDay(ev.Date), s.now)
 	}
 	ev.Path = s.tilde(abs)
 	ev.Fingerprint = s.fp.Of(value)
@@ -552,7 +588,7 @@ func secretScope(ev secretrisk.Evidence) string {
 	return secretrisk.FilesScope
 }
 
-// remedy offers a chmod 600 for a working file other users can read: ranked by the finding when
+// remedy offers to make private a working file other users can read: ranked by the finding when
 // they can now, low (grouped by top folder) when only a parent folder keeps them out. Noise gets
 // no fix: closing a third-party file for its `password=` buys nothing.
 func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
@@ -560,21 +596,18 @@ func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
 	if ev.Source == "gitleaks" || ev.Mode == "" || secretrisk.ImpactOf(ev) == secretrisk.Noise {
 		return r
 	}
-	if runtime.GOOS == "windows" {
-		if othersCanRead(ev.Mode) {
-			r.Summary += " Restrict access in the file's Windows Security settings."
-		}
-		return r
-	}
 	switch {
 	case othersCanRead(ev.Mode):
 		r.Action = connector.ActionChmod600
 	case othersCanRead(ev.FileMode):
 		r.Action, r.Severity, r.Group = connector.ActionChmod600, finding.SevLow, hardeningGroup(ev.Path)
-		r.Summary += fmt.Sprintf(" The file itself is mode %s: only a closed parent folder keeps other users out, so `segurata remediate` can also close the file (chmod 600) in case that folder is opened later.", ev.FileMode)
+		r.Summary += fmt.Sprintf(" The file itself is mode %s: only a closed parent folder keeps other users out, so `segurata remediate` can also close the file (%s) in case that folder is opened later.", ev.FileMode, closeFile)
 	}
 	return r
 }
+
+// closeFile is what connector.ActionChmod600 does to a file on this OS.
+var closeFile = map[bool]string{false: "chmod 600", true: "a private access list"}[windowsHost]
 
 func othersCanRead(mode string) bool {
 	return secretrisk.Where("", mode, false, false).Level == secretrisk.Shared
@@ -593,7 +626,7 @@ func remediation(p secretrisk.Priority, spot secretrisk.Spot, ev secretrisk.Evid
 	case spot.Level == secretrisk.Remote:
 		return fmt.Sprintf("It left this machine: rotate it at the provider, then keep the new value out of plain files (%s).", ev.Fix)
 	case spot.Level == secretrisk.Shared:
-		return fmt.Sprintf("Rotate it, then move the new value to the Keychain or 1Password (%s). `segurata remediate` can close the file (chmod 600) meanwhile.", ev.Fix)
+		return fmt.Sprintf("Rotate it, then move the new value to the Keychain or 1Password (%s). `segurata remediate` can close the file (%s) meanwhile.", ev.Fix, closeFile)
 	}
 	return fmt.Sprintf("Move it to the Keychain or 1Password and delete the plaintext copy (%s).", ev.Fix)
 }

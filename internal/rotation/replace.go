@@ -44,43 +44,33 @@ with redacted values. With --apply it asks for confirmation (stdin must be a ter
 gone and the new one is in place, marks the item rotated and clears the clipboard.
 Plaintext replacements require an untracked file whose permissions keep it private.
 
-  --to-keychain <service>  macOS only. For shell rc files (~/.zshrc, ~/.zprofile, ~/.bashrc…),
-                           store the new value in the login Keychain under <service> (fed to
-                           security -i on stdin) and rewrite the line to read it from there:
+  --to-keychain <service>  Store the new value under <service> in the platform's credential store
+                           and rewrite start-up file lines to read it from there; refused on
+                           other platforms. On macOS, shell rc files (~/.zshrc, ~/.zprofile,
+                           ~/.bashrc…) and the login Keychain (fed to security -i on stdin):
                              export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"
+                           On Windows, PowerShell profiles (Windows PowerShell and PowerShell 7,
+                           all hosts and console host) with a $env:NAME = '…' line, and Credential
+                           Manager (local machine): the line reads it at shell start through
+                           CredRead, compiled by Add-Type, no module needed.
                            Other used_in files still get the plaintext value.
   --backup                 keep a 0600 copy of each file as it was, next to it. Off by default: a
                            backup holds the OLD value in plaintext, one more copy to delete.`
 
 const minValueLen = 8
 
-// Shell rc lines can read the macOS Keychain; on Windows no shell runs the lookup --to-keychain
-// writes, so it is refused, and next offers it on macOS only.
-var (
-	refuseToKeychain = runtime.GOOS == "windows"
-	offerToKeychain  = runtime.GOOS == "darwin"
-)
-
-const toKeychainOnWindows = "--to-keychain rewrites shell rc lines to read the macOS Keychain; on Windows store the value with cmdkey and reference it as keychain:<service> in segurata config, or edit the rc by hand"
-
 var (
 	// safeValue survives being pasted unquoted into a shell line, a .env file or a JSON string.
 	safeValue   = regexp.MustCompile(`^[A-Za-z0-9._~+/=:@%-]+$`)
 	safeService = regexp.MustCompile(`^[A-Za-z0-9._/@:-]+$`)
-	safeAccount = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	aclDeny     = regexp.MustCompile(`^\s+[0-9]+: \S+( inherited)? deny [a-z_,]+$`)
-	assignLine  = regexp.MustCompile(`^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$`)
 )
-
-// lookupLine reads the value back from the Keychain, as docs/secrets.md recommends.
-func lookupLine(service string) string {
-	return fmt.Sprintf(`"$(security find-generic-password -a "$USER" -s %s -w)"`, service)
-}
 
 type lineEdit struct {
 	n        int    // 1-based
-	keychain bool   // rewritten to a Keychain lookup instead of the new value
-	head     string // keychain: the line up to and including "=", which holds no secret
+	keychain bool   // rewritten to a credential store lookup instead of the new value
+	head     string // keychain: the line up to the value, which holds no secret
+	tail     string // keychain: the line ending kept after the lookup
 }
 
 // fileEdit is one file to change, which may stand under several used_in names.
@@ -106,8 +96,9 @@ type replacement struct {
 	old     string // located in the files, kept in memory only
 	newFP   string
 	files   []*fileEdit
+	startup *startup // with service: the start-up files rewritten to a lookup
 	service string
-	account string // Keychain account, with service
+	account string // credential store account, with service
 	warn    []string
 }
 
@@ -147,6 +138,10 @@ func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, e
 func (f *fileEdit) names() []string { return append([]string{f.path}, f.also...) }
 
 func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
+	if secretrisk.IsUserEnv(p) {
+		return nil, fmt.Errorf("%s is a user environment variable, not a file: delete it (`reg delete %s /v %s /f`), keep the new value in Credential Manager and read it from your PowerShell profile (docs/secrets.md#shell-variables-from-credential-manager), then run replace again",
+			p, secretrisk.UserEnvKey, p[len(secretrisk.UserEnvKey)+1:])
+	}
 	var recorded []int
 	var tracked bool
 	for _, loc := range r.item.Secret.Locations {
@@ -203,6 +198,9 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if err != nil {
 		return nil, err
 	}
+	if textfmt.UTF16(raw) {
+		return nil, fmt.Errorf("%s is UTF-16 text, which segurata cannot rewrite in place; save it as UTF-8 (in PowerShell: Set-Content -Encoding utf8), run `segurata inventory local-secrets`, then try again", p)
+	}
 	f := &fileEdit{path: p, abs: abs, paths: []string{original}, link: filepath.Join(resolvedBase, rest) != abs, info: st, tracked: tracked,
 		mode: st.Mode().Perm(), access: access, orig: raw}
 	lines := strings.Split(string(raw), "\n")
@@ -253,22 +251,37 @@ func newValue(raw []byte) (string, error) {
 	return v, nil
 }
 
-// setService identifies which lines will receive a Keychain lookup instead of plaintext.
+// setService identifies which lines will receive a credential store lookup instead of plaintext.
 func (r *replacement) setService(service string) error {
 	if service == "" {
 		return nil
 	}
-	if refuseToKeychain {
-		return errors.New(toKeychainOnWindows)
+	if toKeychain == nil {
+		return errors.New(toKeychainUnsupported)
 	}
 	if !safeService.MatchString(service) {
 		return fmt.Errorf("--to-keychain %q: use letters, digits and . _ / @ : -", service)
 	}
-	if !safeAccount.MatchString(r.account) {
+	if a := toKeychain.account; a != nil && !a.MatchString(r.account) {
 		return fmt.Errorf("user name %q cannot be a Keychain account", r.account)
 	}
-	r.service = service
+	r.startup, r.service = toKeychain, service
 	return r.planKeychain()
+}
+
+// startupReady checks, before anything is read or stored, that the shells reading the start-up
+// files to rewrite can run the lookup.
+func (r *replacement) startupReady(ctx context.Context) error {
+	if r.startup == nil || r.startup.ready == nil {
+		return nil
+	}
+	var files []string
+	for _, f := range r.files {
+		if slices.ContainsFunc(f.names(), r.startup.is) {
+			files = append(files, f.abs)
+		}
+	}
+	return r.startup.ready(ctx, files)
 }
 
 // plan fills the edits after the destinations have been checked and the value read.
@@ -286,29 +299,38 @@ func (r *replacement) plan(v string) error {
 	return nil
 }
 
-// planKeychain marks the lines of shell rc files that become Keychain lookups. Each must be a
-// plain `[export ]NAME=old`, quoted or not, so rewriting the whole line loses nothing.
+// planKeychain marks the lines of start-up files that become lookups. Each must be the startup's
+// one assignment shape holding exactly the old value, so rewriting the whole line loses nothing;
+// any other shape is left alone and refused.
 func (r *replacement) planKeychain() error {
-	rc := false
+	s, found := r.startup, false
 	for _, f := range r.files {
-		if !slices.ContainsFunc(f.names(), secretrisk.IsShellRC) {
+		if !slices.ContainsFunc(f.names(), s.is) {
 			continue
 		}
-		rc = true
+		found = true
 		lines := strings.Split(string(f.orig), "\n")
 		for i := range f.lines {
 			le := &f.lines[i]
-			m := assignLine.FindStringSubmatch(lines[le.n-1])
-			if m == nil || unquote(m[4]) != r.old {
-				return fmt.Errorf("%s:%d is not a plain `export NAME=value` line; drop --to-keychain or edit it by hand", f.path, le.n)
+			m := s.assign.FindStringSubmatch(lines[le.n-1])
+			if m == nil || unquote(m[2]) != r.old {
+				return fmt.Errorf("%s:%d is not a plain %s line; drop --to-keychain or edit it by hand", f.path, le.n, s.shape)
 			}
-			le.keychain, le.head = true, m[1]+m[2]+m[3]+"="
+			le.keychain, le.head = true, m[1]
+			if len(m) > 3 {
+				le.tail = m[3]
+			}
 		}
 	}
-	if !rc {
-		return fmt.Errorf("--to-keychain applies to shell rc files (%s), and no used_in file is one", strings.Join(secretrisk.ShellRC, ", "))
+	if !found {
+		return fmt.Errorf("--to-keychain applies to %s (%s), and no used_in file is one", s.plural, strings.Join(s.files, ", "))
 	}
 	return nil
+}
+
+// lookupLine is a line planKeychain marked, rewritten.
+func (r *replacement) lookupLine(le lineEdit) string {
+	return le.head + r.startup.lookup(r.service) + le.tail
 }
 
 func unquote(s string) string {
@@ -322,7 +344,7 @@ func (r *replacement) rewrite(f *fileEdit, v string) string {
 	lines := strings.Split(string(f.orig), "\n")
 	for _, le := range f.lines {
 		if le.keychain {
-			lines[le.n-1] = le.head + lookupLine(r.service)
+			lines[le.n-1] = r.lookupLine(le)
 		} else {
 			lines[le.n-1] = strings.ReplaceAll(lines[le.n-1], r.old, v)
 		}
@@ -352,14 +374,14 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 		}
 		for _, le := range f.lines {
 			if le.keychain {
-				textfmt.Line(w, "  line %d: %s%s → %s%s", le.n, le.head, before, le.head, lookupLine(r.service))
+				textfmt.Line(w, "  line %d: %s%s → %s", le.n, le.head, before, strings.TrimSuffix(r.lookupLine(le), "\r"))
 			} else {
 				textfmt.Line(w, "  line %d: %s → %s", le.n, before, after)
 			}
 		}
 	}
 	if r.service != "" {
-		fmt.Fprintf(w, "\nKeychain: store the new value as service %q, account %q (security -i, value on stdin), then read it back to check.\n", r.service, r.account)
+		fmt.Fprintf(w, "\n"+r.startup.step+"\n", r.service, r.account)
 	}
 	fmt.Fprintln(w, "\nThen: re-read every file (old fingerprint gone, new value in place), mark the item rotated, clear the clipboard.")
 	if backup {
@@ -429,11 +451,11 @@ func (f *fileEdit) validate(ctx context.Context) error {
 			return fmt.Errorf("%q is tracked by Git; replace the secret by hand outside the index", f.path)
 		}
 	}
-	exposure, err := fileacl.Effective(f.abs, "")
+	closed, err := fileacl.ClosedToOthers(f.abs, "")
 	if err != nil {
 		return fmt.Errorf("%q: file permissions could not be verified: %w", f.path, err)
 	}
-	if fileacl.Exposed(exposure) {
+	if !closed {
 		return fmt.Errorf("%q can be accessed by other users; restrict its permissions before replacing the secret", f.path)
 	}
 	if runtime.GOOS == "darwin" {
@@ -534,7 +556,7 @@ func (r *replacement) verify(v string) error {
 			line := lines[le.n-1]
 			ok := strings.Contains(line, v)
 			if le.keychain {
-				ok = line == le.head+lookupLine(r.service)
+				ok = line == r.lookupLine(le)
 			}
 			if !ok {
 				return fmt.Errorf("%s:%d does not hold the new value", f.path, le.n)
@@ -547,7 +569,7 @@ func (r *replacement) verify(v string) error {
 func (r *replacement) note(written []string) string {
 	n := "replaced in " + strings.Join(written, ", ")
 	if r.service != "" {
-		n += "; new value in the Keychain as " + r.service
+		n += "; new value in " + r.startup.store + " as " + r.service
 	}
 	return n
 }
@@ -565,7 +587,7 @@ func (r *replacement) storeInKeychain(ctx context.Context, kc keychain.Store, v 
 		return err
 	}
 	if r.key.Of(got) != r.newFP {
-		return fmt.Errorf("the Keychain item %s does not hold the new value after storing it; no file was changed", r.service)
+		return fmt.Errorf("%s %s does not hold the new value after storing it; no file was changed", r.startup.item, r.service)
 	}
 	return nil
 }
@@ -588,6 +610,15 @@ func (c CLI) readNewValue(ctx context.Context, fromStdin bool) ([]byte, error) {
 	return raw, nil
 }
 
+// clearClipboard empties the clipboard the new value was read from, or says to.
+func (c CLI) clearClipboard(ctx context.Context) {
+	if err := c.Clipboard.Clear(ctx); err != nil {
+		fmt.Fprintln(c.Err, "rotations: could not clear the clipboard, clear it yourself:", err)
+	} else {
+		fmt.Fprintln(c.Out, "Clipboard cleared.")
+	}
+}
+
 // recordOn changes the item in the tracker as it is now: the copy replace loaded is stale after
 // the clipboard, the confirmation and the writes.
 func recordOn(path string, now time.Time, fingerprint string, change func(*tracker.Item)) error {
@@ -607,7 +638,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	yes := fs.Bool("yes", false, "with --apply, do not ask for confirmation")
 	fromStdin := fs.Bool("stdin", false, "read the new value from stdin (piped) instead of the clipboard")
 	backup := fs.Bool("backup", false, "keep a 0600 copy of each file as it was (holds the old value)")
-	service := fs.String("to-keychain", "", "store the value in the Keychain under this service and make shell rc lines read it")
+	service := fs.String("to-keychain", "", "store the value in the Keychain or Credential Manager under this service and make start-up file lines read it")
 	pos, err := cliflag.Parse(fs, args)
 	if err != nil {
 		return 2
@@ -638,33 +669,53 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	if err := r.setService(*service); err != nil {
 		return c.fail(err)
 	}
+	if err := r.startupReady(ctx); err != nil {
+		return c.fail(err)
+	}
 	if err := r.preflight(ctx); err != nil {
 		return c.fail(err)
 	}
 	raw, err := c.readNewValue(ctx, *fromStdin)
-	var v string
-	if err == nil {
-		v, err = newValue(raw)
+	if err != nil {
+		return c.fail(err)
 	}
+	pasted, printed := !*fromStdin, false
+	caveat := ""
+	if pasted {
+		caveat = c.Clipboard.Caveat()
+	}
+	// From here on the clipboard holds the new value: every failure clears it.
+	fail := func(err error) int {
+		code := c.fail(err)
+		if pasted {
+			c.clearClipboard(ctx)
+			if caveat != "" && !printed {
+				textfmt.Line(c.Err, "Warning: %s", caveat)
+			}
+		}
+		return code
+	}
+	v, err := newValue(raw)
 	if err == nil {
 		err = r.plan(v)
 	}
-	if caveat := c.Clipboard.Caveat(); err == nil && !*fromStdin && caveat != "" {
+	if caveat != "" {
 		r.warn = append(r.warn, caveat)
 	}
 	if err == nil {
 		err = r.preflight(ctx)
 	}
 	if err != nil {
-		return c.fail(err)
+		return fail(err)
 	}
 	r.print(c.Out, v, *backup)
+	printed = true
 
 	record := func(change func(*tracker.Item)) error { return recordOn(path, now, it.Fingerprint, change) }
 	if !*apply {
 		plan := fmt.Sprintf("planned for %s", textfmt.Count(len(r.files), "file", "files"))
 		if err := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplacePlan, plan) }); err != nil {
-			return c.fail(err)
+			return fail(err)
 		}
 		fmt.Fprintln(c.Out, "\nDry run recorded in the tracker. Run again with --apply to read the new value and replace the credential.")
 		return 0
@@ -672,7 +723,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	// A value piped in with --stdin leaves no terminal to confirm on, only --yes.
 	ok, err := prompt.Confirm(c.In, c.Out, *yes, c.TTY && !*fromStdin)
 	if err != nil {
-		return c.fail(err)
+		return fail(err)
 	}
 	if !ok {
 		fmt.Fprintln(c.Out, "Not applied.")
@@ -686,7 +737,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		if rerr := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, note) }); rerr != nil {
 			fmt.Fprintln(c.Err, "rotations:", rerr)
 		}
-		return c.fail(errors.New(note))
+		return fail(errors.New(note))
 	}
 	if r.service != "" {
 		if err := r.storeInKeychain(ctx, c.Keychain(r.account), v); err != nil {
@@ -696,7 +747,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	written, err := r.write(ctx, *backup, now)
 	if err != nil {
 		if r.service != "" {
-			err = fmt.Errorf("the Keychain item was updated: %w", err)
+			err = fmt.Errorf("%s was updated: %w", r.startup.item, err)
 		}
 		return failed(err, written)
 	}
@@ -704,15 +755,11 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		return failed(fmt.Errorf("written, but the check failed: %w", err), written)
 	}
 	if err := record(func(it *tracker.Item) { it.Done(now, r.note(written)) }); err != nil {
-		return c.fail(err)
+		return fail(err)
 	}
 	fmt.Fprintf(c.Out, "\nReplaced in %s and checked. %s is now rotated.\n", textfmt.Count(len(r.files), "file", "files"), it.Secret.ID)
-	if !*fromStdin {
-		if err := c.Clipboard.Clear(ctx); err != nil {
-			fmt.Fprintln(c.Err, "rotations: could not clear the clipboard, clear it yourself:", err)
-		} else {
-			fmt.Fprintln(c.Out, "Clipboard cleared.")
-		}
+	if pasted {
+		c.clearClipboard(ctx)
 	}
 	fmt.Fprintf(c.Out, "Restart whatever reads these files (open a new shell for rc files). Copies in history, transcripts and logs still hold the old value: `segurata rotations show %s`.\nNext: segurata rotations next\n", it.Secret.ID)
 	return 0

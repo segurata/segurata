@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"time"
 
@@ -27,16 +26,5 @@ func redactCmd(args []string) int {
 			}
 			return localsecrets.New().Trails(ctx, cfg.Connectors[secretrisk.ConnectorName].Config)
 		},
-		Lsof: lsof, Now: time.Now}.Run(ctx, args)
-}
-
-// lsof runs lsof read-only and returns its stdout; the error keeps the exit status.
-func lsof(ctx context.Context, _ string, args ...string) ([]byte, error) {
-	path, err := exec.LookPath("lsof")
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	return exec.CommandContext(ctx, path, args...).Output()
+		OpenFiles: redact.DefaultOpenFiles, Now: time.Now}.Run(ctx, args)
 }

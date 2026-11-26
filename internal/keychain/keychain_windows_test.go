@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -55,16 +56,66 @@ func TestCredentialManagerRoundTripStaysOnThisMachine(t *testing.T) {
 // cmdkey /generic and PowerShell store UTF-16LE text without a terminator.
 func TestCredentialManagerReadsACmdkeyStyleBlob(t *testing.T) {
 	target, value := testTarget(t), "cmdkey-ßtyle-"+rand.Text()
-	u := utf16.Encode([]rune(value))
-	blob := make([]byte, 2*len(u))
-	for i, c := range u {
-		binary.LittleEndian.PutUint16(blob[2*i:], c)
-	}
-	if err := writeBlob(target, "", blob); err != nil {
+	if err := writeBlob(target, "", utf16le(value)); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := Default("").Read(context.Background(), target); err != nil || got != value {
 		t.Fatalf("read %q, %v", got, err)
+	}
+}
+
+func utf16le(s string) []byte {
+	u := utf16.Encode([]rune(s))
+	b := make([]byte, 2*len(u))
+	for i, c := range u {
+		binary.LittleEndian.PutUint16(b[2*i:], c)
+	}
+	return b
+}
+
+func TestDecodeBlobReadsUTF16AndRefusesWhatItWouldGarble(t *testing.T) {
+	for _, c := range []struct {
+		name, want, err string
+		blob            []byte
+	}{
+		{"cmdkey text", "k3y-ñ-€-😀", "", utf16le("k3y-ñ-€-😀")},
+		{"with a terminator", "synthetic-token", "", utf16le("synthetic-token\x00")},
+		{"UTF-8 ASCII from a Go keyring", "", "looks like UTF-8", []byte("gho_synthetic012345678")},
+		{"UTF-8 with a non-ASCII letter", "", "looks like UTF-8", []byte("synthetic-ñ-token")},
+		{"odd length", "", "odd length", []byte{'a', 0, 'b'}},
+		{"unpaired high surrogate", "", "unpaired surrogate", []byte{0x3d, 0xd8}},
+		{"lone surrogate", "", "unpaired surrogate", []byte{'a', 0, 0x00, 0xd8, 'b', 0}},
+		{"reversed pair", "", "unpaired surrogate", []byte{0x00, 0xdc, 0x00, 0xd8}},
+		{"NUL inside", "", "control characters", utf16le("ab\x00cd")},
+		{"newline", "", "control characters", utf16le("ab\ncd")},
+	} {
+		got, err := decodeBlob(c.blob)
+		if c.err == "" && (err != nil || got != c.want) || c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err) || got != "") {
+			t.Errorf("%s: %q, %v", c.name, got, err)
+		}
+	}
+}
+
+// cmdkey writes generic credentials with enterprise persistence, which roams with a roaming profile
+// or credential roaming: docs/secrets.md says so, and segurata's own Store writes local-machine items.
+func TestCmdkeyItemsUseEnterprisePersistence(t *testing.T) {
+	cmdkey, err := exec.LookPath("cmdkey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, value := testTarget(t), "synthetic-"+rand.Text()
+	if out, err := exec.Command(cmdkey, "/generic:"+target, "/user:tester", "/pass:"+value).CombinedOutput(); err != nil {
+		t.Fatalf("cmdkey: %v: %s", err, strings.ReplaceAll(string(out), value, "[value]"))
+	}
+	c, err := readCredential(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.persist != credPersistEnterprise {
+		t.Errorf("cmdkey persistence %d, want %d (enterprise): fix docs/secrets.md", c.persist, credPersistEnterprise)
+	}
+	if got, err := Default("").Read(context.Background(), target); err != nil || got != value {
+		t.Errorf("read back %v", err)
 	}
 }
 
@@ -79,6 +130,13 @@ func TestCredentialManagerRefusals(t *testing.T) {
 	}
 	if _, err := Default("").Read(ctx, odd); err == nil || !strings.Contains(err.Error(), "odd length") {
 		t.Errorf("odd blob: %v", err)
+	}
+	utf8Item, utf8Value := testTarget(t), "gho_synthetic"+rand.Text()[:11]
+	if err := writeBlob(utf8Item, "", []byte(utf8Value)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Default("").Read(ctx, utf8Item); err == nil || got != "" || !strings.Contains(err.Error(), "looks like UTF-8") || strings.Contains(err.Error(), utf8Value) {
+		t.Errorf("UTF-8 blob: %q, %v", got, err)
 	}
 	long, value := testTarget(t), strings.Repeat("x", maxBlob/2+1)
 	if err := Default("").Store(ctx, long, value); err == nil || strings.Contains(err.Error(), value) {

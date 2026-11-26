@@ -82,6 +82,8 @@ type Step struct {
 	Terminal bool     `json:"terminal,omitempty"`
 }
 
+// String is the command line as the platform's shell takes it: POSIX sh on Unix, PowerShell on
+// Windows.
 func (s Step) String() string {
 	parts := make([]string, 0, len(s.Argv)+1)
 	if s.Sudo {
@@ -90,7 +92,7 @@ func (s Step) String() string {
 	for _, a := range s.Argv {
 		parts = append(parts, shellQuote(a))
 	}
-	return strings.Join(parts, " ")
+	return callOperator(parts) + strings.Join(parts, " ")
 }
 
 func (s Step) Equal(o Step) bool {
@@ -108,21 +110,14 @@ func (c Call) String() string {
 	return fmt.Sprintf("%s %s (with %s)", c.Method, c.URL, c.Secret)
 }
 
-func shellQuote(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t\n'\"\\$`!*?[]{}()<>|&;#~") {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
+// FileChange makes one file private. Mode and Was are exposures as fileacl gives them: the modes on
+// Unix, and on Windows what other accounts get from the DACL, with Access the old owner and DACL
+// as SDDL, so a plan goes stale whenever the access list changes.
 type FileChange struct {
-	Path string      `json:"path"`
-	Mode os.FileMode `json:"mode"`
-	Was  os.FileMode `json:"was"`
-}
-
-func (c FileChange) String() string {
-	return fmt.Sprintf("chmod %o %s (now %o)", c.Mode.Perm(), shellQuote(c.Path), c.Was.Perm())
+	Path   string      `json:"path"`
+	Mode   os.FileMode `json:"mode"`
+	Was    os.FileMode `json:"was"`
+	Access string      `json:"access,omitempty"`
 }
 
 type IO struct {

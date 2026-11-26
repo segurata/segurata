@@ -12,6 +12,7 @@ import (
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // A database dump committed to git exposes every row to whoever can clone it; gitleaks sees only
@@ -117,7 +118,7 @@ func sniffDump(head []byte) (class, label string) {
 			head = inflated
 		}
 	}
-	if len(head) > 2 && ((head[0] == 0xff && head[1] == 0xfe) || (head[0] == 0xfe && head[1] == 0xff)) {
+	if len(head) > 2 && textfmt.UTF16(head) {
 		head = bytes.ReplaceAll(head[2:], []byte{0}, nil)
 	}
 	for _, h := range dumpHeaders {

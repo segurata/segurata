@@ -148,7 +148,8 @@ func TestGuidesAreShortCitedAndInTheCatalog(t *testing.T) {
 
 func TestIsShellRC(t *testing.T) {
 	for p, want := range map[string]bool{"~/.zshrc": true, "/Users/x/.bash_profile": true, ".profile": true,
-		"~/src/app/.env": false, "~/.zshrc.bak": false, "~/dotfiles/zshrc": false} {
+		"~/src/app/.env": false, "~/.zshrc.bak": false, "~/dotfiles/zshrc": false, `C:\Users\x\.bashrc`: true,
+		`C:\Users\x\.bashrc.d\env`: false} {
 		if IsShellRC(p) != want {
 			t.Errorf("IsShellRC(%q) != %v", p, want)
 		}
@@ -190,6 +191,23 @@ func TestLivenessTrusted(t *testing.T) {
 	} {
 		if got := c.l.Trusted(); got != c.want {
 			t.Errorf("%+v: %v", c.l, got)
+		}
+	}
+}
+
+func TestIsPowerShellProfile(t *testing.T) {
+	for p, want := range map[string]bool{
+		`C:\Users\me\Documents\PowerShell\Microsoft.PowerShell_profile.ps1`: true,
+		`C:\Users\me\OneDrive\Documents\WindowsPowerShell\profile.ps1`:      true,
+		"~/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1":    true,
+		`c:\users\me\documents\powershell\PROFILE.PS1`:                      true,
+		`C:\Users\me\Documents\PowerShell\Microsoft.VSCode_profile.ps1`:     false,
+		`C:\Users\me\Documents\PowerShell\Modules\x\profile.ps1`:            false,
+		"profile.ps1": false,
+		"~/.zshrc":    false,
+	} {
+		if IsPowerShellProfile(p) != want {
+			t.Errorf("IsPowerShellProfile(%q) != %v", p, want)
 		}
 	}
 }

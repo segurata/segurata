@@ -40,6 +40,16 @@ func expose(path string, dir bool) error {
 	return winsys.SetSecurityDescriptor(h, "D:(A;"+inherit+";FA;;;"+user+")(A;"+inherit+";FR;;;BU)", winsys.DaclSecurityInformation)
 }
 
+// giveAway names BUILTIN\Administrators as the owner, which needs it among the token's groups.
+func giveAway(path string) error {
+	h, err := open(path, winsys.WriteOwner)
+	if err != nil {
+		return err
+	}
+	defer syscall.CloseHandle(h)
+	return winsys.SetSecurityDescriptor(h, "O:BA", winsys.OwnerSecurityInformation)
+}
+
 func access(path string) (string, error) {
 	h, err := open(path, readControl)
 	if err != nil {

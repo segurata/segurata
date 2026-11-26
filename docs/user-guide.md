@@ -53,8 +53,8 @@ confirmation. The full list of guarantees, each of which counts as a vulnerabili
 - Secrets found on disk are fingerprinted and attributed locally by default. If you enable
   [liveness checks](inventory.md#liveness), supported checks authenticate against the provider with the
   candidate credential. AWS STS uses a request signed locally with the secret access key.
-- Results stay on disk. Unix systems use mode 0600 for state files. On Windows, use folders
-  with access restricted by Windows ACLs.
+- Results stay on disk, private from the moment they are written: mode 0600 on Unix, an access
+  list for you and SYSTEM only on Windows.
 - `segurata remediate --apply` sends exactly the commands or requests its plan showed.
 - External connectors (`segurata-<name>` on `PATH`) run as you and send what they send: the
   [hibp example](../examples/hibp/README.md) sends your email addresses to Have I Been Pwned. Read one
@@ -233,7 +233,7 @@ your terminal too and is refused without one, `--yes` or not. Design:
 | `macos.smb.share-remove` | `sudo /usr/sbin/sharing -r <name>` (orphaned records and shared folders without guest access) | `sudo /usr/sbin/sharing -a <path> -n <name> -S <smb name> -s <flag> -g <flag> -R <0/1>` with the record's current flags; not applicable for an orphan, whose folder no longer exists |
 | `macos.smb.guest-off` | `sudo /usr/sbin/sharing -e <name> -g 000` (live shares open to guests) | `sudo /usr/sbin/sharing -e <name> -g 001` |
 | `macos.home.private` | `/bin/chmod 700 <home>`, no sudo, when group or others can read the home folder (every user is in `staff`, so 750 is as open as 755; 711 passes, as CIS allows) | `/bin/chmod <old mode> <home>` |
-| `file.chmod600` | Makes the file in the finding's `evidence.path` private: mode 600, or 700 when its owner could execute it. With a group, every file of the group once | `chmod <old mode> <path>` per file |
+| `file.chmod600` | Makes the file in the finding's `evidence.path` private: mode 600, or 700 when its owner could execute it; on Windows a protected access list with full control for you and SYSTEM only. With a group, every file of the group once | `chmod <old mode> <path>` per file; on Windows a PowerShell `Set-Acl` with the old access list |
 | `github.secret-scanning.enable` | Per GitHub owner: `gh api --method PATCH --silent /repos/<owner>/<repo> -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'` for each public repository you administer where either is off (only the fields that are off). Private repositories are left out: there it needs GitHub Secret Protection, a paid add-on | the same request with `disabled` |
 | `github.workflow-token.read` | Per GitHub owner: `gh api --method PUT --silent /orgs/<org>/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=<as it is>` for the organization first, then `/repos/<owner>/<repo>/actions/permissions/workflow` for each repository whose default is write | the same request with `write` |
 | `connected-apps.gh.drop-scopes` | `gh auth refresh -h github.com -r delete_repo,admin:org[,admin:enterprise]`, the removable scopes gh's token holds now, in your terminal (browser approval) | `gh auth refresh -h github.com -s <the same scopes>` |
@@ -328,7 +328,7 @@ own first. `unaccept` takes the finding id or the item id. Details:
 ## Scheduled runs
 
 ```bash
-./segurata schedule install                         # print the launchd agent; changes nothing
+./segurata schedule install                         # print the launchd agent or Windows task; changes nothing
 ./segurata schedule install --every 12h --apply     # write and load it, after "Apply? [y/N]"
 ./segurata schedule status
 ./segurata schedule uninstall --apply
@@ -345,5 +345,8 @@ started. After `"browser_stale_days"` (default 7) of that, one notification says
 `~/.segurata/out`, pruned to the last 30 days after each run (`"keep_runs_days"` in the config; the
 latest run of each connector and the one before it always stay). Install it from the binary you
 will keep: the agent runs that
-exact path, with the PATH you had when installing. On Linux it prints a systemd user timer to
-install by hand. Details: [docs/architecture.md](architecture.md#scheduled-runs).
+exact path, with the PATH you had when installing. On Windows it registers a Task Scheduler task
+(`segurata\inventory`) that runs while you are signed in, logs to
+`%LOCALAPPDATA%\segurata\Logs\schedule.log` and posts no notification. On Linux it prints a
+systemd user timer to install by hand. Details:
+[docs/architecture.md](architecture.md#scheduled-runs).

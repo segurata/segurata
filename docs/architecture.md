@@ -529,9 +529,13 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   under its worst member, and ranks every line by `remediation.severity` when set (a hardening
   step on a finding graded for something else) or the finding's severity.
 - Without `--apply` it stops after the plan. With `--apply` it asks on the terminal and refuses
-  when stdin is not a terminal, unless `--yes`. A plan with `blocked` set (a write credential not
-  configured) is refused before asking; a plan with a `terminal` step (interactive: `gh auth
-  refresh` opens a browser) is refused without a terminal even with `--yes`.
+  when stdin is not a terminal, unless `--yes`. On Windows a terminal is a console handle
+  (`GetConsoleMode`); mintty (Git Bash, MSYS2) hands programs a pipe, so there it takes `--yes`
+  or a run under `winpty`. A step that needs sudo is refused on Windows, which has no sudo to ask
+  on the terminal, with the command to run by hand from an elevated prompt. A plan with `blocked`
+  set (a write credential not configured) is refused before asking; a plan with a `terminal`
+  step (interactive: `gh auth refresh` opens a browser) is refused without a terminal even with
+  `--yes`.
 - After applying, the core runs that connector instance's inventory again and checks each finding
   of the plan: it is fixed when no fresh finding with its id still offers its action. So the same
   finding without that action (a repository that keeps other problems, a grant with fewer scopes)
@@ -571,7 +575,13 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
 - Generic actions belong to the core, so any connector can attach them. `file.chmod600` takes the
   file in `evidence.path` (absolute or `~/`), refuses symlinks and non-regular files, and changes the
   mode in-process to 600 (700 when the owner could execute it); the undo is `chmod <old mode>
-  <path>`. With a group it changes every file once and leaves out, by name, files already private.
+  <path>`. On Windows it sets, in-process, the descriptor segurata gives its own files (owner, a
+  protected DACL, full control for the user and SYSTEM), refuses a file another account owns, and
+  records the old owner and DACL as SDDL, so a plan whose access list changed before apply is
+  stale. The undo is `powershell.exe` from System32 with `-NoProfile -NonInteractive` running
+  `Get-Acl`, `SetSecurityDescriptorSddlForm('<old SDDL>')` and `Set-Acl`; a path with a single
+  quote, or SDDL outside `[A-Za-z0-9;:()-]` (conditional entries), is left out, to be fixed by hand.
+  With a group it changes every file once and leaves out, by name, files already private.
 - An external connector remediates through protocol 2: it declares its actions in `describe`
   (`remediates`), returns a plan from `segurata-<name> plan` and runs it in
   `segurata-<name> apply` (`remediate.external`). As for a built-in, the core shows the plan, confirms
@@ -645,7 +655,7 @@ report.
 segurata schedule install [--every 24h] [--connectors a,b] [--apply [--yes]]
 segurata schedule uninstall [--apply [--yes]]
 segurata schedule status
-segurata schedule run [--every 24h] [--connectors a,b]   what the agent executes
+segurata schedule run [--every 24h] [--connectors a,b] [--log file]   what the agent executes
 ```
 
 `internal/schedule`. On macOS, `install` builds a launchd user agent,
@@ -659,10 +669,34 @@ already loaded and bootstraps the new one. `uninstall` boots it out and removes 
 reports and logs. `install` refuses a binary under the temp directory (`go run`), which would be
 gone by the first run.
 
+On Windows `install` writes a Task Scheduler task, `~/.segurata/schedule-task.xml` (UTF-16LE,
+private like segurata's other files), and registers it with
+`<System32>\schtasks.exe /Create /TN segurata\inventory /XML <file> /F`, which replaces a task
+already registered; `uninstall` runs `/Delete /TN segurata\inventory /F` and removes the file,
+and `status` adds `schtasks /Query /V /FO LIST`, Task Scheduler's last run and result. The task
+runs as the account that installed it (its SID), with `InteractiveToken` and `LeastPrivilege`: it
+runs only while the owner is signed in, because a task that runs signed out (S4U) cannot read
+Credential Manager, so `keychain:` secrets would fail. Its trigger starts one interval after
+installation and repeats every `--every` (at most 31 days, Task Scheduler's longest repetition);
+`StartWhenAvailable` starts a run missed while the machine was off, `IgnoreNew` starts none while
+one is going, and the run is stopped at 95% of the interval, after its own 90% bound. The command
+is the absolute `segurata.exe` and its arguments, each quoted by the rules `CommandLineToArgvW`
+reads, never a `/TR` string; one that holds `%` (Task Scheduler expands `%VAR%`) or a line break
+is refused. Task Scheduler keeps no output, so the task passes `--log
+%LOCALAPPDATA%\segurata\Logs\schedule.log`: `schedule run` appends its output and its commands'
+there, creating the file private and making an existing one private first. The task's command
+is `<System32>\conhost.exe --headless` followed by `segurata.exe` and its arguments: a console
+with no window (Windows 10 1809 and later), so a run shows nothing on the desktop, cannot be
+ended by closing a window and gets no keys typed by mistake, while `proc` can still interrupt
+the inventory with CTRL_BREAK. Task Scheduler's last result is conhost.exe's exit code; the run's own
+errors are in the log. There is no notification.
+
 One `schedule run` ends before the next is due: it has 90% of the interval, and its inventory 80%,
 which leaves time for the report. At the deadline the inventory gets an interrupt, so it writes
 `run_end` (with the interruption as `error`) and syncs the tracker, and a kill two minutes later.
-`install` puts an interval other than 24h on the agent's command line (`schedule run --every 6h`),
+The inventory and the report run in the agent's process group on Unix, so launchd ends them
+with the agent when it boots it out or the owner logs out; `schedule run` takes SIGTERM and
+SIGHUP like an interrupt, so the inventory gets the same interrupt first. `install` puts an interval other than 24h on the agent's command line (`schedule run --every 6h`),
 so an agent installed before that runs with the 24h bound until it is installed again.
 
 1. Runs `segurata inventory --out ~/.segurata/out <connectors>`, which ends in `track sync`.
@@ -672,7 +706,8 @@ so an agent installed before that runs with the 24h bound until it is installed 
 2. Posts one macOS notification (`osascript -e 'display notification …'`) naming up to three of
    the open P0 and P1 items that sync found, reopened or raised to P1 or P0 (history `found`,
    `reopened`, or `priority` with action `raised`, since the run started), by title: the tracker is the one place runs are compared. Titles never carry
-   secrets; evidence is never shown. Each is also written to the log.
+   secrets; evidence is never shown. Each is also written to the log, the only place they go on
+   Linux and Windows.
 3. Runs `segurata report --format md --out ~/.segurata/last-report.md --dir
    ~/.segurata/out`.
 4. Once the report is written, prunes `~/.segurata/out` (`runfile.Prune`): it removes the
@@ -711,7 +746,7 @@ connects by itself never reaches another browser either.
   on schedule (or first were skipped), and `notified`. When a skipped run finds them idle for more
   than `browser_stale_days` (config, default 7, negative for never), it posts one notification,
   "browser connectors haven't run in N days", with the reason as subtitle; the next one comes only
-  after they have run again. On Linux the line goes to the log.
+  after they have run again. On Linux and Windows the line goes to the log.
 
 Scheduled inventories live apart from the interactive `out/`; `segurata remediate --out
 ~/.segurata/out --list` works from them.
@@ -760,8 +795,10 @@ connector or instance (the config and state are always checked).
   key and has mode 0600; `tracker.json` loads and has mode 0600 when present; the tracker
   folder and the output directory (`--out`) have mode 0700 (a warning otherwise, since their files
   are 0600). On Windows the same checks read the DACL: a file or folder another account than the
-  user, SYSTEM and Administrators can read or change fails (a folder warns), and the fix is an
-  `icacls … /inheritance:r /grant:r "%USERNAME%:F" "SYSTEM:F"` that names no account.
+  user, SYSTEM and Administrators can read or change fails (a folder warns), and the fix is a
+  Windows PowerShell `Set-Acl` with a protected access list for the account running it and SYSTEM,
+  which names no account. That command (`connector.MakePrivateCommand`, `chmod 600` on Unix) is
+  the one every connector prints for a file other accounts can read.
 
 ## External connector protocol (v1, v2)
 
@@ -790,9 +827,13 @@ prompt nobody answers in a scheduled run fails the reference instead of hanging.
 Keychain item and a denied read (`User interaction is not allowed`) are reported apart, with
 security's reason for the latter; the missing-item message carries the command that adds it
 (`keychain.Store.Hint`: `security add-generic-password …` on macOS, `cmdkey /generic:… /pass` on
-Windows). On Windows the credential's blob is UTF-16LE text, as `cmdkey` and PowerShell store it;
-an odd length or one over 2560 bytes is refused, and a scheduled task outside the user's logon
-session gets that reason instead of a missing item.
+Windows). On Windows the credential's blob is UTF-16LE text, as `cmdkey` and PowerShell store it,
+with one trailing NUL dropped. An odd length, one over 2560 bytes, an unpaired surrogate or a
+control character is refused, and so is a blob that looks like UTF-8 (no NUL byte, valid UTF-8,
+non-ASCII once read as UTF-16), which Go keyring libraries write and which would otherwise decode
+into unrelated characters. A scheduled task outside the user's logon session gets that reason
+instead of a missing item. Where `keychain:` references do not resolve (`keychain.Available` is
+false), doctor's fix for an unconfigured secret suggests an `env:` reference or `op://` instead.
 
 Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 
@@ -929,6 +970,11 @@ each on an allowlist (`guards.go`). A repository's own config cannot make that g
 every git process, gitleaks' included, overrides `core.fsmonitor`, `core.hooksPath`,
 `log.showSignature` and `core.pager` and forbids every transport (`protocol.allow=never`,
 `GIT_NO_LAZY_FETCH`), and gitleaks' `git log -p` runs with `--no-textconv --no-ext-diff`.
+Git's own ownership check stays on: a repository another account owns (Git for Windows refuses
+one an administrator created, for example) fails with a `gitlocal.UnsafeRepositoryError` that
+names `git config --global --add safe.directory <path>`, recognised from that hint so a
+translated Git is understood too. segurata never passes `-c safe.directory=*`, which would let that
+account's config and hooks into the run.
 
 ## Data dumps in git
 
@@ -1132,7 +1178,25 @@ every run without a new scan.
 - Public OAuth clients: the client secrets of gcloud (`CLOUDSDK_CLIENT_NOTSOSECRET`) and of
   `gcloud auth application-default login` are published in its source; they are recognised by
   their first seven and last four characters and length, and are noise. The refresh token beside
-  them is not. `~/.config/gcloud/logs` is not scanned.
+  them is not. gcloud's `logs` folder is not scanned.
+- Tool folders: `connectors/internal/userdirs` resolves where gcloud, gh and the Chromium browsers
+  keep a user's data, from an OS and environment passed in, each the way that tool does
+  (`CLOUDSDK_CONFIG`; `GH_CONFIG_DIR`, `XDG_CONFIG_HOME`; `%APPDATA%` and `%LOCALAPPDATA%` on
+  Windows). local-secrets adds the gcloud and gh folders to its config pass when they lie outside
+  `~/.config`, gcp reads ADC there, and `FindGcloud` looks in the Windows installer's folders
+  (`gcloud.cmd`). It also resolves PSReadLine's history folder on every OS and, on Windows, the
+  PowerShell profile folders under the Documents folder the shell reports
+  (`SHGetKnownFolderPath`, so a OneDrive redirect is followed). local-secrets reads those, and on
+  Windows `*.log` under `%LOCALAPPDATA%`, in place of `~/Library/Logs`.
+- Path rules: the group a finding lands in (kindOf) and its fix anchor read the path as findings
+  keep it (`~/…`, forward slashes, case ignored on Windows), so one set of patterns serves every
+  OS. ripgrep's errors are read by OS error code from one table per OS: on Windows access denied
+  (5), a file in use (32) or locked (33) is unreadable and 2 or 3 vanished, in whatever language
+  the system words them.
+- User environment variables: on Windows local-secrets reads the string values of
+  `HKCU\Environment` in-process (`RegEnumValueW`, no `reg.exe`) and matches each as a
+  `NAME=value` line of one config file, source `registry`, path `HKCU\Environment\NAME`, with no
+  mode, repository or chmod action. A registry it cannot read leaves that path uninspected.
 - Bare 40-hex values matched by gitleaks' `sourcegraph-access-token` without the `sgp_` prefix
   are noise. gitleaks 8.30 has no other rule that takes a bare hex value: `facebook-secret` and
   `codecov-access-token` require the provider's name next to the value.
@@ -1195,15 +1259,22 @@ places. `rotations next` and the "Rotate N P0 secrets" entry of `status` follow 
   fsync, rename; mode kept; a symlink's target is written, the link stays), then re-reads every
   file: the old fingerprint must be gone from all of it and each edited line must hold the new
   value. Only then is the item marked `rotated` and the clipboard cleared (`pbcopy` with empty
-  stdin, `EmptyClipboard` on Windows).
+  stdin, `EmptyClipboard` on Windows). Every failure after the clipboard was read clears it too,
+  and repeats the Clipboard history warning when the plan was not shown yet; a dry run and a
+  declined confirmation leave it for the next run.
 - `--to-keychain <service>`: for shell rc files whose line is a plain `[export ]NAME=value`, the
   value is stored with `security -i` reading `add-generic-password -U -a $USER -s <service> -w
   <value>` from stdin (no argument list carries it), read back with `find-generic-password -w`
   and compared by fingerprint before any file changes; the line becomes
-  `export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`. On Windows no
-  shell runs that lookup, so the plan refuses `--to-keychain` and `next` does not offer it: the
-  value goes into Credential Manager with `cmdkey` and segurata config references it as
-  `keychain:<service>`.
+  `export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`. On Windows the
+  same steps apply to PowerShell profiles (`secretrisk.PowerShellProfiles`, matched by their last
+  two path elements because Documents may be redirected) whose line is `$env:NAME = 'value'` or
+  `"value"` (no `` ` `` or `$`): the value goes to Credential Manager through `CredWriteW`
+  (generic, local machine, UTF-16LE), is read back, and the line becomes an `Add-Type`
+  declaration of `CredReadW` plus `[Segurata.Cred]::Read('<service>')`, keeping CRLF and a BOM.
+  Each platform's shape is one `startup` value in `internal/rotation/startup.go`; other shapes
+  are refused with the line named. Elsewhere (Linux) the plan refuses `--to-keychain` before
+  reading anything, and `next` offers it only for the start-up files the platform rewrites.
 - `--backup` keeps a 0600 copy of each file as it was. It is off by default because the copy
   holds the old value in plaintext.
 - History: `next` (once per run of consecutive calls), `replace-plan` (dry run),
@@ -1572,20 +1643,59 @@ redaction removes the copy that stays on disk, in backups and in sync tools.
   JSON must stay so. A match that cannot be replaced this way stays and is counted.
 - Safety: files modified within `--min-age` (default 2h) and any file a running `claude` or
   `codex` process has open (`lsof -Fn -c claude -c codex`, read-only; if lsof fails the command
-  refuses) are left alone, as are symlinks and files of another account. `--apply` confirms like
+  refuses) are left alone, as are symlinks and files of another account (the owner uid, on
+  Windows the owner SID). Windows has no lsof: the Restart Manager is asked which of the files in
+  scope any process holds open, in batches split until each held file is found, and any holder
+  leaves the file alone, since the atomic replace would fail on it anyway; if the Restart Manager
+  fails the command refuses. `--apply` confirms like
   `remediate`, then, per file, checks the guards again, refuses a file whose size or modification
   time changed since the plan, writes with `statefile.Replace` (mode kept) and puts the
   modification time back, so tools that sort sessions by date are not confused.
 - After applying, ripgrep scans the rewritten files again: no secret in scope may remain beyond
-  what the plan said would stay, and mode and modification time must be unchanged. Each rotation
+  what the plan said would stay, and mode, access list (`fileacl.Fingerprint`: the owner and DACL
+  on Windows) and modification time must be unchanged. Each rotation
   item whose secret was replaced gets a history note, "redacted from N trail files". Its
   locations stay: the copies were exposed before they were cleaned.
 - No backup by default: a backup is one more plaintext copy. `--backup` keeps a 0600 copy next to
   each file and says so loudly.
 
+## Platforms
+
+macOS, Linux and Windows, each on amd64 and arm64, are built and released alike. CI runs the
+tests on all three (`windows-latest` included), and vets windows/arm64 and compiles its tests.
+Platform code sits in `_unix.go` and `_windows.go` files behind one package per concern; Win32
+calls the `syscall` package lacks go through `internal/winsys`, which loads every DLL from
+System32 by absolute path.
+
+File privacy is one model, `internal/fileacl`, that every privacy decision uses. Exposure is given
+as Unix permission bits on every OS: on Unix the owner and mode, on Windows the owner and the
+DACL, where read access for any account other than the owner, SYSTEM (`S-1-5-18`) and
+BUILTIN\Administrators (`S-1-5-32-544`), the analogue of root, sets the group and other read
+bits, and change access sets the write bits. Files and folders segurata creates, temporary files
+of atomic writes included, get their access as they are created (the security attributes of
+`CreateFileW` and `CreateDirectoryW`): a protected DACL, with inheritance off, granting full
+control to the current user and SYSTEM only, owned by the user, so no inherited DACL ever applies
+to them. Administrators are tolerated when a file is checked and
+never granted when one is created. TrustedInstaller, which owns `C:\` and the system folders,
+counts as trusted only as the owner or editor of a folder above a file, never for reading one.
+
+| Concern | Unix | Windows | Described in |
+|---|---|---|---|
+| Private files and folders | mode 0600, 0700 | the protected DACL above | "Restart resistance", "Doctor" |
+| Atomic writes, the tracker lock | `rename`, `flock` | rename retried past sharing violations, `ReplaceFileW` for the user's files, `LockFileEx` | "Restart resistance" |
+| Child processes | process group, SIGTERM then SIGKILL | suspended start, kill-on-close job object, CTRL_BREAK, refusal of `cmd.exe` metacharacters for `.cmd` wrappers | "Run completeness" |
+| A terminal for `--apply` | a tty | a console handle | "Remediation" |
+| `keychain:` secrets | macOS Keychain; refused on Linux | Credential Manager | "Secrets used by connectors" |
+| `rotations replace --to-keychain` | macOS shell rc files; refused on Linux | PowerShell profiles | "Guided rotation: `next` and `replace`" |
+| Scheduled runs | launchd agent; systemd timer printed on Linux | Task Scheduler task | "Scheduled runs" |
+| Notifications | macOS Notification Center; the log on Linux | the log | "Scheduled runs" |
+| Open-file check before `redact` | `lsof` | Restart Manager | "Redaction" |
+
+The `macos` connector runs on macOS only.
+
 ## Why Go, and why so few dependencies
 
-- One standalone binary for macOS or Linux, with preview Windows builds.
+- One standalone binary for macOS, Linux and Windows.
 - A security tool with a hundred dependencies is a supply-chain risk in itself. The core uses only
   the standard library (including a minimal WebSocket client for CDP). Cloud connectors call the
   official CLIs (`gcloud`, `aws`, `az`), already authenticated on the machine, instead of

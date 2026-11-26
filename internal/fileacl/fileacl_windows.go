@@ -73,7 +73,21 @@ func read(path string, follow bool) (descriptor, string, error) {
 	if err != nil {
 		return descriptor{}, "", fmt.Errorf("%s: %w", path, err)
 	}
+	if !d.groupOwner && d.owner != user {
+		d.groupOwner = !userAccount(d.owner)
+	}
 	return d, user, nil
+}
+
+// userAccount reports whether sid resolves to a single user account. One that does not resolve
+// (a deleted account) keeps the benefit of the doubt its SID text gave it.
+func userAccount(sid string) bool {
+	s, err := syscall.StringToSid(sid)
+	if err != nil {
+		return false
+	}
+	_, _, use, err := s.LookupAccount("")
+	return err != nil || use == syscall.SidTypeUser
 }
 
 func isDir(path string) (bool, error) {
@@ -110,6 +124,13 @@ func Exposure(path string) (fs.FileMode, error) {
 // Effective is Exposure: parent folders never close a file on Windows, because every account holds
 // the right to traverse folders it cannot list.
 func Effective(path, _ string) (fs.FileMode, error) { return Exposure(path) }
+
+// ClosedToOthers reports whether no account but the user, SYSTEM and Administrators can reach
+// path: parent folders never close a file on Windows, as Effective says.
+func ClosedToOthers(path, _ string) (bool, error) {
+	m, err := Exposure(path)
+	return err == nil && !Exposed(m), err
+}
 
 // ChangeableByOthers reports whether an account other than the user, SYSTEM and Administrators
 // owns dir or may add, delete or re-permission its entries.

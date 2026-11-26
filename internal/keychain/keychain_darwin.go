@@ -13,6 +13,9 @@ import (
 
 const Security = "/usr/bin/security"
 
+// Available: keychain: references resolve here.
+const Available = true
+
 // Default is the login Keychain for account ("" matches any account on reads).
 func Default(account string) Store { return Keychain{Run: proc.Exec, Account: account} }
 

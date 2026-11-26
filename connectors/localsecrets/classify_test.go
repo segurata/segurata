@@ -7,16 +7,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/userdirs"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -619,5 +622,128 @@ func TestThirdPartyCopyNamingAnAccountIsEmitted(t *testing.T) {
 	}
 	if noise.total != 1 || noise.types["bbbbbbbbbbbbbbbb"] == "" {
 		t.Errorf("the copy naming only its author should be counted as noise: %+v", noise)
+	}
+}
+
+// gcloud and gh keep their folders where a variable, or %APPDATA% on Windows, puts them: the scan
+// reads them there, and only once when they lie inside ~/.config anyway.
+func TestToolFoldersOutsideConfigAreScanned(t *testing.T) {
+	fx := newFixture(t)
+	fx.write(t, "tenant/gcloud/credentials.db", "SQLite format 3\x00", 0o600)
+	// An earlier login's tokens in the default folder stay reported after CLOUDSDK_CONFIG moves it.
+	defaultGcloud := ".config/gcloud"
+	if runtime.GOOS == "windows" {
+		defaultGcloud = "AppData/Roaming/gcloud"
+	}
+	fx.write(t, defaultGcloud+"/credentials.db", "SQLite format 3\x00", 0o600)
+	fx.write(t, "elsewhere/gh/hosts.yml", "github.com:\n    oauth_token: gho_"+fake("", 36)+"\n    user: someone\n", 0o600)
+	c := fx.connector(t, "[]")
+	c.Getenv = func(k string) string {
+		return map[string]string{"CLOUDSDK_CONFIG": filepath.Join(fx.home, "tenant", "gcloud"),
+			"GH_CONFIG_DIR": filepath.Join(fx.home, "elsewhere", "gh")}[k]
+	}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range rec.Findings {
+		got[evidence(f, "type")+" "+evidence(f, "path")] = true
+	}
+	for _, want := range []string{"gcloud-credential-db ~/tenant/gcloud/credentials.db", "github ~/elsewhere/gh/hosts.yml",
+		"gcloud-credential-db ~/" + defaultGcloud + "/credentials.db"} {
+		if !got[want] {
+			t.Errorf("missing %s; got %v", want, got)
+		}
+	}
+
+	s := newScan(context.Background(), &Connector{Now: time.Now}, fx.home, settings{}, fingerprint.FromBytes(make([]byte, 32)), rec)
+	s.dirs = userdirs.Env{GOOS: "linux", Home: fx.home}
+	if roots := s.configRoots(); len(roots) != len(credFiles) {
+		t.Errorf("~/.config/gcloud and ~/.config/gh are inside ~/.config, searched twice: %v", roots[len(credFiles):])
+	}
+	s.dirs = userdirs.Env{GOOS: "windows", Home: fx.home}
+	extra := s.configRoots()[len(credFiles):]
+	if want := []string{filepath.Join(fx.home, "_netrc"), filepath.Join(fx.home, "AppData", "Roaming", "gcloud"), filepath.Join(fx.home, "AppData", "Roaming", "GitHub CLI")}; !slices.Equal(extra, want) {
+		t.Errorf("Windows tool folders: %v, want %v", extra, want)
+	}
+}
+
+// A PowerShell profile sets variables as `$env:NAME = 'value'`, which the assignment pattern reads
+// like NAME=value.
+func TestPowerShellAssignmentIsAnAssignment(t *testing.T) {
+	v := fake("", 24) + "7"
+	for _, line := range []string{"$env:SERVICE_TOKEN = '" + v + "'", `$Env:SERVICE_TOKEN="` + v + `"`} {
+		m := combined(withAssignment).FindString(line)
+		c, ok := classify("profile.ps1", m, withAssignment)
+		if !ok || c.p.typ != assignment.typ || c.varName != "SERVICE_TOKEN" || c.subs(m)[c.p.group] != v {
+			t.Errorf("%s: matched %q as %+v", line, m, c)
+		}
+	}
+}
+
+// Windows keeps secrets where Unix has none: PowerShell profiles under Documents, PSReadLine's
+// history, logs under %LOCALAPPDATA% and _netrc. Each is searched there and lands in its group;
+// a Unix run searches only PSReadLine's Unix history.
+func TestWindowsSecretLocations(t *testing.T) {
+	for _, goos := range []string{"windows", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			fx := newFixture(t)
+			profile := "Documents/PowerShell/Microsoft.PowerShell_profile.ps1"
+			fx.write(t, profile, "$env:STRIPE_API_KEY = '"+fx.stripe+"'\r\n", 0o600)
+			fx.write(t, "Documents/WindowsPowerShell/Modules/m/profile.ps1", "$env:STRIPE_API_KEY = '"+fx.stripe+"'\n", 0o600)
+			history := "AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt"
+			fx.write(t, history, "stripe login --api-key "+fx.stripe+"\n", 0o600)
+			unixHistory := ".local/share/powershell/PSReadLine/ConsoleHost_history.txt"
+			fx.write(t, unixHistory, "stripe login --api-key "+fx.stripe+"\n", 0o600)
+			logFile := "AppData/Local/Acme/logs/app.log"
+			if windowsHost { // where file names ignore case, so do the path rules
+				logFile = "AppData/Local/Acme/logs/App.LOG"
+			}
+			fx.write(t, logFile, "request with "+fx.stripe+"\n", 0o600)
+			netrcPass := fake("", 20) + "7"
+			fx.secrets = append(fx.secrets, netrcPass)
+			fx.write(t, "_netrc", "machine example.com login someone password "+netrcPass+"\n", 0o600)
+			c := fx.connector(t, "[]")
+			c.GOOS = goos
+			rec := &recorder{}
+			if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
+				t.Fatal(err)
+			}
+			kinds := map[string]string{}
+			fixes := map[string]string{}
+			for _, f := range rec.Findings {
+				p := evidence(f, "path")
+				kinds[p], fixes[p] = evidence(f, "kind"), evidence(f, "fix")
+			}
+			want := map[string]string{"~/" + unixHistory: "history"}
+			if goos == "windows" {
+				want = map[string]string{"~/" + profile: "config", "~/" + history: "history", "~/" + logFile: "log", "~/_netrc": "config"}
+			}
+			for _, rel := range []string{profile, "Documents/WindowsPowerShell/Modules/m/profile.ps1", history, unixHistory, logFile, "_netrc"} {
+				p := "~/" + rel
+				if kinds[p] != want[p] {
+					t.Errorf("%s: kind %q, want %q", p, kinds[p], want[p])
+				}
+			}
+			if goos != "windows" {
+				return
+			}
+			profileFix := "env-files"
+			if windowsHost {
+				profileFix = "shell-variables-from-credential-manager"
+			}
+			for p, a := range map[string]string{"~/" + profile: profileFix, "~/" + history: "shell-history", "~/" + logFile: "logs", "~/_netrc": "github-and-git"} {
+				if fixes[p] != fixDoc+"#"+a {
+					t.Errorf("%s: fix %q, want #%s", p, fixes[p], a)
+				}
+			}
+			raw, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
+			for _, v := range fx.secrets {
+				if len(v) >= 6 && strings.Contains(string(raw), v) {
+					t.Fatal("a raw secret reached the output")
+				}
+			}
+		})
 	}
 }

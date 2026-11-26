@@ -22,6 +22,8 @@ names the workflow, the repository and the tag that produced it, and the Rekor t
 records every signature made with that identity, so a forged release would leave a public trace.
 The cost is on the verifier's side: cosign, and trust in Sigstore's public instance.
 
+Use the public `segurata/segurata` repository for development and releases.
+
 ## Cutting a release
 
 1. On `main`, with CI green: `git pull`, then `go vet ./... && go test ./...`.
@@ -85,6 +87,20 @@ sha256sum --ignore-missing -c checksums.txt          # Linux
 shasum -a 256 --ignore-missing -c checksums.txt      # macOS
 ```
 
+On Windows, in PowerShell, the same signature check and a hash comparison that prints `True`:
+
+```powershell
+$TAG = "v0.1.0"
+cosign verify-blob `
+  --certificate-identity "https://github.com/segurata/segurata/.github/workflows/release.yml@refs/tags/$TAG" `
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
+  --bundle checksums.txt.sigstore.json `
+  checksums.txt
+$zip = "segurata_0.1.0_windows_amd64.zip"
+$line = Get-Content checksums.txt | Where-Object { $_.EndsWith("  $zip") }
+(Get-FileHash -Algorithm SHA256 $zip).Hash -eq $line.Split(" ")[0]
+```
+
 ## Installing
 
 ### Homebrew
@@ -125,6 +141,21 @@ Download, verify (above), extract and put `segurata` on your `PATH`:
 tar -xzf segurata_0.1.0_darwin_arm64.tar.gz segurata
 install -m 0755 segurata ~/.local/bin/
 ```
+
+On Windows, after verifying, clear the downloaded-file mark, extract into a folder that will stay
+(a scheduled task runs that exact path) and add it to your user `PATH`:
+
+```powershell
+Unblock-File $zip
+$dir = "$env:LOCALAPPDATA\Programs\segurata"
+Expand-Archive $zip -DestinationPath $dir
+$path = [Environment]::GetEnvironmentVariable("Path", "User")
+[Environment]::SetEnvironmentVariable("Path", "$path;$dir", "User")
+```
+
+A new terminal then finds `segurata`. The binary has no Authenticode signature, so SmartScreen may
+warn the first time it runs; the cosign signature over `checksums.txt` is what proves its origin.
+There is no winget or Scoop manifest.
 
 While the repository is private, release downloads (and so the cask) need a GitHub token with read
 access to it, for example `gh release download v0.1.0 --repo segurata/segurata`.

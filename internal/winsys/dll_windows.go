@@ -53,6 +53,8 @@ var (
 	kernel32 = newDLL("kernel32.dll")
 	user32   = newDLL("user32.dll")
 	rstrtmgr = newDLL("rstrtmgr.dll")
+	shell32  = newDLL("shell32.dll")
+	ole32    = newDLL("ole32.dll")
 )
 
 type proc struct {

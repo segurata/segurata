@@ -1,11 +1,13 @@
 package localsecrets
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/gitlocal"
 )
 
 func TestGuards(t *testing.T) {
@@ -72,6 +74,24 @@ func TestGuards(t *testing.T) {
 			if err := tc.check.Check(args); !errors.Is(err, cli.ErrRefused) {
 				t.Errorf("%s allowed %q", tc.name, args)
 			}
+		}
+	}
+}
+
+// A repository git refuses for its owner reports safe.directory, and callers still see git's error.
+func TestGitRefusingARepositoryNamesSafeDirectory(t *testing.T) {
+	refused := &cli.Error{Cmd: "git ls-files", Err: errors.New("exit status 128"),
+		Stderr: "fatal: detected dubious ownership in repository at '/r'\n\tgit config --global --add safe.directory /r\n"}
+	git := cli.RunnerFunc(func(context.Context, ...string) ([]byte, error) { return nil, refused })
+	blob := strings.Repeat("a", 40)
+	for _, c := range []struct {
+		r    cli.Runner
+		args []string
+	}{{guardGit(git), []string{"--git-dir=/r/.git", "cat-file", "-s", blob}}, {guardGitHead(git), []string{"--git-dir=/r/.git", "cat-file", "blob", blob}}} {
+		_, err := c.r.Run(context.Background(), c.args...)
+		unsafe, ok := errors.AsType[*gitlocal.UnsafeRepositoryError](err)
+		if !ok || unsafe.Repo != "/r" || !errors.Is(err, refused) || cli.Stderr(err) != refused.Stderr {
+			t.Errorf("got %v", err)
 		}
 	}
 }

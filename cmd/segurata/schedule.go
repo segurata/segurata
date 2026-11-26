@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/segurata/segurata/internal/cdp"
@@ -18,7 +19,12 @@ import (
 	"github.com/segurata/segurata/internal/searchpath"
 )
 
-const scheduleUsage = "usage: segurata schedule install|uninstall|status|run [--every 24h] [--connectors a,b] [--apply] [--yes]"
+const scheduleUsage = "usage: segurata schedule install|uninstall|status|run [--every 24h] [--connectors a,b] [--apply] [--yes] [--log file]"
+
+// scheduleSignals stop a schedule command gracefully: launchd stops an agent with SIGTERM, a
+// logout hangs up, and Windows reports a closed console as SIGTERM. A scheduled run then
+// interrupts its inventory, which writes run_end and syncs the tracker, instead of dying at once.
+var scheduleSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 
 // scheduleCmd is `segurata schedule`. install and uninstall are dry runs unless --apply; run is
 // what the installed agent executes.
@@ -28,8 +34,9 @@ func scheduleCmd(args []string) int {
 	conns := fs.String("connectors", "", "comma-separated connectors (default: all; the browser ones only when Brave answers at cdp_url)")
 	apply := fs.Bool("apply", false, "write and load the agent after confirmation (default: dry run)")
 	yes := fs.Bool("yes", false, "with --apply, do not ask for confirmation")
+	logTo := fs.String("log", "", "with run, append its output to this file (what the Windows task passes)")
 	pos, err := cliflag.Parse(fs, args)
-	if err != nil || len(pos) != 1 {
+	if err != nil || len(pos) != 1 || *logTo != "" && pos[0] != "run" {
 		fmt.Fprintln(os.Stderr, scheduleUsage)
 		return 2
 	}
@@ -45,7 +52,7 @@ func scheduleCmd(args []string) int {
 		}
 	}
 	opt := schedule.Options{Every: *every, Connectors: selected, Apply: *apply, Yes: *yes}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), scheduleSignals...)
 	defer stop()
 	switch pos[0] {
 	case "install":
@@ -55,6 +62,14 @@ func scheduleCmd(args []string) int {
 	case "status":
 		err = env.Status(ctx)
 	case "run":
+		if *logTo != "" {
+			var log *os.File
+			if log, err = schedule.OpenLog(*logTo); err != nil {
+				break
+			}
+			defer log.Close()
+			env.IO.Out, env.IO.Err = log, log
+		}
 		var cfg config.Config
 		if cfg, err = config.Load(config.DefaultPath()); err == nil {
 			env.Config = cfg
@@ -65,7 +80,7 @@ func scheduleCmd(args []string) int {
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(env.IO.Err, err)
 		return 1
 	}
 	return 0
@@ -80,9 +95,10 @@ func scheduleEnv() (schedule.Env, error) {
 	if err != nil {
 		return schedule.Env{}, err
 	}
-	return schedule.Env{
+	env := schedule.Env{
 		GOOS: runtime.GOOS, Home: home, UID: os.Getuid(), Exe: exe, Path: searchpath.Clean(os.Getenv("PATH")), TmpDir: os.TempDir(),
 		Runner: schedule.System{}, IO: connector.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr},
 		TTY: prompt.IsTerminal(os.Stdin), Now: time.Now, Connectors: all(), Browser: cdp.Brave,
-	}, nil
+	}
+	return env, env.LoadTaskHost()
 }

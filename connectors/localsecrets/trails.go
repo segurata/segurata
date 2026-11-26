@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
@@ -154,26 +155,14 @@ func (t *Trails) find(path, mode, text string, matches func(string) [][]int) []H
 	off := 0
 	for line := range strings.SplitAfterSeq(text, "\n") {
 		for _, loc := range matches(strings.TrimSuffix(line, "\n")) {
-			mt := line[loc[0]:loc[1]]
-			c, ok := classify(path, mt, patterns)
+			ev, value, c, ok := lineEvidence(path, line[loc[0]:loc[1]], strings.TrimSuffix(line, "\n"), patterns, t.s.now)
 			if !ok {
 				continue
 			}
-			var ev secretrisk.Evidence
-			var value string
 			start, end := loc[0], loc[1]
-			switch c.p.typ {
-			case privateKeyType:
-				ev, value, ok = privateKeyEvidence(mt)
-			case "gcp-service-account":
-				ok = false
-			default:
-				ev, value, ok = valueEvidence(c.p, c.subs(mt), c.varName, strings.TrimSuffix(line, "\n"), t.s.now)
+			if c.p.typ != privateKeyType {
 				g := c.p.group
 				start, end = loc[0]+c.idx[2*g], loc[0]+c.idx[2*g+1]
-			}
-			if !ok {
-				continue
 			}
 			ev.Kind = kind
 			impact := secretrisk.ImpactOf(ev)
@@ -183,6 +172,25 @@ func (t *Trails) find(path, mode, text string, matches func(string) [][]int) []H
 		off += len(line)
 	}
 	return hits
+}
+
+// lineEvidence judges the match mt of line from the text alone: the evidence without its place,
+// the raw value and how mt was classified. A service-account key is judged from its whole file,
+// so it is left out.
+func lineEvidence(path, mt, line string, patterns []pattern, now time.Time) (secretrisk.Evidence, string, classified, bool) {
+	c, ok := classify(path, mt, patterns)
+	if !ok {
+		return secretrisk.Evidence{}, "", c, false
+	}
+	switch c.p.typ {
+	case privateKeyType:
+		ev, value, ok := privateKeyEvidence(mt)
+		return ev, value, c, ok
+	case "gcp-service-account":
+		return secretrisk.Evidence{}, "", c, false
+	}
+	ev, value, ok := valueEvidence(c.p, c.subs(mt), c.varName, line, now)
+	return ev, value, c, ok
 }
 
 func (t *Trails) Mode(p string) string {

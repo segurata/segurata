@@ -32,6 +32,15 @@ func Expose(t testing.TB, path string) {
 	}
 }
 
+// GiveAway makes another account the owner of path: Administrators on Windows, which an elevated
+// token may name, and on Unix nobody, which only root may. It skips the test when it cannot.
+func GiveAway(t testing.TB, path string) {
+	t.Helper()
+	if err := giveAway(path); err != nil {
+		t.Skipf("cannot give %s to another account: %v", path, err)
+	}
+}
+
 // Access is who may reach path, to compare before and after a rewrite: its mode on Unix, its DACL
 // on Windows. The owner is left out: Windows gives a replaced file the writer's.
 func Access(t testing.TB, path string) string {

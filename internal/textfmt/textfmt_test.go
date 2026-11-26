@@ -123,3 +123,11 @@ func TestContainsAny(t *testing.T) {
 		t.Error("ContainsAny")
 	}
 }
+
+func TestUTF16(t *testing.T) {
+	for in, want := range map[string]bool{"\xff\xfea\x00": true, "\xfe\xff\x00a": true, "\xef\xbb\xbfa": false, "\xff": false, "": false, "ab": false} {
+		if UTF16([]byte(in)) != want {
+			t.Errorf("UTF16(%q) != %v", in, want)
+		}
+	}
+}

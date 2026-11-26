@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -134,18 +135,33 @@ const noTenantHint = `no tenant configured: add one instance per tenant to ~/.co
 
 // loginHelp: gcloud requires cloud-platform on the ADC login (the token requested carries only
 // Scopes), and its default OAuth client refuses scopes outside Google Cloud, hence an own client.
-func loginHelp(s settings) string {
-	return strings.Join([]string{
+func loginHelp(s settings) string { return loginHelpFor(runtime.GOOS, s) }
+
+// loginHelpFor writes the sign-in for the shell of goos: an env prefix in sh; in PowerShell a
+// variable set for the one command and removed after it, so later gcloud runs keep their config.
+func loginHelpFor(goos string, s settings) string {
+	scopes := "openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform," + strings.Join(Scopes, ",")
+	signIn := []string{
+		`     CLOUDSDK_CONFIG="` + s.cloudsdkConfig + `" gcloud auth application-default login \`,
+		`       --client-id-file=$HOME/Downloads/client_secret.json \`,
+		"       --scopes=" + scopes,
+	}
+	if goos == "windows" {
+		signIn = []string{
+			"     $env:CLOUDSDK_CONFIG = " + connector.PowerShellString(s.cloudsdkConfig) + "; gcloud auth application-default login `",
+			`       --client-id-file="$HOME\Downloads\client_secret.json" ` + "`",
+			"       --scopes=" + connector.PowerShellString(scopes) + "; Remove-Item Env:CLOUDSDK_CONFIG",
+		}
+	}
+	return strings.Join(slices.Concat([]string{
 		"No admin credentials for " + s.domain + " with the read-only Admin SDK scopes.",
 		"One-time steps per tenant:",
 		`  1. In a Google Cloud project of the tenant: enable "Admin SDK API" and create an OAuth client ID`,
 		`     of type "Desktop app". Download its JSON (for example ~/Downloads/client_secret.json).`,
 		"  2. Sign in with an admin account of the tenant, in a separate gcloud config:",
-		`     CLOUDSDK_CONFIG="` + s.cloudsdkConfig + `" gcloud auth application-default login \`,
-		`       --client-id-file=$HOME/Downloads/client_secret.json \`,
-		"       --scopes=openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform," + strings.Join(Scopes, ","),
+	}, signIn, []string{
 		"Then run segurata inventory workspace again. To authenticate some other way, set the " + secretName + " secret.",
-	}, "\n")
+	}), "\n")
 }
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {

@@ -119,7 +119,10 @@ the duplicate rule names them.
 - Any service-account key JSON under the gcloud config folder (skipping `virtenv`, `logs`, `cache`):
   **high**. `gcloud auth activate-service-account --key-file` leaves a copy in
   `legacy_credentials/<sa>/adc.json`.
-- Any of these readable by group or others: raised to **high** with a `chmod 600` hint.
+- Any of these readable by other accounts: raised to **high** with the command that makes the file
+  private. On Unix that is group or others and `chmod 600`. On Windows it is any account other than
+  you, SYSTEM and Administrators, read from the access list, and the command is a Windows
+  PowerShell `Set-Acl` that leaves full control to you and SYSTEM only.
 
 Only non-secret fields are decoded: `private_key`, `refresh_token` and `client_secret` are not even
 parsed.

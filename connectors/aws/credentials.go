@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"runtime"
 
 	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/internal/attribution"
@@ -35,7 +36,7 @@ func credentialFindings(path string, mode *fs.FileMode, profiles []awsfiles.Prof
 		if mode != nil && fileacl.Exposed(*mode) {
 			f.Severity = finding.SevHigh
 			f.Title += " and readable by other users"
-			f.Remediation.Summary = "Restrict the file to your account now. " + f.Remediation.Summary
+			f.Remediation.Summary = "Restrict the file to your account now: `" + connector.MakePrivateCommand(runtime.GOOS, path, false) + "`. " + f.Remediation.Summary
 			f.Remediation.URL = urlConfigFiles
 		}
 		out = append(out, f)

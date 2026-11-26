@@ -46,18 +46,16 @@ const usage = `usage: segurata redact (--trails | --path <prefix> | --item <rota
   --apply [--yes]     rewrite the files after confirmation; without it, a dry run
   --backup            with --apply, keep a 0600 copy of each file as it was (plaintext secrets!)`
 
-// Runner runs a program and returns its stdout.
-type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
 // CLI is the `segurata redact` command.
 type CLI struct {
 	Out, Err io.Writer
 	In       io.Reader
 	TTY      bool // In is a terminal
 	Trails   func(ctx context.Context) (*localsecrets.Trails, error)
-	Lsof     Runner        // lists the files claude and codex processes have open
-	Paths    tracker.Paths // zero means tracker.DefaultPaths
-	Now      func() time.Time
+	// OpenFiles reports which of paths a running process holds open (DefaultOpenFiles).
+	OpenFiles func(ctx context.Context, paths []string) (map[string]bool, error)
+	Paths     tracker.Paths // zero means tracker.DefaultPaths
+	Now       func() time.Time
 }
 
 type options struct {
@@ -111,11 +109,18 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	open, err := c.openFiles(ctx)
+	files := make([]string, 0, len(lines))
+	for abs := range lines {
+		if s.file(abs) {
+			files = append(files, abs)
+		}
+	}
+	slices.Sort(files)
+	open, err := c.OpenFiles(ctx, files)
 	if err != nil {
 		return c.fail(err)
 	}
-	p := plan(t, s, lines, open, now)
+	p := plan(t, s, files, lines, open, now)
 	p.print(c.Out, t, o, s)
 	if !o.apply {
 		fmt.Fprintln(c.Out, "\nDry run: nothing was changed. Run again with --apply to rewrite these files.")
@@ -231,6 +236,7 @@ type filePlan struct {
 	lines     []int
 	mode      string // effective mode, for exposure
 	perm      fs.FileMode
+	access    string // fileacl.Fingerprint: the mode on Unix, the owner and DACL on Windows
 	size      int64
 	mtime     time.Time
 	matches   int
@@ -247,12 +253,12 @@ type filesPlan struct {
 
 const (
 	skipRecent  = "modified within --min-age"
-	skipOpen    = "open by a running claude or codex process"
 	skipIrreg   = "not a regular file (symlink or other)"
 	skipOwner   = "owned by another account"
 	skipRead    = "unreadable"
 	skipJSON    = "a replacement would break its JSON"
 	skipChanged = "changed since the plan"
+	skipUTF16   = "UTF-16 text, which it cannot rewrite in place (save it as UTF-8)"
 )
 
 func guard(abs string, minAge time.Duration, now time.Time, open map[string]bool) (fs.FileInfo, string) {
@@ -284,15 +290,8 @@ func isOpen(abs string, open map[string]bool) bool {
 }
 
 // plan works out every file's rewrite in parallel: matching is CPU-bound.
-func plan(t *localsecrets.Trails, s *selection, lines map[string][]int, open map[string]bool, now time.Time) *filesPlan {
+func plan(t *localsecrets.Trails, s *selection, paths []string, lines map[string][]int, open map[string]bool, now time.Time) *filesPlan {
 	p := &filesPlan{skipped: map[string][]string{}}
-	paths := make([]string, 0, len(lines))
-	for abs := range lines {
-		if s.file(abs) {
-			paths = append(paths, abs)
-		}
-	}
-	slices.Sort(paths)
 	type planned struct {
 		fp     *filePlan
 		reason string
@@ -320,6 +319,13 @@ func planFile(t *localsecrets.Trails, s *selection, abs string, lines []int, ope
 	if err != nil {
 		return nil, cmp.Or(reason, skipRead)
 	}
+	if textfmt.UTF16(raw) {
+		return nil, cmp.Or(reason, skipUTF16)
+	}
+	access, err := fileacl.Fingerprint(abs)
+	if err != nil {
+		return nil, cmp.Or(reason, skipRead)
+	}
 	mode := t.Mode(abs)
 	res, err := rewrite(raw, lines, s.finder(t, abs, mode))
 	switch {
@@ -330,7 +336,7 @@ func planFile(t *localsecrets.Trails, s *selection, abs string, lines []int, ope
 	case err != nil:
 		return nil, skipJSON
 	}
-	f := &filePlan{abs: abs, path: t.Tilde(abs), lines: lines, mode: mode, perm: st.Mode().Perm(),
+	f := &filePlan{abs: abs, path: t.Tilde(abs), lines: lines, mode: mode, perm: st.Mode().Perm(), access: access,
 		size: st.Size(), mtime: st.ModTime(), byType: map[string]int{}, fps: map[string]string{},
 		matches: len(res.applied), residue: res.residue, bytes: res.bytes}
 	for _, h := range res.applied {
@@ -430,7 +436,11 @@ func typeCounts(m map[string]int) string {
 // apply rewrites every file still as planned, scans the rewritten files again and notes the
 // redaction on the rotation items.
 func (c CLI) apply(ctx context.Context, t *localsecrets.Trails, s *selection, p *filesPlan, statePath string, now time.Time) int {
-	open, err := c.openFiles(ctx)
+	abs := make([]string, len(p.files))
+	for i, f := range p.files {
+		abs[i] = f.abs
+	}
+	open, err := c.OpenFiles(ctx, abs)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -559,6 +569,8 @@ func (c CLI) verify(t *localsecrets.Trails, s *selection, written []*filePlan) e
 		}
 		if st.Mode().Perm() != f.perm {
 			problem("mode is %o, was %o", st.Mode().Perm(), f.perm)
+		} else if access, err := fileacl.Fingerprint(f.abs); err != nil || access != f.access {
+			problem("its access list changed")
 		}
 		if !st.ModTime().Equal(f.mtime) {
 			problem("modification time changed")
@@ -581,21 +593,4 @@ func (c CLI) verify(t *localsecrets.Trails, s *selection, written []*filePlan) e
 		return errors.New("verification failed:\n  " + strings.Join(problems, "\n  "))
 	}
 	return nil
-}
-
-// openFiles lists the files running claude and codex processes have open. lsof exits 1 when a
-// name matches no process; any other failure refuses, or an active session could be rewritten.
-func (c CLI) openFiles(ctx context.Context) (map[string]bool, error) {
-	out, err := c.Lsof(ctx, "lsof", "-Fn", "-c", "claude", "-c", "codex")
-	var exit interface{ ExitCode() int }
-	if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
-		return nil, fmt.Errorf("cannot list the files agents have open (lsof): %w", err)
-	}
-	open := map[string]bool{}
-	for _, l := range strings.Split(string(out), "\n") {
-		if path, ok := strings.CutPrefix(l, "n"); ok && filepath.IsAbs(path) {
-			open[filepath.Clean(path)] = true
-		}
-	}
-	return open, nil
 }

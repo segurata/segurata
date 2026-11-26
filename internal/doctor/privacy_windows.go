@@ -3,18 +3,18 @@ package doctor
 import (
 	"io/fs"
 
+	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fileacl"
 )
 
 const newDirAccess = "private"
 
-// The fixes name the account through %USERNAME%, so doctor's output never carries it.
 func filePrivacy(path string, _ fs.FileInfo) privacy {
-	return aclPrivacy(path, false, `icacls "`+path+`" /inheritance:r /grant:r "%USERNAME%:F" "SYSTEM:F"`)
+	return aclPrivacy(path, false, connector.MakePrivateCommand("windows", path, false))
 }
 
 func dirPrivacy(dir string, _ fs.FileInfo) privacy {
-	return aclPrivacy(dir, true, `icacls "`+dir+`" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F" "SYSTEM:(OI)(CI)F"`)
+	return aclPrivacy(dir, true, connector.MakePrivateCommand("windows", dir, true))
 }
 
 func aclPrivacy(path string, dir bool, fix string) privacy {

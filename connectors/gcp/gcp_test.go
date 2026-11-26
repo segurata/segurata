@@ -18,6 +18,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -116,11 +117,22 @@ func fakeHome(t *testing.T) string {
 	return dst
 }
 
+// fixtureEnv puts %APPDATA% where testdata keeps ~/.config, so on Windows the fixture's
+// .config/gcloud is gcloud's folder too.
+func fixtureEnv(home string, env map[string]string) func(string) string {
+	return func(k string) string {
+		if v, ok := env[k]; ok || k != "APPDATA" {
+			return v
+		}
+		return filepath.Join(home, ".config")
+	}
+}
+
 func testConnector(t *testing.T, home string, plays map[string][]outcome, env map[string]string) (*Connector, *fakeRunner) {
 	r := &fakeRunner{t: t, plays: plays}
 	return &Connector{
 		runner: r,
-		getenv: func(k string) string { return env[k] },
+		getenv: fixtureEnv(home, env),
 		home:   home,
 		now:    func() time.Time { return time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC) },
 	}, r
@@ -551,39 +563,36 @@ func TestProjectRisks(t *testing.T) {
 }
 
 func TestLocalCredentialPermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX permissions")
-	}
 	home := fakeHome(t)
 	adc := filepath.Join(home, ".config", "gcloud", "application_default_credentials.json")
-	if err := os.Chmod(adc, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	fs := localFindings(func(string) string { return "" }, home)
-	var got *finding.Finding
-	for i := range fs {
-		if fs[i].Resource.ID == adc {
-			got = &fs[i]
+	find := func() (*finding.Finding, int) {
+		fs := localFindings(fixtureEnv(home, nil), home)
+		for i := range fs {
+			if fs[i].Resource.ID == adc {
+				return &fs[i], len(fs)
+			}
 		}
+		return nil, len(fs)
 	}
-	if got == nil || got.Severity != finding.SevHigh || got.Evidence["mode"] != "0644" ||
-		!strings.HasSuffix(got.Title, "readable by other users") || !strings.Contains(got.Remediation.Summary, "chmod 600") {
-		t.Fatalf("world-readable ADC must be high with chmod advice: %+v", got)
+	if got, _ := find(); got == nil || strings.HasSuffix(got.Title, "readable by other users") {
+		t.Fatalf("a file as gcloud leaves it is not exposed (no false positive on the default access): %+v", got)
 	}
-	if len(fs) != 2 {
-		t.Errorf("want ADC and the legacy service account key, virtenv skipped; got %d", len(fs))
+	fileacltest.Expose(t, adc)
+	got, n := find()
+	if got == nil || got.Severity != finding.SevHigh || runtime.GOOS != "windows" && got.Evidence["mode"] != "0644" ||
+		!strings.HasSuffix(got.Title, "readable by other users") ||
+		!strings.Contains(got.Remediation.Summary, connector.MakePrivateCommand(runtime.GOOS, adc, false)) {
+		t.Fatalf("ADC readable by other accounts must be high with this platform's fix: %+v", got)
+	}
+	if n != 2 {
+		t.Errorf("want ADC and the legacy service account key, virtenv skipped; got %d", n)
 	}
 }
 
 func TestLocalCredentialsHonourCloudsdkConfig(t *testing.T) {
 	home := fakeHome(t)
 	other := t.TempDir()
-	fs := localFindings(func(k string) string {
-		if k == "CLOUDSDK_CONFIG" {
-			return other
-		}
-		return ""
-	}, home)
+	fs := localFindings(fixtureEnv(home, map[string]string{"CLOUDSDK_CONFIG": other}), home)
 	if len(fs) != 0 {
 		t.Fatalf("CLOUDSDK_CONFIG points to an empty folder, got %d findings", len(fs))
 	}

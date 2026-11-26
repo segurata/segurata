@@ -3,6 +3,7 @@ package rotation
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/fileacl"
@@ -103,12 +105,21 @@ func (k fakeKeychain) Read(_ context.Context, service string) (string, error) {
 
 func (fakeKeychain) Hint(string) string { return "" }
 
-// needsRCKeychain skips where --to-keychain is refused.
-func needsRCKeychain(t *testing.T) {
+// useStartup makes --to-keychain rewrite s, whatever the platform: the stores are fakes, and every
+// PowerShell runs in mode (FullLanguage unless the test says otherwise).
+func useStartup(t *testing.T, s *startup) {
 	t.Helper()
-	if refuseToKeychain {
-		t.Skip(toKeychainOnWindows)
-	}
+	useLanguageMode(t, func(context.Context, string) (string, error) { return "FullLanguage", nil })
+	orig := toKeychain
+	toKeychain = s
+	t.Cleanup(func() { toKeychain = orig })
+}
+
+func useLanguageMode(t *testing.T, f func(context.Context, string) (string, error)) {
+	t.Helper()
+	orig := languageMode
+	languageMode = f
+	t.Cleanup(func() { languageMode = orig })
 }
 
 // fixture is a temporary HOME with an rc file and a .env holding the same fake key, and a ledger
@@ -125,20 +136,27 @@ const zshrcOld = "# shell\nexport ANTHROPIC_API_KEY=\"%s\"\nalias ll='ls -l'\n"
 
 func newReplaceFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newStartupFixture(t, ".zshrc", zshrcOld)
+}
+
+// newStartupFixture keeps the fake key in the start-up file rel below HOME, content with %s for it,
+// at its line 2.
+func newStartupFixture(t *testing.T, rel, content string) *fixture {
+	t.Helper()
 	home := t.TempDir()
 	key, err := fingerprint.Load(fingerprint.DefaultPath(home))
 	if err != nil {
 		t.Fatal(err)
 	}
 	fx := &fixture{home: home, state: filepath.Join(home, "state", "tracker.json"), old: fakeKey(), new: fakeKey(), key: key,
-		zshrc: filepath.Join(home, ".zshrc"), env: filepath.Join(home, "src", "app", ".env")}
+		zshrc: filepath.Join(home, filepath.FromSlash(rel)), env: filepath.Join(home, "src", "app", ".env")}
 	fx.os = &fakeOS{clip: fx.new, items: map[string]string{}}
-	write(t, fx.zshrc, strings.ReplaceAll(zshrcOld, "%s", fx.old), 0o640)
+	write(t, fx.zshrc, strings.ReplaceAll(content, "%s", fx.old), 0o640)
 	write(t, fx.env, "ANTHROPIC_API_KEY="+fx.old+"\nOTHER=1\n# copy: "+fx.old+"\n", 0o600)
 
 	redacted := secretrisk.Redact("anthropic", "sk-ant-", fx.old)
 	evs := []secretrisk.Evidence{
-		{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted, Path: "~/.zshrc", Line: 2, Mode: "640", Fingerprint: key.Of(fx.old)},
+		{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted, Path: "~/" + rel, Line: 2, Mode: "640", Fingerprint: key.Of(fx.old)},
 		{Source: "scan", Kind: "repo", Type: "anthropic", Redacted: redacted, Path: "~/src/app/.env", Line: 1, Mode: "600", Fingerprint: key.Of(fx.old)},
 		{Source: "scan", Kind: "transcript", Type: "anthropic", Redacted: redacted, Path: "~/.claude/projects/p/s.jsonl", Line: 9, Mode: "600", Fingerprint: key.Of(fx.old)},
 	}
@@ -240,7 +258,7 @@ func TestACLReportAllowsDenyEntriesOnly(t *testing.T) {
 }
 
 func TestReplaceChecksGitBeforeChangingTheKeychain(t *testing.T) {
-	needsRCKeychain(t)
+	useStartup(t, &shellRC)
 	fixture := newReplaceFixture(t)
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -335,6 +353,9 @@ func TestReplaceRefusesAFileSwappedDuringConfirmation(t *testing.T) {
 	}
 	if got := read(t, fx.env); got != before {
 		t.Fatal("the replacement overwrote the newer file")
+	}
+	if !fx.cleared() || fx.os.clip != "" {
+		t.Error("a failed apply left the new value on the clipboard")
 	}
 }
 
@@ -639,30 +660,31 @@ func TestReplaceRefusals(t *testing.T) {
 		tty     bool
 		args    []string
 		wantErr string
+		clears  bool // the clipboard was read before the refusal, so it must be emptied
 	}{
-		{"not a terminal and no --yes", nil, "", false, []string{"--apply"}, "not a terminal"},
-		{"answered no", nil, "n\n", true, []string{"--apply"}, ""},
-		{"new value is the old one", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.old }, "y\n", true, []string{"--apply"}, "is the old one"},
-		{"empty clipboard", func(_ *testing.T, fx *fixture) { fx.os.clip = "" }, "y\n", true, []string{"--apply"}, "empty"},
-		{"value with a quote", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.new[:20] + `"` + fx.new[20:] }, "y\n", true, []string{"--apply"}, "by hand"},
-		{"value too short for a key", func(_ *testing.T, fx *fixture) { fx.os.clip = "abc1234" }, "y\n", true, []string{"--apply"}, "too short"},
-		{"value on two lines", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.new + "\n" + fx.new }, "y\n", true, []string{"--apply"}, "several lines"},
+		{"not a terminal and no --yes", nil, "", false, []string{"--apply"}, "not a terminal", true},
+		{"answered no", nil, "n\n", true, []string{"--apply"}, "", false},
+		{"new value is the old one", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.old }, "y\n", true, []string{"--apply"}, "is the old one", true},
+		{"empty clipboard", func(_ *testing.T, fx *fixture) { fx.os.clip = "" }, "y\n", true, []string{"--apply"}, "empty", true},
+		{"value with a quote", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.new[:20] + `"` + fx.new[20:] }, "y\n", true, []string{"--apply"}, "by hand", true},
+		{"value too short for a key", func(_ *testing.T, fx *fixture) { fx.os.clip = "abc1234" }, "y\n", true, []string{"--apply"}, "too short", true},
+		{"value on two lines", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.new + "\n" + fx.new }, "y\n", true, []string{"--apply"}, "several lines", true},
 		{"old value moved off the recorded line", func(t *testing.T, fx *fixture) {
 			write(t, fx.env, "# new first line\n"+read(t, fx.env), 0o600)
-		}, "y\n", true, []string{"--apply"}, "no longer on line 1"},
+		}, "y\n", true, []string{"--apply"}, "no longer on line 1", false},
 		{"old value gone from a file", func(t *testing.T, fx *fixture) {
 			write(t, fx.zshrc, "export ANTHROPIC_API_KEY=\"$(other)\"\n", 0o640)
-		}, "y\n", true, []string{"--apply"}, "no longer on line 2"},
-		{"--stdin typed on a terminal", nil, "", true, []string{"--stdin"}, "echoed"},
-		{"--stdin piped, --apply without --yes", func(_ *testing.T, fx *fixture) {}, "PIPED", false, []string{"--stdin", "--apply"}, "not a terminal"},
-		{"--to-keychain with a bad service", nil, "y\n", true, []string{"--apply", "--to-keychain", "a b"}, "--to-keychain"},
+		}, "y\n", true, []string{"--apply"}, "no longer on line 2", false},
+		{"--stdin typed on a terminal", nil, "", true, []string{"--stdin"}, "echoed", false},
+		{"--stdin piped, --apply without --yes", func(_ *testing.T, fx *fixture) {}, "PIPED", false, []string{"--stdin", "--apply"}, "not a terminal", false},
+		{"--to-keychain with a bad service", nil, "y\n", true, []string{"--apply", "--to-keychain", "a b"}, "--to-keychain", false},
 		{"Keychain did not take the value", func(_ *testing.T, fx *fixture) { fx.os.keepStale = true }, "y\n", true,
-			[]string{"--apply", "--to-keychain", "ANTHROPIC_API_KEY"}, "no such Keychain item: ANTHROPIC_API_KEY"},
+			[]string{"--apply", "--to-keychain", "ANTHROPIC_API_KEY"}, "no such Keychain item: ANTHROPIC_API_KEY", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if slices.Contains(c.args, "--to-keychain") {
-				needsRCKeychain(t)
+				useStartup(t, &shellRC)
 			}
 			fx := newReplaceFixture(t)
 			if c.setup != nil {
@@ -681,8 +703,11 @@ func TestReplaceRefusals(t *testing.T) {
 			if read(t, fx.zshrc) != zBefore || read(t, fx.env) != eBefore {
 				t.Error("a refused replace changed a file")
 			}
-			if fx.item(t).Status != tracker.Open || fx.cleared() {
-				t.Error("a refused replace marked the item or cleared the clipboard")
+			if fx.item(t).Status != tracker.Open {
+				t.Error("a refused replace marked the item")
+			}
+			if fx.cleared() != c.clears || c.clears && fx.os.clip != "" {
+				t.Errorf("clipboard cleared %v, want %v", fx.cleared(), c.clears)
 			}
 		})
 	}
@@ -705,7 +730,7 @@ func TestReplaceFromStdin(t *testing.T) {
 }
 
 func TestReplaceToKeychain(t *testing.T) {
-	needsRCKeychain(t)
+	useStartup(t, &shellRC)
 	fx := newReplaceFixture(t)
 	o, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--to-keychain", "ANTHROPIC_API_KEY")
 	if code != 0 {
@@ -739,7 +764,7 @@ func TestReplaceToKeychain(t *testing.T) {
 }
 
 func TestReplaceToKeychainNeedsAPlainAssignment(t *testing.T) {
-	needsRCKeychain(t)
+	useStartup(t, &shellRC)
 	fx := newReplaceFixture(t)
 	write(t, fx.zshrc, "# shell\nexport ANTHROPIC_API_KEY=\""+fx.old+"\" # main key\n", 0o640)
 	_, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--to-keychain", "ANTHROPIC_API_KEY")
@@ -787,8 +812,10 @@ func TestReplaceRefusesItemsItCannotLocate(t *testing.T) {
 	l.SyncSecrets([]tracker.Sighting{
 		{Evidence: secretrisk.Evidence{Source: "scan", Kind: "config", Type: "private-key", Redacted: "PEM", Path: "~/k.pem", Line: 1, Mode: "600", Fingerprint: "1111111111111111"}},
 		{Evidence: secretrisk.Evidence{Source: "scan", Kind: "transcript", Type: "anthropic", Redacted: "sk-ant-…abcd(60)", Path: "~/.claude/p.jsonl", Line: 1, Mode: "600", Fingerprint: "2222222222222222"}},
+		{Evidence: secretrisk.Evidence{Source: "registry", Kind: "config", Type: "anthropic", Redacted: "sk-ant-…efgh(60)", Path: secretrisk.UserEnvKey + `\ANTHROPIC_API_KEY`, Fingerprint: "3333333333333333"}},
 	}, t0, false, attribution.Owned{})
-	for id, want := range map[string]string{"11111111": "not a single value on one line", "22222222": "no working file holds"} {
+	for id, want := range map[string]string{"11111111": "not a single value on one line", "22222222": "no working file holds",
+		"33333333": "is a user environment variable, not a file: delete it (`reg delete HKCU\\Environment /v ANTHROPIC_API_KEY /f`)"} {
 		it, _ := l.FindRotate(id)
 		if _, err := locate(it, key, t.TempDir()); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", id, err)
@@ -797,8 +824,7 @@ func TestReplaceRefusesItemsItCannotLocate(t *testing.T) {
 }
 
 func TestNext(t *testing.T) {
-	defer func(orig bool) { offerToKeychain = orig }(offerToKeychain)
-	offerToKeychain = true
+	useStartup(t, &shellRC)
 	fx := newReplaceFixture(t)
 	_, e, code := fx.run(t, "", true, "next")
 	if code != 0 {
@@ -849,16 +875,15 @@ func TestNext(t *testing.T) {
 	}
 }
 
-// Where no shell reads the Keychain (Windows), --to-keychain is refused before anything is read
-// back, stored or written.
+// Where no shell reads a supported credential store (Linux), --to-keychain is refused before
+// anything is read back, stored or written.
 func TestReplaceRefusesToKeychainWhereNoShellReadsIt(t *testing.T) {
-	defer func(orig bool) { refuseToKeychain = orig }(refuseToKeychain)
-	refuseToKeychain = true
+	useStartup(t, nil)
 	for _, args := range [][]string{{"--to-keychain", "ANTHROPIC_API_KEY"}, {"--apply", "--to-keychain", "ANTHROPIC_API_KEY"}} {
 		fx := newReplaceFixture(t)
 		zBefore, eBefore := read(t, fx.zshrc), read(t, fx.env)
 		_, e, code := fx.run(t, "y\n", true, append([]string{"replace", fx.id()}, args...)...)
-		if code != 1 || !strings.Contains(e, "on Windows store the value with cmdkey and reference it as keychain:<service>") {
+		if code != 1 || !strings.Contains(e, "needs the macOS Keychain or Windows Credential Manager; here reference the secret as env: or op://") {
 			t.Fatalf("%v: %d %q", args, code, e)
 		}
 		if len(fx.os.calls) != 0 {
@@ -881,13 +906,194 @@ func TestReplaceWarnsWhereTheClipboardKeepsACopy(t *testing.T) {
 	}
 }
 
-func TestNextOffersToKeychainOnlyWhereShellsReadIt(t *testing.T) {
-	defer func(orig bool) { offerToKeychain = orig }(offerToKeychain)
-	offerToKeychain = false
+// A failure before the plan is shown still names where else the clipboard may keep the value.
+func TestReplaceFailureClearsTheClipboardAndWarns(t *testing.T) {
 	fx := newReplaceFixture(t)
+	fx.os.caveat = "kept in clipboard history"
+	fx.os.clip = fx.old
+	o, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply")
+	if code != 1 || !strings.Contains(e, "is the old one") || !strings.Contains(e, "Warning: kept in clipboard history") ||
+		!strings.Contains(o, "Clipboard cleared.") {
+		t.Fatalf("exit %d:\n%s\n%s", code, o, e)
+	}
+	if !fx.cleared() || fx.os.clip != "" {
+		t.Error("a failed replace left the value on the clipboard")
+	}
+}
+
+// next offers --to-keychain only for the start-up files this platform's shell can rewrite: none
+// where it is refused, and no rc file on Windows.
+func TestNextOffersToKeychainOnlyWhereShellsReadIt(t *testing.T) {
+	for _, s := range []*startup{nil, &powerShell} {
+		useStartup(t, s)
+		fx := newReplaceFixture(t)
+		o, e, code := fx.run(t, "", true, "next")
+		if code != 0 || strings.Contains(o, "to-keychain") || !strings.Contains(o, "~/.zshrc:2") ||
+			!strings.Contains(o, "segurata rotations replace "+fx.id()+" --apply\n") {
+			t.Errorf("next: %d %s\n%s", code, e, o)
+		}
+	}
+}
+
+const profileRel = "Documents/PowerShell/Microsoft.PowerShell_profile.ps1"
+
+const profileOld = "\uFEFF# profile\r\n$env:ANTHROPIC_API_KEY = '%s'\r\nSet-Alias ll Get-ChildItem\r\n"
+
+func TestReplaceToKeychainInAPowerShellProfile(t *testing.T) {
+	useStartup(t, &powerShell)
+	fx := newStartupFixture(t, profileRel, profileOld)
+	o, e, code := fx.run(t, "", true, "replace", fx.id(), "--to-keychain", "ANTHROPIC_API_KEY")
+	if code != 0 || !strings.Contains(o, `Credential Manager: store the new value as generic credential "ANTHROPIC_API_KEY" for "tester"`) ||
+		!strings.Contains(o, "line 2: $env:ANTHROPIC_API_KEY = sk-ant-") || !strings.Contains(o, "[Segurata.Cred]::Read('ANTHROPIC_API_KEY'))\n") {
+		t.Fatalf("dry run: %d %s\n%s", code, e, o)
+	}
+	if len(fx.os.items) != 0 || !strings.Contains(read(t, fx.zshrc), fx.old) {
+		t.Fatal("the dry run stored or wrote something")
+	}
+	if o, e, code = fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--to-keychain", "ANTHROPIC_API_KEY"); code != 0 {
+		t.Fatalf("apply: %d %s\n%s", code, e, o)
+	}
+	want := strings.ReplaceAll(profileOld, "'%s'", powerShell.lookup("ANTHROPIC_API_KEY"))
+	if got := read(t, fx.zshrc); got != want {
+		t.Errorf("profile:\n%q\nwant:\n%q", got, want)
+	}
+	if !strings.Contains(read(t, fx.env), fx.new) || fx.os.items["ANTHROPIC_API_KEY"] != fx.new {
+		t.Error("the .env file or Credential Manager lacks the new value")
+	}
+	if h := fx.item(t).History; !strings.Contains(h[len(h)-1].Detail, "new value in Credential Manager as ANTHROPIC_API_KEY") {
+		t.Errorf("history %v", h[len(h)-1])
+	}
+}
+
+// Under Constrained Language Mode the lookup cannot run, so nothing is stored or written; a
+// PowerShell that is not installed runs no profile and is no obstacle.
+func TestReplaceToKeychainNeedsFullLanguageMode(t *testing.T) {
+	useStartup(t, &powerShell)
+	for _, c := range []struct {
+		rel, shell string
+	}{{profileRel, "pwsh"}, {"Documents/WindowsPowerShell/profile.ps1", "powershell"}} {
+		fx := newStartupFixture(t, c.rel, profileOld)
+		var asked []string
+		useLanguageMode(t, func(_ context.Context, shell string) (string, error) {
+			asked = append(asked, shell)
+			return "ConstrainedLanguage", nil
+		})
+		_, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--yes", "--to-keychain", "ANTHROPIC_API_KEY")
+		if code == 0 || !strings.Contains(e, c.shell+" runs in ConstrainedLanguage mode") || !slices.Equal(asked, []string{c.shell}) {
+			t.Fatalf("%s: %d %q asked %v", c.rel, code, e, asked)
+		}
+		if len(fx.os.items) != 0 || !strings.Contains(read(t, fx.zshrc), fx.old) || slices.ContainsFunc(fx.os.calls, func(c call) bool { return c.name == "paste" }) {
+			t.Fatalf("%s: stored, wrote or read the new value under Constrained Language Mode", c.rel)
+		}
+	}
+	fx := newStartupFixture(t, profileRel, profileOld)
+	useLanguageMode(t, func(context.Context, string) (string, error) { return "", errNoShell })
+	if o, e, code := fx.run(t, "", true, "replace", fx.id(), "--to-keychain", "ANTHROPIC_API_KEY"); code != 0 {
+		t.Fatalf("no pwsh installed: %d %s\n%s", code, e, o)
+	}
+	useLanguageMode(t, func(context.Context, string) (string, error) { return "", errors.New("probe failed") })
+	if _, e, code := fx.run(t, "", true, "replace", fx.id(), "--to-keychain", "ANTHROPIC_API_KEY"); code == 0 || !strings.Contains(e, "could not be read") {
+		t.Fatalf("a failed probe: %d %s", code, e)
+	}
+}
+
+// A profile Windows PowerShell 5.1 wrote with > or Out-File is UTF-16: the scan decodes it, the
+// rewrite cannot, so replace says so instead of claiming the file changed since the scan.
+func TestReplaceRefusesAUTF16Profile(t *testing.T) {
+	useStartup(t, &powerShell)
+	fx := newStartupFixture(t, profileRel, profileOld)
+	u := []byte{0xff, 0xfe}
+	for _, c := range utf16.Encode([]rune(strings.TrimPrefix(read(t, fx.zshrc), "\uFEFF"))) {
+		u = append(u, byte(c), byte(c>>8))
+	}
+	if err := os.WriteFile(fx.zshrc, u, 0); err != nil {
+		t.Fatal(err)
+	}
+	o, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--to-keychain", "ANTHROPIC_API_KEY")
+	if code == 0 || !strings.Contains(e, "is UTF-16 text") || strings.Contains(o+e, "changed since the scan") {
+		t.Fatalf("%d %s\n%s", code, e, o)
+	}
+	if got, _ := os.ReadFile(fx.zshrc); string(got) != string(u) || len(fx.os.items) != 0 {
+		t.Error("a UTF-16 profile was rewritten or a value stored")
+	}
+}
+
+func TestPowerShellLookupReadsCredentialManagerWithoutAModule(t *testing.T) {
+	got := powerShell.lookup("svc")
+	for _, want := range []string{"Add-Type -TypeDefinition '", `DllImport("advapi32.dll"`, "CredReadW", "CredFree", "PtrToStringUni", "[Segurata.Cred]::Read('svc')"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lookup lacks %q", want)
+		}
+	}
+	if strings.ContainsAny(credReadType, "'\r\n") || strings.Contains(got, "Import-Module") {
+		t.Error("the type would break out of its single-quoted string, or the lookup needs a module")
+	}
+}
+
+func TestPowerShellAssignmentShapes(t *testing.T) {
+	const v = "synthetic-value"
+	for line, head := range map[string]string{
+		"$env:A_KEY = '" + v + "'":           "$env:A_KEY = ",
+		`$env:A_KEY="` + v + `"`:             "$env:A_KEY=",
+		"\uFEFF  $ENV:a_key\t=  '" + v + "'": "\uFEFF  $ENV:a_key\t=  ",
+		"$env:A_KEY = '" + v + "'  \r":       "$env:A_KEY = ",
+	} {
+		m := powerShell.assign.FindStringSubmatch(line)
+		tail := ""
+		if strings.HasSuffix(line, "\r") {
+			tail = "\r"
+		}
+		if m == nil || m[1] != head || unquote(m[2]) != v || m[3] != tail {
+			t.Errorf("%q: %q", line, m)
+		}
+	}
+	for _, line := range []string{
+		"$env:A_KEY = " + v,
+		"$env:A_KEY = '" + v + "' # main key",
+		"$env:A_KEY = \"$" + v + "\"",
+		"$env:A_KEY = \"`" + v + "\"",
+		"[Environment]::SetEnvironmentVariable('A_KEY', '" + v + "', 'User')",
+		"Set-Item env:A_KEY '" + v + "'",
+		"$env:A_KEY = 'a\u2019" + v + "'",
+		"$env:A_KEY = 'a\u201B" + v + "'",
+		"$env:A_KEY = \"a\u201D" + v + "\"",
+	} {
+		if powerShell.assign.MatchString(line) {
+			t.Errorf("%q matched", line)
+		}
+	}
+}
+
+func TestReplaceToKeychainLeavesOtherPowerShellShapesAlone(t *testing.T) {
+	useStartup(t, &powerShell)
+	for _, shape := range []string{
+		"# profile\r\n$env:ANTHROPIC_API_KEY = %s\r\n",
+		"# profile\r\n$env:ANTHROPIC_API_KEY = '%s' # main key\r\n",
+		"# profile\r\n[Environment]::SetEnvironmentVariable('ANTHROPIC_API_KEY', '%s', 'Process')\r\n",
+	} {
+		fx := newStartupFixture(t, profileRel, shape)
+		before := read(t, fx.zshrc)
+		_, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--to-keychain", "ANTHROPIC_API_KEY")
+		if code != 1 || !strings.Contains(e, "Microsoft.PowerShell_profile.ps1:2 is not a plain `$env:NAME = 'value'` line") {
+			t.Errorf("%q: %d %q", shape, code, e)
+		}
+		if read(t, fx.zshrc) != before || len(fx.os.calls) != 0 {
+			t.Errorf("%q: a refused shape was rewritten, or the clipboard or store consulted", shape)
+		}
+	}
+	fx := newReplaceFixture(t)
+	if _, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--to-keychain", "X"); code != 1 ||
+		!strings.Contains(e, "--to-keychain applies to PowerShell profiles (WindowsPowerShell/profile.ps1,") {
+		t.Errorf("rc file on Windows: %d %q", code, e)
+	}
+}
+
+func TestNextOffersToKeychainForPowerShellProfiles(t *testing.T) {
+	useStartup(t, &powerShell)
+	fx := newStartupFixture(t, profileRel, profileOld)
 	o, e, code := fx.run(t, "", true, "next")
-	if code != 0 || strings.Contains(o, "to-keychain") || !strings.Contains(o, "~/.zshrc:2") ||
-		!strings.Contains(o, "segurata rotations replace "+fx.id()+" --apply\n") {
+	if code != 0 || !strings.Contains(o, "~/"+profileRel+":2  (PowerShell profile: --to-keychain keeps the new value out of it)") ||
+		!strings.Contains(o, "--apply [--to-keychain <VAR_NAME>]") {
 		t.Errorf("next: %d %s\n%s", code, e, o)
 	}
 }

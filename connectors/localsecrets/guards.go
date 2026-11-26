@@ -1,6 +1,7 @@
 package localsecrets
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -54,6 +55,17 @@ var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	}
 	return nil
 })
+
+// unsafeRepos names safe.directory when git refuses a repository another account owns.
+func unsafeRepos(r cli.Runner) cli.Runner {
+	return cli.RunnerFunc(func(ctx context.Context, args ...string) ([]byte, error) {
+		out, err := r.Run(ctx, args...)
+		if err != nil {
+			err = gitlocal.Classify(err, cli.Stderr(err))
+		}
+		return out, err
+	})
+}
 
 // gitEnv keeps git to local data, even in an untrusted repository.
 var gitEnv = gitlocal.ReadEnv()
@@ -144,7 +156,7 @@ var sshKeygenCheck = cli.CheckFunc(func(args []string) error {
 
 func guardRG(r cli.Runner) cli.Runner        { return cli.Guard(rgCheck, r) }
 func guardGitleaks(r cli.Runner) cli.Runner  { return cli.Guard(gitleaksCheck, r) }
-func guardGit(r cli.Runner) cli.Runner       { return cli.Guard(gitCheck, r) }
-func guardGitHead(r cli.Runner) cli.Runner   { return cli.Guard(gitHeadCheck, r) }
+func guardGit(r cli.Runner) cli.Runner       { return cli.Guard(gitCheck, unsafeRepos(r)) }
+func guardGitHead(r cli.Runner) cli.Runner   { return cli.Guard(gitHeadCheck, unsafeRepos(r)) }
 func guardGH(r cli.Runner) cli.Runner        { return cli.Guard(ghCheck, r) }
 func guardSSHKeygen(r cli.Runner) cli.Runner { return cli.Guard(sshKeygenCheck, r) }

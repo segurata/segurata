@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/userdirs"
+	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -30,39 +33,31 @@ type credFile struct {
 	QuotaProjectID string `json:"quota_project_id"`
 }
 
-func gcloudConfigDir(getenv func(string) string, home string) string {
-	if d := getenv("CLOUDSDK_CONFIG"); d != "" {
-		return d
-	}
-	if runtime.GOOS == "windows" && getenv("APPDATA") != "" {
-		return filepath.Join(getenv("APPDATA"), "gcloud")
-	}
-	return filepath.Join(home, ".config", "gcloud")
-}
-
-func readCred(path string) (credFile, os.FileMode, *time.Time, error) {
-	var c credFile
+// readCred also says who else may read the file; access is nil when that could not be read, which
+// never hides the credential itself.
+func readCred(path string) (c credFile, access *os.FileMode, modTime *time.Time, err error) {
 	st, err := os.Stat(path)
 	if err != nil {
-		return c, 0, nil, err
+		return c, nil, nil, err
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return c, 0, nil, err
+		return c, nil, nil, err
 	}
 	if err := json.Unmarshal(raw, &c); err != nil {
-		return c, 0, nil, err
+		return c, nil, nil, err
+	}
+	if m, err := fileacl.Exposure(path); err == nil {
+		access = &m
 	}
 	mt := st.ModTime().UTC()
-	return c, st.Mode().Perm(), &mt, nil
+	return c, access, &mt, nil
 }
-
-func tooOpen(m os.FileMode) bool { return runtime.GOOS != "windows" && m&0o044 != 0 }
 
 // localFindings reads the ADC file, GOOGLE_APPLICATION_CREDENTIALS and any service-account key
 // JSON in the gcloud config folder.
 func localFindings(getenv func(string) string, home string) []finding.Finding {
-	dir := gcloudConfigDir(getenv, home)
+	dir := userdirs.Env{GOOS: runtime.GOOS, Home: home, Getenv: getenv}.Gcloud()
 	adc := filepath.Join(dir, "application_default_credentials.json")
 	var out []finding.Finding
 	seen := map[string]bool{}
@@ -103,8 +98,11 @@ func localFindings(getenv func(string) string, home string) []finding.Finding {
 	return out
 }
 
-func credFinding(path, source string, c credFile, mode os.FileMode, modTime *time.Time) finding.Finding {
-	ev := map[string]any{"path": path, "source": source, "type": c.Type, "mode": fmt.Sprintf("%04o", mode), "modified_at": modTime}
+func credFinding(path, source string, c credFile, access *os.FileMode, modTime *time.Time) finding.Finding {
+	ev := map[string]any{"path": path, "source": source, "type": c.Type, "modified_at": modTime}
+	if access != nil {
+		ev["mode"] = fmt.Sprintf("%04o", *access)
+	}
 	f := finding.Finding{
 		Account:  localAccount,
 		Resource: finding.Resource{Type: "local_credential", ID: path, Name: filepath.Base(path)},
@@ -155,10 +153,10 @@ func credFinding(path, source string, c credFile, mode os.FileMode, modTime *tim
 			URL:     "https://cloud.google.com/docs/authentication/application-default-credentials",
 		}
 	}
-	if tooOpen(mode) {
+	if access != nil && *access&0o044 != 0 {
 		f.Severity = finding.SevHigh
 		f.Title += ", readable by other users"
-		f.Remediation.Summary = "Run `chmod 600 " + path + "`. " + f.Remediation.Summary
+		f.Remediation.Summary = "Run `" + connector.MakePrivateCommand(runtime.GOOS, path, false) + "`. " + f.Remediation.Summary
 	}
 	f.Evidence = ev
 	return f

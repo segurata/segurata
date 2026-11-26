@@ -18,7 +18,7 @@ const maxContext = 1 << 20 // largest file read for context
 // attribute puts the value's claims before those already set (leakClaims).
 func (s *scan) attribute(abs string, ev *secretrisk.Evidence, value string) {
 	c := attribution.FromValue(value).Or(ev.Claims)
-	if ev.Source != "gitleaks" && contextServices[secretrisk.TypeFor(ev.Type, ev.Redacted).Service] {
+	if ev.Source != "gitleaks" && ev.Source != registrySource && contextServices[secretrisk.TypeFor(ev.Type, ev.Redacted).Service] {
 		if st, err := os.Stat(abs); err == nil && st.Mode().IsRegular() && st.Size() <= maxContext {
 			if raw, err := os.ReadFile(abs); err == nil {
 				c = c.Or(attribution.FromContext(string(raw)))

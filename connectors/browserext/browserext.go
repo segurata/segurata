@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/userdirs"
 	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -22,22 +23,42 @@ import (
 
 type browser struct {
 	name   string
-	dirs   map[string]string // GOOS -> data directory under the home folder
+	dirs   map[string]string // GOOS -> data folder below that OS's application data folder
 	scheme string
 }
 
 var browsers = []browser{
-	{"Brave", map[string]string{"darwin": "Library/Application Support/BraveSoftware/Brave-Browser", "linux": ".config/BraveSoftware/Brave-Browser"}, "brave"},
-	{"Chrome", map[string]string{"darwin": "Library/Application Support/Google/Chrome", "linux": ".config/google-chrome"}, "chrome"},
+	{"Brave", map[string]string{"darwin": "BraveSoftware/Brave-Browser", "linux": "BraveSoftware/Brave-Browser", "windows": "BraveSoftware/Brave-Browser/User Data"}, "brave"},
+	{"Chrome", map[string]string{"darwin": "Google/Chrome", "linux": "google-chrome", "windows": "Google/Chrome/User Data"}, "chrome"},
+}
+
+// dataDir is where b keeps its profiles for the user e describes; false on an OS it is not
+// looked for on.
+func (b browser) dataDir(e userdirs.Env) (string, bool) {
+	rel, ok := b.dirs[e.GOOS]
+	if !ok {
+		return "", false
+	}
+	base := filepath.Join(e.Home, ".config")
+	switch e.GOOS {
+	case "darwin":
+		base = filepath.Join(e.Home, "Library", "Application Support")
+	case "windows":
+		base = e.LocalAppData()
+	}
+	return filepath.Join(base, filepath.FromSlash(rel)), true
 }
 
 type Connector struct {
-	Home func() (string, error)
-	Now  func() time.Time
-	OS   string
+	Home   func() (string, error)
+	Getenv func(string) string // finds %LOCALAPPDATA% on Windows; nil reads no variable
+	Now    func() time.Time
+	OS     string
 }
 
-func New() *Connector { return &Connector{Home: os.UserHomeDir, Now: time.Now, OS: runtime.GOOS} }
+func New() *Connector {
+	return &Connector{Home: os.UserHomeDir, Getenv: os.Getenv, Now: time.Now, OS: runtime.GOOS}
+}
 
 func init() { connector.Register(New()) }
 
@@ -47,7 +68,7 @@ func (c *Connector) Describe() connector.Description {
 		Version:  "0.1.0",
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Brave and Chrome extensions in every profile: capabilities, source, age and a remove/review/keep verdict",
-		Needs:    []string{"os:darwin|linux"},
+		Needs:    []string{"os:darwin|linux|windows"},
 		Theme:    finding.ThemeBrowserExtensions,
 	}
 }
@@ -68,13 +89,13 @@ func (c *Connector) Inventory(_ context.Context, req connector.Request, emit con
 		return nil
 	}
 	now := c.Now()
+	env := userdirs.Env{GOOS: c.OS, Home: home, Getenv: c.Getenv}
 	found := false
 	for _, b := range browsers {
-		rel, ok := b.dirs[c.OS]
+		dir, ok := b.dataDir(env)
 		if !ok {
 			continue
 		}
-		dir := filepath.Join(home, rel)
 		ins, err := readBrowser(dir, now)
 		if errors.Is(err, os.ErrNotExist) {
 			emit.Log(fmt.Sprintf("%s: no profiles in %s", b.name, dir))

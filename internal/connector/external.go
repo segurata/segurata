@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
@@ -65,22 +64,12 @@ func Discover() []*External {
 }
 
 func fileName(path string) string {
-	name := filepath.Base(path)
-	if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(name), ".exe") {
-		name = name[:len(name)-len(".exe")]
-	}
-	return strings.TrimPrefix(name, externalPrefix)
+	return strings.TrimPrefix(trimExecutableExt(filepath.Base(path)), externalPrefix)
 }
 
 func isExecutable(p string) bool {
 	st, err := os.Stat(p)
-	if err != nil || !st.Mode().IsRegular() {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(filepath.Ext(p), ".exe")
-	}
-	return st.Mode()&0o111 != 0
+	return err == nil && st.Mode().IsRegular() && executable(p, st)
 }
 
 // Bounds on a plugin's subprocesses, so one that hangs or floods its output cannot hang the core.

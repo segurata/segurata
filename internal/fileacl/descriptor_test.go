@@ -47,11 +47,28 @@ func TestExposureFromTheDACL(t *testing.T) {
 		{"an empty DACL", "O:" + me + "D:P", false, 0o600},
 		{"an unknown principal", "O:" + me + "D:(A;;FR;;;DU)", false, 0o644},
 		{"the owner's own entry", "O:" + other + "D:(A;;FA;;;" + other + ")(A;;FA;;;OW)", false, 0o600},
+		{"BUILTIN\\Users owns it", "O:BUD:(A;;FA;;;BU)", false, 0o666},
+		{"Everyone owns it", "O:WDD:(A;;FA;;;" + me + ")(A;;FR;;;OW)", false, 0o644},
+		{"Domain Users owns it", "O:S-1-5-21-1000-2000-3000-513D:(A;;FR;;;S-1-5-21-1000-2000-3000-513)", false, 0o644},
+		{"Administrators owns it", "O:BAD:(A;;FA;;;BA)(A;;FA;;;" + me + ")", false, 0o600},
+		{"SYSTEM and Administrators are tolerated", "O:" + me + "D:(A;;FA;;;" + me + ")(A;;FA;;;SY)(A;;FA;;;BA)", false, 0o600},
+		{"TrustedInstaller may read", "O:" + me + "D:(A;;FA;;;" + me + ")(A;;FR;;;" + sidTrustedInstaller + ")", false, 0o644},
 		{"a conditional entry", "O:" + me + "D:(XA;;FR;;;WD;(Member_of {SID(BA)}))", false, 0o644},
 		{"a group section", "O:" + me + "G:DUD:(A;;FR;;;BU)", false, 0o644},
 	} {
 		if got := parse(t, c.sddl).exposure(me, c.dir); got != c.want {
 			t.Errorf("%s: %s gives %04o, want %04o", c.why, c.sddl, got, c.want)
+		}
+	}
+}
+
+func TestGroupSID(t *testing.T) {
+	for sid, want := range map[string]bool{
+		me: false, "S-1-5-21-1000-2000-3000-500": false, "S-1-5-21-1000-2000-3000-513": true,
+		"S-1-5-21-1000-2000-3000-498": true, "S-1-5-32-545": true, "S-1-1-0": true, "alias:XX": true, "S-1-5-21-x": true,
+	} {
+		if groupSID(sid) != want {
+			t.Errorf("groupSID(%s) != %v", sid, want)
 		}
 	}
 }
@@ -128,6 +145,9 @@ func TestDescribeNamesOnlyWellKnownAccounts(t *testing.T) {
 	}
 	if got := parse(t, privateSDDL(me, false)).describe(me, false); !strings.HasPrefix(got, "private") {
 		t.Errorf("private file: %q", got)
+	}
+	if got := parse(t, "O:BUD:(A;;FA;;;BU)").describe(me, false); !strings.Contains(got, `BUILTIN\Users`) {
+		t.Errorf("a group owner's own grant: %q", got)
 	}
 	if got := parse(t, "D:NO_ACCESS_CONTROL").describe(me, false); !strings.Contains(got, "every account") {
 		t.Errorf("NULL DACL: %q", got)

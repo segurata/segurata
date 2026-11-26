@@ -181,7 +181,7 @@ func (e Env) target(ctx context.Context, cfg config.Config, t run.Target) []conn
 		case kind == "secret":
 			if _, set := t.Instance.Secrets[arg]; !set {
 				checks = append(checks, connector.Check{Level: connector.Warn, What: "secret " + arg, Detail: "not configured: the connector is skipped",
-					Fix: keychainFix(d.Name, arg, t.Label())})
+					Fix: keychainFix(d.Name, arg, t.Label(), keychain.Available)})
 			}
 		}
 	}
@@ -298,9 +298,14 @@ func dirCheck(label, dir, creator string) connector.Check {
 	return connector.Check{Level: connector.OK, What: what, Detail: p.detail}
 }
 
-// keychainFix configures secret as a keychain: reference and says how to add its item.
-func keychainFix(connector, secret, label string) string {
+// keychainFix configures secret as a keychain: reference and says how to add its item. Where
+// keychain: references do not resolve, it suggests an env: reference instead.
+func keychainFix(connector, secret, label string, available bool) string {
 	svc := keychainService(connector, secret)
+	if !available {
+		name := strings.ToUpper(strings.ReplaceAll(svc, "-", "_"))
+		return fmt.Sprintf(`add "secrets": {"%s": "env:%s"} to connectors.%s in the config and export %s from your secret manager, or use an op:// reference (keychain: references need the macOS Keychain or Windows Credential Manager)`, secret, name, label, name)
+	}
 	return fmt.Sprintf(`add "secrets": {"%s": "keychain:%s"} to connectors.%s in the config, and the item (%s)`, secret, svc, label, keychain.Default("").Hint(svc))
 }
 
