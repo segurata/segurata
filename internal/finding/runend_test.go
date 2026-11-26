@@ -2,6 +2,7 @@ package finding
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -45,8 +46,8 @@ func TestCoverageMatchesScopesAccountsAndWildcards(t *testing.T) {
 func TestCoverageHoldsWhatIsAtAnUnreadablePath(t *testing.T) {
 	var tally Tally
 	tally.Declare("files", true, "")
-	tally.Declare(PathScope("files", "~/Library/Mail"), false, "unreadable")
-	tally.Declare(PathScope("files", "~/.config/locked.env"), false, "unreadable")
+	tally.Declare(PathScope("files", "~/Library/Mail"), false, UnreadableReason)
+	tally.Declare(PathScope("files", "~/.config/locked.env"), false, UnreadableReason)
 	end := tally.End("c", "", time.Now(), time.Now(), nil)
 	c := CoverageOf(&end)
 	for _, tc := range []struct {
@@ -68,8 +69,32 @@ func TestCoverageHoldsWhatIsAtAnUnreadablePath(t *testing.T) {
 	if _, unchecked := c.Unchecked("local", "files"); unchecked {
 		t.Error("an unreadable path left the whole files scope unchecked")
 	}
+	if !c.CompleteAsConfigured() || c.Complete() || c.Unreadable() != 2 {
+		t.Errorf("unreadable paths are expected skips: complete as configured %v, complete %v, unreadable %d",
+			c.CompleteAsConfigured(), c.Complete(), c.Unreadable())
+	}
 	if _, unchecked := c.UncheckedPath("local", "history:~/Library", "~/Library/Mail"); unchecked {
 		t.Error("a files path held another scope")
+	}
+}
+
+// More skips than run_end lists prove nothing, though every listed one is expected.
+func TestTooManyExpectedSkipsProveNothing(t *testing.T) {
+	var tally Tally
+	tally.Declare("files", true, "")
+	for i := range maxSkippedListed + 1 {
+		tally.Declare(PathScope("files", fmt.Sprintf("~/locked/%d", i)), false, UnreadableReason)
+	}
+	end := tally.End("c", "", time.Now(), time.Now(), nil)
+	c := CoverageOf(&end)
+	if why, none := c.NoneChecked(); !none || why != "201 scopes not inspected, too many to list" {
+		t.Errorf("none checked %v: %q", none, why)
+	}
+	if c.CompleteAsConfigured() || len(c.Missed()) != 1 || c.Missed()[0].Scope != ScopeAll {
+		t.Errorf("complete as configured %v, missed %v", c.CompleteAsConfigured(), c.Missed())
+	}
+	if len(end.Scopes.Skipped) != maxSkippedListed {
+		t.Errorf("run_end lists %d skips", len(end.Scopes.Skipped))
 	}
 }
 
@@ -118,7 +143,7 @@ func TestAFindingsScopeAndPath(t *testing.T) {
 	}
 	var tally Tally
 	tally.Declare("files", true, "")
-	tally.Declare(PathScope("files", "~/locked"), false, "unreadable")
+	tally.Declare(PathScope("files", "~/locked"), false, UnreadableReason)
 	end := tally.End("c", "", time.Now(), time.Now(), nil)
 	at := func(p string) Finding {
 		return Finding{Account: "local", Scope: "files", Evidence: map[string]any{"path": p}}

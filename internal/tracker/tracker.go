@@ -18,7 +18,7 @@ import (
 
 // schemaVersion is bumped whenever tracker.json gains a field, even one an older file simply
 // lacks: the bump keeps an older binary from loading a file with values it does not know.
-const schemaVersion = 6
+const schemaVersion = 7
 
 // Kind says what sort of action an item asks for.
 type Kind string
@@ -213,8 +213,9 @@ type RunInfo struct {
 	Finished     bool            `json:"finished"` // it has run_end
 	Complete     bool            `json:"complete"` // finished, nothing skipped, no connector error
 	Error        string          `json:"error,omitempty"`
-	Expected     int             `json:"expected,omitempty"` // scopes left out by expected statuses
-	Skipped      []string        `json:"skipped,omitempty"`  // the first few, "scope: reason"
+	Expected     int             `json:"expected,omitempty"`   // scopes left out by expected statuses
+	Unreadable   int             `json:"unreadable,omitempty"` // paths left out as finding.UnreadableReason
+	Skipped      []string        `json:"skipped,omitempty"`    // the first few, "scope: reason"
 	SkippedCount int             `json:"skipped_count,omitempty"`
 	Theme        string          `json:"theme,omitempty"`
 	Areas        map[string]bool `json:"areas,omitempty"` // plan area: audited by this run

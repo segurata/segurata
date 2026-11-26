@@ -71,7 +71,7 @@ echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, t
 					files = append(files, s)
 				}
 				if p, ok := strings.CutPrefix(s, secretrisk.FilesScope+":/"); ok {
-					paths = append(paths, "/"+strings.TrimSuffix(p, ": unreadable"))
+					paths = append(paths, "/"+strings.TrimSuffix(p, ": "+finding.UnreadableReason))
 				}
 			}
 			if !slices.Equal(paths, tc.unreadable) {
@@ -102,7 +102,41 @@ echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, t
 			if strings.Contains(detail, "/x/") {
 				t.Errorf("status detail names a path: %q", detail)
 			}
+			// Unreadable paths are expected: they leave nothing of the files missed.
+			cov := runCoverage(rec)
+			missed := slices.ContainsFunc(cov.Missed(), func(s finding.Skipped) bool { return strings.HasPrefix(s.Scope, secretrisk.FilesScope) })
+			if missed != tc.skipped || cov.Unreadable() != n {
+				t.Errorf("files missed %v, unreadable %d; missed %q", missed, cov.Unreadable(), cov.Missed())
+			}
 		})
+	}
+}
+
+// runCoverage is the coverage the run_end of rec's run would give.
+func runCoverage(rec *recorder) finding.Coverage {
+	var tally finding.Tally
+	for _, st := range rec.Statuses {
+		tally.Status(st)
+	}
+	for _, sc := range rec.Scopes {
+		tally.Declare(sc.ID, sc.Inspected, sc.Reason)
+	}
+	end := tally.End(name, "", time.Now(), time.Now(), nil)
+	return finding.CoverageOf(&end)
+}
+
+// More unreadable paths than run_end lists prove nothing, expected or not: the run is partial.
+func TestTooManyUnreadablePathsProveNothing(t *testing.T) {
+	fx := newFixture(t)
+	c := fx.connector(t, "[]")
+	c.RG = cli.Exec{Path: writeExe(t, "rg", `i=0; while [ $i -le 200 ]; do echo "rg: /x/f$i: Permission denied (os error 13)" >&2; i=$((i+1)); done; exit 2`), Timeout: time.Minute}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	cov := runCoverage(rec)
+	if why, none := cov.NoneChecked(); !none || !strings.Contains(why, "too many to list") || cov.CompleteAsConfigured() {
+		t.Errorf("201 unreadable paths: none checked %v (%q), complete as configured %v", none, why, cov.CompleteAsConfigured())
 	}
 }
 
@@ -126,7 +160,7 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 			files = append(files, s)
 		}
 	}
-	if want := []string{finding.PathScope(secretrisk.FilesScope, "~/.config/locked.env") + ": unreadable"}; !slices.Equal(files, want) {
+	if want := []string{finding.PathScope(secretrisk.FilesScope, "~/.config/locked.env") + ": " + finding.UnreadableReason}; !slices.Equal(files, want) {
 		t.Errorf("files skipped %q, want %q", files, want)
 	}
 	var detail string
@@ -137,6 +171,9 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 	}
 	if !strings.Contains(detail, "; 1 unreadable paths skipped") {
 		t.Errorf("status detail %q does not count the unreadable file", detail)
+	}
+	if cov := runCoverage(rec); cov.Unreadable() != 1 || slices.ContainsFunc(cov.Missed(), func(s finding.Skipped) bool { return strings.HasPrefix(s.Scope, secretrisk.FilesScope) }) {
+		t.Errorf("unreadable %d, missed %q: the unreadable file is not expected", cov.Unreadable(), cov.Missed())
 	}
 	var zshrc bool
 	for _, f := range rec.Findings {

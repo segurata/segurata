@@ -87,6 +87,8 @@ func coverageTag(c finding.Coverage) string {
 		return " (no run_end)"
 	case !c.CompleteAsConfigured():
 		return " (partial)"
+	case c.Unreadable() > 0:
+		return " (" + textfmt.Count(c.Unreadable(), "unreadable path", "unreadable paths") + " left out as expected)"
 	}
 	return ""
 }

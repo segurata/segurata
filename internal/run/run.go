@@ -323,9 +323,21 @@ func StatusSummary(w io.Writer, results []*Result) {
 		for _, reason := range slices.Sorted(maps.Keys(expected)) {
 			fmt.Fprintf(w, "~ %s: %d expected (by your config: %s)\n", r.Name, expected[reason], reason)
 		}
-		if sk := r.End.Scopes.Skipped; r.Err == nil && len(sk) > 0 {
-			fmt.Fprintf(w, "~ %s: incomplete run, %d %s not inspected (first %s: %s); missing findings there are not resolved\n",
-				r.Name, r.End.Scopes.SkippedCount, textfmt.Plural(r.End.Scopes.SkippedCount, "scope", "scopes"), sk[0].Scope, sk[0].Reason)
+		if r.Err != nil {
+			continue
+		}
+		c := finding.CoverageOf(&r.End)
+		missed := c.Missed()
+		if len(missed) > 0 && missed[0].Scope == finding.ScopeAll {
+			fmt.Fprintf(w, "~ %s: incomplete run, nothing proven gone (%s); missing findings are not resolved\n", r.Name, missed[0].Reason)
+			continue
+		}
+		if n := c.Unreadable(); n > 0 {
+			fmt.Fprintf(w, "~ %s: %s left out as expected; findings there are not resolved\n", r.Name, textfmt.Count(n, "unreadable path", "unreadable paths"))
+		}
+		if len(missed) > 0 {
+			fmt.Fprintf(w, "~ %s: incomplete run, %s not inspected (first %s: %s); missing findings there are not resolved\n",
+				r.Name, textfmt.Count(len(missed), "scope", "scopes"), missed[0].Scope, missed[0].Reason)
 		}
 	}
 }

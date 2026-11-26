@@ -43,6 +43,11 @@ func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 		finding.Skipped{Scope: "repo:acme/archive", Reason: "expected: in the config's skip list"}) // left out on purpose: not listed
 	runtest.WriteUnfinished(t, path("2026-11-22", "github.jsonl"), ok) // killed
 
+	// local-secrets: paths ripgrep may not read are left out as expected, not a partial run.
+	runtest.Write(t, path("2026-11-21", "local-secrets.jsonl"), status("local-secrets", "", "local", finding.StateOK, ""),
+		finding.Skipped{Scope: finding.PathScope("files", "~/Library/Mail"), Reason: finding.UnreadableReason},
+		finding.Skipped{Scope: finding.PathScope("files", "~/Library/Safari"), Reason: finding.UnreadableReason})
+
 	// macos: a legacy previous run, then a latest run whose account errored.
 	fw, port := mk("macos", "", "fw", finding.SevMedium, "Firewall off"), mk("macos", "", "port", finding.SevHigh, "Port 5000 open")
 	runtest.WriteUnfinished(t, path("2026-11-20", "macos.jsonl"), fw, port)
@@ -75,6 +80,7 @@ func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 		for _, want := range []string{
 			"Run completeness", "2026-11-21 (partial)", "2026-11-21 (no run_end)",
 			"the run of 2026-11-22 did not finish", "repo:acme/b", "completeness unknown",
+			"2026-11-21 (2 unreadable paths left out as expected)",
 		} {
 			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {
 				t.Errorf("%s report lacks %q", f, want)
@@ -82,6 +88,9 @@ func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 		}
 		if strings.Contains(out, "acme/archive") || !strings.Contains(out, "1 scope not inspected") {
 			t.Errorf("%s report: a scope left out by config is listed as not inspected", f)
+		}
+		if strings.Contains(out, "Library") || strings.Contains(out, "local-secrets (2026-11-21)") {
+			t.Errorf("%s report: unreadable paths are listed, or make a run partial", f)
 		}
 	}
 }

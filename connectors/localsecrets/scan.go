@@ -181,8 +181,8 @@ func rgRoots(args []string) []string {
 	return nil
 }
 
-// skipUnreadable marks each path uninspected, so the tracker keeps what it held, while the rest
-// of the files scope counts as inspected.
+// skipUnreadable marks each path uninspected as expected, so the run is not partial yet the
+// tracker keeps what the path held, while the rest of the files scope counts as inspected.
 func (s *scan) skipUnreadable(paths []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,7 +192,7 @@ func (s *scan) skipUnreadable(paths []string) {
 	for _, p := range paths {
 		if !s.unreadable[p] {
 			s.unreadable[p] = true
-			s.emit.Scope(finding.PathScope(secretrisk.FilesScope, s.tilde(p)), false, "unreadable")
+			s.emit.Scope(finding.PathScope(secretrisk.FilesScope, s.tilde(p)), false, finding.UnreadableReason)
 		}
 	}
 }

@@ -38,13 +38,19 @@ func (t *Tracker) recordRuns(folded map[string]*run) {
 		expected[finding.ScopeAll] = expected[finding.ScopeAll] || allExpected
 		var sk []finding.Skipped
 		for _, s := range r.cov.Skipped() {
-			if expected[s.Scope] || s.Expected() {
+			switch {
+			case s.Reason == finding.UnreadableReason:
+				info.Unreadable++
+			case expected[s.Scope] || s.Expected():
 				info.Expected++
-				continue
+			default:
+				sk = append(sk, s)
 			}
-			sk = append(sk, s)
 		}
-		info.Complete = r.cov.Known && r.failed == "" && len(sk) == 0 && (r.cov.Complete() || info.Expected > 0)
+		if len(sk) > 0 && sk[0].Scope == finding.ScopeAll { // nothing proven: no count of what was left out
+			info.Expected, info.Unreadable = 0, 0
+		}
+		info.Complete = r.cov.Known && r.failed == "" && len(sk) == 0 && (r.cov.Complete() || info.Expected+info.Unreadable > 0)
 		info.SkippedCount = len(sk)
 		for _, a := range r.covers {
 			if info.Areas == nil {
@@ -102,12 +108,24 @@ func (t *Tracker) coverageLine(instances []string, now time.Time) string {
 		case !info.Complete:
 			s += ", partial"
 		}
-		if info.Expected > 0 {
-			s += fmt.Sprintf(" (%s left out as expected)", textfmt.Count(info.Expected, "scope", "scopes"))
-		}
-		parts = append(parts, s)
+		parts = append(parts, s+info.expectedNote())
 	}
 	return "Coverage: " + strings.Join(parts, "; ") + "."
+}
+
+// expectedNote is " (1 scope and 12 unreadable paths left out as expected)", or "".
+func (i RunInfo) expectedNote() string {
+	var out []string
+	if i.Expected > 0 {
+		out = append(out, textfmt.Count(i.Expected, "scope", "scopes"))
+	}
+	if i.Unreadable > 0 {
+		out = append(out, textfmt.Count(i.Unreadable, "unreadable path", "unreadable paths"))
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(out, " and ") + " left out as expected)"
 }
 
 func age(d time.Duration) string {

@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,6 +34,11 @@ func TestCoverageLine(t *testing.T) {
 		finding.Skipped{Scope: "sys-1", Reason: "expected: in connectors.prowler.config.skip_projects"})
 	writeRun(t, out, t0, "vercel.jsonl", at("vercel", t0), okStatus("vercel", "me"),
 		finding.Skipped{Scope: "team-b", Reason: "no configured account can list this team"})
+	// Paths the scan may not read (macOS TCC) are expected too, and counted apart.
+	writeRun(t, out, t0, "local-secrets.jsonl", at("local-secrets", t0), okStatus("local-secrets", "local"),
+		finding.Skipped{Scope: finding.PathScope("files", "~/Library/Mail"), Reason: finding.UnreadableReason},
+		finding.Skipped{Scope: finding.PathScope("files", "~/Library/Safari"), Reason: finding.UnreadableReason},
+		finding.Skipped{Scope: "dumps:*", Reason: "expected: data_dumps is off"})
 	tr := New(t0)
 	expect := func(st *finding.Status) {
 		if st.Connector == "anthropic" {
@@ -44,10 +50,31 @@ func TestCoverageLine(t *testing.T) {
 	}
 	got := tr.coverageLine([]string{"aws", "cloudflare", "gcp", "github"}, t0.Add(3*time.Hour))
 	want := "Coverage: anthropic: 3 h ago (1 scope left out as expected); aws: 29 h ago; cloudflare: never run; gcp: 3 h ago, failed: gcloud exited 1; " +
-		"github: 3 h ago, partial: user:me not checked; openai: 3 h ago, partial: nothing checked; prowler: 3 h ago (1 scope left out as expected); " +
+		"github: 3 h ago, partial: user:me not checked; local-secrets: 3 h ago (1 scope and 2 unreadable paths left out as expected); openai: 3 h ago, partial: nothing checked; prowler: 3 h ago (1 scope left out as expected); " +
 		"vercel: 3 h ago, partial: team-b not checked."
 	if got != want {
 		t.Errorf("coverage line\n got %q\nwant %q", got, want)
+	}
+}
+
+// More paths left out than run_end lists prove nothing, though each is expected: the run is
+// partial and counts none of them.
+func TestTooManyUnreadablePathsMakeTheRunPartial(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	records := []any{okStatus("local-secrets", "local")}
+	for i := range 201 {
+		records = append(records, finding.Skipped{Scope: finding.PathScope("files", fmt.Sprintf("~/locked/%d", i)), Reason: finding.UnreadableReason})
+	}
+	writeRun(t, out, t0, "local-secrets.jsonl", records...)
+	tr := New(t0)
+	if _, err := tr.Sync(SyncOptions{OutDir: out}, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if info := tr.Runs["local-secrets"]; info.Complete || info.Unreadable != 0 {
+		t.Fatalf("run info %+v", info)
+	}
+	if got := tr.coverageLine(nil, t0.Add(time.Hour)); !strings.HasSuffix(got, ", partial: nothing checked.") {
+		t.Errorf("coverage line %q", got)
 	}
 }
 

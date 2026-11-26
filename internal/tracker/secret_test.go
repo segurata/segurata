@@ -584,7 +584,7 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 	// files: the shop's .env stays in used_in and its finding is not gone.
 	for n, unreadable := range []string{"~/src/shop/.env", "~/src/shop"} {
 		writeRun(t, out, day(4+n), "local-secrets.jsonl", leak(old, day(4+n)), leak(git, day(4+n)),
-			finding.Skipped{Scope: finding.PathScope("files", unreadable), Reason: "unreadable"}, okStatus(secretrisk.ConnectorName, "local"))
+			finding.Skipped{Scope: finding.PathScope("files", unreadable), Reason: finding.UnreadableReason}, okStatus(secretrisk.ConnectorName, "local"))
 		syncOrDie(t, tr, out, day(4+n).Add(time.Hour))
 		if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env ~/src/shop/.env" {
 			t.Errorf("%s unreadable: used_in %q", unreadable, got)

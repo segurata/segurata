@@ -788,3 +788,40 @@ func TestBrowserConnectorsRunOnlyAgainstBrave(t *testing.T) {
 		t.Fatalf("probed %d times without a browser connector (err %v)", *probes, err)
 	}
 }
+
+// The summary counts unreadable paths apart and calls a run incomplete only for what it missed.
+func TestStatusSummaryLeavesExpectedSkipsOutOfIncomplete(t *testing.T) {
+	end := func(skips ...finding.Skipped) finding.RunEnd {
+		var tally finding.Tally
+		tally.Declare("local", true, "")
+		for _, s := range skips {
+			tally.Declare(s.Scope, false, s.Reason)
+		}
+		return tally.End("local-secrets", "", time.Now(), time.Now(), nil)
+	}
+	locked := func(i int) finding.Skipped {
+		return finding.Skipped{Scope: finding.PathScope("files", fmt.Sprintf("~/locked/%d", i)), Reason: finding.UnreadableReason}
+	}
+	var many []finding.Skipped
+	for i := range 201 {
+		many = append(many, locked(i))
+	}
+	for name, tc := range map[string]struct {
+		end  finding.RunEnd
+		want string
+	}{
+		"unreadable only": {end(locked(1), locked(2)),
+			"~ local-secrets: 2 unreadable paths left out as expected; findings there are not resolved\n"},
+		"and a real skip": {end(locked(1), finding.Skipped{Scope: "files", Reason: "rg: exit status 2"}),
+			"~ local-secrets: 1 unreadable path left out as expected; findings there are not resolved\n" +
+				"~ local-secrets: incomplete run, 1 scope not inspected (first files: rg: exit status 2); missing findings there are not resolved\n"},
+		"too many": {end(many...),
+			"~ local-secrets: incomplete run, nothing proven gone (201 scopes not inspected, too many to list); missing findings are not resolved\n"},
+	} {
+		var b strings.Builder
+		StatusSummary(&b, []*Result{{Name: "local-secrets", End: tc.end}})
+		if b.String() != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", name, b.String(), tc.want)
+		}
+	}
+}

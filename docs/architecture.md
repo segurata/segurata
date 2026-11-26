@@ -82,9 +82,11 @@ account in parts, otherwise its account (`finding.ScopeOf`). Examples: `repo:<ow
 `repo:<owner>`, `user:<login>` and `org:<org>` (github), `history:<repo>`, `dumps:<repo>` and `files` (local-secrets), the project
 id and `billing:<id>` (gcp), the service name (connected-apps), `profile <name>` (aws),
 `check:<id>` (macos). A path a scan could not read is skipped as `<scope>:<path>`
-(`finding.PathScope`; local-secrets skips `files:~/Library/Mail` when ripgrep is denied it): it
-holds every finding and location at that path or inside it, while the rest of the scope counts
-as inspected (`Coverage.UncheckedPath`). The run's
+(`finding.PathScope`; local-secrets skips `files:~/Library/Mail` when ripgrep is denied it, as
+macOS denies it under every home) with the reason `expected: unreadable`
+(`finding.UnreadableReason`): it holds every finding and location at that path or inside it,
+while the rest of the scope counts as inspected (`Coverage.UncheckedPath`). Being expected, it
+does not make the run partial; more skips than `run_end` lists (200) still prove nothing. The run's
 coverage is derived (`finding.Tally`):
 
 - a status `ok` marks its account (or `scope`) inspected;
@@ -403,12 +405,12 @@ reached the model provider).
   so they take no lock for that; they record their outcome (rotated, a failed attempt, the
   redaction notes) with `tracker.Update`, which loads the tracker fresh under the lock. Without
   `flock` (Windows) the lock is a no-op and the SHA-256 check still refuses lost updates.
-- `schema_version` 6 is the current format. A format change adds an upgrade step from version n
+- `schema_version` 7 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
   `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
   status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
-  the top-level `runs` (see "Coverage"); 5 added a location's `gone`; 6 added a secret's `liveness`, the history action `dead` and attribution facts' `github_logins`. An older file holds none of them, so it loads as it is and is saved as the current version (the
+  the top-level `runs` (see "Coverage"); 5 added a location's `gone`; 6 added a secret's `liveness`, the history action `dead` and attribution facts' `github_logins`. 7 added a run's `unreadable`. An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### `segurata status`
@@ -463,12 +465,15 @@ when it ended, whether it has `run_end`, whether it was complete, the connector'
 first five scopes it skipped with the count. A scope left out by a status the config expects (when
 the run was written or by a rule added since), or one the connector skipped with the reason
 `expected` or `expected: …` (the owner's config told it to, as Prowler's `skip_projects`), is counted as expected
-and does not make the run partial, here or in the report (`finding.Coverage.CompleteAsConfigured`).
-It still proves nothing gone there. `status` prints one line for every configured instance (the targets an unfiltered
+and does not make the run partial, here, in the report or in `inventory`'s summary
+(`finding.Coverage.CompleteAsConfigured`); unreadable paths are counted apart, and the report's
+headline gives their count instead of "(partial)". It still proves nothing gone there, and a run
+that proves nothing at all (an error, or more skips than `run_end` lists) is partial whatever the
+listed reasons say. `status` prints one line for every configured instance (the targets an unfiltered
 `inventory` runs) and any other that ran:
 
 ```
-Coverage: aws: 3 h ago (1 scope left out as expected); cloudflare: never run; gcp: 9 h ago, failed: …; github: 3 h ago, partial: user:octocat not checked.
+Coverage: aws: 3 h ago (1 scope left out as expected); cloudflare: never run; gcp: 9 h ago, failed: …; github: 3 h ago, partial: user:octocat not checked; local-secrets: 3 h ago (12 unreadable paths left out as expected).
 ```
 
 **Gaps.** Areas of the plan ([plan.md](plan.md)) that no connector audits on this machine are

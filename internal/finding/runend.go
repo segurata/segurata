@@ -162,8 +162,9 @@ func CoverageOf(end *RunEnd) Coverage {
 		return Coverage{}
 	}
 	c := Coverage{Known: true, skipped: end.Scopes.Skipped}
-	if end.Scopes.SkippedCount > len(end.Scopes.Skipped) {
-		c.all = fmt.Sprintf("%d scopes not inspected, too many to list", end.Scopes.SkippedCount)
+	if n := end.Scopes.SkippedCount; n > len(end.Scopes.Skipped) {
+		// A skip of its own, so expected reasons among the listed ones cannot make the run complete.
+		c.skipped = append([]Skipped{{Scope: ScopeAll, Reason: fmt.Sprintf("%d scopes not inspected, too many to list", n)}}, c.skipped...)
 	}
 	for _, s := range c.skipped {
 		if s.Scope == ScopeAll {
@@ -182,6 +183,21 @@ func (c Coverage) Skipped() []Skipped { return c.skipped }
 func (s Skipped) Expected() bool {
 	why, ok := strings.CutPrefix(s.Reason, string(StateExpected))
 	return ok && (why == "" || strings.HasPrefix(why, ":"))
+}
+
+// UnreadableReason skips a path the run may not read (macOS TCC, a file tightened to 0000):
+// expected, yet nothing at the path is proven gone.
+const UnreadableReason = string(StateExpected) + ": unreadable"
+
+// Unreadable counts the paths skipped as unreadable.
+func (c Coverage) Unreadable() int {
+	n := 0
+	for _, s := range c.skipped {
+		if s.Reason == UnreadableReason {
+			n++
+		}
+	}
+	return n
 }
 
 // Missed is what the run did not inspect and the config did not leave out.
