@@ -221,6 +221,35 @@ func TestApplyKeepsJSONLValidModeAndMtime(t *testing.T) {
 	}
 }
 
+// failingRG runs ripgrep until fail is set, then exits as a broken one would.
+type failingRG struct {
+	rg interface {
+		Run(ctx context.Context, args ...string) ([]byte, error)
+	}
+	fail *bool
+}
+
+func (r failingRG) Run(ctx context.Context, args ...string) ([]byte, error) {
+	if *r.fail {
+		return nil, errors.New("rg: exit status 2")
+	}
+	return r.rg.Run(ctx, args...)
+}
+
+// A rescan that cannot run must not be reported as a clean one.
+func TestApplyFailsWhenTheRescanCannotRun(t *testing.T) {
+	fx := newFixture(t)
+	fx.write(".claude/projects/-src-app/session.jsonl", fx.transcript(), 0o600)
+	broken := false
+	fx.conn.RG = failingRG{fx.conn.RG, &broken}
+	fx.during = func() { broken = true } // after the plan's scan, before the rescan
+
+	code, out := fx.run("", false, "--trails", "--apply", "--yes")
+	if code == 0 || !strings.Contains(out, "the check could not run") || strings.Contains(out, "Verified") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
 // keys lists a JSON object's top-level keys in source order.
 func keys(t *testing.T, line string) string {
 	t.Helper()
