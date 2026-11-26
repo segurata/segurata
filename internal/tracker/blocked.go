@@ -43,8 +43,8 @@ func blocks(d, it *Item) bool {
 	return it.Theme == "data-dumps" && aboutDumps.MatchString(d.Key+" "+d.Decision.Question)
 }
 
-// aboutDumps matches "dump" or "dumps" as a word, not a tool such as mysqldump.
-var aboutDumps = regexp.MustCompile(`(?i)\bdumps?\b`)
+// aboutDumps matches a word starting with "dump" (dumps, dumping), not a tool such as mysqldump.
+var aboutDumps = regexp.MustCompile(`(?i)\bdump`)
 
 const blockedPrefix = "Blocked by decision "
 

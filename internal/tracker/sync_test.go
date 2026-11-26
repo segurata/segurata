@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -506,12 +507,22 @@ func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
 	if got := tr.unblocks(d, t0.Add(time.Hour)); len(got) != 1 || got[0] != repo {
 		t.Errorf("unblocks %v", got)
 	}
-	// A question that only mentions a dump tool is not about the dumps in git.
-	backups := tr.addDecision("decide:nightly-backups", "Run mysqldump every night?", nil, t0)
-	if got := tr.unblocks(backups, t0.Add(time.Hour)); len(got) != 0 {
-		t.Errorf("a mysqldump question blocks %v", got)
+	// A question that only mentions a dump tool is not about the dumps in git; any form of the word is.
+	for i, c := range []struct {
+		question string
+		blocks   bool
+	}{
+		{"Run mysqldump every night?", false},
+		{"Keep pg_dump in the backup cron?", false},
+		{"Stop dumping prod data into repositories?", true},
+		{"Were the dumped tables personal data?", true},
+	} {
+		other := tr.addDecision(fmt.Sprintf("decide:other-%d", i), c.question, nil, t0)
+		if got := tr.unblocks(other, t0.Add(time.Hour)); (len(got) != 0) != c.blocks {
+			t.Errorf("%q blocks %v, want blocking %v", c.question, got, c.blocks)
+		}
+		other.Status = Ignored
 	}
-	backups.Status = Ignored
 	// Answered: the note goes away at the next sync, and is never doubled meanwhile.
 	syncOrDie(t, tr, out, t0.Add(2*time.Hour))
 	if strings.Count(repo.Next.Action, "Blocked by decision") != 1 {
