@@ -16,39 +16,38 @@ import (
 
 func describing(js string) string { return "case \"$1\" in describe) echo '" + js + "';; esac\n" }
 
+// The name in describe must be the file's suffix and a plain lowercase word: it picks the secrets
+// the core hands over and names the run file.
 func TestLoadExternalChecksTheDescription(t *testing.T) {
-	refused := map[string]string{
-		"protocol 3":               `{"name":"x","protocol":3}`,
-		"protocol 0":               `{"name":"x","protocol":0}`,
-		"remediates on protocol 1": `{"name":"x","protocol":1,"remediates":["x.fix"]}`,
-		"empty remediation":        `{"name":"x","protocol":2,"remediates":[""]}`,
-		"no name":                  `{"protocol":2}`,
-		"not json":                 `nope`,
-		"another file's name":      `{"name":"openai","protocol":2}`,
-		"theme id not a word":      `{"name":"x","protocol":2,"theme":{"id":"My Theme"}}`,
-		"area id not a word":       `{"name":"x","protocol":2,"covers":[{"id":""}]}`,
+	cases := []struct {
+		why, file, js string
+		ok            bool
+	}{
+		{"protocol 3", "x", `{"name":"x","protocol":3}`, false},
+		{"protocol 0", "x", `{"name":"x","protocol":0}`, false},
+		{"remediates on protocol 1", "x", `{"name":"x","protocol":1,"remediates":["x.fix"]}`, false},
+		{"empty remediation", "x", `{"name":"x","protocol":2,"remediates":[""]}`, false},
+		{"no name", "x", `{"protocol":2}`, false},
+		{"not json", "x", `nope`, false},
+		{"another file's name", "x", `{"name":"openai","protocol":2}`, false},
+		{"theme id not a word", "x", `{"name":"x","protocol":2,"theme":{"id":"My Theme"}}`, false},
+		{"area id not a word", "x", `{"name":"x","protocol":2,"covers":[{"id":""}]}`, false},
+		{"upper case name", "Upper", `{"name":"Upper","protocol":2}`, false},
+		{"underscore name", "under_score", `{"name":"under_score","protocol":2}`, false},
+		{"dotted name", "prowler.orig", `{"name":"prowler.orig","protocol":2}`, false},
+		{"leading dash", "-lead", `{"name":"-lead","protocol":2}`, false},
+		{"protocol 1", "x", `{"name":"x","protocol":1}`, true},
+		{"remediates on protocol 2", "x", `{"name":"x","protocol":2,"remediates":["x.fix"]}`, true},
+		{"theme and areas", "x", `{"name":"x","protocol":1,"theme":{"id":"cloud"},"covers":[{"id":"hibp"}]}`, true},
 	}
-	for why, js := range refused {
-		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err == nil {
-			t.Errorf("%s: loaded", why)
-		}
-	}
-	for _, js := range []string{`{"name":"x","protocol":1}`, `{"name":"x","protocol":2,"remediates":["x.fix"]}`,
-		`{"name":"x","protocol":1,"theme":{"id":"cloud"},"covers":[{"id":"hibp"}]}`} {
-		if _, err := connector.LoadExternal(connectortest.Script(t, "x", describing(js))); err != nil {
-			t.Errorf("%s: %v", js, err)
-		}
-	}
-}
-
-// The name in describe must be the file's suffix and a plain lowercase word, since it picks the
-// secrets the core hands over and names the run file.
-func TestLoadExternalRefusesABadName(t *testing.T) {
-	for _, name := range []string{"Upper", "under_score", "prowler.orig", "-lead"} {
-		js := `{"name":"` + name + `","protocol":2}`
-		if _, err := connector.LoadExternal(connectortest.Script(t, name, describing(js))); err == nil {
-			t.Errorf("%s: loaded", name)
-		}
+	for _, c := range cases {
+		t.Run(c.why, func(t *testing.T) {
+			t.Parallel()
+			_, err := connector.LoadExternal(connectortest.Script(t, c.file, describing(c.js)))
+			if (err == nil) != c.ok {
+				t.Errorf("%s: err = %v", c.js, err)
+			}
+		})
 	}
 }
 
@@ -178,19 +177,22 @@ func TestInventoryFailsOnMalformedRecords(t *testing.T) {
 		"unknown record type": `{"type":"Finding","account":"a"}`,
 	}
 	for why, line := range malformed {
-		e := connectortest.Plugin(t, "m", `case "$1" in
+		t.Run(why, func(t *testing.T) {
+			t.Parallel()
+			e := connectortest.Plugin(t, "m", `case "$1" in
 describe) echo '{"name":"m","protocol":2}';;
 inventory) cat >/dev/null; echo '`+good+`'; echo '`+line+`';;
 esac
 `)
-		var rec recorder
-		err := e.Inventory(context.Background(), connector.Request{}, &rec)
-		if err == nil || !strings.Contains(err.Error(), "1 malformed record") {
-			t.Errorf("%s: err = %v", why, err)
-		}
-		if len(rec.findings) != 1 || rec.findings[0].Resource.ID != "ok" {
-			t.Errorf("%s: findings %+v; the well-formed one must still arrive", why, rec.findings)
-		}
+			var rec recorder
+			err := e.Inventory(context.Background(), connector.Request{}, &rec)
+			if err == nil || !strings.Contains(err.Error(), "1 malformed record") {
+				t.Errorf("err = %v", err)
+			}
+			if len(rec.findings) != 1 || rec.findings[0].Resource.ID != "ok" {
+				t.Errorf("findings %+v; the well-formed one must still arrive", rec.findings)
+			}
+		})
 	}
 }
 

@@ -11,12 +11,11 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// ProtocolVersion is the newest external connector protocol the core speaks. Version 2 adds
-// remediation (`plan` and `apply`); the core still speaks version 1 (MinProtocolVersion) to
-// connectors that only inventory. See docs/connectors.md.
+// ProtocolVersion is the newest external connector protocol the core speaks (docs/connectors.md).
 const (
-	ProtocolVersion    = 2
-	MinProtocolVersion = 1
+	ProtocolVersion     = 2
+	minProtocolVersion  = 1
+	remediationProtocol = 2 // the first with `plan` and `apply`
 )
 
 // Description is what `segurata-<name> describe` prints.
@@ -26,18 +25,13 @@ type Description struct {
 	Protocol int      `json:"protocol"`
 	Summary  string   `json:"summary"`
 	Needs    []string `json:"needs"` // "cdp", "cli:gcloud", "secret:OPENAI_ADMIN_KEY"
-	// Remediates lists the remediation actions an external connector plans and applies itself
-	// (protocol 2 and later). Built-in connectors leave it empty and implement Remediator.
+	// Remediates are the actions an external connector plans and applies itself; built-in
+	// connectors implement Remediator instead.
 	Remediates []string `json:"remediates,omitempty"`
-	// Timeout is how long one inventory may take by default, as a Go duration ("6h"), for a
-	// connector that routinely needs longer than the core's one hour. The instance's config
-	// `timeout` overrides it.
-	Timeout string `json:"timeout,omitempty"`
-	// Theme is the part of the tracker's briefing the connector's items go to: one of
-	// finding.Themes by id, or a theme of its own with a title and description. Zero: "other".
-	Theme finding.Theme `json:"theme,omitzero"`
-	// Covers are the plan areas (docs/plan.md) the connector audits, which close the tracker's
-	// "not audited" items for them once a run audited them.
+	// Timeout is a Go duration ("6h") for a connector that routinely needs more than an hour.
+	Timeout string        `json:"timeout,omitempty"`
+	Theme   finding.Theme `json:"theme,omitzero"`
+	// Covers are the plan areas (docs/plan.md) the connector audits.
 	Covers []finding.Area `json:"covers,omitempty"`
 }
 
@@ -59,19 +53,13 @@ type Request struct {
 	CDPURL   string            `json:"cdp_url,omitempty"`
 	Config   map[string]any    `json:"config,omitempty"`
 	Secrets  map[string]string `json:"secrets,omitempty"`
-	// Known is what the tracker knows about whose each secret is, lent to built-in connectors only
-	// (never sent to an external one): local-secrets' liveness check never tries a secret
-	// attributed to someone else. nil when the run was started without a tracker.
+	// Known says whose each secret is; built-in connectors only, never sent to a plugin.
 	Known *attribution.Known `json:"-"`
 }
 
-// Emitter receives records as the connector produces them.
-//
-// Statuses already say which accounts (or, with Status.Scope, which parts of one) were inspected.
-// Scope declares coverage no status carries: a repository the rate limit left unread, a project
-// beyond a cap. Every scope a connector meant to inspect and did not must be either a status other
-// than ok or a Scope(id, false, reason); otherwise its findings look resolved. See
-// docs/connectors.md, "Coverage".
+// Emitter receives records as the connector produces them. Every scope a connector meant to
+// inspect and did not must be a status other than ok or a Scope(id, false, reason), or its findings
+// look resolved (docs/connectors.md, "Coverage").
 type Emitter interface {
 	Finding(finding.Finding)
 	Status(finding.Status)
@@ -86,22 +74,17 @@ type Connector interface {
 	Inventory(ctx context.Context, req Request, emit Emitter) error
 }
 
-// SetupHinter is optional: a connector that implements it says how to set up one of the secrets
-// its Description needs. When a secret reference in the config cannot be resolved, the core owns
-// the one missing_credentials status and does not call Inventory; the hint goes in its detail.
+// SetupHinter says how to set up a secret; the hint goes into the core's missing_credentials status.
 type SetupHinter interface {
 	SetupHint(secret string) string
 }
 
-// Tracker is optional: a built-in connector that implements it says how the tracker groups and
-// titles each of its findings. The core sets Track on every finding the connector emits without
-// one; an external connector writes `track` in its findings instead. See finding.Track.
+// Tracker gives the finding.Track of each finding a built-in connector emits without one.
 type Tracker interface {
 	Track(f finding.Finding) *finding.Track
 }
 
-// HintFor is the SetupHint of a connector that needs one secret: hint when asked is that secret,
-// "" otherwise.
+// HintFor is the SetupHint of a connector that needs one secret.
 func HintFor(asked, secret, hint string) string {
 	if asked != secret {
 		return ""
@@ -109,8 +92,7 @@ func HintFor(asked, secret, hint string) string {
 	return hint
 }
 
-// Now is the current time in UTC from clock, or from the real clock when clock is nil: built-in
-// connectors take an optional clock so tests can fix the time.
+// Now is clock() in UTC, or the real time when clock is nil.
 func Now(clock func() time.Time) time.Time {
 	if clock == nil {
 		clock = time.Now
@@ -120,10 +102,9 @@ func Now(clock func() time.Time) time.Time {
 
 var builtins = map[string]Connector{}
 
-// Register is called from each built-in connector's init.
 func Register(c Connector) { builtins[c.Describe().Name] = c }
 
-// Builtins returns the compiled-in connectors sorted by name.
+// Builtins are the compiled-in connectors, sorted by name.
 func Builtins() []Connector {
 	out := make([]Connector, 0, len(builtins))
 	for _, c := range builtins {
