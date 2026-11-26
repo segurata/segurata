@@ -351,7 +351,7 @@ func TestInventoryEndToEnd(t *testing.T) {
 	byKey := map[string][]finding.Finding{}
 	var summary *finding.Finding
 	for _, f := range rec.findings {
-		if f.Resource.Type == NoiseSummaryType {
+		if f.Resource.Type == secretrisk.NoiseSummaryType {
 			summary = &f
 			continue
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runtest"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 func scoped(f finding.Finding, scope string) finding.Finding {
@@ -67,7 +68,7 @@ func TestSyncNeverClosesWhatARunDidNotInspect(t *testing.T) {
 				finding.Skipped{Scope: "repo:globex/b", Reason: "GitHub API rate limit ran low"}},
 			"repo:globex/b: GitHub API rate limit ran low"},
 		{"gitleaks timed out on one repository", "local-secrets.jsonl", pair{dump("~/src/slow"), dump("~/src/fast")},
-			[]any{okStatus(SecretsConnector, "local"), status(SecretsConnector, "~/src/slow", "", finding.StateError, "gitleaks: timed out after 2m0s")},
+			[]any{okStatus(secretrisk.ConnectorName, "local"), status(secretrisk.ConnectorName, "~/src/slow", "", finding.StateError, "gitleaks: timed out after 2m0s")},
 			"~/src/slow: error: gitleaks: timed out after 2m0s"},
 		{"gcp project with permission denied", "gcp.jsonl", pair{gcpKey("locked"), gcpKey("open")},
 			[]any{okStatus("gcp", "me@x.com"), status("gcp", "me@x.com", "locked", finding.StateError, "project locked: permission denied for api keys")},

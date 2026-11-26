@@ -168,7 +168,7 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	if c.rotations != "" {
 		require = func(rep SyncReport) error {
 			if !rep.foldedSecrets() {
-				return fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", SecretsConnector, *out, SecretsConnector)
+				return fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", secretrisk.ConnectorName, *out, secretrisk.ConnectorName)
 			}
 			return nil
 		}

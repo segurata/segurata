@@ -136,7 +136,7 @@ func family(f finding.Finding) string {
 
 func groupingFor(f finding.Finding) *grouping {
 	switch {
-	case f.Connector == SecretsConnector && f.Resource.Type == "data_dump":
+	case f.Connector == secretrisk.ConnectorName && f.Resource.Type == "data_dump":
 		return dumpsGrouping
 	case f.Track != nil:
 		return declared(f.Track)

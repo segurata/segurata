@@ -501,9 +501,9 @@ func TestNoiseSummaryReclassifies(t *testing.T) {
 		sight(ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", "~/src/lms/k.yml", "gitleaks", "repo", "", true, true)),
 		sight(ev("bbbbbbbbbbbbbbbb", "anthropic", "~/.zshrc", "scan", "config", "644", false, false)),
 	}, t0, false)
-	summary := finding.Finding{Connector: SecretsConnector, Resource: finding.Resource{Type: noiseSummaryType},
+	summary := finding.Finding{Connector: secretrisk.ConnectorName, Resource: finding.Resource{Type: secretrisk.NoiseSummaryType},
 		Evidence: map[string]any{"noise_fingerprints": map[string]any{"aaaaaaaaaaaaaaaa": "aws-access-key-id", "ffffffffffffffff": "assignment"}}}
-	noise := noiseOnly([]finding.Finding{{Connector: SecretsConnector, Resource: finding.Resource{Type: "secret"}}, summary})
+	noise := noiseOnly([]finding.Finding{{Connector: secretrisk.ConnectorName, Resource: finding.Resource{Type: "secret"}}, summary})
 	if len(noise) != 2 {
 		t.Fatalf("NoiseOnly %v", noise)
 	}
@@ -535,7 +535,7 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 	tr := New(t0)
 	sync := func(n int, recs ...any) {
 		t.Helper()
-		writeRun(t, out, day(n), "local-secrets.jsonl", append(recs, okStatus(SecretsConnector, "local"))...)
+		writeRun(t, out, day(n), "local-secrets.jsonl", append(recs, okStatus(secretrisk.ConnectorName, "local"))...)
 		syncOrDie(t, tr, out, day(n).Add(time.Hour))
 	}
 	sync(0, leak(env, day(0)), leak(old, day(0)), leak(git, day(0)))
@@ -567,7 +567,7 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 
 	// A run that skipped the files proves nothing: ~/src/old/.env stays in used_in.
 	writeRun(t, out, day(2), "local-secrets.jsonl", leak(git, day(2)), finding.Skipped{Scope: "files", Reason: "ripgrep failed"},
-		okStatus(SecretsConnector, "local"))
+		okStatus(secretrisk.ConnectorName, "local"))
 	syncOrDie(t, tr, out, day(2).Add(time.Hour))
 	if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env" {
 		t.Errorf("day 2 (files skipped) used_in %q", got)
@@ -583,7 +583,7 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 	// files: the shop's .env stays in used_in and its finding is not gone.
 	for n, unreadable := range []string{"~/src/shop/.env", "~/src/shop"} {
 		writeRun(t, out, day(4+n), "local-secrets.jsonl", leak(old, day(4+n)), leak(git, day(4+n)),
-			finding.Skipped{Scope: finding.PathScope("files", unreadable), Reason: "unreadable"}, okStatus(SecretsConnector, "local"))
+			finding.Skipped{Scope: finding.PathScope("files", unreadable), Reason: "unreadable"}, okStatus(secretrisk.ConnectorName, "local"))
 		syncOrDie(t, tr, out, day(4+n).Add(time.Hour))
 		if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env ~/src/shop/.env" {
 			t.Errorf("%s unreadable: used_in %q", unreadable, got)

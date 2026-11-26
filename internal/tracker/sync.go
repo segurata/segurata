@@ -345,11 +345,11 @@ var trail = map[string]bool{"transcript": true, "history": true, "log": true}
 func (r *run) isSecrets() bool { return isSecretsLabel(r.label) }
 
 func isSecretsLabel(l string) bool {
-	return l == SecretsConnector || strings.HasPrefix(l, SecretsConnector+":")
+	return l == secretrisk.ConnectorName || strings.HasPrefix(l, secretrisk.ConnectorName+":")
 }
 
 func transcriptsProposal() proposal {
-	return proposal{theme: "transcripts", kind: KindFix, connector: SecretsConnector, maxSeverity: finding.SevMedium,
+	return proposal{theme: "transcripts", kind: KindFix, connector: secretrisk.ConnectorName, maxSeverity: finding.SevMedium,
 		next: &Next{Who: Segurata, Command: "segurata redact --trails",
 			Action: "Review the dry run, then run it again with --apply. Rotation is still needed: these copies already reached the model provider or wherever the trail went."}}
 }

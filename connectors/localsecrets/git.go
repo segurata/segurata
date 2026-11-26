@@ -65,7 +65,7 @@ func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	if !ok {
 		var err error
 		if files, err = s.lsFiles(root); err != nil {
-			s.emit.Status(finding.Status{Account: s.tilde(root), Scope: filesScope, State: finding.StateError,
+			s.emit.Status(finding.Status{Account: s.tilde(root), Scope: secretrisk.FilesScope, State: finding.StateError,
 				Detail: "git ls-files: " + err.Error() + ": whether its files are tracked is unknown"})
 		}
 		s.git.files[root] = files // nil after a failure: asked once per run

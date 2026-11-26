@@ -452,7 +452,7 @@ func TestTemporaryAWSAndPresignedURLs(t *testing.T) {
 	}
 	var summary *finding.Finding
 	for i, f := range rec.findings {
-		if f.Resource.Type == NoiseSummaryType {
+		if f.Resource.Type == secretrisk.NoiseSummaryType {
 			summary = &rec.findings[i]
 		}
 	}

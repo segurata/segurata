@@ -27,7 +27,7 @@ const coverageTheme = "coverage"
 
 // themeOf is the theme of a finding whose run declared the theme declared ("" for none).
 func themeOf(f finding.Finding, declared string) string {
-	if f.Connector == SecretsConnector {
+	if f.Connector == secretrisk.ConnectorName {
 		if f.Resource.Type == "data_dump" {
 			return "data-dumps"
 		}

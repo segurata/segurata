@@ -30,7 +30,7 @@ func attributionFixture(t *testing.T) (*Tracker, string) {
 	out := t.TempDir()
 	secret := func(fp, file string, c attribution.Claims) finding.Finding {
 		path := legacy + "/" + file
-		f := fnd(SecretsConnector, "", "local", "secret", "gitleaks:"+path+"#"+fp, "AWS key", finding.SevCritical, "AWS key in "+path, t0)
+		f := fnd(secretrisk.ConnectorName, "", "local", "secret", "gitleaks:"+path+"#"+fp, "AWS key", finding.SevCritical, "AWS key in "+path, t0)
 		raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: fp, Type: "aws-access-key-id", Redacted: "AKIA…" + fp[:4] + "(20)", Path: path,
 			Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "b", Claims: c})
 		_ = json.Unmarshal(raw, &f.Evidence)
@@ -40,7 +40,7 @@ func attributionFixture(t *testing.T) (*Tracker, string) {
 		secret("1111aaaa1111aaaa", "a/.env", attribution.Claims{AWSAccount: ownAWS, AuthorEmail: "me@x.com"}),
 		secret("2222bbbb2222bbbb", "b/x.py", attribution.Claims{AWSAccount: foreignAWS}),
 		secret("3333cccc3333cccc", "c/y.py", attribution.Claims{}),
-		okStatus(SecretsConnector, "local"))
+		okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, t0, "aws.jsonl", finding.Status{Type: "status", Connector: "aws", Account: ownAWS, State: finding.StateNoScope, Detail: "limited"})
 	tr := New(t0)
 	if _, err := tr.Sync(SyncOptions{OutDir: out, Owned: attribution.Owned{Emails: []string{"me@x.com"}}}, t0.Add(time.Hour)); err != nil {
@@ -219,7 +219,7 @@ func TestAttributionMineRestoresFullImpactInThirdPartyRepositories(t *testing.T)
 	out := t.TempDir()
 	secret := func(fp, origin string, c attribution.Claims) finding.Finding {
 		path := "~/src/upstream/lib/s3.py"
-		f := fnd(SecretsConnector, "", "local", "secret", "gitleaks:"+path+"#"+fp, "AWS key", finding.SevInfo, "AWS key in "+path, t0)
+		f := fnd(secretrisk.ConnectorName, "", "local", "secret", "gitleaks:"+path+"#"+fp, "AWS key", finding.SevInfo, "AWS key in "+path, t0)
 		raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: fp, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: path, Repo: "~/src/upstream",
 			Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "b", Origin: origin, Claims: c})
 		_ = json.Unmarshal(raw, &f.Evidence)
@@ -230,7 +230,7 @@ func TestAttributionMineRestoresFullImpactInThirdPartyRepositories(t *testing.T)
 		secret("4444dddd4444dddd", secretrisk.OriginForkUpstream, attribution.Claims{AWSAccount: ownAWS}),
 		secret("2222bbbb2222bbbb", secretrisk.OriginThirdParty, attribution.Claims{AWSAccount: foreignAWS}),
 		secret("3333cccc3333cccc", secretrisk.OriginThirdParty, attribution.Claims{}),
-		okStatus(SecretsConnector, "local"))
+		okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, t0, "aws.jsonl", finding.Status{Type: "status", Connector: "aws", Account: ownAWS, State: finding.StateOK})
 	tr := New(t0)
 	if _, err := tr.Sync(SyncOptions{OutDir: out}, t0.Add(time.Hour)); err != nil {

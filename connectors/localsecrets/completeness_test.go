@@ -16,6 +16,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // A run that could not read part of the machine says so, so the findings it missed there are not
@@ -66,10 +67,10 @@ echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, t
 			}
 			var files, paths []string
 			for _, s := range rec.skipped {
-				if strings.HasPrefix(s, filesScope+": ") {
+				if strings.HasPrefix(s, secretrisk.FilesScope+": ") {
 					files = append(files, s)
 				}
-				if p, ok := strings.CutPrefix(s, filesScope+":/"); ok {
+				if p, ok := strings.CutPrefix(s, secretrisk.FilesScope+":/"); ok {
 					paths = append(paths, "/"+strings.TrimSuffix(p, ": unreadable"))
 				}
 			}
@@ -121,11 +122,11 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 	}
 	var files []string
 	for _, s := range rec.skipped {
-		if strings.HasPrefix(s, filesScope) {
+		if strings.HasPrefix(s, secretrisk.FilesScope) {
 			files = append(files, s)
 		}
 	}
-	if want := []string{finding.PathScope(filesScope, "~/.config/locked.env") + ": unreadable"}; !slices.Equal(files, want) {
+	if want := []string{finding.PathScope(secretrisk.FilesScope, "~/.config/locked.env") + ": unreadable"}; !slices.Equal(files, want) {
 		t.Errorf("files skipped %q, want %q", files, want)
 	}
 	var detail string
@@ -166,12 +167,12 @@ func TestFailedLsFilesIsAScopedErrorNotAnEmptyRepository(t *testing.T) {
 	}
 	var failed int
 	for _, s := range rec.statuses {
-		if s.State == finding.StateError && s.Scope == filesScope && s.Account == "~/src/shop" && strings.Contains(s.Detail, "git ls-files") {
+		if s.State == finding.StateError && s.Scope == secretrisk.FilesScope && s.Account == "~/src/shop" && strings.Contains(s.Detail, "git ls-files") {
 			failed++
 		}
 	}
 	if failed != 1 {
-		t.Errorf("want one error status for ~/src/shop scoped to %q, got %d: %+v", filesScope, failed, rec.statuses)
+		t.Errorf("want one error status for ~/src/shop scoped to %q, got %d: %+v", secretrisk.FilesScope, failed, rec.statuses)
 	}
 	if lsCalls != 1 {
 		t.Errorf("ls-files ran %d times for one repository in one run", lsCalls)

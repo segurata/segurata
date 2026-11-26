@@ -16,10 +16,6 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// SecretsConnector is the connector whose findings feed rotate items, one per fingerprint. See
-// docs/architecture.md, "Rotation ledger".
-const SecretsConnector = "local-secrets"
-
 // StillPresent is why a rotated secret seen again in a working file reopens.
 const StillPresent = "still present after rotation (old value still in a working file)"
 
@@ -112,7 +108,7 @@ func sightingsOf(fs []finding.Finding) []Sighting {
 }
 
 func secretEvidence(f finding.Finding) (secretrisk.Evidence, bool) {
-	if f.Connector != SecretsConnector {
+	if f.Connector != secretrisk.ConnectorName {
 		return secretrisk.Evidence{}, false
 	}
 	return secretrisk.EvidenceOf(f)
@@ -272,10 +268,10 @@ func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 // which the connector emits instead of the noise findings.
 func noiseOnly(fs []finding.Finding) map[string]string {
 	for _, f := range fs {
-		if f.Connector != SecretsConnector || f.Resource.Type != noiseSummaryType {
+		if f.Connector != secretrisk.ConnectorName || f.Resource.Type != secretrisk.NoiseSummaryType {
 			continue
 		}
-		raw, _ := json.Marshal(f.Evidence["noise_fingerprints"])
+		raw, _ := json.Marshal(f.Evidence[secretrisk.NoiseFingerprints])
 		var m map[string]string
 		if json.Unmarshal(raw, &m) == nil {
 			return m
@@ -283,9 +279,6 @@ func noiseOnly(fs []finding.Finding) map[string]string {
 	}
 	return nil
 }
-
-// noiseSummaryType is localsecrets.NoiseSummaryType; the tracker does not import connectors.
-const noiseSummaryType = "noise_summary"
 
 // syncNoise reclassifies the items a noise summary names; it never creates one. An item attributed
 // mine with an upstream copy stays: that copy is noise only for where it sits.
@@ -399,13 +392,10 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	rep.Reopened++
 }
 
-// secretsFilesScope is localsecrets.filesScope: findings outside git history.
-const secretsFilesScope = "files"
-
 // markGoneLocations flags the working locations a local-secrets run read without reporting the
 // secret. A skipped file or a noise-only secret proves nothing.
 func (t *Tracker) markGoneLocations(r *run) {
-	if _, unchecked := r.cov.Unchecked("", secretsFilesScope); unchecked {
+	if _, unchecked := r.cov.Unchecked("", secretrisk.FilesScope); unchecked {
 		return
 	}
 	seen := map[string]bool{}
@@ -419,7 +409,7 @@ func (t *Tracker) markGoneLocations(r *run) {
 		}
 		for i := range it.Secret.Locations {
 			l := &it.Secret.Locations[i]
-			if _, unchecked := r.cov.UncheckedPath("", secretsFilesScope, l.Path); l.working() && !unchecked && !seen[fp+"\x00"+l.key()] {
+			if _, unchecked := r.cov.UncheckedPath("", secretrisk.FilesScope, l.Path); l.working() && !unchecked && !seen[fp+"\x00"+l.key()] {
 				l.Gone = true
 			}
 		}

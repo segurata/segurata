@@ -203,7 +203,7 @@ func (l *trailFailure) Log(string)              {}
 func (l *trailFailure) Scope(id string, inspected bool, reason string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if id == filesScope && !inspected && l.msg == "" {
+	if id == secretrisk.FilesScope && !inspected && l.msg == "" {
 		l.msg = reason
 	}
 }

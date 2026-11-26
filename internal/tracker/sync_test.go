@@ -26,7 +26,7 @@ func fnd(connector, instance, account, resType, resID, name string, sev finding.
 // dumpFinding is a local-secrets data_dump finding of one file of a repository, as the connector
 // writes it.
 func dumpFinding(repo, path string, sev finding.Severity, size int64, at time.Time) finding.Finding {
-	f := fnd(SecretsConnector, "", "local", "data_dump", repo+":"+path, path, sev, "Database dump committed to "+repo+": "+path+" ("+secretrisk.HumanSize(size)+", pushed)", at)
+	f := fnd(secretrisk.ConnectorName, "", "local", "data_dump", repo+":"+path, path, sev, "Database dump committed to "+repo+": "+path+" ("+secretrisk.HumanSize(size)+", pushed)", at)
 	f.Evidence = map[string]any{"source": "data-dump", "repo": repo, "path": path, "size_bytes": float64(size), "size": secretrisk.HumanSize(size), "remote": true}
 	return f
 }
@@ -125,7 +125,7 @@ func TestGroupingRules(t *testing.T) {
 		return dumpFinding("~/src/api", path, sev, 365<<10, t0)
 	}
 	secret := func(fp, kind, path string) finding.Finding {
-		f := fnd(SecretsConnector, "", "local", "secret", "scan:"+path+"#"+fp, "Stripe live key", finding.SevCritical, "Stripe live secret key in "+path, t0)
+		f := fnd(secretrisk.ConnectorName, "", "local", "secret", "scan:"+path+"#"+fp, "Stripe live key", finding.SevCritical, "Stripe live secret key in "+path, t0)
 		raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: fp, Type: "stripe-live", Redacted: "sk_live_…" + fp[:4] + "(107)", Path: path,
 			Source: "scan", Kind: kind, Mode: "600", Bucket: "b"})
 		_ = json.Unmarshal(raw, &f.Evidence)
@@ -133,7 +133,7 @@ func TestGroupingRules(t *testing.T) {
 	}
 	writeRun(t, out, t0, "local-secrets.jsonl", dump("a.sql", finding.SevHigh), dump("b.sql", finding.SevCritical), dump("c.sql", finding.SevInfo),
 		secret("aaaaaaaaaaaaaaaa", "repo", "~/src/shop/.env"), secret("aaaaaaaaaaaaaaaa", "transcript", "~/.claude/projects/p/s.jsonl"),
-		secret("bbbbbbbbbbbbbbbb", "history", "~/.zsh_history"), okStatus(SecretsConnector, "local"))
+		secret("bbbbbbbbbbbbbbbb", "history", "~/.zsh_history"), okStatus(secretrisk.ConnectorName, "local"))
 
 	tr := New(t0)
 	rep := syncOrDie(t, tr, out, t0.Add(time.Hour))
@@ -475,7 +475,7 @@ func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	a, b, c := dumpFinding("~/src/api", "a.sql", finding.SevHigh, 1<<20, t0), dumpFinding("~/src/api", "b.sql", finding.SevHigh, 2<<20, t0),
 		dumpFinding("~/src/api", "c.sql", finding.SevMedium, 3<<20, t0)
-	writeRun(t, out, t0, "local-secrets.jsonl", a, b, c, okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0, "local-secrets.jsonl", a, b, c, okStatus(secretrisk.ConnectorName, "local"))
 	tr := New(t0)
 	// Per-file items as an older sync made them.
 	old := map[string]*Item{}

@@ -14,7 +14,7 @@ import (
 
 // leak is a local-secrets finding of one copy of a secret.
 func leak(e secretrisk.Evidence, at time.Time) finding.Finding {
-	f := fnd(SecretsConnector, "", "local", "secret", e.Source+":"+e.Path+"#"+e.Fingerprint, e.Type, finding.SevHigh, e.Type+" in "+e.Path, at)
+	f := fnd(secretrisk.ConnectorName, "", "local", "secret", e.Source+":"+e.Path+"#"+e.Fingerprint, e.Type, finding.SevHigh, e.Type+" in "+e.Path, at)
 	raw, _ := json.Marshal(e)
 	_ = json.Unmarshal(raw, &f.Evidence)
 	return f
@@ -36,7 +36,7 @@ func awsKeyRuns(t *testing.T, out string, at time.Time, connectorFP string) {
 		Source: "scan", Kind: "config", Mode: "600", Bucket: "3-local", Count: 1}
 	git := secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/legacyco/data/s3.py",
 		Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2019-05-02"}
-	writeRun(t, out, at, "local-secrets.jsonl", leak(cred, at), leak(git, at), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, at, "local-secrets.jsonl", leak(cred, at), leak(git, at), okStatus(secretrisk.ConnectorName, "local"))
 	key := withEvidence(fnd("aws", "", "local", "aws_local_credentials", "/x/.aws/credentials#default", "default", finding.SevMedium,
 		`Long-lived AWS access key for profile "default" stored in plain text; aws sts says it works for account 012345678901`, at),
 		map[string]any{"file": "~/.aws/credentials", "key_id": "AKIARB…(20)", "fingerprint": connectorFP, "sts_account": "012345678901"})
@@ -90,7 +90,7 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	// dropped), but the new key's fingerprint says it is another key.
 	writeRun(t, out, day3, "local-secrets.jsonl", leak(secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)",
 		Path: "~/src/legacyco/data/s3.py", Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1}, day3),
-		okStatus(SecretsConnector, "local"))
+		okStatus(secretrisk.ConnectorName, "local"))
 	syncOrDie(t, tr, out, day3.Add(time.Minute))
 	if awsItem.Status != Open || awsItem.MergedInto != "" || len(awsItem.Findings) != 1 {
 		t.Errorf("aws item after the key changed: %s %q %d refs", awsItem.Status, awsItem.MergedInto, len(awsItem.Findings))
@@ -109,7 +109,7 @@ func TestProofOfALiveKeyReopensAnIgnoredSecret(t *testing.T) {
 	tr := New(t0)
 	cred := secretrisk.Evidence{Fingerprint: awsFP, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/legacyco/data/s3.py",
 		Repo: "~/src/legacyco/data", Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "0-git", Count: 1, Date: "2019-05-02"}
-	writeRun(t, out, t0, "local-secrets.jsonl", leak(cred, t0), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0, "local-secrets.jsonl", leak(cred, t0), okStatus(secretrisk.ConnectorName, "local"))
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
 	rot := mustRotate(t, tr, awsFP[:8])
 	d := tr.addDecision("manual:legacy", "Is legacyco dead?", []string{"yes"}, t0)
@@ -174,7 +174,7 @@ func TestProofOfALiveKeyReopensARotatedSecret(t *testing.T) {
 			`Long-lived AWS access key for profile "default" stored in plain text; aws sts says it works for account 012345678901`, at),
 			map[string]any{"file": "~/.aws/credentials", "key_id": "AKIARB…(20)", "fingerprint": fp, "sts_account": "012345678901"})
 	}
-	writeRun(t, out, t0, "local-secrets.jsonl", leak(cred, t0), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0, "local-secrets.jsonl", leak(cred, t0), okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, t0, "aws.jsonl", key(t0, awsFP), okStatus("aws", "012345678901"))
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
 	rot := mustRotate(t, tr, awsFP[:8])
@@ -186,7 +186,7 @@ func TestProofOfALiveKeyReopensARotatedSecret(t *testing.T) {
 	}
 
 	day2 := t0.Add(24 * time.Hour)
-	writeRun(t, out, day2, "local-secrets.jsonl", leak(cred, day2), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, day2, "local-secrets.jsonl", leak(cred, day2), okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, day2, "aws.jsonl", key(day2, awsFP), okStatus("aws", "012345678901"))
 	syncOrDie(t, tr, out, day2.Add(time.Minute))
 	if rot.Status != Open {
@@ -200,7 +200,7 @@ func TestProofOfALiveKeyReopensARotatedSecret(t *testing.T) {
 	// Rotated again, and the next run reports another key in the file: it stays rotated.
 	rot.Done(day2.Add(time.Hour), "")
 	day3 := day2.Add(24 * time.Hour)
-	writeRun(t, out, day3, "local-secrets.jsonl", leak(cred, day3), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, day3, "local-secrets.jsonl", leak(cred, day3), okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, day3, "aws.jsonl", key(day3, "b6b6b6b6b6b6b6b6"), okStatus("aws", "012345678901"))
 	syncOrDie(t, tr, out, day3.Add(time.Minute))
 	if rot.Status != Done {
@@ -221,7 +221,7 @@ func TestCorrelationByHintPathAndConnectorSecrets(t *testing.T) {
 		Source: "scan", Kind: "repo", Mode: "600", Bucket: "3-local", Count: 1}
 	other := secretrisk.Evidence{Fingerprint: "cdefcdefcdefcdef", Type: "openrouter", Redacted: "sk-or-v1-…0000(73)", Path: "~/.zshrc",
 		Source: "scan", Kind: "config", Mode: "600", Bucket: "3-local", Count: 1}
-	writeRun(t, out, t0, "local-secrets.jsonl", leak(or, t0), leak(sa, t0), leak(vc, t0), leak(other, t0), okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0, "local-secrets.jsonl", leak(or, t0), leak(sa, t0), leak(vc, t0), leak(other, t0), okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, t0, "openrouter-personal.jsonl",
 		withEvidence(fnd("openrouter", "personal", "Default Workspace", "api_key", "k1", "Claude Code", finding.SevInfo, `API key "Claude Code": in use with a credit limit`, t0),
 			map[string]any{"redacted": "sk-or-v1-27e...d4d", "usage_month": 40.5}),
@@ -305,7 +305,7 @@ func TestHintMatchConfidenceFactsAndAmbiguity(t *testing.T) {
 		leak(ev("2222222222222222", "sk-or-v1-…ab12(73)", "~/.claude/projects/b/s.jsonl"), t0),
 		leak(ev("3333333333333333", "sk-or-v1-…ab12(73)", "~/.claude/projects/c/s.jsonl"), t0),
 		leak(ev("4444444444444444", "sk-proj-…j_MA(164)", "~/.claude/projects/d/s.jsonl"), t0),
-		okStatus(SecretsConnector, "local"))
+		okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, t0, "openrouter-personal.jsonl",
 		key("k1", "Claude Code", "sk-or-v1-27e…d4d(?)", 42),
 		key("k2", "Shared", "sk-or-v1-9f0…ab12(?)", 0),

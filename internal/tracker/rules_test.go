@@ -34,7 +34,7 @@ func rulesFixture(t *testing.T) (*Tracker, string) {
 	t.Helper()
 	out := t.TempDir()
 	secret := func(fp, path, kind string) finding.Finding {
-		f := fnd(SecretsConnector, "", "local", "secret", "scan:"+path+"#"+fp, "AWS key", finding.SevCritical, "AWS key in "+path, t0)
+		f := fnd(secretrisk.ConnectorName, "", "local", "secret", "scan:"+path+"#"+fp, "AWS key", finding.SevCritical, "AWS key in "+path, t0)
 		raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: fp, Type: "aws", Redacted: "AKIA…" + fp[:4] + "(20)", Path: path, Source: "gitleaks",
 			Kind: kind, Tracked: true, Remote: true, Bucket: "b"})
 		_ = json.Unmarshal(raw, &f.Evidence)
@@ -45,7 +45,7 @@ func rulesFixture(t *testing.T) (*Tracker, string) {
 	key := fnd("gcp", "", "a@x.com", "api_key", "k1", "Old key", finding.SevHigh, "API key \"Old key\" in old-proj has no restrictions", t0)
 	key.Evidence = map[string]any{"project": "old-proj"}
 	writeRun(t, out, t0, "local-secrets.jsonl", secret("1111aaaa1111aaaa", "~/src/old/a/.env", "repo"), secret("2222bbbb2222bbbb", "~/src/old/b/x.py", "repo"),
-		secret("3333cccc3333cccc", "~/src/old/c/y.py", "repo"), secret("3333cccc3333cccc", "~/src/live/.env", "repo"), dump, okStatus(SecretsConnector, "local"))
+		secret("3333cccc3333cccc", "~/src/old/c/y.py", "repo"), secret("3333cccc3333cccc", "~/src/live/.env", "repo"), dump, okStatus(secretrisk.ConnectorName, "local"))
 	writeRun(t, out, t0, "github.jsonl", repo, okStatus("github", "github:acme"))
 	writeRun(t, out, t0, "gcp.jsonl", key, okStatus("gcp", "a@x.com"))
 	tr := New(t0)
@@ -91,11 +91,11 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 	// A new secret found later under ~/src/old never opens an item; one reopened by hand stays open.
 	b2, _ := tr.FindRotate("2222bbbb")
 	b2.reopen(now.Add(time.Minute), "still used, actually")
-	f := fnd(SecretsConnector, "", "local", "secret", "scan:x#4444", "AWS key", finding.SevCritical, "AWS key", t0)
+	f := fnd(secretrisk.ConnectorName, "", "local", "secret", "scan:x#4444", "AWS key", finding.SevCritical, "AWS key", t0)
 	raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: "4444dddd4444dddd", Type: "aws", Redacted: "AKIA…4444(20)", Path: "~/src/old/d/z.py",
 		Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "b"})
 	_ = json.Unmarshal(raw, &f.Evidence)
-	writeRun(t, out, t0.Add(24*time.Hour), "local-secrets.jsonl", f, okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0.Add(24*time.Hour), "local-secrets.jsonl", f, okStatus(secretrisk.ConnectorName, "local"))
 	rep := syncOrDie(t, tr, out, t0.Add(25*time.Hour))
 	if n, _ := tr.FindRotate("4444dddd"); n.Status != Ignored || rep.Ruled != 1 {
 		t.Errorf("new secret in scope: %s, ruled %d", n.Status, rep.Ruled)
@@ -134,11 +134,11 @@ func TestAnsweringADecisionAgainReplacesThePreviousRules(t *testing.T) {
 	}
 
 	// A secret found later under ~/src/old opens an item: no rule covers it any more.
-	f := fnd(SecretsConnector, "", "local", "secret", "scan:x#4444", "AWS key", finding.SevCritical, "AWS key", t0)
+	f := fnd(secretrisk.ConnectorName, "", "local", "secret", "scan:x#4444", "AWS key", finding.SevCritical, "AWS key", t0)
 	raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: "4444dddd4444dddd", Type: "aws", Redacted: "AKIA…4444(20)", Path: "~/src/old/d/z.py",
 		Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "b"})
 	_ = json.Unmarshal(raw, &f.Evidence)
-	writeRun(t, out, t0.Add(24*time.Hour), "local-secrets.jsonl", f, okStatus(SecretsConnector, "local"))
+	writeRun(t, out, t0.Add(24*time.Hour), "local-secrets.jsonl", f, okStatus(secretrisk.ConnectorName, "local"))
 	syncOrDie(t, tr, out, t0.Add(25*time.Hour))
 	if n, _ := tr.FindRotate("4444dddd"); n.Status != Open {
 		t.Errorf("new secret under ~/src/old: %s", n.Status)

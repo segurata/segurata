@@ -20,6 +20,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runfile"
+	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -376,7 +377,7 @@ func latestOwned(out string, now time.Time) (attribution.Owned, error) {
 	var sts []finding.Status
 	for _, f := range files {
 		name, _, _ := strings.Cut(runfile.FileLabel(f), ":")
-		if name == tracker.SecretsConnector {
+		if name == secretrisk.ConnectorName {
 			continue
 		}
 		rf, err := runfile.Read(f)

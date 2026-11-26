@@ -124,22 +124,18 @@ func (n *noiseCounts) name(ev secretrisk.Evidence) {
 	}
 }
 
-// NoiseSummaryType is the resource type of the finding standing for the noise left out: its
-// noise_fingerprints let the tracker close items whose secret became noise.
-const NoiseSummaryType = "noise_summary"
-
 func (n noiseCounts) summary() (finding.Finding, bool) {
 	if n.total == 0 {
 		return finding.Finding{}, false
 	}
 	return finding.Finding{
 		Account:  localAccount,
-		Resource: finding.Resource{Type: NoiseSummaryType, ID: "noise", Name: "noise left out"},
+		Resource: finding.Resource{Type: secretrisk.NoiseSummaryType, ID: "noise", Name: "noise left out"},
 		Kind:     finding.KindExposure,
 		Severity: finding.SevInfo,
 		Title:    fmt.Sprintf("%d noise matches left out (emit_noise: true lists them)", n.total),
 		Evidence: map[string]any{"source": "noise", "total": n.total, "by_type": n.byType, "by_place": n.byPlace,
-			"noise_fingerprints": n.types},
+			secretrisk.NoiseFingerprints: n.types},
 		Remediation: finding.Remediation{Summary: "Nothing to do: generic matches, public, expired or encrypted values, and copies that are not yours."},
 	}, true
 }

@@ -33,11 +33,11 @@ func newCLIFixture(t *testing.T) *cliFixture {
 		fnd("github", "", "github:a", "github_org_setting", "org-2fa-not-required", "a", finding.SevHigh, "a does not require two-factor authentication", t0),
 		fnd("github", "", "github:b", "github_org_setting", "org-2fa-not-required", "b", finding.SevHigh, "b does not require two-factor authentication", t0),
 		finding.Status{Type: "status", Connector: "github", Account: "github:me", State: finding.StateNoScope, Detail: "gh lacks read:org"})
-	f := fnd(SecretsConnector, "", "local", "secret", "scan:~/src/shop/.env#ffff", "Stripe live key", finding.SevCritical, "Stripe live secret key in ~/src/shop/.env", t0)
+	f := fnd(secretrisk.ConnectorName, "", "local", "secret", "scan:~/src/shop/.env#ffff", "Stripe live key", finding.SevCritical, "Stripe live secret key in ~/src/shop/.env", t0)
 	raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: "ffffeeeeddddcccc", Type: "stripe-live", Redacted: secretrisk.Redact("stripe-live", "sk_live_", x.value),
 		Path: "~/.claude/projects/p/s.jsonl", Source: "scan", Kind: "transcript", Mode: "600", Bucket: "b", Line: 4})
 	_ = json.Unmarshal(raw, &f.Evidence)
-	writeRun(t, x.out, t0, "local-secrets.jsonl", f, okStatus(SecretsConnector, "local"))
+	writeRun(t, x.out, t0, "local-secrets.jsonl", f, okStatus(secretrisk.ConnectorName, "local"))
 	return x
 }
 

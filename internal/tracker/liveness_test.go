@@ -36,7 +36,7 @@ func writeSecrets(t *testing.T, out string, at time.Time, evs ...secretrisk.Evid
 	for _, e := range evs {
 		recs = append(recs, leak(e, at))
 	}
-	writeRun(t, out, at, "local-secrets.jsonl", append(recs, okStatus(SecretsConnector, "local"))...)
+	writeRun(t, out, at, "local-secrets.jsonl", append(recs, okStatus(secretrisk.ConnectorName, "local"))...)
 }
 
 func checked(state secretrisk.LiveState, at time.Time, account string) *secretrisk.Liveness {

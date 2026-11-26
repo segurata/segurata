@@ -132,9 +132,9 @@ func (s *scan) rgOutput(args []string) []byte {
 			return out
 		}
 		// Stderr names paths under the home: the reason keeps only the exit status.
-		s.emit.Scope(filesScope, false, ce.Cmd+": "+ce.Err.Error())
+		s.emit.Scope(secretrisk.FilesScope, false, ce.Cmd+": "+ce.Err.Error())
 	default:
-		s.emit.Scope(filesScope, false, "rg: "+err.Error())
+		s.emit.Scope(secretrisk.FilesScope, false, "rg: "+err.Error())
 	}
 	return out
 }
@@ -192,7 +192,7 @@ func (s *scan) skipUnreadable(paths []string) {
 	for _, p := range paths {
 		if !s.unreadable[p] {
 			s.unreadable[p] = true
-			s.emit.Scope(finding.PathScope(filesScope, s.tilde(p)), false, "unreadable")
+			s.emit.Scope(finding.PathScope(secretrisk.FilesScope, s.tilde(p)), false, "unreadable")
 		}
 	}
 }

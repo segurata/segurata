@@ -12,6 +12,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/redact"
+	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // redactCmd is `segurata redact`: replace the secrets local-secrets finds in trail files.
@@ -24,7 +25,7 @@ func redactCmd(args []string) int {
 			if err != nil {
 				return nil, fmt.Errorf("config: %w", err)
 			}
-			return localsecrets.New().Trails(ctx, cfg.Connectors["local-secrets"].Config)
+			return localsecrets.New().Trails(ctx, cfg.Connectors[secretrisk.ConnectorName].Config)
 		},
 		Lsof: lsof, Now: time.Now}.Run(ctx, args)
 }

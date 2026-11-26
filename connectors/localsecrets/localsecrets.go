@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	name           = "local-secrets"
+	name           = secretrisk.ConnectorName
 	localAccount   = "local"
 	fixDoc         = "docs/secrets.md"
 	defaultWorkers = 6
@@ -171,7 +171,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		return fmt.Errorf("fingerprint key: %w", err)
 	}
 	if cfg.dumps == dumpsOnly {
-		emit.Scope(filesScope, false, `data_dumps is "only"`)
+		emit.Scope(secretrisk.FilesScope, false, `data_dumps is "only"`)
 		emit.Scope(historyScope("*"), false, `data_dumps is "only"`)
 		s := newScan(ctx, c, home, cfg, fp, emit)
 		s.dumpsAll()
@@ -566,8 +566,6 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 
 // Scopes say which part of the machine a run left unread: the files, or one repository's history
 // or dumps.
-const filesScope = "files"
-
 func historyScope(repo string) string { return "history:" + repo }
 func dumpsScope(repo string) string   { return "dumps:" + repo }
 
@@ -575,7 +573,7 @@ func secretScope(ev secretrisk.Evidence) string {
 	if ev.Source == "gitleaks" {
 		return historyScope(ev.Repo)
 	}
-	return filesScope
+	return secretrisk.FilesScope
 }
 
 // remedy offers a chmod 600 for a working file other users can read: ranked by the finding when

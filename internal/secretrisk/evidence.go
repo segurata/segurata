@@ -7,6 +7,19 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
+// What the local-secrets connector and the tracker agree on besides Evidence.
+const (
+	// ConnectorName is the local-secrets connector; its findings feed rotate items, one per
+	// fingerprint. See docs/architecture.md, "Rotation ledger".
+	ConnectorName = "local-secrets"
+	// FilesScope is the scope of the findings outside git history.
+	FilesScope = "files"
+	// NoiseSummaryType is the resource type of the finding standing for the noise left out; its
+	// NoiseFingerprints evidence maps each noise-only fingerprint to its type.
+	NoiseSummaryType  = "noise_summary"
+	NoiseFingerprints = "noise_fingerprints"
+)
+
 // Evidence is what a local-secrets finding carries. It never holds a secret value: at most a
 // redacted hint and an HMAC fingerprint only this machine's key can reproduce.
 type Evidence struct {

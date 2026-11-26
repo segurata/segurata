@@ -39,9 +39,9 @@ func writeFindings(t *testing.T, path string, evs ...secretrisk.Evidence) {
 		raw, _ := json.Marshal(e)
 		var m map[string]any
 		_ = json.Unmarshal(raw, &m)
-		recs = append(recs, finding.Finding{Type: "finding", Connector: tracker.SecretsConnector, Evidence: m, ObservedAt: t0})
+		recs = append(recs, finding.Finding{Type: "finding", Connector: secretrisk.ConnectorName, Evidence: m, ObservedAt: t0})
 	}
-	recs = append(recs, finding.Status{Type: "status", Connector: tracker.SecretsConnector, State: finding.StateOK},
+	recs = append(recs, finding.Status{Type: "status", Connector: secretrisk.ConnectorName, State: finding.StateOK},
 		finding.Finding{Type: "finding", Connector: "aws", Evidence: map[string]any{"fingerprint": "zzzz"}})
 	runtest.Write(t, path, recs...)
 }
