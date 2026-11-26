@@ -139,6 +139,106 @@ jobs:
           SEGURATA_TEST_DISPOSABLE_CLIPBOARD: "1"
         run: go test ./...
 
+  # The windows-latest runner account is the built-in Administrator, elevated. This job runs the
+  # same tests as a local standard user created for it: not in Administrators, so its token is
+  # never split or elevated (medium integrity, no admin privileges), with its own loaded profile,
+  # %TEMP% and Credential Manager vault. Start-Process -Credential goes through
+  # CreateProcessWithLogonW, an interactive logon (the token holds INTERACTIVE, as a signed-in
+  # user's does) with the profile loaded and the runner's window station and desktop granted to
+  # the new logon, so the clipboard, Credential Manager and Task Scheduler behave as for a user at
+  # the keyboard. A scheduled task (batch logon, session 0, no desktop) would not. The script
+  # checks those token properties before it runs anything.
+  test-windows-standard-user:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: keep LF line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: ./.github/actions/install-ripgrep
+      - name: go test as a standard user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = 'segurata-std'
+          # A random password that lives only in this step: generated here, masked, never written.
+          $alphabet = [char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!#%+-=?@_'
+          $bytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(40)
+          $plain = 'Aa1!' + -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+          Write-Output "::add-mask::$plain"
+          # ADSI keeps the password off every command line.
+          $computer = [ADSI]"WinNT://$env:COMPUTERNAME,computer"
+          $account = $computer.Create('User', $name)
+          $account.SetPassword($plain)
+          $account.SetInfo()
+          $password = ConvertTo-SecureString $plain -AsPlainText -Force
+          Remove-Variable plain, bytes
+          $users = ([Security.Principal.SecurityIdentifier]'S-1-5-32-545').Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+          $group = [ADSI]"WinNT://$env:COMPUTERNAME/$users,group"
+          if (-not $group.IsMember("WinNT://$env:COMPUTERNAME/$name")) { $group.Add("WinNT://$env:COMPUTERNAME/$name") }
+          $sid = ([Security.Principal.NTAccount]"$env:COMPUTERNAME\$name").Translate([Security.Principal.SecurityIdentifier]).Value
+
+          # The user reads the checkout, the Go toolchain and ripgrep, and nothing of the runner's
+          # else; its build cache, module cache and temporary files stay in its own profile.
+          $go = (Get-Command go).Source
+          $rg = (Get-Command rg).Source
+          $goroot = (& $go env GOROOT).Trim()
+          foreach ($dir in @($env:GITHUB_WORKSPACE, $goroot, (Split-Path $rg))) {
+            icacls $dir /grant "*${sid}:(OI)(CI)RX" /Q | Out-Null
+            if ($LASTEXITCODE) { throw "icacls $dir failed" }
+          }
+          $work = Join-Path $env:RUNNER_TEMP 'standard-user'
+          New-Item -ItemType Directory -Path $work | Out-Null
+          $script = Join-Path $work 'run.ps1'
+          # The user's environment comes from its own profile; only PATH is extended.
+          @"
+          `$ErrorActionPreference = 'Stop'
+          `$env:PATH = '$(Split-Path $go);$(Split-Path $rg);' + `$env:PATH
+          `$env:GOTOOLCHAIN = 'local'
+          # A disposable VM: the native clipboard test clears the clipboard.
+          `$env:SEGURATA_TEST_DISPOSABLE_CLIPBOARD = '1'
+          `$groups = whoami /groups /fo csv | ConvertFrom-Csv
+          whoami /user /groups /priv
+          `$checks = [ordered]@{
+            'runs as the standard user' = ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq '$sid')
+            'not an administrator'      = -not (`$groups | Where-Object SID -eq 'S-1-5-32-544')
+            'medium integrity'          = [bool](`$groups | Where-Object SID -eq 'S-1-16-8192')
+            'interactive logon'         = [bool](`$groups | Where-Object SID -eq 'S-1-5-4')
+            'own profile loaded'        = (Test-Path (Join-Path `$env:USERPROFILE 'NTUSER.DAT')) -and `$env:USERPROFILE -like '*\$name*'
+            'temp in the profile'       = `$env:TEMP.StartsWith(`$env:USERPROFILE, 'OrdinalIgnoreCase')
+          }
+          `$checks.GetEnumerator() | ForEach-Object { '{0}: {1}' -f `$_.Key, `$_.Value }
+          if (`$checks.Values -contains `$false) { 'the token is not a standard user''s'; exit 2 }
+          & '$go' env GOCACHE GOMODCACHE GOTMPDIR
+          & '$go' test ./...
+          exit `$LASTEXITCODE
+          "@ | Set-Content -Path $script -Encoding utf8
+
+          $out = Join-Path $work 'out.log'
+          $err = Join-Path $work 'err.log'
+          $credential = [pscredential]::new("$env:COMPUTERNAME\$name", $password)
+          $pwsh = (Get-Process -Id $PID).Path
+          $p = Start-Process -FilePath $pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script `
+            -Credential $credential -LoadUserProfile -WorkingDirectory $env:GITHUB_WORKSPACE `
+            -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+          $null = $p.Handle # keeps the handle, so the exit code survives the process
+          $finished = $p.WaitForExit(25 * 60 * 1000)
+          Get-Content $out
+          Get-Content $err
+          if (-not $finished) { $p.Kill($true); throw 'go test as the standard user timed out' }
+          if ($p.ExitCode -ne 0) { throw "go test as the standard user exited $($p.ExitCode)" }
+      - name: remove the standard user
+        if: always()
+        shell: pwsh
+        run: |
+          ([ADSI]"WinNT://$env:COMPUTERNAME,computer").Delete('User', 'segurata-std')
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
