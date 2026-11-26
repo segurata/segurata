@@ -8,8 +8,7 @@ import (
 	"github.com/segurata/segurata/internal/statefile"
 )
 
-// browserSelected are the selectors ("name" or "name:label") of connectors that drive the
-// browser over CDP.
+// browserSelected are the selectors of connectors that drive the browser.
 func (e Env) browserSelected(selectors []string) []string {
 	cdpNames := map[string]bool{}
 	for _, c := range e.Connectors {
@@ -26,39 +25,35 @@ func (e Env) browserSelected(selectors []string) []string {
 	return out
 }
 
-// browserState is what scheduled runs remember about the browser connectors, in
-// Paths.BrowserState.
+// browserState is what scheduled runs remember about the browser connectors.
 type browserState struct {
-	// NotRunSince is when the browser connectors last ran on schedule or, if they have not since
-	// the file exists, when a run first skipped them.
+	// NotRunSince is when they last ran, or when a run first skipped them.
 	NotRunSince time.Time `json:"not_run_since"`
-	// Notified is set once the owner was told they have not run in a while; a run that includes
-	// them clears it.
-	Notified bool `json:"notified,omitempty"`
+	Notified    bool      `json:"notified,omitempty"` // cleared by a run that includes them
 }
 
 func (e Env) loadBrowserState() browserState {
 	var s browserState
-	if _, err := statefile.ReadJSON(e.Paths().BrowserState, &s); err != nil {
-		fmt.Fprintf(e.IO.Err, "reading %s: %v\n", e.Paths().BrowserState, err)
+	path := e.Paths().BrowserState
+	if _, err := statefile.ReadJSON(path, &s); err != nil {
+		fmt.Fprintf(e.IO.Err, "reading %s: %v\n", path, err)
 	}
 	return s
 }
 
 func (e Env) saveBrowserState(s browserState) {
-	if err := statefile.WriteJSON(e.Paths().BrowserState, s); err != nil {
-		fmt.Fprintf(e.IO.Err, "writing %s: %v\n", e.Paths().BrowserState, err)
+	path := e.Paths().BrowserState
+	if err := statefile.WriteJSON(path, s); err != nil {
+		fmt.Fprintf(e.IO.Err, "writing %s: %v\n", path, err)
 	}
 }
 
-// browserRan records that a run included the browser connectors.
 func (e Env) browserRan(now time.Time) {
 	e.saveBrowserState(browserState{NotRunSince: now.UTC()})
 }
 
-// browserSkipped records that a run skipped the browser connectors and returns the text of the
-// one notification due when they have not run for longer than the config's browser_stale_days,
-// "" otherwise. It stays due until browserNotified says it was sent.
+// browserSkipped records a skip and returns the notification due once the browser connectors have
+// not run for longer than browser_stale_days, "" otherwise; it stays due until browserNotified.
 func (e Env) browserSkipped(now time.Time) string {
 	s := e.loadBrowserState()
 	if s.NotRunSince.IsZero() {
@@ -72,7 +67,6 @@ func (e Env) browserSkipped(now time.Time) string {
 	return fmt.Sprintf("browser connectors haven't run in %d days", int(idle/(24*time.Hour)))
 }
 
-// browserNotified records that the staleness notification was sent.
 func (e Env) browserNotified() {
 	s := e.loadBrowserState()
 	s.Notified = true

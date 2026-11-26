@@ -1,7 +1,6 @@
-// Package schedule is `segurata schedule`: it installs a per-user agent that runs an inventory
-// and writes a report on a fixed interval, and notifies about new high or critical findings. On
-// macOS the agent is a launchd user agent; on Linux the equivalent systemd user timer is printed
-// only. Install and uninstall are dry runs unless --apply. See docs/architecture.md, "Scheduled runs".
+// Package schedule is `segurata schedule`: a launchd user agent (on Linux, a printed systemd timer)
+// that runs an inventory and a report on an interval and notifies about new P0 and P1 items.
+// Install and uninstall are dry runs unless --apply. See docs/architecture.md, "Scheduled runs".
 package schedule
 
 import (
@@ -26,32 +25,28 @@ import (
 )
 
 const (
-	// Label names the launchd agent and its plist.
-	Label = "com.segurata.inventory"
-	// Unit names the systemd user service and timer.
-	Unit = "segurata-inventory"
+	agentLabel = "com.segurata.inventory" // the launchd agent and its plist
+	unit       = "segurata-inventory"     // the systemd user service and timer
 
 	DefaultEvery = 24 * time.Hour
-	MinEvery     = time.Hour
+	minEvery     = time.Hour
 
 	launchctl = "/bin/launchctl"
 	osascript = "/usr/bin/osascript"
 )
 
-// Runner runs one external command. Tests inject a fake; System is the real one.
+// Runner runs one external command; System is the real one.
 type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error
 }
 
-// System runs commands as real processes.
 type System struct{}
 
-// stopGrace is how long a command whose context ended has to stop after its interrupt before it is
-// killed: enough for an inventory to write run_end and sync the tracker.
+// stopGrace lets an interrupted inventory write run_end and sync the tracker before it is killed.
 var stopGrace = 2 * time.Minute
 
-// Run runs the command. When ctx ends, the command gets an interrupt, the signal segurata
-// commands stop cleanly on, then a kill after stopGrace.
+// Run interrupts the command when ctx ends, the signal segurata stops cleanly on, and kills it
+// after stopGrace.
 func (System) Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
@@ -60,8 +55,7 @@ func (System) Run(ctx context.Context, name string, args []string, stdout, stder
 	return cmd.Run()
 }
 
-// Env is the machine the schedule is installed on. Everything that touches the system is here so
-// tests can use a temp home and a fake runner.
+// Env is the machine the schedule is installed on, everything that touches the system included.
 type Env struct {
 	GOOS   string
 	Home   string
@@ -75,31 +69,27 @@ type Env struct {
 	Now    func() time.Time
 	// Connectors are the installed connectors: the default selection, and which drive the browser.
 	Connectors []connector.Connector
-	// Config is the owner's config: cdp_url, keep_runs_days and browser_stale_days.
-	Config config.Config
-	// Browser checks that Brave answers at a CDP address (cdp.Brave). It never starts a browser.
-	Browser func(ctx context.Context, cdpURL string) (cdp.Version, error)
-	// Tracker is the tracker the inventory's sync writes, whose new items a run notifies; zero
-	// means tracker.DefaultPaths.
+	Config     config.Config
+	Browser    func(ctx context.Context, cdpURL string) (cdp.Version, error) // cdp.Brave
+	// Tracker is what the inventory's sync writes; zero means tracker.DefaultPaths.
 	Tracker tracker.Paths
 }
 
 // Paths are the files the schedule uses, all under the owner's home.
 type Paths struct {
-	Plist  string // ~/Library/LaunchAgents/com.segurata.inventory.plist
-	Logs   string // ~/Library/Logs/segurata
-	State  string // ~/.segurata, the agent's working directory
-	Out    string // inventory output of scheduled runs, under State
-	Report string // the last report, under State
-	// BrowserState is what runs remember about the browser connectors, under State.
+	Plist        string
+	Logs         string
+	State        string // the agent's working directory
+	Out          string
+	Report       string
 	BrowserState string
-	SystemdTo    string // ~/.config/systemd/user
+	SystemdTo    string
 }
 
 func (e Env) Paths() Paths {
 	state := filepath.Join(e.Home, ".segurata")
 	return Paths{
-		Plist:        filepath.Join(e.Home, "Library", "LaunchAgents", Label+".plist"),
+		Plist:        filepath.Join(e.Home, "Library", "LaunchAgents", agentLabel+".plist"),
 		Logs:         filepath.Join(e.Home, "Library", "Logs", "segurata"),
 		State:        state,
 		Out:          filepath.Join(state, "out"),
@@ -109,7 +99,6 @@ func (e Env) Paths() Paths {
 	}
 }
 
-// Options are the command-line choices of install and uninstall.
 type Options struct {
 	Every      time.Duration
 	Connectors []string // empty: every installed connector
@@ -121,14 +110,13 @@ func (o Options) every() (time.Duration, error) {
 	if o.Every == 0 {
 		return DefaultEvery, nil
 	}
-	if o.Every < MinEvery || o.Every%time.Second != 0 {
-		return 0, fmt.Errorf("--every must be whole seconds and at least %s", MinEvery)
+	if o.Every < minEvery || o.Every%time.Second != 0 {
+		return 0, fmt.Errorf("--every must be whole seconds and at least %s", minEvery)
 	}
 	return o.Every, nil
 }
 
-// runArgs is the command line the agent runs. It names an interval other than the default, which
-// bounds how long a run may take.
+// runArgs is the command line the agent runs; the interval bounds how long a run may take.
 func (e Env) runArgs(o Options) []string {
 	args := []string{e.Exe, "schedule", "run"}
 	if o.Every != 0 && o.Every != DefaultEvery {
@@ -141,11 +129,10 @@ func (e Env) runArgs(o Options) []string {
 }
 
 func (e Env) domain() string  { return "gui/" + strconv.Itoa(e.UID) }
-func (e Env) service() string { return e.domain() + "/" + Label }
+func (e Env) service() string { return e.domain() + "/" + agentLabel }
 
-// Plist is the launchd agent: run `segurata schedule run` every interval, from the state
-// directory, with logs in ~/Library/Logs/segurata. It does not run at load, so installing it
-// starts nothing until the first interval passes.
+// Plist is the launchd agent. It does not run at load: installing starts nothing until the first
+// interval passes.
 func (e Env) Plist(o Options) (string, error) {
 	every, err := o.every()
 	if err != nil {
@@ -161,7 +148,7 @@ func (e Env) Plist(o Options) (string, error) {
 	key := func(k string) { fmt.Fprintf(&b, "\t<key>%s</key>\n", xmlText(k)) }
 	str := func(indent, v string) { fmt.Fprintf(&b, "%s<string>%s</string>\n", indent, xmlText(v)) }
 	key("Label")
-	str("\t", Label)
+	str("\t", agentLabel)
 	key("ProgramArguments")
 	b.WriteString("\t<array>\n")
 	for _, a := range e.runArgs(o) {
@@ -194,8 +181,7 @@ func xmlText(s string) string {
 	return buf.String()
 }
 
-// SystemdUnits are the Linux equivalent: a oneshot service and a timer that starts it every
-// interval (and 15 minutes after boot).
+// SystemdUnits are a oneshot service and the timer that starts it every interval.
 func (e Env) SystemdUnits(o Options) (service, timer string, err error) {
 	every, err := o.every()
 	if err != nil {
@@ -235,8 +221,7 @@ func systemdQuote(s string) string {
 	return `"` + r.Replace(s) + `"`
 }
 
-// ErrDarwinOnly refuses --apply where only a printed equivalent exists.
-var ErrDarwinOnly = errors.New("--apply works on macOS only; on this system, install the printed units by hand")
+var errDarwinOnly = errors.New("--apply works on macOS only; on this system, install the printed units by hand")
 
 func (e Env) checkExe() error {
 	if !filepath.IsAbs(e.Exe) {
@@ -262,9 +247,10 @@ func (e Env) Install(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	every, _ := o.every() // Plist validated it
 	p := e.Paths()
 	fmt.Fprintf(out, "Agent    %s\nRuns     %s\nEvery    %s\nReport   %s\nLogs     %s\n",
-		p.Plist, strings.Join(e.runArgs(o), " "), orDefault(o.Every), p.Report, p.Logs)
+		p.Plist, strings.Join(e.runArgs(o), " "), every, p.Report, p.Logs)
 	fmt.Fprintf(out, "\n%s\n", plist)
 	loaded := e.loaded(ctx)
 	fmt.Fprintln(out, "Commands:")
@@ -304,7 +290,7 @@ func (e Env) Install(ctx context.Context, o Options) error {
 	if err := e.launchctl(ctx, "bootstrap", e.domain(), p.Plist); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Installed. The first run starts in %s; logs in %s.\n", orDefault(o.Every), p.Logs)
+	fmt.Fprintf(out, "Installed. The first run starts in %s; logs in %s.\n", every, p.Logs)
 	return nil
 }
 
@@ -314,9 +300,9 @@ func (e Env) Uninstall(ctx context.Context, o Options) error {
 	if e.GOOS != "darwin" {
 		p := e.Paths()
 		fmt.Fprintf(out, "Commands:\n  systemctl --user disable --now %s.timer\n  rm %s %s\n  systemctl --user daemon-reload\n",
-			Unit, filepath.Join(p.SystemdTo, Unit+".service"), filepath.Join(p.SystemdTo, Unit+".timer"))
+			unit, filepath.Join(p.SystemdTo, unit+".service"), filepath.Join(p.SystemdTo, unit+".timer"))
 		if o.Apply {
-			return ErrDarwinOnly
+			return errDarwinOnly
 		}
 		return nil
 	}
@@ -373,7 +359,7 @@ func (e Env) Status(ctx context.Context) error {
 		fmt.Fprintf(out, "Agent    %s: %s, %s\n", p.Plist, installed, loaded)
 		fmt.Fprintf(out, "Logs     %s\n", p.Logs)
 	} else {
-		fmt.Fprintf(out, "Timer    check with: systemctl --user list-timers %s.timer\n", Unit)
+		fmt.Fprintf(out, "Timer    check with: systemctl --user list-timers %s.timer\n", unit)
 	}
 	if st, err := os.Stat(p.Report); err == nil {
 		fmt.Fprintf(out, "Report   %s, written %s\n", p.Report, st.ModTime().Format("2006-01-02 15:04"))
@@ -390,10 +376,10 @@ func (e Env) printSystemd(o Options) error {
 	}
 	p := e.Paths()
 	fmt.Fprintf(e.IO.Out, "%s:\n\n%s\n%s:\n\n%s\nCommands:\n  mkdir -p %s %s\n  systemctl --user daemon-reload\n  systemctl --user enable --now %s.timer\n",
-		filepath.Join(p.SystemdTo, Unit+".service"), svc, filepath.Join(p.SystemdTo, Unit+".timer"), timer, p.SystemdTo, p.State, Unit)
-	fmt.Fprintln(e.IO.Out, "\nLogs: journalctl --user -u "+Unit+". Notifications are macOS only; on Linux new findings go to the log.")
+		filepath.Join(p.SystemdTo, unit+".service"), svc, filepath.Join(p.SystemdTo, unit+".timer"), timer, p.SystemdTo, p.State, unit)
+	fmt.Fprintln(e.IO.Out, "\nLogs: journalctl --user -u "+unit+". Notifications are macOS only; on Linux new findings go to the log.")
 	if o.Apply {
-		return ErrDarwinOnly
+		return errDarwinOnly
 	}
 	return nil
 }
@@ -417,11 +403,4 @@ func (e Env) launchctl(ctx context.Context, args ...string) error {
 		return fmt.Errorf("launchctl %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
-}
-
-func orDefault(d time.Duration) time.Duration {
-	if d == 0 {
-		return DefaultEvery
-	}
-	return d
 }
