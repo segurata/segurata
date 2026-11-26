@@ -20,7 +20,7 @@ func TestEscapingHelpers(t *testing.T) {
 
 func TestEveryFormatRendersTheSameContent(t *testing.T) {
 	d := &Doc{Title: "t"}
-	d.H(1, d.Title)
+	d.H(1, "Résumé")
 	d.P("run ", Code("segurata status"), " now")
 	d.List([]Item{{Badge: "P0", Text: "Rotate <key>", Meta: "id 1", Details: []Detail{{Label: "Where", Text: "https://example.com/x", Kind: DLink}}}})
 	d.Table([]string{"A", "N"}, [][]Cell{{{Text: "row"}, {Text: "3", Num: true}}})
@@ -43,6 +43,17 @@ func TestEveryFormatRendersTheSameContent(t *testing.T) {
 	}
 	if Format("pdf").Valid() || Render(&bytes.Buffer{}, d, "pdf") == nil {
 		t.Error("unknown format accepted")
+	}
+	var text bytes.Buffer
+	_ = Render(&text, d, Text)
+	if !strings.HasPrefix(text.String(), "RÉSUMÉ\n======\n") {
+		t.Errorf("a heading's rule must match its length in characters:\n%s", text.String())
+	}
+	var md, page bytes.Buffer
+	_ = Render(&md, d, Markdown)
+	_ = Render(&page, d, HTML)
+	if !strings.Contains(md.String(), "| --- | ---: |") || !strings.Contains(page.String(), `<th class="num">N</th>`) {
+		t.Errorf("a numeric column is not right-aligned:\n%s\n%s", md.String(), page.String())
 	}
 }
 
