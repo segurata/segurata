@@ -382,6 +382,35 @@ func TestReplaceFollowsSymlinks(t *testing.T) {
 	}
 }
 
+// Links above the name (here ~ itself) are not shown; a directory under ~ that links elsewhere is.
+func TestReplaceNamesOnlyTheLinksTheUsedInNameSpellsOut(t *testing.T) {
+	fx := newReplaceFixture(t)
+	real := filepath.Join(t.TempDir(), "home")
+	if err := os.Rename(fx.home, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, fx.home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(real, "src"), filepath.Join(real, "code")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "code"), filepath.Join(real, "src")); err != nil {
+		t.Fatal(err)
+	}
+	o, e, code := fx.run(t, "", false, "replace", fx.id(), "--apply", "--yes")
+	if code != 0 {
+		t.Fatalf("apply: %d %s", code, e)
+	}
+	target, _ := filepath.EvalSymlinks(fx.env)
+	if strings.Contains(o, "~/.zshrc (→") || !strings.Contains(o, "~/src/app/.env (→ "+target+")") {
+		t.Errorf("plan names the wrong links:\n%s", o)
+	}
+	if !strings.Contains(read(t, fx.zshrc), fx.new) || !strings.Contains(read(t, fx.env), fx.new) {
+		t.Error("files not updated through the links")
+	}
+}
+
 // A used_in file deleted since the scan: a new scan and sync take it out of used_in, as the
 // refusal advises, and replace goes ahead with the files left.
 func TestReplaceAfterAUsedInFileWasDeletedAndRescanned(t *testing.T) {

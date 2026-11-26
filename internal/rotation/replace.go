@@ -76,7 +76,7 @@ type fileEdit struct {
 	also    []string // other used_in names of the same file (a symlink and its target)
 	abs     string   // the file written: path with ~ expanded and symlinks resolved
 	paths   []string // absolute paths before resolving symlinks
-	link    bool     // the path or one of its ancestors resolves through a symlink
+	link    bool     // a symlink the used_in name spells out leads elsewhere: the plan names abs
 	info    fs.FileInfo
 	tracked bool // tracked when the ledger last saw any of its names
 	mode    fs.FileMode
@@ -147,16 +147,22 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if len(recorded) == 0 {
 		return nil, fmt.Errorf("%s: the ledger records no line for it; edit it by hand", p)
 	}
-	abs := p
-	if rest, ok := strings.CutPrefix(p, "~/"); ok {
-		abs = filepath.Join(home, rest)
+	base, rest := filepath.Dir(p), filepath.Base(p)
+	if r, ok := strings.CutPrefix(p, "~/"); ok {
+		base, rest = home, r
 	}
-	if !filepath.IsAbs(abs) {
+	if !filepath.IsAbs(base) {
 		return nil, fmt.Errorf("%q is not an absolute file path", p)
 	}
-	original := abs
-	var err error
-	if abs, err = filepath.EvalSymlinks(abs); err != nil {
+	original := filepath.Join(base, rest)
+	abs, err := filepath.EvalSymlinks(original)
+	if err != nil {
+		return nil, err
+	}
+	// Only links in the part the name spells out (below ~, or the file itself) are worth showing:
+	// the directories above it, like macOS /var -> /private/var, say nothing about this file.
+	resolvedBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
 		return nil, err
 	}
 	st, err := os.Stat(abs)
@@ -170,7 +176,7 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &fileEdit{path: p, abs: abs, paths: []string{original}, link: original != abs, info: st, tracked: tracked,
+	f := &fileEdit{path: p, abs: abs, paths: []string{original}, link: filepath.Join(resolvedBase, rest) != abs, info: st, tracked: tracked,
 		mode: st.Mode().Perm(), orig: raw}
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
