@@ -147,7 +147,7 @@ func readProfile(dir, prof string, daily bool) ([]install, error) {
 		}
 	}
 	if read == 0 && len(failures) == 0 {
-		return nil, fmt.Errorf("profile %q has no preferences files", prof)
+		return nil, nil // a remnant directory, as a failed profile deletion leaves: no extensions
 	}
 	name := prefs.Profile.Name
 	if name == "" {

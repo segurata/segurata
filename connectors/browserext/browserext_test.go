@@ -208,6 +208,24 @@ func TestUnreadablePreferencesKeepTheBrowserUninspected(t *testing.T) {
 	t.Fatalf("missing incomplete browser status: %v", rec.Statuses)
 }
 
+// A profile directory without preferences files holds no extensions: the rest of the browser is
+// still assessed.
+func TestAProfileWithoutPreferencesIsAbsent(t *testing.T) {
+	c := fixture(t)
+	home, _ := c.Home()
+	b := browsers[1]
+	if err := os.MkdirAll(filepath.Join(home, b.dirs[c.OS], "Profile 3"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rec := run(t, c)
+	rec.ByResource(t, "browser_extension", "reactdev")
+	for _, st := range rec.Statuses {
+		if st.Account == b.name && st.State != finding.StateOK {
+			t.Fatalf("%s status %v", b.name, st)
+		}
+	}
+}
+
 func TestChromeTime(t *testing.T) {
 	if got := chromeTime("13358625205255503"); got.Format(time.DateOnly) != "2024-04-26" {
 		t.Errorf("got %s", got)
