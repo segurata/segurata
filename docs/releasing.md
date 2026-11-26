@@ -198,5 +198,8 @@ private:
 
 5. Check `go install github.com/segurata/segurata/cmd/segurata@main` from a machine without a
    clone, then cut `v0.1.0` as in [Cutting a release](#cutting-a-release).
-6. Archive the private repository (`gh repo archive <owner>/<repository>`) once nothing is left to
+6. In the clone you work in from now on, install the push gate without `--skip-authors`
+   (`scripts/install-hooks.sh`): the private remote's pushes skip the author lines, the public
+   one's must not.
+7. Archive the private repository (`gh repo archive <owner>/<repository>`) once nothing is left to
    move over.

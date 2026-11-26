@@ -23,9 +23,13 @@ Commands:
     identifiers.py replace-file FILE OUT      write git filter-repo --replace-text expressions
     identifiers.py scan-tree REPO FILE        tracked files of the working tree: content and paths
     identifiers.py scan-history REPO FILE     every object reachable from any ref, and ref names
-    identifiers.py scan-push REPO FILE        what a git push sends: the pre-push hook's stdin
+    identifiers.py scan-push REPO FILE [--skip-authors]
+                                              what a git push sends: the pre-push hook's stdin
                                               names the refs; objects already on the remote and
-                                              in any remote-tracking ref are left out
+                                              in any remote-tracking ref are left out. With
+                                              --skip-authors, commits' author and committer lines
+                                              are not scanned (their messages are), for a private
+                                              remote: prepare-public-history.sh decides authors
     identifiers.py push-revs REPO             the pre-push stdin as git log arguments, one line
     identifiers.py mask FILE                  copy stdin to stdout, masked
     identifiers.py run-masked FILE CMD...     run CMD with its stdout and stderr masked
@@ -221,7 +225,14 @@ def scan_tree(repo, entries):
     return hits
 
 
-def scan_objects(repo, entries, refs, objects):
+def without_authors(commit):
+    """A raw commit object without its author and committer header lines."""
+    header, sep, message = commit.partition(b"\n\n")
+    kept = [line for line in header.split(b"\n") if not line.startswith((b"author ", b"committer "))]
+    return b"\n".join(kept) + sep + message
+
+
+def scan_objects(repo, entries, refs, objects, skip_authors=False):
     """Ref names and objects: {object id: the path rev-list found it at}."""
     hits = []
     for ref in refs:
@@ -241,6 +252,8 @@ def scan_objects(repo, entries, refs, objects):
             hits += hits_in(entries, data, lambda line: b"blob %s %s:%d" % (oid, where, line))
         elif kind == b"tree":
             hits += hits_in(entries, data, lambda _: b"a file or folder name in /" + where)
+        elif kind == b"commit" and skip_authors:
+            hits += hits_in(entries, without_authors(data), lambda _: b"commit %s (message)" % oid)
         elif kind == b"commit":
             hits += hits_in(entries, data, lambda _: b"commit %s (message, author or committer)" % oid)
         else:
@@ -297,9 +310,9 @@ def has_commit(repo, oid):
     return subprocess.run(probe, stderr=subprocess.DEVNULL).returncode == 0
 
 
-def scan_push(repo, entries, lines):
+def scan_push(repo, entries, lines, skip_authors=False):
     revs, refs = push_revs(repo, lines)
-    return scan_objects(repo, entries, refs, rev_list_objects(repo, *revs) if revs else {})
+    return scan_objects(repo, entries, refs, rev_list_objects(repo, *revs) if revs else {}, skip_authors)
 
 
 def run_masked(entries, cmd):
@@ -327,6 +340,12 @@ SCANS = {
 }
 
 
+def report(hits):
+    for hit in hits:
+        print(hit)
+    return 1 if hits else 0
+
+
 def main(argv):
     if len(argv) < 3:
         print(__doc__, file=sys.stderr)
@@ -351,11 +370,10 @@ def main(argv):
             return 0
         if command == "run-masked" and len(argv) >= 4:
             return run_masked(load(argv[2]), argv[3:])
+        if command == "scan-push" and argv[4:] == ["--skip-authors"]:
+            return report(scan_push(argv[2], load(argv[3]), sys.stdin.buffer.read().splitlines(), skip_authors=True))
         if command in SCANS and len(argv) == 4:
-            hits = SCANS[command](argv[2], load(argv[3]))
-            for hit in hits:
-                print(hit)
-            return 1 if hits else 0
+            return report(SCANS[command](argv[2], load(argv[3])))
     except InputError as e:
         print(f"identifiers.py: {e}", file=sys.stderr)
         return 2

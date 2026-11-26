@@ -21,14 +21,21 @@ options it checks the tracked files of the working tree only, not the commits: `
 every commit. Maintainers keep a list of private identifiers (client names, internal hosts, project
 ids) outside the repository, at `~/.config/segurata/public-gate.txt` or `$SEGURATA_PUBLIC_GATE`
 (format in [`scripts/identifiers.py`](scripts/identifiers.py)), and gate every push with a pre-push
-hook. With `--pre-push` the gate reads the refs being pushed from the hook's input and scans exactly
-the commits the remote lacks, so a secret or identifier added in one commit and deleted in the next
-is still caught:
+hook. As the hook, `--pre-push` reads the refs being pushed from git and scans exactly the commits
+the remote lacks, so a secret or identifier added in one commit and deleted in the next is still
+caught; by hand, `--unpushed` scans what `git push` of the current branch would send. Install the
+hook with:
 
 ```bash
-printf '#!/bin/sh\nexec scripts/check-public.sh --require-identifiers --pre-push\n' > "$(git rev-parse --git-path hooks)/pre-push"
-chmod +x "$(git rev-parse --git-path hooks)/pre-push"
+scripts/install-hooks.sh
 ```
+
+It keeps the hooks you have: with a global `core.hooksPath`, writing into it would replace that
+directory's pre-push hook and gate every other repository. The script gives this clone a hooks
+directory of its own that links the other hooks and runs the previous pre-push after the gate.
+While the remote is the private one, install it with `--skip-authors`: the commits' author lines
+carry the owner's name until `scripts/prepare-public-history.sh` decides the public history's
+authors; messages and content are still scanned.
 
 ## Rules
 

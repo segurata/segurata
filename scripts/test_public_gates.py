@@ -54,23 +54,35 @@ class CheckPublicTest(GateBase):
 
 @unittest.skipUnless(shutil.which("gitleaks"), "needs gitleaks")
 class PrePushTest(GateBase):
-    """A real git push through the hook CONTRIBUTING.md installs, into a throwaway bare remote."""
+    """A real git push through the hook scripts/install-hooks.sh installs, into a throwaway bare
+    remote, in a clone whose hooks came from a shared directory (core.hooksPath), as a global one."""
 
     def setUp(self):
         super().setUp()
         remote = os.path.join(self.tmp.name, "remote.git")
         subprocess.run(["git", "init", "-q", "--bare", remote], env=ENV, check=True)
         self.repo_.git("remote", "add", "origin", remote)
-        hook = os.path.join(self.repo_.path, ".git", "hooks", "pre-push")
-        with open(hook, "w") as f:
-            f.write(f"#!/bin/sh\nexec '{SCRIPTS}/check-public.sh' --require-identifiers --identifiers '{self.ids_file}' --pre-push\n")
-        os.chmod(hook, 0o755)
+        self.shared = os.path.join(self.tmp.name, "shared-hooks")
+        os.makedirs(self.shared)
+        self.chained = os.path.join(self.tmp.name, "chained")
+        self.hook("pre-push", f"cat > '{self.chained}'")
+        self.hook("commit-msg", "exit 0")
+        self.repo_.git("config", "core.hooksPath", self.shared)
+        installed = subprocess.run([os.path.join(SCRIPTS, "install-hooks.sh"), "--identifiers", self.ids_file],
+                                   cwd=self.repo_.path, env=ENV, capture_output=True)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
         # Made up at run time, in the shape gitleaks' github-pat rule catches.
         self.token = "ghp_" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(36))
         self.repo_.write("a.txt", "clean\n")
         self.repo_.commit("init")
-        code, output = self.push("main")
+        code, output = self.push("-u", "main")
         self.assertEqual(code, 0, output)
+
+    def hook(self, name, body):
+        path = os.path.join(self.shared, name)
+        with open(path, "w") as f:
+            f.write(f"#!/bin/sh\n{body}\n")
+        os.chmod(path, 0o755)
 
     def push(self, *args):
         done = subprocess.run(["git", "-C", self.repo_.path, "push", "-q", "origin", *args], env=ENV, capture_output=True)
@@ -108,6 +120,56 @@ class PrePushTest(GateBase):
         self.assertNotEqual(code, 0, output)
         self.assertIn("ref refs/heads/<identifier 2>-fix", output)
 
+    def test_hooks_of_the_shared_directory_still_run(self):
+        hooks = os.path.join(self.repo_.path, ".git", "hooks-segurata")
+        self.assertEqual(os.path.realpath(os.path.join(hooks, "commit-msg")), os.path.realpath(os.path.join(self.shared, "commit-msg")))
+        with open(self.chained) as f:
+            self.assertIn("refs/heads/main", f.read())  # the shared pre-push got the push's refs
+        with open(os.path.join(self.shared, "pre-push")) as f:
+            self.assertNotIn("check-public", f.read())  # and was left as it was
+        # A second install refreshes the links and still chains to the shared directory.
+        installed = subprocess.run([os.path.join(SCRIPTS, "install-hooks.sh"), "--identifiers", self.ids_file],
+                                   cwd=self.repo_.path, env=ENV, capture_output=True, text=True)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertIn(f"chained to {self.shared}", installed.stdout)
+
+    def test_a_failed_gate_stops_the_chain(self):
+        os.remove(self.chained)
+        self.add_then_delete()
+        self.assertNotEqual(self.push("main")[0], 0)
+        self.assertFalse(os.path.exists(self.chained))
+
+    def test_by_hand(self):
+        code, output = self.gate("--require-identifiers", "--pre-push")
+        self.assertEqual(code, 2, output)  # stdin is no push: it refuses rather than pass on nothing
+        self.assertIn("use --unpushed", output)
+        self.add_then_delete()
+        code, output = self.gate("--require-identifiers", "--unpushed")
+        self.assertEqual(code, 1, output)
+        self.assertIn("pushed commits (2)", output)
+        self.assertIn("leaks found: 1", output)
+        self.assertIn("identifier on line 2: blob", output)
+        self.repo_.git("checkout", "-q", "-b", "fresh")
+        code, output = self.gate("--require-identifiers", "--unpushed")
+        self.assertEqual(code, 1, output)  # a branch not on the remote: what no remote branch has
+        self.assertIn("pushed commits (2)", output)
+
+    def test_skip_authors(self):
+        self.repo_.write("b.txt", "clean\n")
+        self.repo_.git("add", "-A")
+        self.repo_.git("commit", "-q", "-m", "more", "--author", "ñandú-ácme <dev@example.com>")
+        code, output = self.gate("--require-identifiers", "--unpushed")
+        self.assertEqual(code, 1, output)
+        self.assertIn("(message, author or committer)", output)
+        code, output = self.gate("--require-identifiers", "--skip-authors", "--unpushed")
+        self.assertEqual(code, 0, output)
+        self.repo_.git("commit", "-q", "--allow-empty", "-m", "for ÑANDÚ-ácme")
+        code, output = self.gate("--require-identifiers", "--skip-authors", "--unpushed")
+        self.assertEqual(code, 1, output)  # the message is still scanned
+        self.assertIn("(message)", output)
+        code, output = self.gate("--require-identifiers", "--skip-authors")
+        self.assertEqual(code, 2, output)  # only for what a push sends
+
     def test_clean_push_and_deletion(self):
         self.repo_.write("b.txt", "still clean\n")
         self.repo_.commit("more")
@@ -115,9 +177,9 @@ class PrePushTest(GateBase):
         code, output = self.push("--delete", "other")
         self.assertEqual(code, 0, output)
         deletion = b"(delete) " + b"0" * 40 + b" refs/heads/other " + b"1" * 40 + b"\n"
-        code, output = self.gate("--require-identifiers", "--pre-push", stdin=deletion)
+        code, output = self.gate("--require-identifiers", "--pre-push", "origin", "url", stdin=deletion)
         self.assertEqual(code, 0, output)
-        self.assertIn("nothing pushed but deletions", output)
+        self.assertIn("no commits to push", output)
 
 
 @unittest.skipUnless(shutil.which("gitleaks") and shutil.which("git-filter-repo"), "needs gitleaks and git-filter-repo")
