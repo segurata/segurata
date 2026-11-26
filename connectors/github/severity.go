@@ -33,6 +33,7 @@ const (
 )
 
 var severities = map[check]finding.Severity{
+	// The account's own 2FA guards everything else; owning organizations hands over every repository.
 	accountNo2FA:      finding.SevHigh,
 	accountNo2FAOwner: finding.SevCritical,
 

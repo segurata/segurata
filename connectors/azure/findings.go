@@ -115,6 +115,7 @@ func (f budgetFilter) describe() []string {
 	return out
 }
 
+// secretFinding keeps only the hint and key id, never the value, which Graph does not return anyway.
 func secretFinding(a app, p passwordCredential, now time.Time) finding.Finding {
 	name := a.DisplayName
 	if p.DisplayName != "" {

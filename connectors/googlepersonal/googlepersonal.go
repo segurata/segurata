@@ -189,6 +189,7 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 		}
 		seen[page.Mail] = true
 		if only != nil && !only[strings.ToLower(page.Mail)] {
+			// Declared skipped, so findings an earlier run made for this account are not resolved.
 			emit.Scope(page.Mail, false, "not in connectors.google-personal.config.accounts")
 			continue
 		}

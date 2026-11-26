@@ -8,6 +8,7 @@ import (
 )
 
 // Doctor obtains the token as the inventory does and asks tokeninfo for its scopes and account.
+// The token is discarded; nothing is printed but the outcome.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
 	cfg, err := parseSettings(req.Config, c.home)
 	if err != nil {

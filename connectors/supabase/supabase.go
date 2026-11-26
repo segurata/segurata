@@ -119,6 +119,8 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return nil
 }
 
+// projectScope: project findings come from the project list, so when it fails the organizations
+// are still read but every project is declared unread.
 func projectScope(ref string) string { return "project:" + ref }
 
 // emitStatuses reports one status per organization and per account with failures, in name order.

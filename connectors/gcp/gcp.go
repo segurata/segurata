@@ -386,6 +386,7 @@ func (b *billing) discover(ctx context.Context, account string, emit connector.E
 	var list []billingAccount
 	if err := b.g.json(ctx, &list, "billing", "accounts", "list", "--account="+account); err != nil {
 		state, why := classify(err)
+		// Budgets are judged per billing account: without the list any of them may be missed.
 		emit.Status(finding.Status{Account: account, Scope: billingScope("*"), State: state, Detail: "billing accounts list: " + why})
 		return
 	}
@@ -409,7 +410,7 @@ func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 	for _, id := range slices.Sorted(maps.Keys(b.accounts)) {
 		st := b.accounts[id]
 		if len(st.linked) == 0 && (st.open == nil || !*st.open) {
-			continue
+			continue // closed and paying for nothing we can see: it cannot spend
 		}
 		args := []string{"billing", "budgets", "list", "--billing-account=" + id, "--account=" + st.account}
 		if b.billingProject != "" {
@@ -429,6 +430,8 @@ func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 	}
 }
 
+// billingScope, like a project id for project checks, is narrower than the gcloud account, so one
+// billing account or project the account cannot read leaves only its own findings unresolved.
 func billingScope(id string) string { return "billing:" + id }
 
 func projectList(ps []linkedProject) string {

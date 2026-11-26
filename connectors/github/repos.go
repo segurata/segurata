@@ -250,6 +250,7 @@ func (r *run) inspect(ctx context.Context, base repo) repoResult {
 	if rp.Visibility != "public" {
 		return res
 	}
+	// A workflow token's default only matters where Actions run; forks start with them off.
 	var ap struct {
 		Enabled bool `json:"enabled"`
 	}

@@ -267,6 +267,8 @@ func (s *scan) finding(f finding.Finding) {
 	s.emit.Finding(f)
 }
 
+// Account and zone findings come from the account and zone lists, so when a list fails or is
+// capped, every finding it would have produced is declared unread by scope.
 func accountScope(label string) string { return "account:" + label }
 func zoneScope(name string) string     { return "zone:" + name }
 
@@ -436,7 +438,7 @@ func (s *scan) statuses() {
 }
 
 // Doctor probes one page of each listing the inventory reads, so a missing permission shows
-// before a run.
+// before a run. Nothing is printed from the token.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
 	tok := req.Secrets[secretName]
 	if tok == "" {
