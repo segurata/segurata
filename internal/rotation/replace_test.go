@@ -3,10 +3,9 @@ package rotation
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
 	"io"
-	"math/big"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,23 +17,14 @@ import (
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/testcorpus"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
 // fakeKey is an obviously fake Anthropic-shaped key, generated at run time: no secret-looking
 // literal sits in the source.
-func fakeKey(t *testing.T) string {
-	t.Helper()
-	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	b := []byte("sk-ant-FAKE")
-	for i := 0; i < 60; i++ {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alnum))))
-		if err != nil {
-			t.Fatal(err)
-		}
-		b = append(b, alnum[n.Int64()])
-	}
-	return string(b)
+func fakeKey() string {
+	return testcorpus.Fake(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), "sk-ant-FAKE", 60, testcorpus.Alnum)
 }
 
 // call is one external command a test runner saw.
@@ -105,7 +95,7 @@ func newReplaceFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fx := &fixture{home: home, state: filepath.Join(home, "state", "tracker.json"), old: fakeKey(t), new: fakeKey(t), key: key,
+	fx := &fixture{home: home, state: filepath.Join(home, "state", "tracker.json"), old: fakeKey(), new: fakeKey(), key: key,
 		zshrc: filepath.Join(home, ".zshrc"), env: filepath.Join(home, "src", "app", ".env")}
 	fx.os = &fakeOS{clip: fx.new, items: map[string]string{}}
 	write(t, fx.zshrc, strings.ReplaceAll(zshrcOld, "%s", fx.old), 0o640)

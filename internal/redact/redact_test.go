@@ -3,7 +3,6 @@ package redact
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"math/rand/v2"
@@ -18,6 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/testcorpus"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -26,29 +26,7 @@ import (
 
 var rng = rand.New(rand.NewPCG(3, 5))
 
-const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-
-func fake(prefix string, n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = alnum[rng.IntN(len(alnum))]
-	}
-	return prefix + string(b)
-}
-
-// fakePEMEscaped is random bytes in PEM armour, and its base64 body (what is fingerprinted).
-func fakePEMEscaped() (pem, body string) {
-	raw := make([]byte, 400)
-	for i := range raw {
-		raw[i] = byte(rng.IntN(256))
-	}
-	body = base64.StdEncoding.EncodeToString(raw)
-	var lines []string
-	for i := 0; i < len(body); i += 64 {
-		lines = append(lines, body[i:min(i+64, len(body))])
-	}
-	return "-----BEGIN RSA PRIVATE KEY-----\n" + strings.Join(lines, "\n") + "\n-----END RSA PRIVATE KEY-----\n", body
-}
+func fake(prefix string, n int) string { return testcorpus.Fake(rng, prefix, n, testcorpus.Alnum) }
 
 type fixture struct {
 	t       testing.TB
@@ -159,7 +137,7 @@ func (fx *fixture) tag(typ, name string) string {
 func (fx *fixture) transcript() string {
 	ant := fx.secret("anthropic", fake("sk-ant-api03-", 60))
 	gh := fx.secret("github", fake("ghp_", 36))
-	pem, body := fakePEMEscaped()
+	pem, body := testcorpus.PEM("RSA", testcorpus.Bytes(rng, 400))
 	fx.secret("pem", body)
 	cs := fx.secret("client-secret", fake("", 24))
 	q := func(s string) string {
