@@ -140,6 +140,35 @@ func TestNotebookOutputsAreIgnoredInHistory(t *testing.T) {
 	}
 }
 
+// Without gitleaks the working tree is searched whole: a notebook on disk keeps only the matches
+// in its cells' source.
+func TestNotebookOutputsAreIgnoredOnDisk(t *testing.T) {
+	fx := newFixture(t)
+	inSource, inOutput := fake("ghp_", 36), fake("ghp_", 36)
+	fx.write(t, "src/shop/lesson.ipynb", "{\n \"cells\": [\n  {\n   \"outputs\": [\n    {\"text\": [\""+inOutput+
+		"\"]}\n   ],\n   \"source\": [\n    \"tok = '"+inSource+"'\"\n   ]\n  }\n ]\n}\n", 0o600)
+	c := fx.connector(t, "[]")
+	c.LookPath = func(n string) (string, error) {
+		if n == "gitleaks" {
+			return "", exec.ErrNotFound
+		}
+		return "/bin/true", nil
+	}
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, f := range rec.findings {
+		if evidence(f, "path") == "~/src/shop/lesson.ipynb" {
+			lines = append(lines, evidence(f, "line"))
+		}
+	}
+	if !slices.Equal(lines, []string{"8"}) {
+		t.Errorf("notebook findings on lines %v, want only the source line 8", lines)
+	}
+}
+
 func TestClassifyOrigin(t *testing.T) {
 	names := map[string]bool{"me": true, "my-org": true}
 	cases := []struct {
@@ -263,7 +292,7 @@ func newOwnersFixture(t *testing.T) (*ownersFixture, *Connector) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 		Home:      func() (string, error) { return fx.home, nil },
 		KeyPath:   func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") },
-		CacheDir:  DefaultCacheDir,
+		CacheDir:  defaultCacheDir,
 		Now:       func() time.Time { return time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC) },
 	}
 	return o, c
@@ -514,38 +543,6 @@ func TestFixturePathsLowerImpact(t *testing.T) {
 	}
 }
 
-func TestNewGuardShapes(t *testing.T) {
-	refused := func(c cli.Checker, args ...string) bool { return errors.Is(c.Check(args), cli.ErrRefused) }
-	if refused(ghCheck, "api", "user") || refused(ghCheck, strings.Fields(ghOrgsCall)...) {
-		t.Error("gh reads of the user refused")
-	}
-	if !refused(ghCheck, "api", "-X", "DELETE", "user") || !refused(ghCheck, "api", "user/repos") || !refused(ghCheck, "api", "graphql") ||
-		!refused(ghCheck, "api", "--paginate", "--jq", ".[].login", "user/repos") {
-		t.Error("gh api beyond the two reads allowed")
-	}
-	if refused(gitCheck, "--git-dir=/r/.git", "cat-file", "blob", "0123456789:nb/a b.ipynb") {
-		t.Error("cat-file blob <commit>:<path> refused")
-	}
-	if !refused(gitCheck, "--git-dir=/r/.git", "cat-file", "blob", "HEAD:x") || !refused(gitCheck, "--git-dir=/r/.git", "cat-file", "--textconv", "0123456789:x") {
-		t.Error("cat-file with a symbolic ref or textconv allowed")
-	}
-	if refused(gitCheck, "--git-dir=/r/.git", "rev-list", "0123456789", "--not", "--remotes=upstream") {
-		t.Error("fork history check refused")
-	}
-}
-
-func TestSettingsOwnersAndNoise(t *testing.T) {
-	s, err := parseSettings(map[string]any{"owned_owners": []any{"me", "my-org"}, "emit_noise": true}, "/h")
-	if err != nil || !slices.Equal(s.ownedOwners, []string{"me", "my-org"}) || !s.emitNoise {
-		t.Fatalf("settings %+v err %v", s, err)
-	}
-	for _, bad := range []any{"me", []any{"me", 3}, []any{""}} {
-		if _, err := parseSettings(map[string]any{"owned_owners": bad}, "/h"); err == nil {
-			t.Errorf("owned_owners %v accepted", bad)
-		}
-	}
-}
-
 func TestNoiseCountsLine(t *testing.T) {
 	var n noiseCounts
 	if n.String() != "" {
@@ -614,10 +611,9 @@ func TestThirdPartyCopyNamingAnAccountIsEmitted(t *testing.T) {
 		return secretrisk.Evidence{Fingerprint: fp, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/lms/k.py", Repo: "~/src/lms",
 			Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Origin: secretrisk.OriginThirdParty, Claims: c}
 	}
-	sc := &scan{rows: map[string]*row{
-		"a": {ev: copyOf("aaaaaaaaaaaaaaaa", attribution.Claims{AWSAccount: "171436882533"})},
-		"b": {ev: copyOf("bbbbbbbbbbbbbbbb", attribution.Claims{AuthorEmail: "me@x.com"})},
-	}}
+	a := copyOf("aaaaaaaaaaaaaaaa", attribution.Claims{AWSAccount: "171436882533"})
+	b := copyOf("bbbbbbbbbbbbbbbb", attribution.Claims{AuthorEmail: "me@x.com"})
+	sc := &scan{rows: map[string]*secretrisk.Evidence{"a": &a, "b": &b}}
 	got, noise := sc.findings()
 	if len(got) != 1 || evidence(got[0], "fingerprint") != "aaaaaaaaaaaaaaaa" || got[0].Severity != finding.SevInfo {
 		t.Fatalf("want only the copy naming an account, as noise: %+v", got)

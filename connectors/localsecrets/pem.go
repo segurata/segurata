@@ -9,13 +9,11 @@ import (
 	"strings"
 )
 
-// escapedBreak is a newline as it appears inside JSON strings and transcripts: "\n", "\\n", "\r\n".
+// escapedBreak is a newline escaped inside JSON strings and transcripts.
 var escapedBreak = regexp.MustCompile(`(?:\\+[nr])+`)
 
-// pemBody extracts the base64 body of a PEM private key, in either real-newline or escaped form,
-// dropping the BEGIN/END lines and RFC 1421 headers. The same key gives the same body wherever it
-// is found (a .pem file, a service-account JSON, a transcript, git history), so it gets the same
-// fingerprint.
+// pemBody is the base64 body of a PEM private key, with real or escaped newlines and without RFC
+// 1421 headers: the same key gets the same fingerprint wherever it is found.
 func pemBody(text string) string {
 	text = escapedBreak.ReplaceAllString(text, "\n")
 	var b strings.Builder
@@ -63,7 +61,7 @@ func pemEncrypted(header, text, body string) bool {
 
 var pemHeader = regexp.MustCompile(`-----BEGIN ([A-Z ]*)PRIVATE KEY-----`)
 
-// pemLabel is the key kind from its header ("RSA", "OPENSSH", "EC"), "PKCS8" when unnamed.
+// pemLabel is the key kind in the header, "PKCS8" when unnamed.
 func pemLabel(text string) string {
 	m := pemHeader.FindStringSubmatch(text)
 	if m == nil {
@@ -75,8 +73,7 @@ func pemLabel(text string) string {
 	return "PKCS8"
 }
 
-// pemBlockAt reads the PEM block whose header is on (1-based) line n of path, for keys stored with
-// real newlines, where ripgrep only reports the header line.
+// pemBlockAt reads the PEM block whose header is on line n: ripgrep reports only that line.
 func pemBlockAt(path string, n int) string {
 	raw, err := readSmall(path)
 	if err != nil {
@@ -97,13 +94,15 @@ func pemBlockAt(path string, n int) string {
 	return b.String()
 }
 
-// readSmall reads a file of at most 50 MB, the limit ripgrep is given.
+// maxFileSize bounds every file read, ripgrep's included.
+const maxFileSize = 50 << 20
+
 func readSmall(path string) ([]byte, error) {
 	st, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	if st.Size() > 50<<20 {
+	if st.Size() > maxFileSize {
 		return nil, fmt.Errorf("%s: too large", path)
 	}
 	return os.ReadFile(path)

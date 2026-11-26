@@ -9,8 +9,7 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// sshKeys inspects private keys in ~/.ssh: type, permissions and whether they have a passphrase.
-// ssh-keygen opens each one with an empty passphrase; its output (the public key) is discarded.
+// sshKeys reports each private key in ~/.ssh, opened with an empty passphrase to see if it has one.
 func (s *scan) sshKeys() {
 	dir := s.h(".ssh")
 	entries, err := os.ReadDir(dir)
@@ -41,7 +40,7 @@ func (s *scan) sshKeys() {
 		keytype := "?"
 		if pub != "" {
 			if out, err := keygen.Run(s.ctx, "-l", "-f", pub); err == nil {
-				// "256 SHA256:… comment (ED25519)": keep the type and the size, never the comment.
+				// "256 SHA256:… comment (ED25519)": the comment is never kept.
 				if l := strings.Fields(strings.TrimSpace(string(out))); len(l) >= 2 {
 					keytype = strings.Trim(l[len(l)-1], "()") + " " + l[0]
 				}

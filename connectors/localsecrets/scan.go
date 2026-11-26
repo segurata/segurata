@@ -18,7 +18,6 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// skipDirs are never descended into by ripgrep: dependencies, build output, VCS internals.
 var skipDirs = []string{"node_modules", "deps", "_build", "vendor", ".git", ".elixir_ls", ".venv", "venv", "__pycache__", ".next", "dist"}
 
 func globs(list ...string) []string {
@@ -37,18 +36,15 @@ func skipGlobs() []string {
 	return globs(gs...)
 }
 
-// pass is one ripgrep run: which patterns, over which paths, with which extra filters.
 type pass struct {
 	patterns []pattern
 	paths    []string
 	extra    []string
 }
 
-// Source code inside config dirs (~/.mcp, ~/.config) is left to gitleaks: too noisy for the
-// generic assignment pattern.
+// codeExts in config folders are left to gitleaks: too noisy for the assignment pattern.
 var codeExts = []string{"ts", "tsx", "js", "mjs", "cjs", "py", "rb", "ex", "exs", "go", "rs", "java", "md", "html", "css", "map", "lock", "d.ts"}
 
-// Files under repos_root that hold secrets by convention.
 var srcSecretGlobs = []string{".env*", "*.pem", "*.key", "*.p8", "credentials*", "secrets*", "*.secret.exs", "*.secrets.*"}
 
 var credFiles = []string{".aws/credentials", ".aws/config", ".npmrc", ".netrc", ".docker/config.json", ".kube/config", ".pypirc",
@@ -64,13 +60,11 @@ func (s *scan) hs(rels []string) []string {
 	return out
 }
 
-// passes lists the ripgrep runs. Config files, .env files and histories get the generic
-// assignment pattern too; logs and transcripts only the specific ones. Without a git history scan
-// the whole working tree under repos_root is searched instead of just its secret files.
+// passes are the ripgrep runs. Without gitleaks, the whole tree under repos_root is searched
+// instead of its secret files only.
 func (s *scan) passes(history bool) []pass {
-	// gcloud's own logs record its API calls (segurata's gcp connector among them): ~70 info
-	// matches a run, none a secret.
-	noCode := []string{"--max-filesize", "50M", "-g", "!**/gcloud/logs"}
+	limit := []string{"--max-filesize", strconv.Itoa(maxFileSize)}
+	noCode := append(slices.Clone(limit), "-g", "!**/gcloud/logs") // gcloud's API call log: no secrets
 	for _, e := range codeExts {
 		noCode = append(noCode, "-g", "!*."+e)
 	}
@@ -80,12 +74,11 @@ func (s *scan) passes(history bool) []pass {
 	}
 	return append([]pass{
 		{withAssignment, s.hs(credFiles), noCode},
-		{withAssignment, []string{s.h(".claude")}, append([]string{"--max-filesize", "50M"}, globs("*.json", "!projects", "!plugins/cache")...)},
-		{withAssignment, []string{s.src}, append([]string{"--max-filesize", "50M"}, srcExtra...)},
+		{withAssignment, []string{s.h(".claude")}, slices.Concat(limit, globs("*.json", "!projects", "!plugins/cache"))},
+		{withAssignment, []string{s.src}, slices.Concat(limit, srcExtra)},
 	}, s.trailPasses()...)
 }
 
-// trailPasses are the runs over trails: shell histories, logs and agent transcripts.
 func (s *scan) trailPasses() []pass {
 	return []pass{
 		{withAssignment, s.hs(historyFiles), nil},
@@ -95,8 +88,7 @@ func (s *scan) trailPasses() []pass {
 	}
 }
 
-// patternsFor are the patterns a pass applies to a file of this kind: shell histories get the
-// generic assignment pattern, the other trails only the specific ones.
+// patternsFor leaves the noisy assignment pattern out of transcripts and logs.
 func patternsFor(kind string) []pattern {
 	if specificOnly(kind) {
 		return specific
@@ -104,8 +96,6 @@ func patternsFor(kind string) []pattern {
 	return withAssignment
 }
 
-// specificOnly reports whether files of this kind (transcripts, logs) are searched with the
-// specific patterns only.
 func specificOnly(kind string) bool { return kind == "transcript" || kind == "log" }
 
 func existing(paths []string) []string {
@@ -118,17 +108,14 @@ func existing(paths []string) []string {
 	return out
 }
 
-// rgArgs are the flags every ripgrep run shares: search hidden and ignored files, print only the
-// match with its path and line, NUL after the path.
 func rgArgs() []string {
 	return append([]string{"--no-config", "--hidden", "--no-ignore", "-o", "-n", "--null", "--no-heading", "-H",
 		"--color", "never"}, skipGlobs()...)
 }
 
-// rgOutput returns what ripgrep printed, partial output included, and marks the files scope
-// uninspected unless the search was complete. Exit 1 means no matches. macOS denies reads under
-// every home (TCC), so exit 2 is complete apart from those paths when ripgrep only reports
-// unreadable paths below its roots.
+// rgOutput returns what ripgrep printed and marks the files scope uninspected unless the search
+// was complete. macOS (TCC) denies reads under every home, so an exit 2 that only reports
+// unreadable paths below the roots is complete apart from those paths.
 func (s *scan) rgOutput(args []string) []byte {
 	out, err := guardRG(s.c.RG).Run(s.ctx, args...)
 	if err == nil {
@@ -152,15 +139,14 @@ func (s *scan) rgOutput(args []string) []byte {
 	return out
 }
 
-// unreadableErrs end ripgrep's message for a path it was not allowed to read; vanishedErr for a
-// path removed while it searched, which holds nothing any more.
+// ripgrep's message endings for a path it may not read, and for one removed while it searched.
 var (
 	unreadableErrs = []string{": Permission denied (os error 13)", ": Operation not permitted (os error 1)"}
 	vanishedErr    = ": No such file or directory (os error 2)"
 )
 
-// unreadableBelow is the paths ripgrep's stderr reports unreadable, and whether all it reports
-// is paths below its roots that it could not read or that vanished.
+// unreadableBelow is the unreadable paths in ripgrep's stderr, and whether stderr reports only
+// unreadable or vanished paths below its roots.
 func unreadableBelow(stderr string, roots []string) ([]string, bool) {
 	var paths []string
 	lines := 0
@@ -188,7 +174,6 @@ func unreadableBelow(stderr string, roots []string) ([]string, bool) {
 	return paths, lines > 0
 }
 
-// rgRoots are the paths a ripgrep command line searches: everything after "--".
 func rgRoots(args []string) []string {
 	if i := slices.Index(args, "--"); i >= 0 {
 		return args[i+1:]
@@ -196,8 +181,8 @@ func rgRoots(args []string) []string {
 	return nil
 }
 
-// skipUnreadable leaves each path out of the files scope: what it may hold is unknown, so the
-// tracker keeps every location there, while the rest of the scope counts as inspected.
+// skipUnreadable marks each path uninspected, so the tracker keeps what it held, while the rest
+// of the files scope counts as inspected.
 func (s *scan) skipUnreadable(paths []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,7 +197,7 @@ func (s *scan) skipUnreadable(paths []string) {
 	}
 }
 
-// rgArgsFor is the ripgrep command line of one pass, or nil when none of its paths exist.
+// rgArgsFor is nil when none of the pass's paths exist.
 func rgArgsFor(p pass) []string {
 	paths := existing(p.paths)
 	if len(paths) == 0 {
@@ -225,9 +210,8 @@ func rgArgsFor(p pass) []string {
 	return append(append(args, "--"), paths...)
 }
 
-// rg runs one pass. Matches whose judgement needs the whole line (a token in a URL's query
-// string is judged by the URL's host, which ripgrep's -o output leaves out) are read back from
-// their file afterwards, one read per file.
+// rg runs one pass. ripgrep's -o leaves out the rest of the line, so the lines of matches that
+// need it (needsLine) are read back afterwards, one read per file.
 func (s *scan) rg(p pass) {
 	args := rgArgsFor(p)
 	if args == nil {
@@ -259,9 +243,8 @@ func (s *scan) rg(p pass) {
 	}
 }
 
-// keyIDLines are the lines, by file, where a pass found a long-term AWS key id: a secret-ish
-// assignment within awsPairLines lines of one is that key id's secret access key
-// (awsSecretNearKeyID). Only the passes with the assignment pattern have such assignments.
+// keyIDLines are the lines, by file, of long-term AWS key ids, which make a nearby secret-ish
+// assignment a secret access key (awsSecretNearKeyID).
 func keyIDLines(out []byte, patterns []pattern) map[string][]int {
 	if !slices.ContainsFunc(patterns, func(p pattern) bool { return p.typ == assignment.typ }) {
 		return nil
@@ -278,10 +261,9 @@ func keyIDLines(out []byte, patterns []pattern) map[string][]int {
 	return lines
 }
 
-// needsLine are the types judged with the line around the match.
+// needsLine: a URL token is judged by the URL's host.
 var needsLine = map[string]bool{"url-token-param": true}
 
-// linesAt reads the wanted (1-based) lines of a file of at most 50 MB, streaming.
 func linesAt(path string, want map[int]bool) map[int]string {
 	out := map[int]string{}
 	f, err := os.Open(path)
@@ -289,7 +271,7 @@ func linesAt(path string, want map[int]bool) map[int]string {
 		return out
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil || st.Size() > 50<<20 {
+	if st, err := f.Stat(); err != nil || st.Size() > maxFileSize {
 		return out
 	}
 	r := bufio.NewReader(f)
@@ -325,15 +307,13 @@ func eachRGMatch(out []byte, f func(path string, line int, text string)) {
 	}
 }
 
-// classified is one ripgrep match read by the first pattern that fits it whole. idx holds the
-// submatch byte offsets inside the match text, as regexp's Index functions return them.
+// classified is a match read by the first pattern that fits it whole; idx are submatch offsets.
 type classified struct {
 	p       *pattern
 	idx     []int
 	varName string
 }
 
-// subs are the submatches of text.
 func (c classified) subs(text string) []string {
 	m := make([]string, len(c.idx)/2)
 	for i := range m {
@@ -344,9 +324,8 @@ func (c classified) subs(text string) []string {
 	return m
 }
 
-// classify finds the first pattern that fits text whole. ripgrep reports the leftmost match, so
-// `NAME=sk-ant-…` arrives as an assignment: its value is classified with the specific patterns
-// when one of them fits.
+// classify finds the first pattern that fits text whole. The leftmost match of `NAME=sk-ant-…` is
+// an assignment, so its value is classified again with the specific patterns.
 func classify(path, text string, patterns []pattern) (classified, bool) {
 	for i := range patterns {
 		p := &patterns[i]
@@ -376,10 +355,8 @@ func classify(path, text string, patterns []pattern) (classified, bool) {
 	return classified{}, false
 }
 
-// match classifies one ripgrep match and records it. context is the whole line when the pattern
-// needs it (needsLine), else "". keyIDs are the lines of the file that hold an AWS key id: an
-// assignment to a secret-ish name near one is an AWS secret access key, outside trails, whose
-// lines (commands, messages) say nothing about what belongs together.
+// match records one ripgrep match. context is the whole line for needsLine types. Near a key id,
+// a secret-ish assignment is an AWS secret key, except in trails, whose lines are unrelated.
 func (s *scan) match(path string, line int, text, context string, patterns []pattern, keyIDs []int) {
 	c, ok := classify(path, text, patterns)
 	if !ok || s.fileNotebookOutput(path, line) {
@@ -393,7 +370,7 @@ func (s *scan) match(path string, line int, text, context string, patterns []pat
 		s.serviceAccount(path, line, kind)
 	default:
 		p, m := c.p, c.subs(text)
-		if p.typ == assignment.typ && !IsTrail(kind) && nearKeyID(keyIDs, line) && awsSecretNearKeyID(c.varName, m[p.group]) {
+		if p.typ == assignment.typ && !isTrail(kind) && nearKeyID(keyIDs, line) && awsSecretNearKeyID(c.varName, m[p.group]) {
 			p, m = awsSecretKey, []string{m[0], m[p.group]}
 		}
 		s.value(path, line, kind, p, m, c.varName, context)
@@ -410,7 +387,6 @@ func (s *scan) value(path string, line int, kind string, p *pattern, m []string,
 }
 
 // valueEvidence judges a value match: the evidence without its location, and the raw secret.
-// context is the line the match came from, when known: a URL token's host is read from it.
 func valueEvidence(p *pattern, m []string, varName, context string, now time.Time) (secretrisk.Evidence, string, bool) {
 	v, ok := judge(p, m[p.group], varName, now)
 	if !ok {
@@ -429,8 +405,7 @@ func valueEvidence(p *pattern, m []string, varName, context string, now time.Tim
 		scheme, host := urlBefore(context, m[0])
 		note = secretrisk.URLNote(scheme, host, queryParam(m[0]))
 	case "cloudflare-token":
-		// The key it is assigned to (CLOUDFLARE_API_TOKEN, CF_KEY): the value alone does not say
-		// whose it is, and the liveness check tries only one the key names (namesCloudflare).
+		// The key name says whose it is (namesCloudflare).
 		note, _, _ = strings.Cut(m[0], "=")
 		note, _, _ = strings.Cut(note, ":")
 		note = strings.Trim(note, "\"' \t")
@@ -439,7 +414,6 @@ func valueEvidence(p *pattern, m []string, varName, context string, now time.Tim
 		Note: note, Public: v.public, Sample: sampleValue(v.secret)}, v.secret, true
 }
 
-// queryParam is the parameter name of a `?name=value` or `&name=value` match.
 func queryParam(m string) string {
 	name, _, _ := strings.Cut(strings.TrimLeft(m, "?&"), "=")
 	return strings.ToLower(name)
@@ -447,9 +421,7 @@ func queryParam(m string) string {
 
 var urlStart = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]{1,20})://(?:[^\s/@"'<>]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])[^\s"'<>]*$`)
 
-// urlBefore finds the URL a query-string match belongs to in its line: the scheme and host of
-// the URL that runs, without a break, up to the match. Empty when the line is unknown or the
-// match is not inside a URL.
+// urlBefore is the scheme and host of the URL that runs unbroken up to the match in line.
 func urlBefore(line, match string) (scheme, host string) {
 	i := strings.Index(line, match)
 	if i < 0 {
@@ -462,8 +434,8 @@ func urlBefore(line, match string) (scheme, host string) {
 	return strings.ToLower(m[1]), strings.ToLower(strings.Trim(m[2], "[]"))
 }
 
-// privateKey fingerprints the key body. A header with no body in a transcript or a log is
-// documentation; in a file, the body is on the following lines.
+// privateKey fingerprints the key body. A bare header is documentation in a trail; in a file the
+// body follows it.
 func (s *scan) privateKey(path string, line int, kind, text string) {
 	if len(pemBody(text)) < 40 {
 		if kind == "transcript" || kind == "log" {
@@ -479,8 +451,6 @@ func (s *scan) privateKey(path string, line int, kind, text string) {
 	s.add(path, ev, body)
 }
 
-// privateKeyEvidence reads a PEM block (real or escaped newlines): the evidence without its
-// location and the base64 body that is fingerprinted. ok is false without a body.
 func privateKeyEvidence(text string) (secretrisk.Evidence, string, bool) {
 	body := pemBody(text)
 	if len(body) < 40 {
@@ -495,10 +465,10 @@ func privateKeyEvidence(text string) (secretrisk.Evidence, string, bool) {
 	return secretrisk.Evidence{Source: "scan", Type: privateKeyType, Redacted: "PEM", Note: note, Encrypted: enc}, body, true
 }
 
-// serviceAccount reads a service-account key file and fingerprints its private key, so the same key
-// matches wherever else it appears. In a transcript the private-key match covers it.
+// serviceAccount fingerprints the file's private key, so it matches the key's other copies. In a
+// trail the private-key match covers it.
 func (s *scan) serviceAccount(path string, line int, kind string) {
-	if IsTrail(kind) {
+	if isTrail(kind) {
 		return
 	}
 	raw, err := readSmall(path)
@@ -520,8 +490,8 @@ func (s *scan) serviceAccount(path string, line int, kind string) {
 		Note: sa.ClientEmail}, body)
 }
 
-// byName reports files that are secrets by name, even when binary or patternless: Rails master
-// keys, keystores and certificate bundles under repos_root, and gcloud's credential stores.
+// byName reports files that are secrets by name, binary or not: Rails master keys, keystores and
+// gcloud's credential stores.
 func (s *scan) byName() {
 	var files []string
 	if paths := existing([]string{s.src}); len(paths) > 0 {

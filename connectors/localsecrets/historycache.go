@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,56 +15,39 @@ import (
 	"github.com/segurata/segurata/internal/statefile"
 )
 
-// Git history is append-only in practice, so a repository's history needs a full gitleaks scan
-// once: after that only the commits added since the last run are scanned, and the leaks found
-// before are replayed from a per-repository cache.
-//
-// The cache records the commit every ref (and HEAD) pointed to when the scan ran, its tips. The
-// next run lists the tips again and scans `<new tips> --not <old tips>`: exactly the commits no
-// earlier scan saw. That is only valid while every old tip is still reachable from a current one;
-// when a ref was rewritten or deleted, the commits it held may be gone, their leaks with them, and
-// the run falls back to a full scan. So does a change of cache format, gitleaks version, gitleaks
-// configuration or fingerprint key, or of how this connector reads gitleaks' leaks.
-//
-// The cache holds evidence only (fingerprints, redacted hints, paths, commits), never a value: it
-// stores the evidence after prepare, which has already refused any that would contain the value.
+// A repository's history is scanned in full once; later runs scan `<new tips> --not <old tips>`
+// and replay the cached leaks. A ref rewritten or deleted since (an old tip no longer reachable)
+// and any change of format, gitleaks version or config or fingerprint key mean a full scan again.
+// The cache holds prepared evidence only, never a value.
 
-// historyCacheVersion goes up when the cached evidence of the same leaks would differ: version 2
-// reads AWS secret access keys out of gitleaks' generic-api-key leaks (markAWSSecretLeaks).
+// historyCacheVersion goes up when the cached evidence of the same leaks would differ.
 const historyCacheVersion = 2
 
-// maxLogOpts bounds the commit list passed to gitleaks, well under any OS argument limit.
-var maxLogOpts = 256 << 10
+var maxLogOpts = 256 << 10 // well under any OS argument limit
 
-// cacheRoot holds the connector's caches: the gitleaks history caches' parent, ~/.cache/segurata.
 func (c *Connector) cacheRoot(home string) string { return filepath.Dir(c.CacheDir(home)) }
 
-// DefaultCacheDir is ~/.cache/segurata/gitleaks.
-func DefaultCacheDir(home string) string {
+func defaultCacheDir(home string) string {
 	return filepath.Join(home, ".cache", "segurata", "gitleaks")
 }
 
-// historyCache is one repository's cache file.
 type historyCache struct {
 	Version int          `json:"version"`
-	Repo    string       `json:"repo"`  // absolute path: the file name is only its hash
-	Rules   string       `json:"rules"` // hash of the gitleaks version and configuration in force
-	Key     string       `json:"key"`   // fingerprint of a fixed probe: changes with the machine key
-	Tips    []string     `json:"tips"`  // commits the refs and HEAD pointed to at the last scan
+	Repo    string       `json:"repo"`  // the file name is only its hash
+	Rules   string       `json:"rules"` // gitleaks version and configuration
+	Key     string       `json:"key"`   // changes with the fingerprint key
+	Tips    []string     `json:"tips"`  // what the refs and HEAD pointed to
 	Leaks   []cachedLeak `json:"leaks"`
-	Omitted int          `json:"omitted,omitempty"` // leaks dropped because evidence held the value
+	Omitted int          `json:"omitted,omitempty"`
 }
 
-// cachedLeak is one gitleaks finding, already prepared. Expires keeps a JWT's exp claim so a
-// token that expired after it was cached is judged as of today.
+// cachedLeak keeps a JWT's exp, so a token that expired since is judged as of today.
 type cachedLeak struct {
 	Evidence secretrisk.Evidence `json:"evidence"`
 	Expires  int64               `json:"expires,omitempty"`
 }
 
-// evidence is the cached evidence as of now, for a repository that has a remote or not and
-// belongs to someone (origin): JWTs and temporary AWS keys that expired since they were cached are
-// judged as of today.
+// evidence is the cached evidence as of now, with the repository's current remote and origin.
 func (c cachedLeak) evidence(now time.Time, remote bool, origin string) secretrisk.Evidence {
 	ev := c.Evidence
 	ev.Remote, ev.Origin = remote, origin
@@ -77,8 +59,7 @@ func (c cachedLeak) evidence(now time.Time, remote bool, origin string) secretri
 	return ev
 }
 
-// commitDay is the end of the day of a commit date ("2024-05-01", as evidence keeps it): the
-// latest the commit can have happened. Zero when the date is unreadable.
+// commitDay is the end of a commit's day, the latest it can have happened; zero when unreadable.
 func commitDay(date string) time.Time {
 	d, err := time.Parse(time.DateOnly, leading(date, 10))
 	if err != nil {
@@ -87,17 +68,14 @@ func commitDay(date string) time.Time {
 	return d.Add(24 * time.Hour)
 }
 
-// historyStats counts how each repository's history was scanned, for the run's status line.
 type historyStats struct{ unchanged, incremental, full atomic.Int64 }
 
 func (h *historyStats) String() string {
 	return fmt.Sprintf("%d unchanged, %d incremental, %d full", h.unchanged.Load(), h.incremental.Load(), h.full.Load())
 }
 
-// gitleaks scans one repository's history, through the cache unless git_cache is false. Each
-// leak is replayed with what may have changed since it was cached: whether the repository has a
-// remote, whose it is, which commits a fork inherited, and the data dumps and notebook outputs it
-// falls in.
+// gitleaks scans one repository's history and replays each leak with what may have changed since
+// it was cached: remote, origin, inherited commits, dumps and notebook outputs.
 func (s *scan) gitleaks(repo string) error {
 	remote := s.hasRemote(repo)
 	org := s.originOf(repo)
@@ -141,7 +119,6 @@ func (s *scan) gitleaks(repo string) error {
 	return nil
 }
 
-// scanWithCache brings a repository's cache up to date, scanning only what it lacks, and saves it.
 func (s *scan) scanWithCache(repo string) (*historyCache, error) {
 	tips, err := s.tips(repo)
 	if err != nil {
@@ -156,8 +133,7 @@ func (s *scan) scanWithCache(repo string) (*historyCache, error) {
 	var logOpts string
 	switch {
 	case incremental && len(without(tips, old.Tips)) == 0, !incremental && len(tips) == 0:
-		// Nothing new, or no commits yet.
-		if incremental {
+		if incremental { // nothing new
 			fresh.Leaks, fresh.Omitted = old.Leaks, old.Omitted
 		}
 		s.stats.unchanged.Add(1)
@@ -166,13 +142,10 @@ func (s *scan) scanWithCache(repo string) (*historyCache, error) {
 	case incremental:
 		logOpts = "--full-history " + strings.Join(without(tips, old.Tips), " ") + " --not " + strings.Join(old.Tips, " ")
 	default:
-		// Explicit tips rather than gitleaks' default --all, so the cache records exactly what was
-		// scanned even if a commit lands during the scan.
+		// Explicit tips, so the cache records what was scanned even if a commit lands meanwhile.
 		logOpts = "--full-history " + strings.Join(tips, " ")
 	}
-	if len(logOpts) > maxLogOpts {
-		// Thousands of refs would not fit on a command line: scan everything the gitleaks way.
-		// A commit that lands during this scan may then be scanned twice by the next run.
+	if len(logOpts) > maxLogOpts { // too many refs for a command line: scan everything
 		incremental, logOpts = false, ""
 	}
 	leaks, omitted, err := s.runGitleaks(repo, logOpts)
@@ -193,7 +166,6 @@ func (s *scan) scanWithCache(repo string) (*historyCache, error) {
 
 func gitDirArg(repo string) string { return "--git-dir=" + filepath.Join(repo, ".git") }
 
-// tips lists the distinct commits the refs and HEAD point to (tags peeled), sorted.
 func (s *scan) tips(repo string) ([]string, error) {
 	out, err := guardGit(s.c.Git).Run(s.ctx, gitDirArg(repo), "rev-list", "--no-walk", "--all")
 	if err != nil {
@@ -202,9 +174,8 @@ func (s *scan) tips(repo string) ([]string, error) {
 	return sortedUnique(strings.Fields(string(out))), nil
 }
 
-// stillReachable reports whether every old tip is reachable from a current one, i.e. no ref was
-// rewritten or deleted since the last scan. A missing object is a rewrite too: git fails on it,
-// whereas gitleaks would silently scan nothing.
+// stillReachable: no ref was rewritten or deleted. A missing object counts as rewritten: gitleaks
+// would silently scan nothing.
 func (s *scan) stillReachable(repo string, old, current []string) bool {
 	if len(old) == 0 {
 		return true
@@ -218,9 +189,8 @@ func (s *scan) stillReachable(repo string, old, current []string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == ""
 }
 
-// rulesKey hashes what decides gitleaks' results besides the commits: its version, the
-// configuration named by its environment variables and the repository's own config and ignore
-// files. An error means the version could not be read; the scan then runs in full and is not cached.
+// rulesKey hashes what decides gitleaks' results besides the commits. Without a version the scan
+// runs in full and is not cached.
 func (s *scan) rulesKey(repo string) (string, error) {
 	s.glOnce.Do(func() {
 		out, err := guardGitleaks(s.c.Gitleaks).Run(s.ctx, "version")
@@ -247,19 +217,16 @@ func (s *scan) rulesKey(repo string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 
-// cacheKeyProbe changes whenever the fingerprint key does, which invalidates cached fingerprints.
 func (s *scan) cacheKeyProbe() string { return s.fp.Of("segurata git history cache") }
 
 func (s *scan) cachePath(repo string) string { return repoCacheFile(s.c.CacheDir(s.home), repo) }
 
-// repoCacheFile names a repository's cache file in dir after the hash of its path.
 func repoCacheFile(dir, repo string) string {
 	sum := sha256.Sum256([]byte(repo))
 	return filepath.Join(dir, hex.EncodeToString(sum[:8])+".json")
 }
 
-// loadCache returns the cache at path when it matches want's version, repository, rules and key,
-// or nil (missing, unreadable or stale), which means a full scan.
+// loadCache is nil, a full scan, unless the cache matches want's version, repository, rules and key.
 func (s *scan) loadCache(path string, want *historyCache) *historyCache {
 	var c historyCache
 	found, err := statefile.ReadJSON(path, &c)
@@ -275,8 +242,7 @@ func (s *scan) loadCache(path string, want *historyCache) *historyCache {
 	return &c
 }
 
-// saveCache writes the cache, mode 0600 in a 0700 directory, unless the rules could not be read.
-// A cache that cannot be written only costs the next run a full scan.
+// saveCache skips a scan whose rules are unknown; a failed write costs the next run a full scan.
 func (s *scan) saveCache(path string, c *historyCache, rulesErr error) {
 	if rulesErr != nil {
 		s.emit.Log(rulesErr.Error() + ": git history cache not written")
@@ -287,7 +253,6 @@ func (s *scan) saveCache(path string, c *historyCache, rulesErr error) {
 	}
 }
 
-// without returns the elements of a not in b.
 func without(a, b []string) []string {
 	in := make(map[string]bool, len(b))
 	for _, x := range b {
@@ -302,22 +267,4 @@ func without(a, b []string) []string {
 	return out
 }
 
-func sortedUnique(xs []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, x := range xs {
-		if !seen[x] {
-			seen[x] = true
-			out = append(out, x)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// historyOnce guards the gitleaks version lookup shared by every repository of a run.
-type historyOnce struct {
-	glOnce    sync.Once
-	glVersion string
-	glErr     error
-}
+func sortedUnique(xs []string) []string { return slices.Compact(slices.Sorted(slices.Values(xs))) }

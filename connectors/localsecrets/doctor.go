@@ -8,8 +8,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 )
 
-// Doctor checks the tools the scan runs, found as the inventory finds them (LookPath), and prints
-// the versions of rg and gitleaks through their read-only guards.
+// Doctor checks the tools the scan runs and prints the versions of rg and gitleaks.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
 	skipHistory, _ := req.Config["skip_git_history"].(bool)
 	tools := []struct {

@@ -93,7 +93,7 @@ func (r *historyRepo) run(gitCache bool, key byte) (map[string]bool, [][]string)
 	c := &Connector{
 		Gitleaks: r.gitleaks(),
 		Git:      cli.Exec{Path: "git", Timeout: time.Minute},
-		CacheDir: DefaultCacheDir,
+		CacheDir: defaultCacheDir,
 		Now:      func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
 	}
 	cfg := settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute, gitCache: gitCache}
@@ -245,7 +245,7 @@ func TestHistoryCacheInvalidation(t *testing.T) {
 
 func (r *historyRepo) cacheFile(t *testing.T) string {
 	t.Helper()
-	files, _ := filepath.Glob(filepath.Join(DefaultCacheDir(r.home), "*.json"))
+	files, _ := filepath.Glob(filepath.Join(defaultCacheDir(r.home), "*.json"))
 	if len(files) != 1 {
 		t.Fatalf("cache files %v", files)
 	}

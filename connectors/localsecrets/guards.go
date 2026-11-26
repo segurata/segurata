@@ -10,14 +10,14 @@ import (
 	"github.com/segurata/segurata/internal/gitlocal"
 )
 
-// Every external command goes through one of these guards, so a bug cannot make the connector run
-// anything that writes, executes other programs or prints raw values to a file.
+// Every external command goes through a guard, so a bug cannot make the connector write, run
+// other programs or put raw values in a file.
 
 func refuse(args []string) error {
 	return fmt.Errorf("%w: %s", cli.ErrRefused, strings.Join(args, " "))
 }
 
-// rgCheck refuses ripgrep flags that run other programs (--pre, --search-zip).
+// rgCheck refuses the flags that run other programs.
 var rgCheck = cli.CheckFunc(func(args []string) error {
 	for _, a := range args {
 		if a == "--" {
@@ -30,8 +30,8 @@ var rgCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// gitleaksCheck allows only `gitleaks version`, and `gitleaks git` with the report on stdout and
-// its `git log` told not to run textconv drivers or external diffs (gitLogSafety).
+// gitleaksCheck allows `gitleaks version`, and `gitleaks git` reporting to stdout with
+// gitLogSafety.
 var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	if len(args) == 1 && args[0] == "version" {
 		return nil
@@ -55,25 +55,20 @@ var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// Git invoked for an inventory reads only local data, even from untrusted repositories.
+// gitEnv keeps git to local data, even in an untrusted repository.
 var gitEnv = gitlocal.ReadEnv()
 
-// gitLogSafety opens every --log-opts gitleaks passes to its `git log -p`: no textconv driver
-// and no external diff program from the repository's config or attributes.
+// gitLogSafety opens every --log-opts: no textconv or external diff from the repository.
 const gitLogSafety = "--no-textconv --no-ext-diff"
 
-// gitList allows only `git ls-files` and `git rev-list`, both read-only.
 var gitList = cli.Allowlist{"ls-files", "rev-list"}
 
-// gitLogFlags are the only flags `git log` may take: file lists and raw blob ids, never a patch
-// (which could run an external diff or textconv program) and never --output.
+// gitLogFlags never ask for a patch (external diff, textconv) or --output.
 var gitLogFlags = []string{"--all", "--remotes", "--full-history", "--no-renames", "--name-only", "--raw", "--no-abbrev", "-z", "--diff-filter=", "--format="}
 
-// gitCheck is gitList plus the data-dump check's reads (dumpscan.go), `git log` with gitLogFlags
-// and `git cat-file -s <object>` (a size), and the notebook check's (notebook.go) and the liveness
-// check's (liveness.go) `git cat-file blob <commit>:<path>` (a file as committed; cat-file runs no
-// textconv without --textconv), with `git cat-file -s <commit>:<path>` before it.
-// Options before the subcommand must be --git-dir= or --work-tree=.
+// gitCheck is gitList, `git log` with gitLogFlags, `cat-file -s` of an object or a committed file
+// and `cat-file blob` of a committed file (no textconv without --textconv). Only --git-dir= and
+// --work-tree= may precede the subcommand.
 var gitCheck = cli.CheckFunc(func(args []string) error {
 	i := 0
 	for i < len(args) && (strings.HasPrefix(args[i], "--git-dir=") || strings.HasPrefix(args[i], "--work-tree=")) {
@@ -114,8 +109,7 @@ func logFlagAllowed(a string) bool {
 	return false
 }
 
-// gitHeadCheck allows only `git cat-file blob <object>`, run through headExec so at most the
-// first bytes of the blob are read.
+// gitHeadCheck allows only `git cat-file blob <object>`, which headExec cuts short.
 var gitHeadCheck = cli.CheckFunc(func(args []string) error {
 	if len(args) == 4 && strings.HasPrefix(args[0], "--git-dir=") && args[1] == "cat-file" && args[2] == "blob" && hexID.MatchString(args[3]) {
 		return nil
@@ -123,11 +117,9 @@ var gitHeadCheck = cli.CheckFunc(func(args []string) error {
 	return refuse(args)
 })
 
-// commitPath is `<abbreviated commit>:<path>`, the only object name cat-file blob may read.
 var commitPath = regexp.MustCompile(`\A[0-9a-f]{7,40}:[^\x00]+\z`)
 
-// ghCheck allows only `gh repo view <owner/name> --json visibility` and the two reads of who the
-// user is (origin.go): `gh api user` and every page of `gh api user/orgs` (ghOrgsArgs), both GET.
+// ghCheck allows a repository's visibility and the GETs of the user and their organizations.
 var ghCheck = cli.CheckFunc(func(args []string) error {
 	switch {
 	case len(args) == 5 && args[0] == "repo" && args[1] == "view" && githubSlugRe.MatchString(args[2]) && args[3] == "--json" && args[4] == "visibility":
@@ -139,8 +131,7 @@ var ghCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
-// sshKeygenCheck allows exactly two shapes: print the public key of a key opened with an empty
-// passphrase (-y -P "" -f key), and print a key's fingerprint (-l -f key).
+// sshKeygenCheck allows opening a key with an empty passphrase and printing a fingerprint.
 var sshKeygenCheck = cli.CheckFunc(func(args []string) error {
 	switch {
 	case len(args) == 5 && args[0] == "-y" && args[1] == "-P" && args[2] == "" && args[3] == "-f":

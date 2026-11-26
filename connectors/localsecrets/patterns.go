@@ -11,24 +11,23 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// pattern is one secret shape. src must work both in ripgrep (Rust regex) and in Go's RE2. group
-// is the submatch that holds the secret (0 = the whole match); prefix lists, separated by "|",
-// the known prefixes a redacted hint may show; files restricts the pattern to matching paths.
+// pattern is one secret shape. src runs in both ripgrep and RE2; group is the submatch holding
+// the secret; prefix lists ("|") the prefixes a hint may show; files restricts it to paths.
 type pattern struct {
 	typ    string
 	src    string
 	prefix string
 	group  int
 	files  *regexp.Regexp
-	re     *regexp.Regexp // src anchored to the whole match, used to classify ripgrep's output
+	re     *regexp.Regexp // src anchored to the whole match
 }
 
-// privateKeyType is special: its match carries the key body (escaped "\n" form, as in JSON and
-// transcripts) or only the header line, in which case the body is read from the file.
+// privateKeyType matches the key body in escaped "\n" form (JSON, transcripts) or the header line
+// alone, whose body is then read from the file.
 const privateKeyType = "private-key"
 
-// An AWS secret access key is 40 characters of base64's alphabet. Nothing in it says AWS: the key
-// name it is assigned to does, or the key id written next to it.
+// Nothing in an AWS secret access key says AWS: the name it is assigned to does, or the key id
+// beside it.
 const (
 	awsSecretType = "aws-secret-key"
 	awsSecretBody = `[A-Za-z0-9/+=]{40}`
@@ -42,23 +41,18 @@ var (
 	awsSecretNamed = regexp.MustCompile(`(?i)^` + awsSecretName + `$`)
 )
 
-// awsSecretShaped reports whether v can be an AWS secret access key. A git commit hash (40 hex
-// digits) has the length and alphabet but never is one; a real key, 30 random bytes in base64,
-// is all hex with odds of (22/64)^40, about 10^-19.
+// awsSecretShaped: a 40-hex commit hash fits the alphabet; a real key is all hex with odds of
+// about 10^-19.
 func awsSecretShaped(v string) bool { return awsSecretValue.MatchString(v) && !hexOnly.MatchString(v) }
 
-// awsSecretNearKeyID reports whether a value assigned to name, written within awsPairLines lines
-// of a long-term AWS key id, is that key id's secret access key: a secret-ish name (secret_key,
-// app_secret, SecretKey) and the shape of one. Names that hold secret_access_key need no key id
-// beside them: the aws-secret-key pattern takes them anywhere.
+// awsSecretNearKeyID judges a value written near a long-term key id: a secret-ish name and the
+// shape. Names holding secret_access_key need no key id (the aws-secret-key pattern).
 func awsSecretNearKeyID(name, value string) bool {
 	return secretishName.MatchString(name) && awsSecretShaped(value)
 }
 
-// awsSecretKey is the aws-secret-key pattern, for values that the weaker names make one.
 var awsSecretKey = specificByType(awsSecretType)
 
-// specificByType is the specific pattern of a type, or nil.
 func specificByType(typ string) *pattern {
 	for i := range specific {
 		if specific[i].typ == typ {
@@ -68,7 +62,7 @@ func specificByType(typ string) *pattern {
 	return nil
 }
 
-// specific patterns are applied everywhere, transcripts included.
+// specific patterns apply everywhere, trails included.
 var specific = compile([]pattern{
 	{typ: "anthropic", src: `sk-ant-[A-Za-z0-9_-]{32,}`, prefix: "sk-ant-"},
 	{typ: "openrouter", src: `sk-or-[A-Za-z0-9_-]{32,}`, prefix: "sk-or-"},
@@ -86,13 +80,9 @@ var specific = compile([]pattern{
 	{typ: "github", src: `\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}`, prefix: "ghp_|gho_|ghu_|ghs_|ghr_"},
 	{typ: "github-pat", src: `\bgithub_pat_[A-Za-z0-9_]{60,}`, prefix: "github_pat_"},
 	{typ: "gitlab", src: `\bglpat-[A-Za-z0-9_-]{20,}`, prefix: "glpat-"},
-	// Any key name that holds secret_access_key (aws_secret_access_key, an Ansible
-	// app_secret_access_key, the SDKs' secretAccessKey) names an AWS secret access key; a weaker
-	// name (secret_key, *_secret) does only next to a key id (awsSecretNearKeyID). The value may
-	// end in "/" or "+", so it ends at a character outside its alphabet, not at a word boundary.
+	// The value may end in "/" or "+": it ends outside its alphabet, not at a word boundary.
 	{typ: awsSecretType, src: `(?i)` + awsSecretName + `["']?\s*[:=]\s*["']?(` + awsSecretBody + `)(?:[^A-Za-z0-9/+=]|$)`, group: 1},
-	// A pre-signed URL names its key id in X-Amz-Credential (SigV4) or AWSAccessKeyId (SigV2); it
-	// starts before the bare key id, so it wins the leftmost match.
+	// SigV4 and SigV2 pre-signed URLs start before the bare key id, so they win the leftmost match.
 	{typ: "aws-presigned-url", src: `(?:X-Amz-Credential|AWSAccessKeyId)=((?:AKIA|ASIA)[A-Z0-9]{16})\b`, prefix: "AKIA|ASIA", group: 1},
 	{typ: "aws-access-key-id", src: `\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`, prefix: "AKIA|ASIA"},
 	{typ: "google-api-key", src: `\bAIza[0-9A-Za-z_-]{35}`, prefix: "AIza"},
@@ -131,9 +121,8 @@ var specific = compile([]pattern{
 	{typ: "jwt", src: `\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`, prefix: "eyJ"},
 })
 
-// assignment is the generic `NAME_TOKEN=value` / `password: "..."` shape, only used in config
-// files, .env files and shell histories, where its noise is tolerable. The value may not start
-// with "-", so `"private_key": "-----BEGIN…"` is left to the private-key pattern.
+// assignment is the generic `NAME_TOKEN=value` shape, kept out of transcripts and logs. A value
+// starting with "-" is left to the private-key pattern.
 var assignment = compile([]pattern{{
 	typ:   "assignment",
 	group: 2,
@@ -154,8 +143,7 @@ func compile(ps []pattern) []pattern {
 	return ps
 }
 
-// rgPattern puts ripgrep in ASCII mode: Unicode `\b` makes it several times slower on non-ASCII
-// text.
+// rgPattern puts ripgrep in ASCII mode: Unicode `\b` is several times slower.
 func rgPattern(src string) string {
 	if strings.HasPrefix(src, "(?i)") {
 		return "(?i-u)" + src[4:]
@@ -163,8 +151,7 @@ func rgPattern(src string) string {
 	return "(?-u)" + src
 }
 
-// classifyValue finds the specific pattern that a bare value matches whole, for assignments and
-// gitleaks secrets.
+// classifyValue is the specific pattern a bare value matches whole.
 func classifyValue(v string) *pattern {
 	for i := range specific {
 		p := &specific[i]
@@ -175,8 +162,6 @@ func classifyValue(v string) *pattern {
 	return nil
 }
 
-// placeholder catches sample values: runs of x or 0, ellipses, template syntax, and the sequential
-// alphabet or digits that test fixtures use ("sk_live_abcdefghijkl…", "…123456789").
 var placeholder = regexp.MustCompile(`(?i)abcdefgh|123456789|x{5,}|0{8,}|\.{3}|…|\*{3,}|example|your[_-]|placeholder|dummy|redacted|changeme|replace|<[^>]*>|\$\{|\$\(|%s|\{\{`)
 
 var (
@@ -185,11 +170,8 @@ var (
 	defaultPassword = regexp.MustCompile(`(?i)^(pass(word)?|postgres|secret|root|admin|test|user|changeme|mysql|redis|guest)$`)
 )
 
-// minEntropyOf is the least entropy a typed secret's body of n characters must score. Entropy
-// measured on few characters runs low even for random data: under a flat 3.2, 3 in 100 random
-// 16-character AWS key id bodies failed. Bodies shorter than 28 characters get log2(n) - 1.5
-// (2.5 for 16), which no body in 10,000 random base32 ones fails, and which still rejects four
-// letters repeated four times (entropy 2).
+// minEntropyOf: short random bodies score low, so a flat 3.2 dropped 3 in 100 AWS key ids. Under
+// 28 characters the floor is log2(n) - 1.5, which still rejects four letters repeated (entropy 2).
 func minEntropyOf(n int) float64 {
 	return math.Min(3.2, math.Log2(float64(n))-1.5)
 }
@@ -212,17 +194,14 @@ func entropy(s string) float64 {
 	return e
 }
 
-// verdict is a plausible secret: its raw value (kept in memory only, to fingerprint it) and a
-// note that is safe to print.
+// verdict is a plausible secret: the raw value, kept in memory, and a printable note.
 type verdict struct {
 	secret  string
 	note    string
 	public  bool
-	expires int64 // JWT exp claim (Unix seconds), 0 when none
+	expires int64 // JWT exp, Unix seconds
 }
 
-// judge decides whether a value matched by p is a plausible secret. It rejects placeholders,
-// low-entropy strings and, for the generic patterns, values that are clearly not secrets.
 func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
 	body := strings.TrimPrefix(secret, secretrisk.KnownPrefix(p.prefix, secret))
 	minEntropy := minEntropyOf(len(body))
@@ -272,12 +251,9 @@ func judge(p *pattern, secret, name string, now time.Time) (verdict, bool) {
 	return verdict{secret: secret}, true
 }
 
-// publicClients are OAuth client secrets published in the source of the tools that use them, so
-// not secret: gcloud's own client (Google Cloud SDK, googlecloudsdk/core/config.py,
-// CLOUDSDK_CLIENT_NOTSOSECRET) and the one `gcloud auth application-default login` uses
-// (googlecloudsdk/api_lib/auth/util.py). They sit in gcloud's ADC and legacy_credentials files.
-// Each is recognised by its first seven and last four characters and its length, so the value
-// itself is not repeated here.
+// publicClients are OAuth client secrets published in gcloud's source (core/config.py,
+// api_lib/auth/util.py), found in its ADC and legacy credentials. Each is recognised by its head,
+// tail and length, so the value is not repeated here.
 var publicClients = []struct{ head, tail, name string }{
 	{"ZmssLNj", "ejr2", "Google Cloud SDK"},
 	{"d-FL95Q", "D0Ty", "gcloud application-default login"},
@@ -285,7 +261,6 @@ var publicClients = []struct{ head, tail, name string }{
 
 const publicClientLen = 24
 
-// publicValue recognises a value that is public by design, with the note that says why.
 func publicValue(v string) (string, bool) {
 	if len(v) != publicClientLen {
 		return "", false
@@ -298,11 +273,10 @@ func publicValue(v string) (string, bool) {
 	return "", false
 }
 
-// sampleMarks are what test data reads like; a run of four equal characters counts too.
 var sampleMarks = regexp.MustCompile(`(?i)test|fake|sample|demo|mock|fixture|dummy|foo|bar|baz|qwerty|1234|abcd`)
 
-// sampleValue reports whether a value reads like test data. Real random keys hit this now and
-// then, which is why it only lowers secrets found in test, example or documentation paths.
+// sampleValue reports test-looking data, a run of four equal characters included. Real keys hit it
+// now and then, so it only lowers secrets in test, example or documentation paths.
 func sampleValue(v string) bool {
 	if sampleMarks.MatchString(v) {
 		return true

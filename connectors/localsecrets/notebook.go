@@ -8,23 +8,18 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// A Jupyter notebook stores what its cells printed next to their code: base64 images, tables,
-// logs. Generic rules find token-shaped strings in those outputs (a "Square access token" inside a
-// PNG), so in a .ipynb file only the cells' source counts. The check is by line: a match on a line
-// that holds no source text is in an output, metadata or an attachment, and is dropped. Notebooks
-// are pretty-printed JSON, one source line per JSON line; a notebook squeezed onto one line keeps
-// its matches.
+// A notebook's outputs (base64 images, tables) are full of token-shaped strings, so only matches
+// on lines that hold cell source count. Notebooks are pretty-printed, one source line per line; a
+// one-line notebook keeps its matches.
 
-// notebooks remembers the source lines of each notebook version read in one run.
 type notebooks struct {
 	mu    sync.Mutex
-	lines map[string]map[int]bool // repo, commit and path (or file path) -> source lines; nil when unreadable
+	lines map[string]map[int]bool // nil when unreadable
 }
 
 func isNotebook(path string) bool { return strings.HasSuffix(strings.ToLower(path), ".ipynb") }
 
-// inNotebookOutput reports whether a gitleaks match sits outside the source of a notebook's cells,
-// reading the notebook as committed.
+// inNotebookOutput judges a gitleaks match against the notebook as committed.
 func (s *scan) inNotebookOutput(repo string, ev secretrisk.Evidence) bool {
 	if !isNotebook(ev.Path) || ev.Line <= 0 || ev.Commit == "" {
 		return false
@@ -41,7 +36,6 @@ func (s *scan) inNotebookOutput(repo string, ev secretrisk.Evidence) bool {
 	return lines != nil && !lines[ev.Line]
 }
 
-// fileNotebookOutput is inNotebookOutput for a match in a file on disk.
 func (s *scan) fileNotebookOutput(path string, line int) bool {
 	if !isNotebook(path) || line <= 0 {
 		return false
@@ -70,8 +64,7 @@ func (n *notebooks) get(key string, read func() []byte) map[int]bool {
 	return l
 }
 
-// notebookSourceLines returns the 1-based lines of a notebook's JSON that hold part of a cell's
-// source ("source", or "input" in nbformat 3), or nil when the text is not readable JSON.
+// notebookSourceLines are the lines holding cell source ("input" in nbformat 3); nil for bad JSON.
 func notebookSourceLines(raw []byte) map[int]bool {
 	if len(raw) == 0 {
 		return nil

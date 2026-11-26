@@ -277,7 +277,7 @@ func TestGitErrorUnderGitleaksIsAFailedScan(t *testing.T) {
 			gl.Path = writeExe(t, "gitleaks", `[ "$1" = version ] && { echo 8.30.1; exit 0; }
 printf '%s\n' "`+tc.stderr+`" >&2
 echo '[]'`)
-			c := &Connector{Gitleaks: gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+			c := &Connector{Gitleaks: gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: defaultCacheDir,
 				Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) }}
 			cfg := settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute, gitCache: true}
 			s := newScan(context.Background(), c, r.home, cfg, fingerprint.FromBytes(make([]byte, 32)), &recorder{})
@@ -285,7 +285,7 @@ echo '[]'`)
 			if (err != nil) != tc.failed {
 				t.Fatalf("scan error %v, want failed=%v", err, tc.failed)
 			}
-			cached, _ := filepath.Glob(filepath.Join(DefaultCacheDir(r.home), "*.json"))
+			cached, _ := filepath.Glob(filepath.Join(defaultCacheDir(r.home), "*.json"))
 			if (len(cached) == 0) != tc.failed {
 				t.Errorf("cache files %v after failed=%v", cached, tc.failed)
 			}

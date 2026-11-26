@@ -72,16 +72,28 @@ func TestMatcherAgreesWithAlternation(t *testing.T) {
 	}
 }
 
-// TestFindIsUnchanged compares Find's hits, (type, fingerprint, offsets), with the matcher and with
-// the plain alternation, for every kind of trail.
+// TestFindIsUnchanged compares Find's hits with the matcher and with the plain alternation, for
+// every kind of trail. Kinds sharing a pattern set share its alternation's (slow) results.
 func TestFindIsUnchanged(t *testing.T) {
 	r := rand.New(rand.NewPCG(9, 4))
 	text := strings.Join(corpusFor(r), "\n")
 	tr := testTrails()
+	memo := map[bool]map[string][][]int{}
 	for _, path := range corpusPaths {
 		kind := tr.s.kindOf(path)
+		ref, seen := reference(patternsFor(kind)), memo[specificOnly(kind)]
+		if seen == nil {
+			seen = map[string][][]int{}
+			memo[specificOnly(kind)] = seen
+		}
 		got := tr.Find(path, "600", text)
-		want := tr.find(path, "600", text, reference(patternsFor(kind)))
+		want := tr.find(path, "600", text, func(line string) [][]int {
+			if m, ok := seen[line]; ok {
+				return m
+			}
+			seen[line] = ref(line)
+			return seen[line]
+		})
 		if len(want) < 100 {
 			t.Fatalf("%s: corpus too thin: %d hits", path, len(want))
 		}

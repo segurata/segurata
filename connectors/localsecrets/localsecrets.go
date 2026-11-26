@@ -1,10 +1,7 @@
-// Package localsecrets inventories plaintext secrets on this machine: .env and credential files,
-// shell and agent config, shell histories, logs, agent transcripts, git history (gitleaks) and SSH
-// keys without a passphrase. Read-only. See docs/secrets.md for what to do with each finding and
-// docs/architecture.md, "Rotation ledger", for how findings become rotation items.
-//
-// No secret value ever leaves the process: findings carry a redacted hint and an HMAC fingerprint
-// (internal/fingerprint), and each one is checked not to contain the value before it is emitted.
+// Package localsecrets inventories plaintext secrets on this machine: credential and .env files,
+// shell and agent config, histories, logs, agent transcripts, git history (gitleaks), committed
+// database dumps and SSH keys without a passphrase. Read-only. No value leaves the process:
+// findings carry a redacted hint and an HMAC fingerprint, and each is checked not to contain it.
 package localsecrets
 
 import (
@@ -37,37 +34,31 @@ const (
 )
 
 type Connector struct {
-	// The tools this connector runs, each behind its own read-only guard (guards.go). Tests
-	// replace them with canned output.
+	// Every runner goes through its read-only guard (guards.go).
 	RG, Gitleaks, Git, SSHKeygen cli.Runner
 	LookPath                     func(string) (string, error)
 	Home                         func() (string, error)
-	// KeyPath is the fingerprint key file for a home directory.
-	KeyPath func(home string) string
-	// CacheDir holds the per-repository git history caches for a home directory (historycache.go);
-	// the data-dump caches live in a sibling datadumps directory.
+	KeyPath                      func(home string) string
+	// CacheDir holds the git history caches; the other caches sit beside it.
 	CacheDir func(home string) string
 	Now      func() time.Time
 
-	// GitHead reads the first bytes of a blob (headExec) and GH asks GitHub a repository's
-	// visibility, both for the data-dump check (dumpscan.go). Either may be nil: no peek, no gh.
+	// GitHead peeks at blobs and GH reads repository visibility and owners; nil skips them.
 	GitHead, GH cli.Runner
 
-	// AWS and SSH are the owner's aws CLI and ssh, which the liveness lookups run with (as GH) to
-	// classify lone AWS key ids and private keys. Nil leaves that source out.
+	// AWS and SSH run the liveness lookups of lone key ids and private keys; nil skips them.
 	AWS, SSH cli.Runner
-	// AWSIssuers says which aws profiles hold an R2 or other non-AWS key, so the lookups skip them.
+	// AWSIssuers names the aws profiles that hold a non-AWS key (R2), which the lookups skip.
 	AWSIssuers func() map[string]awsfiles.Provider
 
-	// NewChecker builds the liveness checker (liveness.go); nil is the real one. Tests point it at
-	// fake providers.
+	// NewChecker replaces the real liveness checker in tests.
 	NewChecker func(home string, cfg liveness.Config) *liveness.Checker
 }
 
 func New() *Connector {
 	return &Connector{
 		RG:         cli.Exec{Path: "rg", Timeout: time.Hour},
-		Gitleaks:   cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour, Env: gitEnv, StderrCheck: gitleaksStderr}, // bounded per repo by the context
+		Gitleaks:   cli.Exec{Path: "gitleaks", Timeout: 24 * time.Hour, Env: gitEnv, StderrCheck: gitleaksStderr}, // gitleaks_timeout bounds each repository
 		Git:        cli.Exec{Path: "git", Timeout: 2 * time.Minute, Env: gitEnv},
 		SSHKeygen:  cli.Exec{Path: "ssh-keygen", Timeout: 30 * time.Second},
 		GitHead:    headExec{Path: "git", Limit: dumpPeekSize, Timeout: 30 * time.Second, Env: gitEnv},
@@ -78,7 +69,7 @@ func New() *Connector {
 		LookPath:   exec.LookPath,
 		Home:       os.UserHomeDir,
 		KeyPath:    fingerprint.DefaultPath,
-		CacheDir:   DefaultCacheDir,
+		CacheDir:   defaultCacheDir,
 		Now:        time.Now,
 	}
 }
@@ -92,22 +83,20 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Plaintext secrets in config, .env files, histories, logs, agent transcripts, git history; database dumps committed to git; SSH keys without a passphrase",
 		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen", "cli:gh (optional)", "cli:aws (optional)", "cli:ssh (optional)"},
-		// Each rg pass may take an hour and the history scan gitleaks_timeout per repository.
-		Timeout: "6h",
+		Timeout:  "6h", // an hour per ripgrep pass, gitleaks_timeout per repository
 	}
 }
 
-// settings is the connector's config block.
 type settings struct {
 	reposRoot   string          // repos_root, default ~/src
 	skipHistory bool            // skip_git_history
 	workers     int             // gitleaks_workers
 	timeout     time.Duration   // gitleaks_timeout, per repository
-	gitCache    bool            // git_cache: scan only commits added since the last run
-	dumps       dumpMode        // data_dumps: true, false or "only"
-	emitNoise   bool            // emit_noise: emit noise findings too, not only their counts
-	ownedOwners []string        // owned_owners: GitHub users and organizations that are the owner's
-	liveness    liveness.Config // liveness: try each secret against its provider (off by default)
+	gitCache    bool            // git_cache
+	dumps       dumpMode        // data_dumps
+	emitNoise   bool            // emit_noise
+	ownedOwners []string        // owned_owners
+	liveness    liveness.Config // liveness
 }
 
 func parseSettings(cfg map[string]any, home string) (settings, error) {
@@ -208,31 +197,15 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	s := newScan(ctx, c, home, cfg, fp, emit)
 	var wg sync.WaitGroup
 	for _, pass := range s.passes(history) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.rg(pass)
-		}()
+		wg.Go(func() { s.rg(pass) })
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		s.byName()
-	}()
+	wg.Go(s.byName)
 	if cfg.dumps == dumpsOn {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.dumpsAll()
-		}()
+		wg.Go(s.dumpsAll)
 	}
 	var repos, failed int
 	if history {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			repos, failed = s.gitleaksAll()
-		}()
+		wg.Go(func() { repos, failed = s.gitleaksAll() })
 	}
 	wg.Wait()
 	s.sshKeys()
@@ -242,8 +215,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 
 	findings, noise := s.findings()
 	live := s.checkLiveness(ctx, findings, req.Known)
-	// The scan is done: its findings are emitted even when the run ends during the liveness check,
-	// which the sink then marks interrupted.
+	// Emitted even when the run ends during the liveness check: the sink marks it interrupted.
 	for _, f := range findings {
 		emit.Finding(f)
 	}
@@ -276,10 +248,6 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return s.emitDumps(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
 }
 
-// row is one secret at one location, aggregated over repeated matches.
-type row struct{ ev secretrisk.Evidence }
-
-// scan holds the state of one inventory run.
 type scan struct {
 	ctx  context.Context
 	c    *Connector
@@ -291,23 +259,29 @@ type scan struct {
 	emit connector.Emitter
 
 	mu         sync.Mutex
-	rows       map[string]*row
+	rows       map[string]*secretrisk.Evidence // one secret at one location
 	omitted    int
 	unreadable map[string]bool // paths ripgrep was not allowed to read
 
-	held heldValues // values the liveness check may try (liveness.go)
+	held heldValues
 
 	git   gitCache
 	own   ownership
 	nb    notebooks
 	stats historyStats
-	historyOnce
 	dumps dumpState
+
+	repoOnce sync.Once
+	repoList []string
+
+	glOnce    sync.Once // the gitleaks version, shared by every repository
+	glVersion string
+	glErr     error
 }
 
 func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprint.Key, emit connector.Emitter) *scan {
 	return &scan{ctx: ctx, c: c, home: home, src: cfg.reposRoot, cfg: cfg, fp: fp, now: c.Now(), emit: emit,
-		rows: map[string]*row{}, git: gitCache{roots: map[string]string{}, files: map[string]map[string]bool{}, remote: map[string]bool{}}}
+		rows: map[string]*secretrisk.Evidence{}, git: gitCache{roots: map[string]string{}, files: map[string]map[string]bool{}, remote: map[string]bool{}}}
 }
 
 func (s *scan) h(p string) string { return filepath.Join(s.home, p) }
@@ -331,7 +305,6 @@ func (s *scan) under(p string, rels []string) bool {
 	return false
 }
 
-// kindOf classifies a path: agent transcript, shell history, log, file in a repository, or config.
 func (s *scan) kindOf(p string) string {
 	switch {
 	case s.under(p, transcriptDirs):
@@ -346,11 +319,9 @@ func (s *scan) kindOf(p string) string {
 	return "config"
 }
 
-// modeOf is the file's effective permissions for other accounts: the group and other read bits
-// count only if every parent directory lets that class through (execute bit). A 644 file inside
-// a 700 home folder is closed to everyone else. The walk stops at root (the home folder): above it
-// are system folders that every account can traverse. fileMode is the file's own mode, set when
-// the two differ so the evidence shows both.
+// modeOf is the file's mode for other accounts: a class reads it only if every parent folder up
+// to root lets that class through, so a 644 file in a 700 home is closed. fileMode is the file's
+// own mode, set only when it differs.
 func modeOf(p, root string) (effective, fileMode string) {
 	st, err := os.Stat(p)
 	if err != nil {
@@ -384,15 +355,14 @@ func bucketOf(ev secretrisk.Evidence) string {
 		return "ok"
 	case ev.Tracked:
 		return "0-git"
-	case IsTrail(ev.Kind):
+	case isTrail(ev.Kind):
 		return "2-trail"
-	case secretrisk.Where("", "", ev.Mode, false, false).Level == secretrisk.Shared:
+	case othersCanRead(ev.Mode):
 		return "1-readable"
 	}
 	return "3-local"
 }
 
-// fixFor is the docs/secrets.md anchor with the recommended fix.
 func fixFor(ev secretrisk.Evidence) string {
 	t, p := ev.Type, ev.Path
 	hasAny := func(subs ...string) bool {
@@ -444,8 +414,7 @@ func fixFor(ev secretrisk.Evidence) string {
 	return fixDoc + "#" + a
 }
 
-// add records one secret at one location. value is what gets fingerprinted (the raw secret, or the
-// body of a PEM key); it never leaves this function.
+// add records one secret at one location. value is fingerprinted, never stored.
 func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
 	ev, ok := s.prepare(abs, ev, value)
 	if !ok {
@@ -461,9 +430,8 @@ func (s *scan) omit(n int) {
 	s.mu.Unlock()
 }
 
-// prepare completes the evidence of one secret at one location: kind, permissions, git status,
-// fingerprint, bucket and fix. It reports false when the evidence would contain the value itself,
-// so the caller drops it. value never leaves this function.
+// prepare completes the evidence of one secret at one location, or reports false when it would
+// contain the value itself.
 func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secretrisk.Evidence, bool) {
 	if ev.Kind == "" {
 		ev.Kind = s.kindOf(abs)
@@ -499,46 +467,39 @@ func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secret
 	return ev, true
 }
 
-// store aggregates prepared evidence: the same secret at the same location counts once more.
 func (s *scan) store(ev secretrisk.Evidence) {
 	key := strings.Join([]string{ev.Source, ev.Path, ev.Type, ev.Fingerprint}, "\x00")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.rows[key]; ok {
-		r.ev.Count++
+		r.Count++
 		return
 	}
 	ev.Count = 1
-	s.rows[key] = &row{ev: ev}
+	s.rows[key] = &ev
 }
 
-// findings turns the aggregated rows into findings, sorted by path, after the steps that need
-// every row at once (rows.go): a private-key row is dropped when the same key in the same file was
-// already reported as a GCP service account key; a fork's working copy of an inherited secret is
-// the upstream's too; a third-party copy of a value the owner also holds counts as the owner's;
-// temporary AWS credentials collapse to one finding per file. Noise findings are only counted
-// unless emit_noise is set.
+// findings turns the rows into findings sorted by resource, after the steps that need every row
+// (rows.go). Without emit_noise, noise is only counted.
 func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sa := map[string]bool{}
-	for _, r := range s.rows {
-		if r.ev.Type == "gcp-service-account" {
-			sa[fileValueKey(r.ev)] = true
+	sa := map[string]bool{} // a service-account key is not reported again as a private key
+	for _, ev := range s.rows {
+		if ev.Type == "gcp-service-account" {
+			sa[fileValueKey(*ev)] = true
 		}
 	}
 	var evs []secretrisk.Evidence
-	for _, r := range s.rows {
-		if r.ev.Type == privateKeyType && sa[fileValueKey(r.ev)] {
+	for _, ev := range s.rows {
+		if ev.Type == privateKeyType && sa[fileValueKey(*ev)] {
 			continue
 		}
-		evs = append(evs, r.ev)
+		evs = append(evs, *ev)
 	}
 	evs, folded := collapseTemporaryAWS(markReused(inheritForkUpstream(evs)))
-	// A noise copy of a value that has a real copy elsewhere is emitted all the same: it is one more
-	// place the secret went (a generic match in pushed history of the key in ~/.aws/credentials). So
-	// is a copy in someone else's repository that names an account (an AWS key id): if the account
-	// is the owner's, the tracker attributes the secret mine and counts it in full.
+	// Noise is still emitted when it is one more copy of a real secret, or a third-party copy that
+	// names an account the tracker may attribute to the owner.
 	fs := make([]finding.Finding, len(evs))
 	real := map[string]bool{}
 	for i, ev := range evs {
@@ -566,8 +527,7 @@ func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 	return out, noise
 }
 
-// isNoise reports whether a finding is noise: an exposure without a priority. An SSH key with a
-// passphrase is info too, but a setting worth showing.
+// isNoise is an exposure without a priority; an SSH key with a passphrase is an info setting.
 func isNoise(f finding.Finding) bool {
 	return f.Severity == finding.SevInfo && f.Kind == finding.KindExposure
 }
@@ -604,10 +564,8 @@ func toFinding(ev secretrisk.Evidence) finding.Finding {
 	}
 }
 
-// Scopes of local-secrets findings, so a run that leaves part of the machine unread says which
-// part: the files ripgrep and the name scan read, one repository's git history, one repository's
-// data dumps. A failed gitleaks or dump scan names its repository's scope in its status; a failed
-// ripgrep pass or `git ls-files` leaves the files scope uninspected.
+// Scopes say which part of the machine a run left unread: the files, or one repository's history
+// or dumps.
 const filesScope = "files"
 
 func historyScope(repo string) string { return "history:" + repo }
@@ -620,17 +578,11 @@ func secretScope(ev secretrisk.Evidence) string {
 	return filesScope
 }
 
-// remedy offers `segurata remediate` a chmod 600 for a working file with a secret that other users
-// can read, or could: it closes the file; it does not make rotation unnecessary.
-//
-//   - Readable by others now (effective mode): the finding's own fix, ranked by the finding.
-//   - Closed only by a parent folder (a 644 file in a 700 home folder): a hardening step, ranked
-//     low, because the file opens again the day that folder does. One plan closes every such file
-//     under the same top folder (hardeningGroup).
+// remedy offers a chmod 600 for a working file other users can read: ranked by the finding when
+// they can now, low (grouped by top folder) when only a parent folder keeps them out. Noise gets
+// no fix: closing a third-party file for its `password=` buys nothing.
 func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
 	r := finding.Remediation{Summary: summary, URL: url}
-	// Noise (generic matches, public or encrypted values) gets no fix: closing a third-party
-	// source file because it contains `password=` buys nothing.
 	if ev.Source == "gitleaks" || ev.Mode == "" || secretrisk.ImpactOf(ev) == secretrisk.Noise {
 		return r
 	}
@@ -644,13 +596,11 @@ func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
 	return r
 }
 
-// othersCanRead reports whether an octal mode lets the group or other accounts read.
 func othersCanRead(mode string) bool {
 	return secretrisk.Where("", "", mode, false, false).Level == secretrisk.Shared
 }
 
-// hardeningGroup is the top folder of a file for grouping hardening chmods: up to three levels
-// under the home folder (~/src/acme/app), or the file's folder when it is shallower (~/.claude).
+// hardeningGroup is the file's folder, cut at three levels under the home (~/src/acme/app).
 func hardeningGroup(path string) string {
 	parts := strings.Split(filepath.ToSlash(filepath.Dir(path)), "/")
 	return "files in " + strings.Join(parts[:min(len(parts), 4)], "/")
