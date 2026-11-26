@@ -50,6 +50,14 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
+// Stderr is what a failed command printed on stderr, or the error itself when it printed nothing.
+func Stderr(err error) string {
+	if ce, ok := errors.AsType[*Error](err); ok && strings.TrimSpace(ce.Stderr) != "" {
+		return ce.Stderr
+	}
+	return err.Error()
+}
+
 // Run keeps exec.ErrNotFound or context.DeadlineExceeded in the chain; any other failure is an
 // *Error, returned with the stdout so far for tools such as rg that exit non-zero after a partial
 // success.

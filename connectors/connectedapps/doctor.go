@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 )
 
@@ -17,7 +18,7 @@ func (c *Connector) Doctor(ctx context.Context, _ connector.Request) []connector
 	}
 	out, err := c.ghRunner().Run(ctx, ghAuthStatus...)
 	if err != nil {
-		msg := ghStderr(err)
+		msg := cli.Stderr(err)
 		switch {
 		case errors.Is(err, exec.ErrNotFound):
 			return one(connector.Fail, "the gh CLI is not installed", "install it: https://cli.github.com")

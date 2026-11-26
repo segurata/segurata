@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -65,15 +64,7 @@ func (g *gcloud) json(ctx context.Context, into any, args ...string) error {
 }
 
 func rateLimited(err error) bool {
-	return textfmt.ContainsAny(errText(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
-}
-
-func errText(err error) string {
-	var ce *cli.Error
-	if errors.As(err, &ce) {
-		return ce.Stderr
-	}
-	return err.Error()
+	return textfmt.ContainsAny(cli.Stderr(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
 }
 
 const deniedPrefix = "permission denied: "
@@ -82,32 +73,22 @@ const deniedPrefix = "permission denied: "
 var http403 = regexp.MustCompile(`\b403\b`)
 
 func classify(err error) (finding.State, string) {
-	s := errText(err)
+	s := cli.Stderr(err)
 	switch {
 	case textfmt.ContainsAny(s, "Reauthentication failed", "gcloud auth login", "invalid_grant", "Please run:\n\n  $ gcloud auth"):
 		return finding.StateReauth, "credentials expired: run gcloud auth login for this account"
 	case textfmt.ContainsAny(s, "has not been used in project", "SERVICE_DISABLED", "it is disabled"):
-		return finding.StateError, "API not enabled: " + summarize(s, err)
+		return finding.StateError, "API not enabled: " + summarize(s)
 	case textfmt.ContainsAny(s, "PERMISSION_DENIED", "does not have permission", "USER_PROJECT_DENIED") || http403.MatchString(s):
-		return finding.StateError, deniedPrefix + summarize(s, err)
+		return finding.StateError, deniedPrefix + summarize(s)
 	case rateLimited(err):
-		return finding.StateError, "rate limited: " + summarize(s, err)
+		return finding.StateError, "rate limited: " + summarize(s)
 	}
-	return finding.StateError, summarize(s, err)
+	return finding.StateError, summarize(s)
 }
 
-func summarize(stderr string, err error) string {
-	line := strings.TrimSpace(stderr)
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
-	}
-	if line == "" && err != nil {
-		var ce *cli.Error
-		if errors.As(err, &ce) && ce.Err != nil {
-			return ce.Err.Error()
-		}
-		return err.Error()
-	}
+func summarize(stderr string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
 	if strings.HasPrefix(line, "ERROR: (") {
 		if i := strings.Index(line, ") "); i >= 0 {
 			line = line[i+2:]

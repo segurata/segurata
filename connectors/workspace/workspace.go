@@ -200,24 +200,16 @@ func (c *Connector) token(ctx context.Context, cfg settings, secret string) (str
 			return "", finding.StateUnsupported, "gcloud not found: install the Google Cloud SDK, set gcloud_path, or set the " + secretName + " secret"
 		}
 		state := finding.StateError
-		if strings.Contains(errText(err), "invalid_grant") || strings.Contains(errText(err), "Reauthentication") {
+		if strings.Contains(cli.Stderr(err), "invalid_grant") || strings.Contains(cli.Stderr(err), "Reauthentication") {
 			state = finding.StateReauth
 		}
-		return "", state, fmt.Sprintf("gcloud could not issue a token for %s (%s).\n\n%s", cfg.domain, lastLine(errText(err)), loginHelp(cfg))
+		return "", state, fmt.Sprintf("gcloud could not issue a token for %s (%s).\n\n%s", cfg.domain, lastLine(cli.Stderr(err)), loginHelp(cfg))
 	}
 	token := strings.TrimSpace(string(out))
 	if token == "" {
 		return "", finding.StateError, "gcloud printed an empty token for " + cfg.domain + ".\n\n" + loginHelp(cfg)
 	}
 	return token, "", ""
-}
-
-func errText(err error) string {
-	var ce *cli.Error
-	if errors.As(err, &ce) && strings.TrimSpace(ce.Stderr) != "" {
-		return ce.Stderr
-	}
-	return err.Error()
 }
 
 func lastLine(s string) string {

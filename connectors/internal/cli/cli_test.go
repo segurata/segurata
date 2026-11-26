@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -197,5 +198,15 @@ func TestExecTimeoutEndsAWrapperThatDoesNotExec(t *testing.T) {
 	}
 	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
 		t.Fatalf("took %s", took)
+	}
+}
+
+func TestStderrFallsBackToTheError(t *testing.T) {
+	printed := fmt.Errorf("wrapped: %w", &Error{Cmd: "gcloud x", Stderr: "ERROR: denied\n", Err: errors.New("exit status 1")})
+	silent := &Error{Cmd: "gcloud x", Stderr: " \n", Err: errors.New("exit status 1")}
+	for err, want := range map[error]string{printed: "ERROR: denied\n", silent: "gcloud x: exit status 1", context.DeadlineExceeded: "context deadline exceeded"} {
+		if got := Stderr(err); got != want {
+			t.Errorf("Stderr(%v) = %q, want %q", err, got, want)
+		}
 	}
 }

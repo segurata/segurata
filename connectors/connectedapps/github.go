@@ -352,14 +352,6 @@ func (a ghAccount) has(scope string) bool {
 	return slices.Contains(strings.Split(strings.ReplaceAll(a.Scopes, " ", ""), ","), scope)
 }
 
-// ghStderr is what gh printed on failure, or the error itself.
-func ghStderr(err error) string {
-	if ce, ok := errors.AsType[*cli.Error](err); ok {
-		return ce.Stderr
-	}
-	return err.Error()
-}
-
 // ghAllowlist is every gh command inventory and doctor may run.
 var ghAllowlist = cli.CheckFunc(func(args []string) error {
 	if slices.Equal(args, ghAuthStatus) {
@@ -425,7 +417,7 @@ func githubKeys(ctx context.Context, e *env, login string) {
 	for _, ep := range ghKeyEndpoints {
 		out, err := e.gh.Run(ctx, "api", "--paginate", ep.path)
 		if err != nil {
-			msg := ghStderr(err)
+			msg := cli.Stderr(err)
 			switch {
 			case errors.Is(err, exec.ErrNotFound):
 				e.status(login, finding.StateUnsupported, "the gh CLI is not installed: GitHub keys not listed (%s)", ghKeysURL)
