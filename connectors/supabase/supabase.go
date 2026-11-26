@@ -6,9 +6,10 @@ package supabase
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
@@ -24,14 +25,12 @@ const (
 		"~/.config/segurata/config.json as connectors.supabase.secrets.SUPABASE_ACCESS_TOKEN = \"keychain:segurata-supabase\""
 )
 
-// Connector is the built-in Supabase connector. A zero BaseURL uses the real API.
 type Connector struct {
 	BaseURL string
 }
 
 func init() { connector.Register(&Connector{}) }
 
-// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
 	return connector.HintFor(secret, secretName, setupHint)
 }
@@ -61,7 +60,7 @@ type project struct {
 	Status           string `json:"status"`
 }
 
-// apiKey decodes only metadata: the api_key field is never read into memory as a value we keep.
+// apiKey has no field for the key value, so it is never decoded.
 type apiKey struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
@@ -120,8 +119,6 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return nil
 }
 
-// projectScope scopes a project's findings, which come from the project list: when it fails, the
-// organizations still read, but none of the projects.
 func projectScope(ref string) string { return "project:" + ref }
 
 // emitStatuses reports one status per organization and per account with failures, in name order.
@@ -133,12 +130,7 @@ func emitStatuses(orgs []organization, failed map[string][]string, emit connecto
 	for a := range failed {
 		accounts[a] = true
 	}
-	names := make([]string, 0, len(accounts))
-	for a := range accounts {
-		names = append(names, a)
-	}
-	sort.Strings(names)
-	for _, a := range names {
+	for _, a := range slices.Sorted(maps.Keys(accounts)) {
 		st := finding.Status{Account: a, State: finding.StateOK}
 		if msgs := failed[a]; len(msgs) > 0 {
 			st.State, st.Detail = finding.StateError, strings.Join(msgs, "; ")

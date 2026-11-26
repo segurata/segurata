@@ -4,6 +4,7 @@
 package vercel
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/url"
@@ -31,7 +32,6 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
-// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
 	return connector.HintFor(secret, secretName, setupHint)
 }
@@ -100,10 +100,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: "vercel", State: httpx.State(err), Detail: err.Error()})
 		return nil
 	}
-	account := me.User.Username
-	if account == "" {
-		account = me.User.Email
-	}
+	account := cmp.Or(me.User.Username, me.User.Email)
 	scanned := connector.Now(c.Now)
 	var failed []string
 
