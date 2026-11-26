@@ -33,7 +33,28 @@
         <p class="eyebrow">Open-source security CLI</p>
         <h1 id="hero-title">Know what still<br class="wide-break"> has access<span class="period">.</span></h1>
         <p class="lede">Audit the accounts and computers you manage. Find connected apps, browser extensions, and secrets on disk, then track what needs fixing between scans.</p>
-        <a class="button" href="#install">Get Segurata</a>
+        <div class="hero-actions">
+          <a class="button" href="#install">Get Segurata</a>
+          <div class="agent">
+            <span>For your agent:</span>
+            <button class="copy" type="button" data-copy="agent-prompt" aria-label="Copy a prompt for your coding agent" hidden>Copy prompt</button>
+          </div>
+        </div>
+        <details class="agent-prompt">
+          <summary>Read the prompt</summary>
+          <pre><code id="agent-prompt">Help me audit this computer with Segurata, an open-source security CLI: https://github.com/segurata/segurata
+
+1. Read https://raw.githubusercontent.com/segurata/segurata/main/.agents/skills/segurata-audit/SKILL.md and follow it.
+2. If `segurata version` fails, install it with Go 1.26 or later: go install github.com/segurata/segurata/cmd/segurata@latest
+   Other install options: https://github.com/segurata/segurata/blob/main/docs/releasing.md#installing
+3. Run `segurata connectors` and tell me which connectors apply here. Ask me before running any that signs in to a provider or checks a credential over the network.
+4. On macOS or Linux, start with the scan that needs no credentials:
+   segurata doctor --connector browser-extensions
+   segurata inventory browser-extensions
+   segurata status
+5. Summarize the findings by priority, with their IDs and next actions. Keep secret values and full inventory records out of the chat.
+6. Do not apply any fix. For a fix, read https://raw.githubusercontent.com/segurata/segurata/main/.agents/skills/segurata-remediate/SKILL.md, show me the plan and wait for my approval.</code></pre>
+        </details>
         <p class="platforms">macOS, Linux, and Windows · Go 1.26+</p>
       </div>
       <div class="hero-art">
