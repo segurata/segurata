@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,20 +38,20 @@ func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {
 		name, script string
 		timeout      time.Duration
 		skipped      bool
-		unreadable   int // paths the status detail counts as skipped
+		unreadable   []string // paths the run skips, which the status detail counts
 	}{
-		{"regex error", `echo "rg: regex parse error" >&2; exit 2`, time.Minute, true, 0},
-		{"partial output, then an error", `printf '%s\0001:x\n' "$HOME/.zshrc"; echo "rg: something broke" >&2; exit 2`, time.Minute, true, 0},
+		{"regex error", `echo "rg: regex parse error" >&2; exit 2`, time.Minute, true, nil},
+		{"partial output, then an error", `printf '%s\0001:x\n' "$HOME/.zshrc"; echo "rg: something broke" >&2; exit 2`, time.Minute, true, nil},
 		{"unreadable files and an I/O error", `echo "rg: /x/a: Permission denied (os error 13)" >&2
-echo "rg: /x/b: Input/output error (os error 5)" >&2; exit 2`, time.Minute, true, 0},
-		{"unreadable root", lastRoot + `echo "rg: $root: Permission denied (os error 13)" >&2; exit 2`, time.Minute, true, 0},
-		{"exit 2 without a message", `exit 2`, time.Minute, true, 0},
-		{"killed", `kill -9 $$`, time.Minute, true, 0},
-		{"timed out", `exec sleep 5`, 100 * time.Millisecond, true, 0},
+echo "rg: /x/b: Input/output error (os error 5)" >&2; exit 2`, time.Minute, true, nil},
+		{"unreadable root", lastRoot + `echo "rg: $root: Permission denied (os error 13)" >&2; exit 2`, time.Minute, true, nil},
+		{"exit 2 without a message", `exit 2`, time.Minute, true, nil},
+		{"killed", `kill -9 $$`, time.Minute, true, nil},
+		{"timed out", `exec sleep 5`, 100 * time.Millisecond, true, nil},
 		{"unreadable files only", `echo "rg: /x/Mail: Operation not permitted (os error 1)" >&2
 echo "rg: /x/a: Permission denied (os error 13)" >&2
-echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, false, 2},
-		{"no match", `exit 1`, time.Minute, false, 0},
+echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, false, []string{"/x/Mail", "/x/a"}},
+		{"no match", `exit 1`, time.Minute, false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fx := newFixture(t)
@@ -60,11 +61,17 @@ echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, fals
 			if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
 				t.Fatal(err)
 			}
-			var files []string
+			var files, paths []string
 			for _, s := range rec.skipped {
 				if strings.HasPrefix(s, filesScope+": ") {
 					files = append(files, s)
 				}
+				if p, ok := strings.CutPrefix(s, filesScope+":/"); ok {
+					paths = append(paths, "/"+strings.TrimSuffix(p, ": unreadable"))
+				}
+			}
+			if !slices.Equal(paths, tc.unreadable) {
+				t.Errorf("unreadable paths skipped %q, want %q", paths, tc.unreadable)
 			}
 			if got := len(files) > 0; got != tc.skipped {
 				t.Errorf("files scope skipped = %v, want %v (skipped: %q)", got, tc.skipped, rec.skipped)
@@ -83,9 +90,10 @@ echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, fals
 					detail = s.Detail
 				}
 			}
-			want := fmt.Sprintf("; %d unreadable paths skipped", tc.unreadable)
-			if got := strings.Contains(detail, "unreadable paths skipped"); got != (tc.unreadable > 0) || tc.unreadable > 0 && !strings.Contains(detail, want) {
-				t.Errorf("status detail %q, want unreadable count %d", detail, tc.unreadable)
+			n := len(tc.unreadable)
+			want := fmt.Sprintf("; %d unreadable paths skipped", n)
+			if got := strings.Contains(detail, "unreadable paths skipped"); got != (n > 0) || n > 0 && !strings.Contains(detail, want) {
+				t.Errorf("status detail %q, want unreadable count %d", detail, n)
 			}
 			if strings.Contains(detail, "/x/") {
 				t.Errorf("status detail names a path: %q", detail)
@@ -94,8 +102,8 @@ echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, fals
 	}
 }
 
-// The real ripgrep exits 2 on a file it may not read, as it does on every macOS home: the rest of
-// the search is still complete, and still finds what it reads.
+// The real ripgrep exits 2 on a file it may not read, as it does on every macOS home: the run
+// skips that file alone, and the rest of the search is still complete and finds what it reads.
 func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every file")
@@ -108,10 +116,14 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
 		t.Fatal(err)
 	}
+	var files []string
 	for _, s := range rec.skipped {
-		if strings.HasPrefix(s, filesScope+": ") {
-			t.Errorf("files scope skipped: %q", s)
+		if strings.HasPrefix(s, filesScope) {
+			files = append(files, s)
 		}
+	}
+	if want := []string{finding.PathScope(filesScope, "~/.config/locked.env") + ": unreadable"}; !slices.Equal(files, want) {
+		t.Errorf("files skipped %q, want %q", files, want)
 	}
 	var detail string
 	for _, s := range rec.statuses {

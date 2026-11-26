@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -126,7 +127,8 @@ func rgArgs() []string {
 
 // rgOutput returns what ripgrep printed, partial output included, and marks the files scope
 // uninspected unless the search was complete. Exit 1 means no matches. macOS denies reads under
-// every home (TCC), so exit 2 is complete when ripgrep only reports unreadable paths below its roots.
+// every home (TCC), so exit 2 is complete apart from those paths when ripgrep only reports
+// unreadable paths below its roots.
 func (s *scan) rgOutput(args []string) []byte {
 	out, err := guardRG(s.c.RG).Run(s.ctx, args...)
 	if err == nil {
@@ -180,6 +182,8 @@ func rgRoots(args []string) []string {
 	return nil
 }
 
+// skipUnreadable leaves each path out of the files scope: what it may hold is unknown, so the
+// tracker keeps every location there, while the rest of the scope counts as inspected.
 func (s *scan) skipUnreadable(paths []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,7 +191,10 @@ func (s *scan) skipUnreadable(paths []string) {
 		s.unreadable = map[string]bool{}
 	}
 	for _, p := range paths {
-		s.unreadable[p] = true
+		if !s.unreadable[p] {
+			s.unreadable[p] = true
+			s.emit.Scope(finding.PathScope(filesScope, s.tilde(p)), false, "unreadable")
+		}
 	}
 }
 

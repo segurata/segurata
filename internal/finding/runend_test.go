@@ -41,6 +41,38 @@ func TestCoverageMatchesScopesAccountsAndWildcards(t *testing.T) {
 	}
 }
 
+// A path the run could not read holds what is at it, or inside it, and nothing else of its scope.
+func TestCoverageHoldsWhatIsAtAnUnreadablePath(t *testing.T) {
+	var tally Tally
+	tally.Declare("files", true, "")
+	tally.Declare(PathScope("files", "~/Library/Mail"), false, "unreadable")
+	tally.Declare(PathScope("files", "~/.config/locked.env"), false, "unreadable")
+	end := tally.End("c", "", time.Now(), time.Now(), nil)
+	c := CoverageOf(&end)
+	for _, tc := range []struct {
+		path      string
+		unchecked bool
+	}{
+		{"~/.config/locked.env", true},
+		{"~/Library/Mail/V10/x.emlx", true},
+		{"~/Library", true}, // a repository or directory holding an unreadable path
+		{"~/Library/Mailbox/x", false},
+		{"~/.config/locked.env.bak", false},
+		{"~/.config/other.env", false},
+		{"", false},
+	} {
+		if _, unchecked := c.UncheckedPath("local", "files", tc.path); unchecked != tc.unchecked {
+			t.Errorf("UncheckedPath(%q) = %v", tc.path, unchecked)
+		}
+	}
+	if _, unchecked := c.Unchecked("local", "files"); unchecked {
+		t.Error("an unreadable path left the whole files scope unchecked")
+	}
+	if _, unchecked := c.UncheckedPath("local", "history:~/Library", "~/Library/Mail"); unchecked {
+		t.Error("a files path held another scope")
+	}
+}
+
 func TestCoverageOfRunsThatProveNothing(t *testing.T) {
 	if why, none := CoverageOf(nil).NoneChecked(); !none || !strings.Contains(why, "no run_end") {
 		t.Errorf("no run_end: %q %v", why, none)

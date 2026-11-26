@@ -437,9 +437,9 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 const secretsFilesScope = "files"
 
 // markGoneLocations flags, on every rotate item, the working locations a local-secrets run did not
-// report although it read the files: the secret is no longer there. A run that skipped the files
-// proves nothing, and noise-only secrets are not reported one by one, so neither marks anything. A
-// location reported again is no longer gone (merge replaces it).
+// report although it read them: the secret is no longer there. A file the run skipped (the whole
+// files scope, or that path) proves nothing, and noise-only secrets are not reported one by one,
+// so neither marks anything. A location reported again is no longer gone (merge replaces it).
 func (t *Tracker) markGoneLocations(r *run) {
 	if _, unchecked := r.cov.Unchecked("", secretsFilesScope); unchecked {
 		return
@@ -454,7 +454,8 @@ func (t *Tracker) markGoneLocations(r *run) {
 			continue
 		}
 		for i := range it.Secret.Locations {
-			if l := &it.Secret.Locations[i]; l.Working() && !seen[fp+"\x00"+l.key()] {
+			l := &it.Secret.Locations[i]
+			if _, unchecked := r.cov.UncheckedPath("", secretsFilesScope, l.Path); l.Working() && !unchecked && !seen[fp+"\x00"+l.key()] {
 				l.Gone = true
 			}
 		}

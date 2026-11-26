@@ -495,7 +495,8 @@ func TestNoiseSummaryReclassifies(t *testing.T) {
 
 // used_in follows the latest finished local-secrets run: a working file it inspected and no longer
 // found the secret in leaves used_in, the priority and path rules; history copies stay, a run that
-// skipped the files keeps the location, and a sighting there again brings it back.
+// skipped the files keeps the location, and a sighting there again brings it back. A run that
+// could not read one file keeps the locations there, and only there.
 func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 	out := t.TempDir()
 	const fp = "c7c7c7c7c7c7c7c7"
@@ -551,5 +552,21 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 	sync(3, leak(env, day(3)), leak(old, day(3)), leak(git, day(3)))
 	if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env ~/src/shop/.env" {
 		t.Errorf("day 3 used_in %q", got)
+	}
+
+	// A run that could not read the shop's .env, or the directory holding it, read the rest of the
+	// files: the shop's .env stays in used_in and its finding is not gone.
+	for n, unreadable := range []string{"~/src/shop/.env", "~/src/shop"} {
+		writeRun(t, out, day(4+n), "local-secrets.jsonl", leak(old, day(4+n)), leak(git, day(4+n)),
+			finding.Skipped{Scope: finding.PathScope("files", unreadable), Reason: "unreadable"}, okStatus(SecretsConnector, "local"))
+		syncOrDie(t, tr, out, day(4+n).Add(time.Hour))
+		if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env ~/src/shop/.env" {
+			t.Errorf("%s unreadable: used_in %q", unreadable, got)
+		}
+		for _, r := range it.Findings {
+			if r.Path == env.Path && r.Gone {
+				t.Errorf("%s unreadable: the shop's .env finding is gone", unreadable)
+			}
+		}
 	}
 }

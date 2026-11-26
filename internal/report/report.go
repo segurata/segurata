@@ -120,7 +120,7 @@ func Build(in Inputs) (*Report, error) {
 		for _, f := range it.Findings {
 			gone := false
 			if run, ok := byLabel[f.Label()]; ok && !reported[f.ID] {
-				_, unchecked := run.Coverage.Unchecked(f.Account, f.Scope)
+				_, unchecked := run.Coverage.UncheckedPath(f.Account, f.Scope, f.Path)
 				gone = !unchecked
 			}
 			r.Accepted = append(r.Accepted, Accepted{ID: f.ID, Connector: f.Connector, Title: it.Title, Reason: it.Accepted.Reason,

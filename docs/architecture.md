@@ -81,7 +81,10 @@ the instance (never the value; see "Correlation"). The lists are capped (50 insp
 account in parts, otherwise its account (`finding.ScopeOf`). Examples: `repo:<owner>/<name>` and
 `repo:<owner>`, `user:<login>` and `org:<org>` (github), `history:<repo>`, `dumps:<repo>` and `files` (local-secrets), the project
 id and `billing:<id>` (gcp), the service name (connected-apps), `profile <name>` (aws),
-`check:<id>` (macos). The run's
+`check:<id>` (macos). A path a scan could not read is skipped as `<scope>:<path>`
+(`finding.PathScope`; local-secrets skips `files:~/Library/Mail` when ripgrep is denied it): it
+holds every finding and location at that path or inside it, while the rest of the scope counts
+as inspected (`Coverage.UncheckedPath`). The run's
 coverage is derived (`finding.Tally`):
 
 - a status `ok` marks its account (or `scope`) inspected;

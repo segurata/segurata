@@ -503,7 +503,7 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[strin
 		if !ok {
 			continue
 		}
-		why, unchecked := run.cov.Unchecked(r.Account, r.Scope)
+		why, unchecked := run.cov.UncheckedPath(r.Account, r.Scope, r.Path)
 		if strings.HasPrefix(r.ID, "status:") {
 			why, unchecked = run.statusesUnproven()
 			if len(seen) > 0 || r.Account != "" && run.wholeInstance(it.setupState()) {

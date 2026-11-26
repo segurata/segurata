@@ -243,9 +243,42 @@ func (c Coverage) Unchecked(account, scope string) (string, bool) {
 	return "", false
 }
 
-// UncheckedFinding is Unchecked for a finding of a run that records scopes.
+// PathScope is the part of scope at one path: a run that could not read that path, or a
+// directory holding it, skips it while the rest of scope counts as inspected.
+func PathScope(scope, path string) string { return scope + ":" + path }
+
+// UncheckedPath is Unchecked for something at path within scope: also unchecked when the run
+// skipped the PathScope of a path that holds it or lies inside it.
+func (c Coverage) UncheckedPath(account, scope, path string) (string, bool) {
+	if why, unchecked := c.Unchecked(account, scope); unchecked || path == "" {
+		return why, unchecked
+	}
+	for _, s := range c.skipped {
+		if p, ok := strings.CutPrefix(s.Scope, PathScope(scope, "")); ok && overlaps(p, path) {
+			return s.Scope + ": " + s.Reason, true
+		}
+	}
+	return "", false
+}
+
+func overlaps(a, b string) bool {
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
+}
+
+// UncheckedFinding is UncheckedPath for a finding of a run that records scopes.
 func (c Coverage) UncheckedFinding(f Finding) (string, bool) {
-	return c.Unchecked(f.Account, ScopeOf(f))
+	return c.UncheckedPath(f.Account, ScopeOf(f), PathOf(f))
+}
+
+// PathOf is the local path a finding is at, from its evidence: its repository, else its file;
+// "" when it names neither.
+func PathOf(f Finding) string {
+	for _, k := range []string{"repo", "path"} {
+		if p, _ := f.Evidence[k].(string); strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "/") {
+			return p
+		}
+	}
+	return ""
 }
 
 func matchScope(pattern, id string) bool {
