@@ -40,6 +40,6 @@ func lock(path string) (unlock func(), err error) {
 			f.Close()
 			return nil, fmt.Errorf("%s is in use by another segurata command (%s held for over %s); try again when it ends", path, name, lockWait)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }

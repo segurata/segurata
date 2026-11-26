@@ -35,8 +35,8 @@ func TestStatusActionPutsTheDetailsCommandInNext(t *testing.T) {
 		if cmd != c.cmd || !strings.Contains(action, c.inAction) {
 			t.Errorf("%s %q:\n got %q, %q\nwant %q, action with %q", c.st.State, c.st.Detail, action, cmd, c.cmd, c.inAction)
 		}
-		if strings.Contains(action, "Do what the status detail says") || strings.Contains(action, "drop it from the config") {
-			t.Errorf("generic action %q", action)
+		if strings.HasPrefix(action, "See the status detail.") {
+			t.Errorf("%s fell back to the generic action %q", c.st.State, action)
 		}
 	}
 }
@@ -51,8 +51,11 @@ func TestAdminOnlyChecksAskForNoInstall(t *testing.T) {
 		t.Errorf("unsupported: %q", action)
 	}
 	// A reauth without a fix must not assume a browser connector.
-	if got, _ := statusAction(finding.Status{State: finding.StateReauth, Detail: "InvalidClientTokenId"}, "aws", ""); strings.Contains(got, "drives over CDP") {
+	if got, _ := statusAction(finding.Status{State: finding.StateReauth, Detail: "InvalidClientTokenId"}, "aws", ""); !strings.Contains(got, "with the provider's CLI otherwise") {
 		t.Errorf("aws reauth should not point to the browser only: %q", got)
+	}
+	if got, _ := statusAction(finding.Status{State: finding.StateUnverified, Detail: "x"}, "x", ""); !strings.HasPrefix(got, "See the status detail.") || strings.Contains(got, "expect") {
+		t.Errorf("a state without its own action: %q", got)
 	}
 }
 
