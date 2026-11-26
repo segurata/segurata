@@ -143,6 +143,14 @@ func TestCommands(t *testing.T) {
 	if _, e, code := cli("accept", "ffff", "--reason", "x", "--out", out); code != 1 || !strings.Contains(e, "no finding") {
 		t.Errorf("unknown id: %d %q", code, e)
 	}
+	// A run dated after the clock's today was written while the clock was wrong: it is not the latest.
+	future := firewall()
+	future.ID, future.Resource.ID, future.Title = "", "future", "From a run dated tomorrow"
+	future.Fill(now)
+	runtest.Write(t, filepath.Join(out, now.AddDate(0, 0, 1).Format(time.DateOnly), "macos.jsonl"), future)
+	if _, e, code := cli("accept", future.ID, "--reason", "x", "--out", out); code != 1 || !strings.Contains(e, "no finding") {
+		t.Errorf("a finding from a future-dated run: %d %q", code, e)
+	}
 	o, e, code := cli("accept", dbg.ID[:6], "--reason", "AI agents drive Brave", "--out", out)
 	if code != 0 || !strings.Contains(o, "Accepted "+dbg.ID) || !strings.Contains(o, "no end date") {
 		t.Fatalf("accept: %d %q %q", code, o, e)
