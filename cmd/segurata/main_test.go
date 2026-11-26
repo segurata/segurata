@@ -24,6 +24,7 @@ func TestConnectorsAreDiscoveredOncePerProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
+	freshDiscovery(t)
 	for range 3 {
 		browserConnector("once")
 		all()
@@ -83,9 +84,7 @@ esac
 	t.Setenv("HOME", home)
 	t.Setenv("SEGURATA_HOME", filepath.Join(home, "state"))
 	t.Setenv("SEGURATA_CONFIG", filepath.Join(home, "config.json"))
-	saved := all
-	all = sync.OnceValue(discover)
-	t.Cleanup(func() { all = saved })
+	freshDiscovery(t)
 
 	if code := inventory([]string{"--out", filepath.Join(home, "out"), "stub"}); code != 0 {
 		t.Fatalf("inventory exit %d", code)
@@ -97,4 +96,11 @@ esac
 	if tr.LastSyncAt == nil || !slices.ContainsFunc(tr.Items, func(it *tracker.Item) bool { return it.Title == "Stub thing is off" }) {
 		t.Errorf("the sync did not fold the run: %d items", len(tr.Items))
 	}
+}
+
+// freshDiscovery makes the next all() discover the connectors on the test's PATH.
+func freshDiscovery(t *testing.T) {
+	saved := all
+	all = sync.OnceValue(discover)
+	t.Cleanup(func() { all = saved })
 }
