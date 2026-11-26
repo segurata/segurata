@@ -1,9 +1,6 @@
-// Package signin is `segurata signin`: it opens, in the browser segurata drives, the pages where
-// the owner has to sign in again or confirm their identity for a browser connector, waits while
-// they do, reading each page and never typing or clicking anything, then runs the affected
-// connector instances again and says which setup items closed. Commands the owner has to run in
-// a terminal (gcloud auth login, gh auth refresh) are listed, never executed. See README,
-// "Signing in".
+// Package signin is `segurata signin`: it opens the pages where the owner signs in again for a
+// browser connector, waits while they do, reading but never typing or clicking, then runs those
+// connectors again. Terminal commands are listed, never run. See README, "Signing in".
 package signin
 
 import (
@@ -23,19 +20,17 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-// Item is one thing the owner does so a connector sees an account again: a page in the browser
-// (Page) or a command in their terminal (Command).
-type Item struct {
-	TrackerID string         // the setup item it clears
-	Title     string         // the setup item's title
-	Target    string         // the connector instance to run again, by label
-	Status    finding.Status // the status it clears
+// item is a page to act on in the browser, or a Command for the terminal.
+type item struct {
+	TrackerID string // the setup item it clears
+	Title     string
+	Target    string // the connector instance label to run again
+	Status    finding.Status
 	Page      *connector.SignInPage
 	Command   string
 }
 
-// Do is what the owner does, in a few words.
-func (it Item) Do() string {
+func (it item) Do() string {
 	switch {
 	case it.Page != nil && it.Page.Do != "":
 		return it.Page.Do
@@ -45,23 +40,19 @@ func (it Item) Do() string {
 	return "run in your terminal: " + it.Command
 }
 
-// commandStates are the states whose command is a sign-in: noscope counts, its fix is a fresh
-// sign-in with more scopes (gh auth refresh -s …). Pages are for reauth and signedout
-// (tracker.Item.BrowserSignIn).
+// commandStates are those whose command is a sign-in; noscope's is one with more scopes.
 var commandStates = []finding.State{finding.StateReauth, finding.StateSignedOut, finding.StateNoScope}
 
-// Collect lists what the owner can do about the active setup items of the given connector
-// instances, in tracker order: for a status whose detail names a command, that command; for a
-// reauth or signedout status of a browser connector, the page its SignInPage names (or the URL
-// the item gives, without a way to tell when it is done). Commands count for reauth, signedout
-// and noscope statuses, or for any state with all. Accounts the config does not watch (accounts
-// is cfg.Accounts) are skipped, as are instances not in targets.
-func Collect(items []*tracker.Item, targets []run.Target, accounts func(label string) ([]string, bool), all bool, now time.Time) []Item {
+// collect lists, in tracker order, what the owner can do about the active setup items of targets:
+// the command a status names, or the sign-in page of a browser connector (else the item's URL,
+// with no way to tell when it is done). all lists commands of every state. Accounts the config
+// does not watch are skipped.
+func collect(items []*tracker.Item, targets []run.Target, accounts func(label string) ([]string, bool), all bool, now time.Time) []item {
 	byLabel := map[string]connector.Connector{}
 	for _, t := range targets {
 		byLabel[t.Label()] = t.Connector
 	}
-	var out []Item
+	var out []item
 	for _, it := range items {
 		if it.Kind != tracker.KindSetup || !it.Active(now) {
 			continue
@@ -73,24 +64,24 @@ func Collect(items []*tracker.Item, targets []run.Target, accounts func(label st
 	return out
 }
 
-func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accounts func(string) ([]string, bool), all bool, now time.Time) (Item, bool) {
+func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accounts func(string) ([]string, bool), all bool, now time.Time) (item, bool) {
 	sts := it.SetupStatuses()
 	if len(sts) == 0 {
-		return Item{}, false
+		return item{}, false
 	}
 	st := sts[0]
 	lbl := tracker.StatusLabel(st)
 	conn, ok := byLabel[lbl]
 	if !ok || !watched(accounts, lbl, st.Account) {
-		return Item{}, false
+		return item{}, false
 	}
-	x := Item{TrackerID: it.ID, Title: it.Title, Target: lbl, Status: st}
+	x := item{TrackerID: it.ID, Title: it.Title, Target: lbl, Status: st}
 	if cmds := it.StatusCommands(); len(cmds) > 0 {
 		x.Command = strings.Join(cmds, " && ")
 		return x, all || slices.Contains(commandStates, st.State)
 	}
 	if !it.BrowserSignIn(func(string) bool { return conn.Describe().NeedsCDP() }, now) {
-		return Item{}, false
+		return item{}, false
 	}
 	if si, ok := conn.(connector.SignInner); ok {
 		for _, s := range sts {
@@ -105,11 +96,10 @@ func collectOne(it *tracker.Item, byLabel map[string]connector.Connector, accoun
 		x.Page = &connector.SignInPage{URL: it.Next.URL}
 		return x, true
 	}
-	return Item{}, false
+	return item{}, false
 }
 
-// watched reports whether the config watches the account: true unless the instance has an
-// accounts list (segurata accounts watch/unwatch) that leaves it out.
+// watched: true unless the instance's accounts list leaves the account out.
 func watched(accounts func(string) ([]string, bool), lbl, account string) bool {
 	if accounts == nil || account == "" {
 		return true
@@ -118,49 +108,41 @@ func watched(accounts func(string) ([]string, bool), lbl, account string) bool {
 	return !set || slices.ContainsFunc(list, func(a string) bool { return strings.EqualFold(a, account) })
 }
 
-// Tab is a page open in the browser whose state can be read.
 type Tab interface {
 	Evaluate(ctx context.Context, expr string) (json.RawMessage, error)
 }
 
-// Browser opens foreground tabs that are never closed: the owner's to use.
+// Browser opens foreground tabs, never closed: they are the owner's.
 type Browser interface {
 	OpenTab(ctx context.Context, url string) (Tab, error)
 }
 
-// CDP is the Browser at a CDP client: tabs in the browser segurata already drives, never another.
 type CDP struct{ *cdp.Client }
 
 func (b CDP) OpenTab(ctx context.Context, url string) (Tab, error) { return b.Client.OpenTab(ctx, url) }
 
-// Outcome is how waiting ended for one item.
-type Outcome struct {
-	Done   bool      // the page shows what the connector reads
-	At     time.Time // when Done was seen
-	Closed bool      // the tab went away (closed by the owner) before it was done
-	Err    error     // the tab could not be opened
+type outcome struct {
+	Done   bool
+	At     time.Time
+	Closed bool  // by the owner, before it was done
+	Err    error // the tab could not be opened
 }
 
-// WaitOptions tune Wait. Zero Interval and Timeout take the defaults.
-type WaitOptions struct {
-	Interval time.Duration   // between two reads of the pages; default 3s
-	Timeout  time.Duration   // give up after; default 10 minutes
+type waitOptions struct {
+	Interval time.Duration   // default 3s
+	Timeout  time.Duration   // default 10 minutes
 	Enter    <-chan struct{} // closed when the owner says they are done
 	Progress io.Writer
-	// OnDone runs as soon as item i is done, before Wait returns: reruns that cannot wait.
-	OnDone func(i int)
-	Now    func() time.Time
+	OnDone   func(i int) // runs at once, for reruns that cannot wait
+	Now      func() time.Time
 }
 
-// confirmations is how many reads in a row must find a page done: one read can catch a page
-// halfway through a redirect.
+// confirmations: one read can catch a page halfway through a redirect.
 const confirmations = 2
 
-// Wait opens a tab for every item with a page and reads each until its Done holds on
-// confirmations reads in a row, its tab goes away, the owner closes Enter, the timeout passes or
-// ctx ends. Pages without Done wait for Enter or the timeout. Outcomes are in items' order;
-// items without a page get the zero Outcome.
-func Wait(ctx context.Context, b Browser, items []Item, o WaitOptions) []Outcome {
+// wait reads each item's tab until Done holds on confirmations reads in a row or the tab goes
+// away, until Enter, the timeout or ctx. Pages without Done wait for Enter or the timeout.
+func wait(ctx context.Context, b Browser, items []item, o waitOptions) []outcome {
 	if o.Interval == 0 {
 		o.Interval = 3 * time.Second
 	}
@@ -176,7 +158,7 @@ func Wait(ctx context.Context, b Browser, items []Item, o WaitOptions) []Outcome
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 
-	out := make([]Outcome, len(items))
+	out := make([]outcome, len(items))
 	tabs := make([]Tab, len(items))
 	streak := make([]int, len(items))
 	for i, it := range items {
@@ -187,7 +169,6 @@ func Wait(ctx context.Context, b Browser, items []Item, o WaitOptions) []Outcome
 			fmt.Fprintf(o.Progress, "  %d. could not open %s: %v\n", i+1, it.Page.URL, out[i].Err)
 		}
 	}
-	// waiting reports whether item i has an open tab that is not done yet.
 	waiting := func(i int) bool { return tabs[i] != nil && !out[i].Done && !out[i].Closed }
 	pending := func() (auto, manual int) {
 		for i, it := range items {
@@ -251,8 +232,7 @@ func reason(err error) string {
 	return "interrupted"
 }
 
-// progress counts the pages done and the pages opened.
-func progress(items []Item, out []Outcome) (done, total int) {
+func progress(items []item, out []outcome) (done, total int) {
 	for i, it := range items {
 		if it.Page != nil && out[i].Err == nil {
 			total++
@@ -264,11 +244,9 @@ func progress(items []Item, out []Outcome) (done, total int) {
 	return done, total
 }
 
-// Reruns are the connector instances to run once waiting is over, in item order: the target of
-// every page item, except a target already run early (early holds when that run started) whose
-// pages were all done before then, or left undone. Command items are left to the owner, who runs
-// them in a terminal.
-func Reruns(items []Item, out []Outcome, early map[string]time.Time) []string {
+// reruns are the targets of page items to run once waiting is over, except one already run early
+// (early holds when) with no page done after that run started.
+func reruns(items []item, out []outcome, early map[string]time.Time) []string {
 	var labels []string
 	need := map[string]bool{}
 	for i, it := range items {
