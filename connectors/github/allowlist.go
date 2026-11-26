@@ -9,12 +9,11 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 )
 
-// seg is one owner, repository or URL-escaped branch name in a path. "." and "..", escaped or
-// not, are refused separately, so a path cannot climb out of the endpoint it names.
+// seg is one owner, repository or escaped branch name; "." and ".." are refused separately.
 const seg = `[A-Za-z0-9_.%-]+`
 
-// readPaths are the only REST paths this connector may request, each with the query string it
-// always sends. Every one is a GET documented at docs.github.com/rest (checked 2026-11-24).
+// readPaths are GETs documented at docs.github.com/rest (checked 2026-11-24), each with the query
+// string it always sends.
 var readPaths = compile(
 	`/rate_limit`,
 	`/user`,
@@ -44,9 +43,8 @@ func compile(patterns ...string) []*regexp.Regexp {
 	return out
 }
 
-// readOnly admits exactly `gh api --method GET [--include|--paginate] <path>` with a path from
-// readPaths. Fields (-f, -F, --input) would turn the request into a POST, so no other flag is
-// accepted, in any position.
+// readOnly admits exactly `gh api --method GET [--include|--paginate] <path>`: a field flag (-f,
+// -F, --input) anywhere would turn the request into a POST.
 var readOnly = cli.CheckFunc(func(args []string) error {
 	if allowed(args) {
 		return nil

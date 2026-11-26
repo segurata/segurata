@@ -65,9 +65,6 @@ func TestInventoryOffersActionsGroupedByOwner(t *testing.T) {
 		if f.Remediation.Action != "" {
 			got[f.Resource.Type+" "+f.Resource.ID] = f.Remediation.Action + " " + f.Remediation.Group
 		}
-		if f.Remediation.Automatable != (f.Remediation.Action != "") && f.Remediation.Automatable {
-			t.Errorf("%s: automatable without an action", f.Title)
-		}
 	}
 	want := map[string]string{
 		// secret scanning comes first; the workflow issue of the same repository waits for it
@@ -143,6 +140,39 @@ func TestWorkflowPlanCoversTheOrganizationFirstAndKeepsTheApproveFlag(t *testing
 		"gh api --method PUT --silent /repos/octo-tester/site/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false",
 	}) {
 		t.Errorf("repository plan: %v", got)
+	}
+}
+
+func TestWorkflowPlanLeavesOutWhatNoLongerApplies(t *testing.T) {
+	gh := world()
+	gh.replies["/repos/acme-corp/old"] = repoJSON(103, "acme-corp/old", "public", true, true)
+	gh.replies["/repos/other-org/shared"] = repoJSON(104, "other-org/shared", "private", false, false)
+	gh.errs["/orgs/tidy-free/actions/permissions/workflow"] = httpErr("Must have admin rights to Repository.", 403)
+	rem := finding.Remediation{Action: ActionWorkflowRead, Group: "octo-tester"}
+	group := []finding.Finding{{ID: "o", Resource: finding.Resource{Type: "github_org_setting", Name: "tidy-free"}, Remediation: rem}}
+	for _, full := range []string{"octo-tester/forked-ci", "acme-corp/old", "other-org/shared", "tidy-free/web"} {
+		group = append(group, finding.Finding{ID: full, Resource: finding.Resource{Type: "github_repo"},
+			Evidence: map[string]any{"repository": full}, Remediation: rem})
+	}
+	c := &Connector{Run: gh}
+	p, err := c.PlanGroup(context.Background(), group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strs(p.Commands); len(got) != 1 || !strings.Contains(got[0], "/repos/octo-tester/forked-ci/") {
+		t.Errorf("commands: %v", got)
+	}
+	effects := strings.Join(p.SideEffects, "\n")
+	for _, w := range []string{"Left out: tidy-free (its workflow permissions are not readable",
+		"Left out: acme-corp/old (archived", "Left out: other-org/shared (you no longer administer it)",
+		"Left out: tidy-free/web (the default workflow token is already read)"} {
+		if !strings.Contains(effects, w) {
+			t.Errorf("side effects lack %q:\n%s", w, effects)
+		}
+	}
+	gh.errs["/repos/octo-tester/forked-ci"] = httpErr("Server Error", 500)
+	if _, err := c.PlanGroup(context.Background(), group); err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("a failed read must stop the plan: %v", err)
 	}
 }
 

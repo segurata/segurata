@@ -6,7 +6,6 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// checkPhrases word each check that groups across organizations, for the title of its item.
 var checkPhrases = map[check]string{
 	orgNo2FARequirement:      "Two-factor authentication not required",
 	orgMembersNo2FA:          "Members without two-factor authentication",

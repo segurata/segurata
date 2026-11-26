@@ -273,7 +273,7 @@ func TestInventoryRepositories(t *testing.T) {
 			t.Errorf("site title lacks %q: %s", part, site.Title)
 		}
 	}
-	if strings.HasPrefix(site.Title, "octo-tester/site: active webhook") == false {
+	if !strings.HasPrefix(site.Title, "octo-tester/site: active webhook") {
 		t.Errorf("worst issue must come first: %s", site.Title)
 	}
 	if strings.Contains(site.Title, "push protection") || strings.Contains(site.Title, "reader") || strings.Contains(site.Title, "webhook 9") {
@@ -365,10 +365,7 @@ func TestBranchProtectionOptIn(t *testing.T) {
 	if gh.called("/repos/tidy-free/web/rules/branches/main?per_page=100") {
 		t.Error("a protected branch needs no ruleset lookup")
 	}
-	if _, ok := rec.ByResource(t, "github_repo_setting", string(repoUnprotectedDefault)).Evidence["repositories"].([]string); !ok {
-		t.Error("roll-up evidence lists repositories")
-	}
-	if got := rec.ByResource(t, "github_repo_setting", string(repoUnprotectedDefault)).Evidence["repositories"]; !reflect.DeepEqual(got, []string{"octo-tester/site"}) {
+	if got := bp.Evidence["repositories"]; !reflect.DeepEqual(got, []string{"octo-tester/site"}) {
 		t.Errorf("a branch covered by a ruleset counts as protected: %v", got)
 	}
 }

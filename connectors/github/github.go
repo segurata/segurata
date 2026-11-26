@@ -1,11 +1,7 @@
-// Package github inventories the security settings of a GitHub account through the authenticated
-// `gh` CLI: the account's two-factor authentication, the organizations it owns (2FA requirement and
-// members without it, default permissions, Actions permissions, code security defaults) and the
-// repositories it administers (secret scanning, push protection, Dependabot security updates,
-// webhooks, deploy keys, Actions defaults, optionally branch protection). Read-only: every request
-// is a GET on an allowlisted path. OAuth apps, GitHub Apps, sessions and the account's own keys are
-// covered by the connected-apps connector. Remediations (remediate.go) write through `gh api`
-// only after a confirmed plan, with their own allowlist.
+// Package github inventories, through the authenticated `gh` CLI and only GETs on allowlisted
+// paths, the account's 2FA, the organizations it owns and the repositories it administers. OAuth
+// apps, GitHub Apps, sessions and the account's keys belong to the connected-apps connector.
+// Remediations write through `gh api` only after a confirmed plan, with their own allowlist.
 package github
 
 import (
@@ -21,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,19 +28,15 @@ import (
 
 const (
 	defaultMaxRepos = 500
-	// rateReserve is how many requests of the hourly quota the connector leaves for the owner's
-	// other tools; it stops before going below it.
+	// rateReserve is the part of the hourly quota left for the owner's other tools.
 	rateReserve = 300
 	concurrency = 4
 	web         = "https://github.com"
 )
 
 type Connector struct {
-	// Run executes gh commands after the read-only guard. Tests replace it with canned output.
-	Run cli.Runner
-	// Exec runs a confirmed remediation's allowlisted commands; nil is connector.System. Tests
-	// replace it with a recorder.
-	Exec connector.Executor
+	Run  cli.Runner         // gh, behind the read-only guard
+	Exec connector.Executor // runs a confirmed remediation; nil is connector.System
 }
 
 func New() *Connector {
@@ -62,8 +55,7 @@ func (c *Connector) Describe() connector.Description {
 		Summary:  "GitHub account 2FA, organization security settings, and the webhooks, deploy keys and code security of repositories you administer",
 		Needs:    []string{"cli:gh"},
 		Theme:    finding.ThemeGitHub,
-		// The owner's own account is read under the user:<login> scope, with gh's read:user.
-		Covers: []finding.Area{{ID: "github-owner-2fa", Scope: "user:"}},
+		Covers:   []finding.Area{{ID: "github-owner-2fa", Scope: "user:"}},
 	}
 }
 
@@ -91,7 +83,6 @@ func parseSettings(m map[string]any) (settings, error) {
 	return s, nil
 }
 
-// run is one inventory: the connector, the emitter, the token's scopes and the request budget.
 type run struct {
 	c      *Connector
 	emit   connector.Emitter
@@ -123,8 +114,8 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return nil
 }
 
-// start reads the token's scopes and the rate limit in one request that does not count against
-// the quota. It reports and returns false when nothing else can run.
+// start reads the token's scopes and the rate limit in one request GitHub does not count. It
+// returns false when nothing else can run.
 func (r *run) start(ctx context.Context) bool {
 	out, err := r.gh(ctx, "--include", "/rate_limit")
 	if err != nil {
@@ -155,7 +146,6 @@ func (r *run) start(ctx context.Context) bool {
 	return true
 }
 
-// splitInclude separates the headers `gh api --include` prints from the body after them.
 func splitInclude(out []byte) (textproto.MIMEHeader, []byte) {
 	rd := textproto.NewReader(bufio.NewReader(bytes.NewReader(out)))
 	if _, err := rd.ReadLine(); err != nil { // status line
@@ -170,35 +160,50 @@ func (r *run) status(account string, state finding.State, format string, args ..
 	r.scopedStatus(account, "", state, format, args...)
 }
 
-// scopedStatus is a status about one part of an account; see finding.Status.
 func (r *run) scopedStatus(account, scope string, state finding.State, format string, args ...any) {
 	r.emit.Status(finding.Status{Account: account, Scope: scope, State: state, Detail: fmt.Sprintf(format, args...)})
 }
 
 func account(name string) string { return "github:" + name }
 
-// errBudget is returned instead of running a request once the budget is spent.
 var errBudget = errors.New("rate limit budget spent")
 
-// gh runs one read-only `gh api` request, with an optional flag (--include or --paginate), and
-// returns its stdout. Each call costs one unit of the budget, except /rate_limit, which GitHub
-// does not count; a paginated call counts once, which the reserve absorbs.
+// gh spends one unit of the budget per call, except on /rate_limit, which GitHub does not count;
+// the reserve absorbs the extra pages of a paginated call.
 func (r *run) gh(ctx context.Context, flag, path string) ([]byte, error) {
 	if path != "/rate_limit" && r.budget.Add(-1) < 0 {
 		return nil, errBudget
 	}
+	return ghGet(ctx, r.c.Run, flag, path)
+}
+
+// ghGet runs `gh api --method GET [flag] path` through the read-only guard.
+func ghGet(ctx context.Context, run cli.Runner, flag, path string) ([]byte, error) {
 	args := []string{"api", "--method", "GET"}
 	if flag != "" {
 		args = append(args, flag)
 	}
-	out, err := cli.Guard(readOnly, r.c.Run).Run(ctx, append(args, path)...)
+	out, err := cli.Guard(readOnly, run).Run(ctx, append(args, path)...)
 	if err != nil {
 		return nil, wrapError(path, err)
 	}
 	return out, nil
 }
 
-// get decodes one object; list decodes every page of a paginated array.
+// forEach calls fn for 0..n-1, concurrency at a time.
+func forEach(n int, fn func(int)) {
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i := range n {
+		sem <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-sem }()
+			fn(i)
+		})
+	}
+	wg.Wait()
+}
+
 func (r *run) get(ctx context.Context, path string, out any) error {
 	raw, err := r.gh(ctx, "", path)
 	if err != nil {
@@ -212,7 +217,7 @@ func list[T any](ctx context.Context, r *run, path string) ([]T, error) {
 	if err != nil {
 		return nil, err
 	}
-	// gh --paginate prints one JSON array per page, one after the other.
+	// gh --paginate prints one JSON array per page.
 	var all []T
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	for dec.More() {
@@ -232,7 +237,6 @@ func decodeJSON(path string, raw []byte, out any) error {
 	return nil
 }
 
-// apiError is a request GitHub answered with an error status.
 type apiError struct {
 	path   string
 	code   int
@@ -252,8 +256,7 @@ var (
 	rateLimitRE = regexp.MustCompile(`(?i)rate limit`)
 )
 
-// wrapError names the path in a failure, and reads gh's last stderr line, "gh: <message> (HTTP
-// <code>)", into an *apiError when there is one.
+// wrapError reads gh's last stderr line, "gh: <message> (HTTP <code>)", into an *apiError.
 func wrapError(path string, err error) error {
 	var ce *cli.Error
 	if errors.As(err, &ce) {
@@ -280,8 +283,7 @@ func rateLimited(err error) bool {
 	return ok && (e.code == 429 || e.code == 403 && rateLimitRE.MatchString(e.reason))
 }
 
-// denied is GitHub refusing a resource the token cannot see: 403, or 404, which GitHub returns for
-// things that exist but are hidden from the caller.
+// denied counts 404 too: GitHub answers it for resources hidden from the caller.
 func denied(err error) bool {
 	e, ok := asAPIError(err)
 	return ok && (e.code == 403 || e.code == 404) && !rateLimited(err)
@@ -292,7 +294,6 @@ func notFound(err error) bool {
 	return ok && e.code == 404
 }
 
-// stateOf maps a failure to the status the owner acts on.
 func stateOf(err error) finding.State {
 	var ce *cli.Error
 	switch {
@@ -307,7 +308,7 @@ func stateOf(err error) finding.State {
 	return finding.StateError
 }
 
-// describe turns a failure into a detail that says what to do next.
+// describe says what to do next about a failure.
 func describe(err error, fallback string) string {
 	switch stateOf(err) {
 	case finding.StateUnsupported:

@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,8 +28,8 @@ type repo struct {
 	Permissions struct {
 		Admin bool `json:"admin"`
 	} `json:"permissions"`
-	// SecurityAndAnalysis is only in GET /repos/{owner}/{repo}, for admins, and only lists the
-	// features the repository's plan offers: nil for a private repository without them.
+	// SecurityAndAnalysis comes only from GET /repos/{owner}/{repo}, for admins, with the features
+	// the plan offers: nil for a private repository without them.
 	SecurityAndAnalysis *struct {
 		SecretScanning            *feature `json:"secret_scanning"`
 		PushProtection            *feature `json:"secret_scanning_push_protection"`
@@ -61,15 +60,13 @@ type deployKey struct {
 	LastUsed  *time.Time `json:"last_used"`
 }
 
-// repoResult is what one repository's inspection found.
 type repoResult struct {
 	issues  []issue
-	err     error // a request that failed; the repository is reported as partly unreadable
-	skipped bool  // stopped by the rate limit before it was fully read
+	err     error // the repository is partly unreadable
+	skipped bool  // the rate limit stopped it before it was fully read
 }
 
-// repos inspects the repositories the user administers, up to max_repos, concurrency at a time.
-// Archived ones are read-only on GitHub and are skipped.
+// repos inspects up to max_repos repositories the user administers; archived ones are read-only.
 func (r *run) repos(ctx context.Context, login string) {
 	acct := account(login)
 	if !r.scopes.has("repo") {
@@ -102,29 +99,16 @@ func (r *run) repos(ctx context.Context, login string) {
 
 	results := make([]repoResult, len(admin))
 	var stop atomic.Bool
-	jobs := make(chan int)
-	var wg sync.WaitGroup
-	for range concurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				if stop.Load() {
-					results[i] = repoResult{skipped: true}
-					continue
-				}
-				results[i] = r.inspect(ctx, admin[i])
-				if results[i].skipped {
-					stop.Store(true)
-				}
-			}
-		}()
-	}
-	for i := range admin {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+	forEach(len(admin), func(i int) {
+		if stop.Load() {
+			results[i] = repoResult{skipped: true}
+			return
+		}
+		results[i] = r.inspect(ctx, admin[i])
+		if results[i].skipped {
+			stop.Store(true)
+		}
+	})
 
 	var limited, unreadable []repo
 	for i, res := range results {
@@ -141,20 +125,16 @@ func (r *run) repos(ctx context.Context, login string) {
 	r.reposStatus(acct, login, len(admin), archived, over, results)
 }
 
-// Repository findings carry these scopes, so a run that leaves repositories unread says which:
-// "repo:<owner>/<name>" for one repository's own finding, "repo:<owner>" for an owner's rolled-up
-// findings, which depend on every repository of that owner.
+// A repository's own finding has scope repo:<owner>/<name>; an owner's roll-ups, which depend on
+// every repository of that owner, have repo:<owner>.
 const allRepos = "repo:*"
 
 func repoScope(fullName string) string { return "repo:" + fullName }
 func ownerScope(owner string) string   { return "repo:" + owner }
 
-// maxSkippedRepos is how many repositories are declared one by one; past it every repository
-// scope is declared skipped at once, which keeps run_end small.
+// maxSkippedRepos keeps run_end small: past it every repository scope is declared skipped at once.
 const maxSkippedRepos = 50
 
-// skipRepos declares repositories the run did not fully read, and their owners' rolled-up
-// findings with them.
 func (r *run) skipRepos(repos []repo, reason string) {
 	if len(repos) > maxSkippedRepos {
 		r.emit.Scope(allRepos, false, fmt.Sprintf("%d repositories: %s", len(repos), reason))
@@ -166,9 +146,7 @@ func (r *run) skipRepos(repos []repo, reason string) {
 	}
 }
 
-// reposStatus sums up the repositories of the signed-in user. It is scoped to the user's
-// repositories: the account itself was inspected, and each repository left unread is declared on
-// its own by skipRepos.
+// reposStatus is scoped to the user's repositories: the account itself was inspected.
 func (r *run) reposStatus(acct, login string, inspected, archived, over int, results []repoResult) {
 	withIssues, skipped, unreadable := 0, 0, 0
 	var firstErr error
@@ -205,8 +183,6 @@ func (r *run) reposStatus(acct, login string, inspected, archived, over int, res
 	r.scopedStatus(acct, ownerScope(login), state, "%s", strings.Join(parts, "; "))
 }
 
-// inspect reads one repository: its code security features, webhooks, deploy keys and, when
-// public, its default workflow permissions and (opt-in) default branch protection.
 func (r *run) inspect(ctx context.Context, base repo) repoResult {
 	var res repoResult
 	fail := func(err error) repoResult {
@@ -274,7 +250,6 @@ func (r *run) inspect(ctx context.Context, base repo) repoResult {
 	if rp.Visibility != "public" {
 		return res
 	}
-	// A workflow token's default only matters where Actions run; forks start with them off.
 	var ap struct {
 		Enabled bool `json:"enabled"`
 	}
@@ -308,8 +283,7 @@ func (r *run) inspect(ctx context.Context, base repo) repoResult {
 	return res
 }
 
-// protected reports whether the default branch has classic protection or an active ruleset rule.
-// GitHub answers 404 "Branch not protected" when classic protection is absent.
+// protected checks classic protection, which answers 404 when absent, then rulesets.
 func (r *run) protected(ctx context.Context, rp repo) (bool, error) {
 	b := url.PathEscape(rp.DefaultBranch)
 	var protection json.RawMessage
@@ -327,9 +301,7 @@ func (r *run) protected(ctx context.Context, rp repo) (bool, error) {
 	return len(rules) > 0, nil
 }
 
-// insecureHook reports a webhook that delivers over plain HTTP or without checking the
-// certificate. Only the scheme and host are kept: a hook URL can carry a token in its path or
-// query.
+// insecureHook keeps only the scheme and host: a hook URL can carry a token in its path or query.
 func insecureHook(h hook, settings string) (issue, bool) {
 	u, err := url.Parse(h.Config.URL)
 	if err != nil {
@@ -354,10 +326,8 @@ func insecureHook(h hook, settings string) (issue, bool) {
 		settings+"/hooks/"+strconv.FormatInt(h.ID, 10)), true
 }
 
-// rolledUp are the checks that would otherwise flag most repositories of an owner and that one
-// decision fixes (buy Secret Protection, turn a feature on everywhere, prune forks): they become
-// one finding per owner listing the repositories, instead of one line in every repository's
-// finding.
+// rolledUp checks would flag most repositories of an owner and one decision fixes them, so they
+// become one finding per owner listing the repositories.
 var rolledUp = map[check]struct{ title, fix, url string }{
 	repoForkNoSecretScanning: {
 		title: "Secret scanning or push protection is off in %d forked %s of %s",
@@ -386,11 +356,8 @@ var rolledUp = map[check]struct{ title, fix, url string }{
 	},
 }
 
-// maxListed caps the repositories named in one rolled-up finding's evidence.
 const maxListed = 200
 
-// reportRepos emits one finding per repository with its issues, worst first in the title, and
-// one finding per owner for each rolled-up check.
 func (r *run) reportRepos(repos []repo, results []repoResult) {
 	type key struct {
 		owner string

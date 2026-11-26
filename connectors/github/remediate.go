@@ -5,27 +5,22 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"sync"
 
-	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Remediation actions this connector can apply. Each groups the findings of one GitHub owner (a
-// user or an organization), so one plan covers all of that owner's repositories, listing each.
+// Each action groups the findings of one GitHub owner, so one plan covers all its repositories.
 const (
 	// ActionSecretScanning enables secret scanning and push protection on public repositories.
 	ActionSecretScanning = "github.secret-scanning.enable"
-	// ActionWorkflowRead sets the default GITHUB_TOKEN of workflows to read-only, for an
-	// organization and for repositories.
+	// ActionWorkflowRead makes the default GITHUB_TOKEN read-only in organizations and repositories.
 	ActionWorkflowRead = "github.workflow-token.read"
 )
 
-// checkActions are the checks a remediation fixes. A repository finding can hold both
-// repository checks; it offers secret scanning first, and the workflow action once a check run
-// after that remediation finds only the workflow issue left.
+// checkActions: a repository finding with both checks offers secret scanning first, and the
+// workflow action once the next run finds only that issue left.
 var checkActions = map[check]string{
 	repoNoSecretScanning:     ActionSecretScanning,
 	repoNoPushProtection:     ActionSecretScanning,
@@ -35,7 +30,6 @@ var checkActions = map[check]string{
 	orgWorkflowWrite:         ActionWorkflowRead,
 }
 
-// remedy is the remediation of a finding with these checks, worst action first, grouped by owner.
 func remedy(summary, url, owner string, checks ...check) finding.Remediation {
 	r := finding.Remediation{Summary: summary, URL: url}
 	for _, want := range []string{ActionSecretScanning, ActionWorkflowRead} {
@@ -53,7 +47,6 @@ func ghStep(args ...string) connector.Step {
 	return connector.Step{Argv: append([]string{"gh", "api"}, args...)}
 }
 
-// scanningStep turns the given security_and_analysis features of a repository to status.
 func scanningStep(full, status string, features []string) connector.Step {
 	args := []string{"--method", "PATCH", "--silent", "/repos/" + full}
 	for _, f := range features {
@@ -62,8 +55,7 @@ func scanningStep(full, status string, features []string) connector.Step {
 	return ghStep(args...)
 }
 
-// workflowStep sets the default workflow token of an organization (/orgs/<org>) or a repository
-// (/repos/<owner>/<name>), keeping whether workflows may approve pull requests as it is.
+// workflowStep keeps whether workflows may approve pull requests as it is.
 func workflowStep(base, perm string, canApprove bool) connector.Step {
 	return ghStep("--method", "PUT", "--silent", base+"/actions/permissions/workflow",
 		"-f", "default_workflow_permissions="+perm, "-F", "can_approve_pull_request_reviews="+strconv.FormatBool(canApprove))
@@ -74,23 +66,19 @@ const (
 	featurePush     = "secret_scanning_push_protection"
 )
 
-// scanningFeatureSets are every set of features a scanning step may change, in step order.
 var scanningFeatureSets = [][]string{{featureScanning, featurePush}, {featureScanning}, {featurePush}}
 
 // target is one repository or organization named by a group's findings, as read now.
 type target struct {
-	base     string // /repos/<owner>/<name> or /orgs/<org>, from GitHub's answer
-	name     string
-	eligible bool   // the action applies to it now
-	why      string // why it is left out when not eligible
-	// secret scanning: the features that are off now
-	features []string
-	// workflow token: its approve flag now
+	base       string // /repos/<owner>/<name> or /orgs/<org>, from GitHub's answer
+	name       string
+	eligible   bool
+	why        string   // why it is left out when not eligible
+	features   []string // secret scanning features off now
 	canApprove bool
 }
 
-// names collects what a group's findings name: repositories (one repository's finding, or an
-// owner's rolled-up list) and organizations, plus how many repositories a capped list left out.
+// names also counts the repositories a capped roll-up list left out.
 func names(fs []finding.Finding) (repos, orgs []string, unlisted int) {
 	seen := map[string]bool{}
 	add := func(list *[]string, n string) {
@@ -122,35 +110,18 @@ func names(fs []finding.Finding) (repos, orgs []string, unlisted int) {
 	return repos, orgs, unlisted
 }
 
-// get reads one path through the read-only guard.
 func (c *Connector) get(ctx context.Context, path string, out any) error {
-	raw, err := cli.Guard(readOnly, c.Run).Run(ctx, "api", "--method", "GET", path)
+	raw, err := ghGet(ctx, c.Run, "", path)
 	if err != nil {
-		return wrapError(path, err)
+		return err
 	}
 	return decodeJSON(path, raw, out)
 }
 
-// readEach reads targets concurrently, keeping their order.
 func readEach(ctx context.Context, items []string, read func(context.Context, string) (target, error)) ([]target, error) {
 	out := make([]target, len(items))
 	errs := make([]error, len(items))
-	jobs := make(chan int)
-	var wg sync.WaitGroup
-	for range concurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				out[i], errs[i] = read(ctx, items[i])
-			}
-		}()
-	}
-	for i := range items {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+	forEach(len(items), func(i int) { out[i], errs[i] = read(ctx, items[i]) })
 	for _, err := range errs {
 		if err != nil {
 			return nil, err
@@ -159,8 +130,7 @@ func readEach(ctx context.Context, items []string, read func(context.Context, st
 	return out, nil
 }
 
-// readRepo reads a repository and says whether an action may change it: you administer it and
-// it is not archived. A repository GitHub no longer shows is left out, not an error.
+// readRepo says whether an action may change the repository: administered and not archived.
 func (c *Connector) readRepo(ctx context.Context, full string) (repo, target, bool, error) {
 	var rp repo
 	if err := c.get(ctx, "/repos/"+full, &rp); err != nil {
@@ -238,7 +208,6 @@ func (c *Connector) readWorkflow(ctx context.Context, t target) (target, error) 
 	return t, nil
 }
 
-// state is what a group's plan is built from: every target as read now.
 type state struct {
 	action   string
 	owner    string
@@ -263,7 +232,7 @@ func (c *Connector) read(ctx context.Context, fs []finding.Finding) (state, erro
 		if ot, err = readEach(ctx, orgs, c.readOrgWorkflow); err == nil {
 			rt, err = readEach(ctx, repos, c.readRepoWorkflow)
 		}
-		got = append(ot, rt...) // the organization first: its default bounds its repositories'
+		got = append(ot, rt...) // the organization's default bounds its repositories'
 	default:
 		return state{}, fmt.Errorf("github has no remediation %q", st.action)
 	}
@@ -274,7 +243,6 @@ func (c *Connector) read(ctx context.Context, fs []finding.Finding) (state, erro
 	return st, nil
 }
 
-// plan states exactly what applying the action does to what was read.
 func (st state) plan() (connector.Plan, error) {
 	p := connector.Plan{Action: st.action}
 	var left []string
@@ -320,8 +288,7 @@ func (st state) plan() (connector.Plan, error) {
 	return p, nil
 }
 
-// allowlist is every command line the action may run on what was read: the fixed shapes, for the
-// repositories and organizations GitHub says are eligible now, never names taken from a finding.
+// allowlist is built from what GitHub says is eligible now, never from names in a finding.
 func (st state) allowlist() connector.Allowlist {
 	allow := connector.Allowlist{}
 	for _, t := range st.targets {
@@ -350,8 +317,6 @@ func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Pl
 	return c.ApplyGroup(ctx, []finding.Finding{f}, p, io)
 }
 
-// PlanGroup reads every repository and organization the group names, now, and plans only those
-// the action still applies to.
 func (c *Connector) PlanGroup(ctx context.Context, fs []finding.Finding) (connector.Plan, error) {
 	st, err := c.read(ctx, fs)
 	if err != nil {
@@ -360,7 +325,7 @@ func (c *Connector) PlanGroup(ctx context.Context, fs []finding.Finding) (connec
 	return st.plan()
 }
 
-// ApplyGroup reads again and runs the confirmed plan through the allowlist built from that read.
+// ApplyGroup reads again and runs the confirmed plan through the allowlist of that read.
 func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p connector.Plan, io connector.IO) error {
 	st, err := c.read(ctx, fs)
 	if err != nil {

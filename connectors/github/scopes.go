@@ -6,9 +6,8 @@ import (
 	"strings"
 )
 
-// scopes are the OAuth scopes of gh's token, from the X-OAuth-Scopes header. A fine-grained or
-// app token sends no such header: known is false and every check is attempted, with refusals
-// read from the responses instead.
+// scopes come from X-OAuth-Scopes. A fine-grained or app token sends none: known is false, every
+// check is attempted and refusals are read from the responses.
 type scopes struct {
 	known bool
 	set   map[string]bool
@@ -34,8 +33,7 @@ func parseScopes(h textproto.MIMEHeader) scopes {
 	return s
 }
 
-// has reports whether the token holds the scope or one that includes it. Unknown scopes count as
-// held: the request is made and GitHub decides.
+// has counts unknown scopes as held: the request is made and GitHub decides.
 func (s scopes) has(scope string) bool {
 	if !s.known || s.set[scope] {
 		return true
@@ -48,7 +46,6 @@ func (s scopes) has(scope string) bool {
 	return false
 }
 
-// refresh is the command that adds a scope to gh's token, keeping the ones it has.
 func refresh(scope string) string {
 	return fmt.Sprintf("gh auth refresh -h github.com -s %s", scope)
 }

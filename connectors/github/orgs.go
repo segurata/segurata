@@ -16,8 +16,6 @@ type membership struct {
 	} `json:"organization"`
 }
 
-// memberships lists the organizations the user is an active member of, with the role in each.
-// It returns false when they could not be listed; the status says why.
 func (r *run) memberships(ctx context.Context, login string) ([]membership, bool) {
 	if !r.scopes.has("read:org") {
 		r.scopedStatus(account(login), orgScope("*"), finding.StateNoScope, "organizations not inspected: gh's token lacks read:org; run: %s", refresh("read:org"))
@@ -31,7 +29,6 @@ func (r *run) memberships(ctx context.Context, login string) ([]membership, bool
 	return ms, true
 }
 
-// stateOrNoScope reads a refusal of the token as a missing scope.
 func stateOrNoScope(err error) finding.State {
 	if denied(err) {
 		return finding.StateNoScope
@@ -91,7 +88,6 @@ type workflowPermissions struct {
 	CanApprovePRs bool   `json:"can_approve_pull_request_reviews"`
 }
 
-// orgReport gathers one organization's findings and notes before they are emitted.
 type orgReport struct {
 	org, settings string
 	found         []orgCheck
@@ -118,13 +114,11 @@ func (o *orgReport) fail(what string, err error) {
 	o.notes = append(o.notes, describe(err, what+" not read"))
 }
 
-// Account-level checks have scopes of their own, so a missing token scope for one of them does not
-// leave the account's repositories (also under github:<login>) uninspected: "user:<login>" for the
-// signed-in user's own settings, "org:<org>" for an organization's settings.
+// Account-level checks have scopes of their own, so a token scope missing for one does not leave
+// the account's repositories, also under github:<login>, uninspected.
 func userScope(login string) string { return "user:" + login }
 func orgScope(org string) string    { return "org:" + org }
 
-// org reads one organization the user owns and reports what falls short.
 func (r *run) org(ctx context.Context, org string) {
 	acct := account(org)
 	if !r.scopes.has("admin:org") {
@@ -185,8 +179,7 @@ func (r *run) org(ctx context.Context, org string) {
 	r.scopedStatus(acct, orgScope(org), state, "owner; %d findings; %s", len(o.found), strings.Join(o.notes, "; "))
 }
 
-// orgPeople reports members and outside collaborators without two-factor authentication.
-// GitHub lets only owners use the 2fa_disabled filter.
+// orgPeople relies on the 2fa_disabled filter, which only owners may use.
 func (r *run) orgPeople(ctx context.Context, o *orgReport) {
 	if ms, err := list[login](ctx, r, "/orgs/"+o.org+"/members?filter=2fa_disabled&per_page=100"); err != nil {
 		o.fail("members without 2FA", err)
@@ -214,9 +207,8 @@ func (r *run) orgPeople(ctx context.Context, o *orgReport) {
 	}
 }
 
-// orgScanning compares the code security configurations applied to new repositories with secret
-// scanning and push protection. The organization's own *_enabled_for_new_repositories fields are
-// deprecated in favour of these configurations, so they are not read.
+// orgScanning reads the default code security configurations: the organization's own
+// *_enabled_for_new_repositories fields are deprecated.
 func (r *run) orgScanning(ctx context.Context, o *orgReport, plan string) {
 	var defaults []defaultConfig
 	if err := r.get(ctx, "/orgs/"+o.org+"/code-security/configurations/defaults", &defaults); err != nil {
@@ -233,8 +225,7 @@ func (r *run) orgScanning(ctx context.Context, o *orgReport, plan string) {
 	switch {
 	case private.ok:
 	case plan == "free":
-		// Secret scanning on private repositories needs GitHub Secret Protection, which the Free
-		// plan cannot buy: nothing the owner can turn on.
+		// Secret Protection, needed on private repositories, cannot be bought on the Free plan.
 		o.note("secret scanning for private repositories is not available on the Free plan")
 	default:
 		o.add(orgNoPrivateScanning, "New private repositories in "+o.org+" do not get secret scanning and push protection by default",
@@ -243,11 +234,10 @@ func (r *run) orgScanning(ctx context.Context, o *orgReport, plan string) {
 }
 
 type scanning struct {
-	ok   bool   // secret scanning and push protection both enabled
-	name string // configuration applied by default, if any
+	ok   bool // secret scanning and push protection both enabled
+	name string
 }
 
-// scanningDefaults reads which default configuration covers new public and new private repos.
 func scanningDefaults(defaults []defaultConfig) (public, private scanning) {
 	for _, d := range defaults {
 		s := scanning{ok: d.Config.SecretScanning == "enabled" && d.Config.PushProtection == "enabled", name: d.Config.Name}
@@ -302,7 +292,6 @@ func withCheck(ev map[string]any, c check) map[string]any {
 	return out
 }
 
-// maxLogins caps the logins listed in one finding's evidence.
 const maxLogins = 50
 
 func logins(ls []login) []string {
