@@ -231,7 +231,7 @@ func (e *env) report(g grant) {
 		ev["dependency"] = dep.label
 		summary = dep.fix
 		if len(dep.remove) > 0 {
-			action = ActionGHDropScopes
+			action = actionGHDropScopes
 		}
 	}
 	if g.scopes != nil {

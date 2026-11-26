@@ -342,6 +342,42 @@ func parseGitHubSession(r row) ghSession {
 // ghAuthStatus prints the signed-in accounts and their scopes as JSON, never the token.
 var ghAuthStatus = []string{"auth", "status", "--json", "hosts"}
 
+type ghAccount struct {
+	Login       string `json:"login"`
+	Active      bool   `json:"active"`
+	State       string `json:"state"`
+	Scopes      string `json:"scopes"` // comma-separated
+	TokenSource string `json:"tokenSource"`
+}
+
+// parseGhStatus reads the active github.com account of ghAuthStatus.
+func parseGhStatus(out []byte) (acct ghAccount, found bool, err error) {
+	var st struct {
+		Hosts map[string][]ghAccount `json:"hosts"`
+	}
+	if err := json.Unmarshal(out, &st); err != nil {
+		return ghAccount{}, false, err
+	}
+	for _, a := range st.Hosts["github.com"] {
+		if a.Active {
+			return a, true, nil
+		}
+	}
+	return ghAccount{}, false, nil
+}
+
+func (a ghAccount) has(scope string) bool {
+	return slices.Contains(strings.Split(strings.ReplaceAll(a.Scopes, " ", ""), ","), scope)
+}
+
+// ghStderr is what gh printed on failure, or the error itself.
+func ghStderr(err error) string {
+	if ce, ok := errors.AsType[*cli.Error](err); ok {
+		return ce.Stderr
+	}
+	return err.Error()
+}
+
 // ghAllowlist is every gh command this connector may run: read-only API calls, and the sign-in
 // status for doctor.
 var ghAllowlist = cli.CheckFunc(func(args []string) error {
@@ -409,11 +445,7 @@ func githubKeys(ctx context.Context, e *env, login string) {
 	for _, ep := range ghKeyEndpoints {
 		out, err := e.gh.Run(ctx, "api", "--paginate", ep.path)
 		if err != nil {
-			var ce *cli.Error
-			msg := err.Error()
-			if errors.As(err, &ce) {
-				msg = ce.Stderr
-			}
+			msg := ghStderr(err)
 			switch {
 			case errors.Is(err, exec.ErrNotFound):
 				e.status(login, finding.StateUnsupported, "the gh CLI is not installed: GitHub keys not listed (%s)", ghKeysURL)

@@ -83,23 +83,15 @@ func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
 		}
 	default:
 		if s, ok := pageOnlyServices[service]; ok && signedOut {
-			return listSignIn(s.page.url, "sign in to "+s.title, pageTextJS, func(p listPage) bool {
-				return !s.page.signedOut.MatchString(p.URL) && s.page.loaded.MatchString(p.Text)
+			return listSignIn(s.url, "sign in to "+s.title, pageTextJS, func(p listPage) bool {
+				return !s.signedOut.MatchString(p.URL) && s.loaded.MatchString(p.Text)
 			}), true
 		}
 	}
 	return connector.SignInPage{}, false
 }
 
-// pageOnlyServices are the services read by a pageOnly, with the name the owner knows them by.
-var pageOnlyServices = map[string]struct {
-	page  pageOnly
-	title string
-}{
-	"instagram": {instagramPage, "Instagram"},
-	"linkedin":  {linkedinPage, "LinkedIn"},
-	"microsoft": {microsoftPage, "your Microsoft account"},
-}
+var pageOnlyServices = map[string]pageOnly{"instagram": instagramPage, "linkedin": linkedinPage, "microsoft": microsoftPage}
 
 // msSignIn is a Microsoft page, through once it has left the sign-in host and through accepts it.
 func msSignIn(u, do, expr string, through func(fetchPage) bool) connector.SignInPage {

@@ -11,6 +11,7 @@ import (
 // browser and a verified empty list apart; anything else is reported as unverified, with the
 // page to review by hand, rather than parsed by guesswork.
 type pageOnly struct {
+	title     string // the service as the owner knows it
 	url       string
 	signedOut *regexp.Regexp // matches the URL a signed-out browser lands on
 	empty     *regexp.Regexp // matches the empty list's text; nil when it was never seen
@@ -40,6 +41,7 @@ var (
 	// Checked 2026-11-24, signed in with no apps: "Apps and websites", tabs Active, Expired,
 	// Removed, then the empty message.
 	instagramPage = pageOnly{
+		title:     "Instagram",
 		url:       "https://www.instagram.com/accounts/manage_access/",
 		signedOut: regexp.MustCompile(`/accounts/login|/challenge`),
 		empty:     regexp.MustCompile(`(?i)No has autorizado a ninguna aplicación|(haven.t|have not) authorized any (app|application)s?`),
@@ -49,6 +51,7 @@ var (
 	// /mypreferences/d/permitted-services now redirects to data-sharing-for-permitted-services,
 	// which is where the list of permitted services lives. Checked 2026-11-24 with none granted.
 	linkedinPage = pageOnly{
+		title:     "LinkedIn",
 		url:       "https://www.linkedin.com/mypreferences/d/data-sharing-for-permitted-services",
 		signedOut: regexp.MustCompile(`/login|/authwall|/uas/|/checkpoint`),
 		empty:     regexp.MustCompile(`(?i)not granted access to any services|No has (concedido|otorgado) acceso a ningún servicio`),
@@ -61,6 +64,7 @@ var (
 	// with no personal account leaves "microsoft" out of the services config; microsoft-work reads
 	// work and school accounts.
 	microsoftPage = pageOnly{
+		title:     "your Microsoft account",
 		url:       "https://account.live.com/consent/Manage",
 		signedOut: regexp.MustCompile(`login\.(live|microsoftonline)\.com`),
 		loaded:    regexp.MustCompile(`(?s).{400}`),
