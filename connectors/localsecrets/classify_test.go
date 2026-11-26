@@ -379,9 +379,11 @@ func TestOwnedOwnersConfigWithoutGH(t *testing.T) {
 func TestTemporaryAWSAndPresignedURLs(t *testing.T) {
 	fx := newFixture(t)
 	sts := func() string { return "ASIA" + strings.ToUpper(fake("", 16)) }
-	var urls []string
+	var urls, signers []string
 	for range 3 {
-		urls = append(urls, "https://b.s3.amazonaws.com/f.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential="+sts()+"%2F20241101%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature="+fake("", 64))
+		id := sts()
+		signers = append(signers, id)
+		urls = append(urls, "https://b.s3.amazonaws.com/f.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential="+id+"%2F20241101%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature="+fake("", 64))
 	}
 	fx.write(t, "src/shop/.env.signed", "LINKS="+strings.Join(urls, " ")+"\n", 0o600)
 	fx.write(t, "src/shop/.env.old", "AWS_ACCESS_KEY_ID="+sts()+"\n", 0o600)
@@ -414,6 +416,31 @@ func TestTemporaryAWSAndPresignedURLs(t *testing.T) {
 	}
 	if fresh := got["~/src/shop/.env.fresh"]; len(fresh) != 1 || fresh[0].Severity != finding.SevLow {
 		t.Errorf("STS key an hour old: %+v", fresh)
+	}
+
+	// Left out as noise, the collapsed file still names every key id it stands for, so the tracker
+	// closes the items each one had before the collapse; it counts them as one match.
+	rec = &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	var summary *finding.Finding
+	for i, f := range rec.findings {
+		if f.Resource.Type == NoiseSummaryType {
+			summary = &rec.findings[i]
+		}
+	}
+	if summary == nil {
+		t.Fatal("no noise summary")
+	}
+	named, _ := summary.Evidence["noise_fingerprints"].(map[string]string)
+	for i, id := range signers {
+		if _, ok := named[fx.fpOf(t, c, id, "aws-presigned-url")]; !ok {
+			t.Errorf("pre-signed URL %d not in the noise summary", i)
+		}
+	}
+	if byType, _ := summary.Evidence["by_type"].(map[string]int); byType["aws-presigned-url"] != 1 {
+		t.Errorf("collapsed rows counted apart: %v", byType)
 	}
 }
 

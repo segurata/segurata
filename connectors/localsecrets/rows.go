@@ -56,10 +56,11 @@ func markReused(evs []secretrisk.Evidence) []secretrisk.Evidence {
 // single finding: a page of signed links (197 in one committed JSON file on 2026-11-24) is one
 // thing to clean up, not 197 keys to rotate. The row kept is the one with the smallest
 // fingerprint, so the same file keeps the same finding across runs; it counts every match and is
-// expired only when all of them are.
-func collapseTemporaryAWS(evs []secretrisk.Evidence) []secretrisk.Evidence {
+// expired only when all of them are. folded maps the kept row's fingerprint to the rows it stands
+// for, so the noise summary still names their fingerprints when it is noise.
+func collapseTemporaryAWS(evs []secretrisk.Evidence) (out []secretrisk.Evidence, folded map[string][]secretrisk.Evidence) {
 	groups := map[string][]int{}
-	var out []secretrisk.Evidence
+	folded = map[string][]secretrisk.Evidence{}
 	for i, ev := range evs {
 		if secretrisk.TemporaryAWS(ev) || ev.Type == "aws-presigned-url" {
 			k := ev.Source + "\x00" + ev.Path
@@ -75,6 +76,9 @@ func collapseTemporaryAWS(evs []secretrisk.Evidence) []secretrisk.Evidence {
 		}
 		sort.Slice(idx, func(a, b int) bool { return evs[idx[a]].Fingerprint < evs[idx[b]].Fingerprint })
 		keep := evs[idx[0]]
+		for _, i := range idx[1:] {
+			folded[keep.Fingerprint] = append(folded[keep.Fingerprint], evs[i])
+		}
 		keep.Count, keep.Public = 0, true
 		presigned := false
 		for _, i := range idx {
@@ -91,7 +95,7 @@ func collapseTemporaryAWS(evs []secretrisk.Evidence) []secretrisk.Evidence {
 		}
 		out = append(out, keep)
 	}
-	return out
+	return out, folded
 }
 
 // noiseCounts counts the noise findings left out of the output, by type and by place (the
@@ -105,7 +109,7 @@ type noiseCounts struct {
 
 func (n *noiseCounts) add(ev secretrisk.Evidence) {
 	if n.byType == nil {
-		n.byType, n.byPlace, n.types = map[string]int{}, map[string]int{}, map[string]string{}
+		n.byType, n.byPlace = map[string]int{}, map[string]int{}
 	}
 	place := ev.Repo
 	if place == "" {
@@ -114,6 +118,15 @@ func (n *noiseCounts) add(ev secretrisk.Evidence) {
 	n.total++
 	n.byType[ev.Type]++
 	n.byPlace[place]++
+	n.name(ev)
+}
+
+// name records a noise-only fingerprint for the summary without counting a match: a row a
+// collapsed one stands for (collapseTemporaryAWS), already counted in it.
+func (n *noiseCounts) name(ev secretrisk.Evidence) {
+	if n.types == nil {
+		n.types = map[string]string{}
+	}
 	if t, ok := n.types[ev.Fingerprint]; !ok || ev.Type < t {
 		n.types[ev.Fingerprint] = ev.Type
 	}
