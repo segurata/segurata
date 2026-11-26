@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -196,37 +197,29 @@ type grant struct {
 
 // grants lists the OAuth tokens of live accounts: suspended and archived ones cannot use theirs.
 func (a *audit) grants(ctx context.Context, accounts []account) ([]grant, error) {
-	var mu sync.Mutex
+	live := slices.DeleteFunc(slices.Clone(accounts), func(acc account) bool { return !acc.live() })
+	tokens := make([][]token, len(live))
+	errs := make([]error, len(live))
+	fanout.Each(len(live), parallel, func(i int) {
+		var p page[token]
+		errs[i] = a.api.Get(ctx, "/directory/v1/users/"+url.PathEscape(live[i].email)+"/tokens", nil, &p)
+		tokens[i] = p.Items
+	})
 	var out []grant
 	var failed []string
 	var first error
-	sem := make(chan struct{}, parallel)
-	var wg sync.WaitGroup
-	for _, acc := range accounts {
-		if !acc.live() {
+	for i, acc := range live {
+		if errs[i] != nil {
+			failed = append(failed, acc.email)
+			if first == nil {
+				first = errs[i]
+			}
 			continue
 		}
-		email := acc.email
-		sem <- struct{}{}
-		wg.Go(func() {
-			defer func() { <-sem }()
-			var p page[token]
-			err := a.api.Get(ctx, "/directory/v1/users/"+url.PathEscape(email)+"/tokens", nil, &p)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				failed = append(failed, email)
-				if first == nil {
-					first = err
-				}
-				return
-			}
-			for _, t := range p.Items {
-				out = append(out, grant{user: email, token: t})
-			}
-		})
+		for _, t := range tokens[i] {
+			out = append(out, grant{user: acc.email, token: t})
+		}
 	}
-	wg.Wait()
 	if first != nil {
 		_, why := a.apiFailure(first)
 		sort.Strings(failed)

@@ -10,12 +10,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/pagetext"
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -241,16 +241,7 @@ type inspected struct {
 
 func inspectAll(ctx context.Context, b browser, links []appLink, now time.Time) []inspected {
 	out := make([]inspected, len(links))
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for i, l := range links {
-		sem <- struct{}{}
-		wg.Go(func() {
-			defer func() { <-sem }()
-			out[i] = inspect(ctx, b, l, now)
-		})
-	}
-	wg.Wait()
+	fanout.Each(len(links), concurrency, func(i int) { out[i] = inspect(ctx, b, links[i], now) })
 	return out
 }
 

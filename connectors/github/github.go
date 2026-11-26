@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -187,19 +186,6 @@ func ghGet(ctx context.Context, run cli.Runner, flag, path string) ([]byte, erro
 		return nil, wrapError(path, err)
 	}
 	return out, nil
-}
-
-func forEach(n int, fn func(int)) {
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for i := range n {
-		sem <- struct{}{}
-		wg.Go(func() {
-			defer func() { <-sem }()
-			fn(i)
-		})
-	}
-	wg.Wait()
 }
 
 func (r *run) get(ctx context.Context, path string, out any) error {

@@ -19,6 +19,7 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/runfile"
@@ -222,19 +223,13 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 		}
 	}
 	results := make([]*Result, len(targets))
-	var wg sync.WaitGroup
-	for i, t := range targets {
+	fanout.Each(len(targets), 0, func(i int) {
 		var refused error
-		if t.Connector.Describe().NeedsCDP() {
+		if targets[i].Connector.Describe().NeedsCDP() {
 			refused = noBrowser
 		}
-		wg.Add(1)
-		go func(i int, t Target) {
-			defer wg.Done()
-			results[i] = runOne(ctx, cfg, t, dir, verbose, lent, refused)
-		}(i, t)
-	}
-	wg.Wait()
+		results[i] = runOne(ctx, cfg, targets[i], dir, verbose, lent, refused)
+	})
 	return results, nil
 }
 

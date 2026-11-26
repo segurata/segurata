@@ -18,12 +18,12 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/homepath"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -300,20 +300,9 @@ func plan(t *localsecrets.Trails, s *selection, lines map[string][]int, open map
 		reason string
 	}
 	out := make([]planned, len(paths))
-	work := make(chan int)
-	var wg sync.WaitGroup
-	for range min(runtime.GOMAXPROCS(0), len(paths)) {
-		wg.Go(func() {
-			for i := range work {
-				out[i].fp, out[i].reason = planFile(t, s, paths[i], lines[paths[i]], open, now)
-			}
-		})
-	}
-	for i := range paths {
-		work <- i
-	}
-	close(work)
-	wg.Wait()
+	fanout.Each(len(paths), runtime.GOMAXPROCS(0), func(i int) {
+		out[i].fp, out[i].reason = planFile(t, s, paths[i], lines[paths[i]], open, now)
+	})
 	for i, r := range out {
 		switch {
 		case r.reason != "":

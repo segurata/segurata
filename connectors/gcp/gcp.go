@@ -16,6 +16,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -142,16 +143,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		bill.discover(ctx, a, emit)
 	}
 
-	sem := make(chan struct{}, parallel)
-	var wg sync.WaitGroup
-	for _, t := range targets {
-		sem <- struct{}{}
-		wg.Go(func() {
-			defer func() { <-sem }()
-			c.inspect(ctx, g, t, bill, emit)
-		})
-	}
-	wg.Wait()
+	fanout.Each(len(targets), parallel, func(i int) { c.inspect(ctx, g, targets[i], bill, emit) })
 	bill.judge(ctx, emit)
 	return nil
 }

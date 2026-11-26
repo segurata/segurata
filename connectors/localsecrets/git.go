@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/gitlocal"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -226,23 +227,12 @@ var gitleaksRules = map[string]string{
 
 // eachRepo runs fn on every repository, gitleaks_workers at a time, until the run is cancelled.
 func (s *scan) eachRepo(fn func(repo string)) {
-	jobs := make(chan string)
-	var wg sync.WaitGroup
-	for range s.cfg.workers {
-		wg.Go(func() {
-			for repo := range jobs {
-				fn(repo)
-			}
-		})
-	}
-	for _, r := range s.repos() {
-		if s.ctx.Err() != nil {
-			break
+	repos := s.repos()
+	fanout.Each(len(repos), s.cfg.workers, func(i int) {
+		if s.ctx.Err() == nil {
+			fn(repos[i])
 		}
-		jobs <- r
-	}
-	close(jobs)
-	wg.Wait()
+	})
 }
 
 // gitleaksAll scans every repository's history, each with its own timeout.

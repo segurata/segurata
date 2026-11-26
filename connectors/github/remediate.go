@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -120,7 +121,7 @@ func (c *Connector) get(ctx context.Context, path string, out any) error {
 func readEach(ctx context.Context, items []string, read func(context.Context, string) (target, error)) ([]target, error) {
 	out := make([]target, len(items))
 	errs := make([]error, len(items))
-	forEach(len(items), func(i int) { out[i], errs[i] = read(ctx, items[i]) })
+	fanout.Each(len(items), concurrency, func(i int) { out[i], errs[i] = read(ctx, items[i]) })
 	for _, err := range errs {
 		if err != nil {
 			return nil, err

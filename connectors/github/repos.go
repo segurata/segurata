@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -99,7 +100,7 @@ func (r *run) repos(ctx context.Context, login string) {
 
 	results := make([]repoResult, len(admin))
 	var stop atomic.Bool
-	forEach(len(admin), func(i int) {
+	fanout.Each(len(admin), concurrency, func(i int) {
 		if stop.Load() {
 			results[i] = repoResult{skipped: true}
 			return

@@ -12,11 +12,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/pagetext"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -144,24 +144,16 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 
 	details := make([]ghDetail, len(apps))
 	errs := make([]error, len(apps))
-	sem := make(chan struct{}, ghConcurrency)
-	var wg sync.WaitGroup
-	for i, a := range apps {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer func() { <-sem; wg.Done() }()
-			p, err := load(ctx, e, a.href, ghDetailJS, func(p listPage) bool {
-				return strings.Contains(p.Text, "Permissions") || strings.Contains(p.Text, "Organization access")
-			}, 30)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			details[i] = parseGitHubDetail(p.Text)
-		}()
-	}
-	wg.Wait()
+	fanout.Each(len(apps), ghConcurrency, func(i int) {
+		p, err := load(ctx, e, apps[i].href, ghDetailJS, func(p listPage) bool {
+			return strings.Contains(p.Text, "Permissions") || strings.Contains(p.Text, "Organization access")
+		}, 30)
+		if err != nil {
+			errs[i] = err
+			return
+		}
+		details[i] = parseGitHubDetail(p.Text)
+	})
 	failed := 0
 	for i, a := range apps {
 		if errs[i] != nil {

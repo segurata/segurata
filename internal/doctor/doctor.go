@@ -14,12 +14,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/secrets"
@@ -157,15 +157,7 @@ func (e Env) cdp(ctx context.Context, cfg config.Config, targets []run.Target) [
 // connectors checks every target at once and returns each target's checks in order.
 func (e Env) connectors(ctx context.Context, cfg config.Config, targets []run.Target) [][]connector.Check {
 	out := make([][]connector.Check, len(targets))
-	var wg sync.WaitGroup
-	for i, t := range targets {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			out[i] = e.target(ctx, cfg, t)
-		}()
-	}
-	wg.Wait()
+	fanout.Each(len(targets), 0, func(i int) { out[i] = e.target(ctx, cfg, targets[i]) })
 	return out
 }
 

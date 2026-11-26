@@ -18,6 +18,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -356,16 +357,7 @@ func (s *scan) zones() {
 		s.emit.Scope(zoneScope("*"), false, msg) // which zones were left out is unknown
 	}
 	results := make([]zoneResult, len(zones))
-	sem := make(chan struct{}, workers)
-	var wg sync.WaitGroup
-	for i, z := range zones {
-		sem <- struct{}{}
-		wg.Go(func() {
-			defer func() { <-sem }()
-			results[i] = s.zone(z)
-		})
-	}
-	wg.Wait()
+	fanout.Each(len(zones), workers, func(i int) { results[i] = s.zone(zones[i]) })
 	for i, r := range results {
 		label := zones[i].accountLabel()
 		for _, e := range r.errs {
