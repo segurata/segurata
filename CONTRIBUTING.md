@@ -14,7 +14,13 @@ go test ./...
 (cd plugins/prowler && python3 -m unittest) # the Prowler wrapper
 (cd scripts && python3 -m unittest)         # the leak gate
 scripts/check-public.sh                     # gitleaks and private identifiers over tracked files
+GOOS=windows GOARCH=amd64 go vet ./...      # and GOARCH=arm64
+for p in $(go list ./...); do GOOS=windows go test -c -o /dev/null "$p" || exit 1; done
 ```
+
+On Windows, `go vet ./...` and `go test ./...` run natively; the tests that fake a CLI with a shell
+script need Git for Windows' `sh`. The leak gate and the hooks are bash scripts: run them from WSL
+or Git Bash.
 
 `scripts/check-public.sh` needs [gitleaks](https://github.com/gitleaks/gitleaks); its options
 (`--history`, `--unpushed`, `--pre-push`) are in its usage block. Maintainers keep a list of private
@@ -44,6 +50,11 @@ authors; messages and content are still scanned.
 - **No personal data in the repository**: inventories (`out/`) are gitignored; fixtures use
   `example.com` addresses and made-up names.
 - **English** for code, comments, finding text, docs and commit messages.
+- **Platform code in build-tagged files.** Windows code lives in `_windows.go` files and calls
+  Win32 only through `internal/winsys`. Every decision about who can reach a file goes through
+  `internal/fileacl`, never through mode bits or uids read by hand, and tests assert a private
+  file with `fileacltest.AssertPrivate`. A test that fakes a CLI uses `proctest`, so it runs on
+  Windows too.
 - Every behaviour change comes with a test. External services are faked in tests, never called.
 
 How to write a connector, the finding model and the external protocol:

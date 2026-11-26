@@ -63,6 +63,9 @@ These are the properties segurata promises. Breaking one is a vulnerability.
   needs sudo is refused.
 - **Private files.** On Unix, inventories and state files are written with mode 0600. On Windows,
   run preview builds with configuration and output directories restricted by Windows ACLs.
+- **System libraries by path.** On Windows every Win32 DLL is loaded from the System32 directory
+  by its absolute path, never through the DLL search order, where a planted DLL could take its
+  place.
 - **Standard library only.** No third-party Go modules, so no transitive dependency supply chain.
   Release binaries are built with `CGO_ENABLED=0 -trimpath`, and their checksums file is signed
   with Sigstore cosign ([docs/releasing.md](docs/releasing.md#verifying-a-release)).

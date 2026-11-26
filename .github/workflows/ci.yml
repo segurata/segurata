@@ -12,9 +12,9 @@ concurrency:
   cancel-in-progress: true
 
 # Third-party actions are pinned by full commit SHA, with the release in a comment; tools by exact
-# version (Go tools through the checksum database, gitleaks by SHA-256). Bump them only to releases
-# published at least 4 days earlier (see .github/dependabot.yml). setup-go installs the toolchain
-# directive of go.mod.
+# version (Go tools through the checksum database, gitleaks and ripgrep by SHA-256). Bump them only
+# to releases published at least 4 days earlier (see .github/dependabot.yml). setup-go installs the
+# toolchain directive of go.mod.
 
 jobs:
   lint:
@@ -58,9 +58,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      # 2026.2.2 (module v0.8.2); checks in staticcheck.conf. The Windows files are only checked
+      # with GOOS=windows.
+      - name: install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
       - name: staticcheck
-        # 2026.2.2 (module v0.8.2); checks in staticcheck.conf
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+        run: |
+          for target in linux/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            echo "== $target"
+            GOOS=${target%/*} GOARCH=${target#*/} "$(go env GOPATH)/bin/staticcheck" ./...
+          done
 
   govulncheck:
     runs-on: ubuntu-latest
@@ -94,10 +101,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
+      # Golden files and fixtures are compared byte for byte: keep LF on Windows.
+      - name: keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -106,15 +117,26 @@ jobs:
           go-version-file: go.mod
           cache: false
       # The local-secrets and redact tests that drive a real rg skip without it. Ubuntu's signed
-      # archive is the source; macOS runs them skipped.
+      # archive is the source on Linux and a pinned release on Windows; macOS runs them skipped.
       - name: install ripgrep
         if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ripgrep
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/install-ripgrep
       - name: go test (race)
         if: runner.os == 'Linux'
         run: go test -race ./...
-      - name: go test
-        if: runner.os != 'Linux'
+      - name: go test (macOS)
+        if: runner.os == 'macOS'
+        run: go test ./...
+      - name: go vet (Windows)
+        if: runner.os == 'Windows'
+        run: go vet ./...
+      - name: go test (Windows)
+        if: runner.os == 'Windows'
+        env:
+          # This hosted runner is a disposable VM. The native test clears its clipboard.
+          SEGURATA_TEST_DISPOSABLE_CLIPBOARD: "1"
         run: go test ./...
 
   build:
@@ -136,6 +158,19 @@ jobs:
             for arch in amd64 arm64; do
               echo "== $os/$arch"
               GOOS=$os GOARCH=$arch go build -trimpath -o /dev/null ./cmd/segurata
+            done
+          done
+      # The windows-latest job vets and runs the amd64 tests; arm64 gets the same vet, and every test
+      # binary must compile for both.
+      - name: windows vet and test compile
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for arch in amd64 arm64; do
+            echo "== windows/$arch"
+            GOOS=windows GOARCH=$arch go vet ./...
+            for p in $(go list ./...); do
+              GOOS=windows GOARCH=$arch go test -c -o /dev/null "$p"
             done
           done
 

@@ -1,0 +1,17 @@
+name: install ripgrep
+description: ripgrep for Windows x64 at a pinned version, checked by SHA-256, on PATH.
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      env:
+        VERSION: 15.2.0
+        SHA256: 71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5
+      run: |
+        $name = "ripgrep-$env:VERSION-x86_64-pc-windows-msvc"
+        $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
+        Invoke-WebRequest -Uri "https://github.com/BurntSushi/ripgrep/releases/download/$env:VERSION/$name.zip" -OutFile $zip
+        $got = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
+        if ($got -ne $env:SHA256) { throw "ripgrep archive checksum $got, want $env:SHA256" }
+        Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP
+        Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $env:RUNNER_TEMP $name)
