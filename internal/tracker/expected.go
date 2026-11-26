@@ -11,13 +11,8 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Expected statuses: a status other than ok that the owner's config expects (an ephemeral key, an
-// IAM user limited on purpose, other people's accounts) closes its setup item as expected instead
-// of keeping it on the to-do list. See config.Expected and docs/architecture.md, "Expected
-// statuses".
-
 // expectedReasons are the distinct reasons when every status of a setup proposal is expected, or
-// nil when one is not.
+// nil when one is not. See docs/architecture.md, "Expected statuses".
 func (p *proposal) expectedReasons() []string {
 	if len(p.refs) == 0 {
 		return nil
@@ -34,11 +29,9 @@ func (p *proposal) expectedReasons() []string {
 	return out
 }
 
-// expectedMoves closes a setup item whose every current status is expected, or opens again one
-// that was expected and now reports a status no rule covers; it reports whether it closed one. A
-// done item reported again with only expected statuses goes back to expected rather than open: an
-// intermittent expected status (a key that needs a sign-in one day in two) never reaches the to-do
-// list.
+// expectedMoves closes a setup item whose every status is expected, or reopens an expected one
+// that reports a status no rule covers; it reports whether it closed. A done item goes back to
+// expected, not open, so an intermittent expected status never reaches the to-do list.
 func (it *Item) expectedMoves(reasons []string, now time.Time) bool {
 	switch {
 	case reasons != nil && (it.Status == Open || it.Status == InProgress || it.Status == Snoozed || it.Status == Done):
@@ -68,8 +61,8 @@ func expectedByReason(items []*Item) map[string]int {
 	return out
 }
 
-// expectRule is the config rule that expects a setup item's statuses: its connector instance
-// (the config key), the state the connector reported and the account, plus an optional detail.
+// expectRule is the config rule, under the connector instance key, that expects a setup item's
+// statuses.
 func (it *Item) expectRule(reason, detail string) (key string, rule config.Expected, err error) {
 	if it.Kind != KindSetup || len(it.Findings) == 0 {
 		return "", rule, fmt.Errorf("%s is not a setup item: only a connector status can be expected", it.ID)
@@ -95,7 +88,6 @@ func globEscape(s string) string {
 	return b.String()
 }
 
-// expect closes a setup item as expected by a config rule just written.
 func (it *Item) expect(at time.Time, rule config.Expected, where string) {
 	for i := range it.Findings {
 		if !it.Findings[i].Gone && rule.Matches(finding.Status{Account: it.Findings[i].Account, Detail: it.Findings[i].Title}, rule.State) {

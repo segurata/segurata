@@ -30,14 +30,12 @@ func (f Filter) keep(it *Item) bool {
 	return false
 }
 
-// newFilter reads the comma-separated --theme, --kind and --priority flags.
 func newFilter(themes, kinds, priorities string) Filter {
 	return Filter{Themes: set(themes, false), Kinds: set(kinds, false), Priorities: set(priorities, true)}
 }
 
 func (f Filter) empty() bool { return len(f.Themes)+len(f.Kinds)+len(f.Priorities) == 0 }
 
-// statusTop is how many entries "Do next" lists, and how many changes are listed one by one.
 const (
 	statusTop     = 10
 	statusChanges = 20
@@ -46,22 +44,16 @@ const (
 
 var prios = []secretrisk.Priority{secretrisk.P0, secretrisk.P1, secretrisk.P2, secretrisk.P3}
 
-// View says what a status shows: the items a filter keeps, and with Explain the score of each
-// entry of "Do next".
+// View says what a status shows.
 type View struct {
 	Filter
-	Explain bool
-	// Instances are the configured connector instances, for the coverage line (one that never ran
-	// shows as such); instances that ran are listed anyway.
-	Instances []string
-	// Browser names the connectors that drive the browser, for the segurata signin line under
-	// Setup blockers; nil leaves it out.
-	Browser func(connector string) bool
+	Explain   bool                        // show each "Do next" score
+	Instances []string                    // configured connector instances, for the coverage line
+	Browser   func(connector string) bool // nil leaves the segurata signin line out
 }
 
-// Status lays the briefing out: headline, what to do next, pending decisions, setup blockers,
-// what changed since the last status, and the accepted risks. It never shows a secret value:
-// rotate items are named by their redacted hint.
+// status lays the briefing out. It never shows a secret value: rotate items are named by their
+// redacted hint.
 func (t *Tracker) status(path string, now time.Time, v View) *doc.Doc {
 	var items []*Item
 	for _, it := range t.Items {
@@ -93,17 +85,14 @@ func (t *Tracker) status(path string, now time.Time, v View) *doc.Doc {
 	return d
 }
 
-// Headline counts the items: open by priority and theme, done and verified in the last 7 days,
-// closed by kind, and the areas not audited here. status and report open with it, so both count
-// the same things: tracker items, not findings.
+// Headline counts the items, as status and report both open with it.
 func (t *Tracker) Headline(d *doc.Doc, items []*Item, now time.Time) {
 	byTheme := map[string]map[secretrisk.Priority]int{}
 	open := map[secretrisk.Priority]int{}
 	byStatus := map[Status]int{}
 	weekAgo := now.AddDate(0, 0, -7)
 	doneWeek, verifiedWeek, gaps := 0, 0, 0
-	// Closed and done counts describe the whole tracker: a --priority filter must not report
-	// 0 reclassified items just because noise has no priority. Open counts follow the filter.
+	// Closed counts ignore the filter: noise has no priority, so --priority would hide it.
 	for _, it := range t.Items {
 		byStatus[it.Status]++
 		if it.Status == Done && it.StatusAt.After(weekAgo) {
@@ -156,9 +145,8 @@ func (t *Tracker) Headline(d *doc.Doc, items []*Item, now time.Time) {
 	d.Table(head, rows)
 }
 
-// doNext lists the entries most worth doing now, by score (see score.go): items, pending
-// decisions that unblock others, and one entry per priority for secrets (there can be hundreds),
-// which names the next secret to rotate and why. With explain each entry shows its score.
+// doNext lists the entries worth most now: items, decisions that unblock others, and one entry per
+// priority for secrets, which can number hundreds.
 func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool) {
 	d.H(2, "Do next")
 	type entry struct {
@@ -221,8 +209,6 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool)
 	}
 }
 
-// secretsDoc is the entry standing for the secrets of one priority: how many, and the next one to
-// rotate with why and the command that does it.
 func secretsDoc(p secretrisk.Priority, queue []*Item) doc.Item {
 	next := queue[0]
 	out := doc.Item{Badge: string(p), Text: "Rotate " + textfmt.Count(len(queue), string(p)+" secret", string(p)+" secrets"),
@@ -238,8 +224,6 @@ func secretsDoc(p secretrisk.Priority, queue []*Item) doc.Item {
 	return out
 }
 
-// decisionDoc is a pending decision as a "Do next" entry: the question, what answering unblocks
-// or closes, and the command.
 func (t *Tracker) decisionDoc(it *Item, now time.Time) doc.Item {
 	out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: "Decide: " + it.Decision.Question,
 		Meta: it.ID + " · " + t.themeTitle(it.Theme) + " · decide"}
@@ -247,7 +231,6 @@ func (t *Tracker) decisionDoc(it *Item, now time.Time) doc.Item {
 	return out
 }
 
-// decisionDetails are a pending decision's options, leverage and answer command.
 func (t *Tracker) decisionDetails(it *Item, now time.Time) []doc.Detail {
 	var out []doc.Detail
 	if len(it.Decision.Options) > 0 {
@@ -277,7 +260,6 @@ func byPriority(items []*Item) string {
 	return "(" + strings.Join(parts, ", ") + ")"
 }
 
-// itemDoc is one item in a list: priority, title, what it is, and its next step.
 func itemDoc(it *Item, t *Tracker) doc.Item {
 	meta := []string{it.ID, t.themeTitle(it.Theme), string(it.Kind)}
 	if it.Severity != "" {
@@ -293,7 +275,6 @@ func itemDoc(it *Item, t *Tracker) doc.Item {
 	return out
 }
 
-// nextDetails are a next step's action, under label, and its command and page when it has them.
 func nextDetails(label string, n *Next) []doc.Detail {
 	out := []doc.Detail{doc.Fold(label, n.Action, actionLen)}
 	if n.Command != "" {
@@ -318,10 +299,8 @@ func (t *Tracker) decisions(d *doc.Doc, items []*Item, now time.Time) {
 	d.List(list)
 }
 
-// Blockers lists the open setup items (what keeps segurata from seeing an account) with their
-// next step, and the statuses the config expects on one line. report shows it too, instead of
-// listing the runs' statuses again. browser, when set, names the connectors that drive the
-// browser: when one needs a sign-in there, a line points to segurata signin.
+// Blockers lists the active setup items and sums up the expected statuses in one line; report
+// shows it too. browser, when set, names the connectors that drive the browser.
 func Blockers(d *doc.Doc, items []*Item, now time.Time, browser func(connector string) bool) {
 	d.H(2, "Setup blockers")
 	var list []doc.Item
@@ -348,8 +327,8 @@ func Blockers(d *doc.Doc, items []*Item, now time.Time, browser func(connector s
 	}
 }
 
-// expectedLine is the one line that stands for the statuses the config expects, with their
-// reasons: "3 expected (by your config): ephemeral key (1); other people's accounts (2)." or "".
+// expectedLine is "3 expected (by your config): ephemeral key (1); other people's accounts (2).",
+// or "".
 func expectedLine(byReason map[string]int) string {
 	if len(byReason) == 0 {
 		return ""
@@ -363,8 +342,6 @@ func expectedLine(byReason map[string]int) string {
 	return fmt.Sprintf("%d expected (by your config): %s.", n, strings.Join(parts, "; "))
 }
 
-// changes counts the history events since the last status, secrets apart, and lists the latest
-// ones of other items. The first status only counts: everything is new.
 func (t *Tracker) changes(d *doc.Doc, items []*Item, now time.Time) {
 	if t.LastStatusAt == nil {
 		d.H(2, "Since the last status (first status: everything)")
@@ -375,13 +352,8 @@ func (t *Tracker) changes(d *doc.Doc, items []*Item, now time.Time) {
 	Changes(d, items, *t.LastStatusAt, true)
 }
 
-// changeKinds are the kinds of change Changes counts, in the order it names them.
 var changeKinds = []string{"new", "closed", "verified", "reopened", "other"}
 
-// changeKind sorts a history event: an item found, closed (done, ignored, accepted, expected,
-// reclassified, merged), verified (by a later run, closing it or confirming a done), reopened (also
-// by a snooze or an acceptance running out), or another change (seen again, a note, a snooze, a
-// priority).
 func changeKind(e Event) string {
 	switch e.Event {
 	case EvFound:
@@ -403,10 +375,8 @@ func changeKind(e Event) string {
 	return "other"
 }
 
-// Changes counts the items' history events after since by kind, secrets apart ("Items: 3 new,
-// 2 closed, 1 verified by a later run, 1 reopened"), and with list names the latest changes of
-// items other than secrets. status shows the changes since the last status, report those of the
-// last 7 days.
+// Changes counts the history events after since by kind, secrets apart, and with list names the
+// latest changes of other items.
 func Changes(d *doc.Doc, items []*Item, since time.Time, list bool) {
 	type change struct {
 		at   time.Time
@@ -505,5 +475,4 @@ func sorted(items []*Item, keep func(*Item) bool) []*Item {
 	return out
 }
 
-// oneLine folds a multi-line text (a connector's step-by-step detail) onto one line.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

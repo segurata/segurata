@@ -51,36 +51,30 @@ const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P
 type CLI struct {
 	Out, Err io.Writer
 	Paths    Paths  // zero means DefaultPaths
-	Config   string // config file with the expected rules; "" means none (and no track expect)
+	Config   string // config file with the expected rules; "" for none
 	Now      func() time.Time
-	// Instances lists the configured connector instances, for status's coverage line; nil lists
-	// only the ones that ran.
+	// Instances lists the configured connector instances for status's coverage line.
 	Instances func() []string
-	// Browser names the connectors that drive the browser (status's segurata signin line); nil
-	// for none.
+	// Browser names the connectors that drive the browser.
 	Browser func(connector string) bool
 
-	// rotations is the usage of `segurata rotations` when Rotations runs a verb; "" for track.
-	rotations string
+	rotations string // `segurata rotations` usage when it runs the verb; "" for track
 }
 
 var (
 	trackVerbs = []string{"list", "show", "add", "sync", "start", "done", "note", "decide", "snooze", "ignore", "reopen", "prioritize", "expect"}
-	// RotationVerbs are the verbs of track that `segurata rotations` runs as its own (see Rotations).
+	// RotationVerbs are the track verbs `segurata rotations` runs as its own.
 	RotationVerbs = []string{"sync", "done", "snooze", "ignore", "reopen"}
-	// pathVerbs take --path instead of an id.
-	pathVerbs = []string{"done", "snooze", "ignore", "reopen"}
+	pathVerbs     = []string{"done", "snooze", "ignore", "reopen"}
 )
 
-// Rotations runs one of RotationVerbs as `segurata rotations`: track's own code, with ids and
-// --path naming secrets only, a sync that refuses to save without a local-secrets run, and usage
-// (the rotations family's) and "rotations" in the messages.
+// Rotations runs one of RotationVerbs as `segurata rotations`: ids and --path name secrets only,
+// and sync refuses to save without a local-secrets run.
 func (c CLI) Rotations(args []string, usage string) int {
 	c.rotations = usage
 	return c.Track(args)
 }
 
-// name is the command family the user typed.
 func (c CLI) name() string {
 	if c.rotations != "" {
 		return "rotations"
@@ -95,7 +89,6 @@ func (c CLI) usage() string {
 	return trackUsage
 }
 
-// find is the item an id names: any item for track, a secret for rotations.
 func (c CLI) find(t *Tracker, ref string) (*Item, error) {
 	if c.rotations != "" {
 		return t.FindRotate(ref)
@@ -108,13 +101,11 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// multi is a flag given several times.
 type multi []string
 
 func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 
-// set reads a comma-separated flag value.
 func set(s string, upper bool) map[string]bool {
 	m := map[string]bool{}
 	for _, p := range strings.Split(s, ",") {
@@ -193,7 +184,6 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	return 0
 }
 
-// secretsSynced prints what a sync did to the secrets and what is open.
 func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now time.Time) {
 	r := rep.Secrets
 	fmt.Fprintf(w, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d reclassified as noise, %d noise-only skipped, %d AWS key ids folded into their secret key.\n",
@@ -214,10 +204,9 @@ func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now ti
 		owners[attribution.Mine], owners[attribution.NotMine], owners[attribution.Unknown])
 }
 
-// syncAndSave folds the runs into t and saves it, unless require (nil for none) rejects the sync's
-// report; it returns the tracker it saved. When tracker.json changed after t was loaded (saved by
-// something that does not take the lock: an edit, an older binary), it folds the same runs once
-// more into that version instead of failing a scheduled sync or dropping the change.
+// syncAndSave folds the runs into t and saves it, unless require rejects the report. When
+// tracker.json changed without the lock (an edit, an older binary), it folds the same runs once
+// more into that version rather than fail a scheduled sync or drop the change.
 func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, require func(SyncReport) error) (*Tracker, SyncReport, error) {
 	for again := false; ; again = true {
 		rep, err := t.Sync(opt, now)
@@ -236,8 +225,7 @@ func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, requir
 	}
 }
 
-// expect writes the config rule that expects a setup item's status and closes the item as
-// expected; --dry-run prints the rule and changes nothing.
+// expect writes the config rule that expects a setup item's status and closes the item.
 func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
 	fs := cliflag.New("track expect", c.Err)
 	reason := fs.String("reason", "", "why this status is expected")
@@ -502,9 +490,8 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	return 0
 }
 
-// itemsUnder returns the items whose every location lies under prefix (a ~/ path, as findings
-// report them; an absolute path inside the home directory is accepted too), secrets only for
-// rotations: active ones, or closed ones when closed is true.
+// itemsUnder returns the active (or, with closed, the closed) items that lie entirely under prefix;
+// secrets only for rotations.
 func (c CLI) itemsUnder(t *Tracker, prefix string, closed bool, now time.Time) []*Item {
 	var out []*Item
 	for _, it := range t.Items {
@@ -523,7 +510,6 @@ func parseOwners(s string) ([]attribution.Owner, error) {
 	return attribution.ParseOwners(s)
 }
 
-// previewDecision prints what answering would close and keep open, and changes nothing.
 func (c CLI) previewDecision(t *Tracker, it *Item, now time.Time, answer string, ignore, accept []string, owner string) int {
 	owners, err := parseOwners(owner)
 	if err != nil {
@@ -543,7 +529,6 @@ func (c CLI) previewDecision(t *Tracker, it *Item, now time.Time, answer string,
 	return 0
 }
 
-// decide answers a decision with its effects and says what the answer replaced and closed.
 func (c CLI) decide(t *Tracker, it *Item, now time.Time, answer string, ignore, accept []string, owner string) error {
 	owners, err := parseOwners(owner)
 	if err != nil {
@@ -628,9 +613,8 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 	return 0
 }
 
-// Status prints the briefing, and with --write also writes status.md and status.html next to the
-// tracker (mode 0600). It is read-only unless asked: an unfiltered status with --mark-seen (or
-// --write, which implies it) remembers when it ran, for "Since the last status".
+// Status prints the briefing, with --write also as status.md and status.html next to the tracker.
+// It is read-only except that an unfiltered --mark-seen or --write records when it ran.
 func (c CLI) Status(args []string) int {
 	fs := cliflag.New("status", c.Err)
 	theme := fs.String("theme", "", "comma-separated themes")

@@ -1,14 +1,10 @@
-// Package tracker keeps segurata's single local record of what to do: one item per thing a
-// person would act on (a secret to rotate, five GitHub orgs that do not require 2FA, a data dump in
-// git, a connector that needs a fresh sign-in, an open decision), with its status, priority, the
-// findings it links, the next action and its history. Runs and findings are ephemeral; items are
-// not. It absorbs the former rotation ledger (rotate items) and accepted-risks file (accepted
-// items).
+// Package tracker keeps segurata's local record of what to do: one item per thing a person would
+// act on, with its status, priority, linked findings, next step and history. Runs and findings are
+// ephemeral; items are not.
 //
-// The file is ~/.segurata/tracker.json (SEGURATA_HOME names another directory), mode 0600 in a
-// 0700 directory, written atomically with the previous good version kept as tracker.json.bak. It
-// never holds a secret value: rotate items carry redacted hints and HMAC fingerprints only, and
-// findings carry none. See docs/architecture.md, "Tracker".
+// The file is ~/.segurata/tracker.json (or $SEGURATA_HOME), mode 0600, written atomically with the
+// previous version kept as tracker.json.bak. It never holds a secret value: rotate items carry
+// redacted hints and HMAC fingerprints only. See docs/architecture.md, "Tracker".
 package tracker
 
 import (
@@ -20,7 +16,6 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// schemaVersion is the tracker.json format this binary writes.
 const schemaVersion = 6
 
 // Kind says what sort of action an item asks for.
@@ -44,17 +39,13 @@ const (
 	InProgress Status = "in_progress"
 	Done       Status = "done"
 	Accepted   Status = "accepted" // a risk kept on purpose
-	Ignored    Status = "ignored"  // not a real problem (false positive, test fixture), said by the owner
+	Ignored    Status = "ignored"  // not a real problem, said by the owner
 	Snoozed    Status = "snoozed"  // open again after snoozed_until
-	// Reclassified is closed by segurata itself: a corrected rule now rates every current sighting
-	// of the secret as noise. A later sighting that is not noise opens it again.
+	// Reclassified is closed by segurata: a corrected rule rates every current sighting as noise.
 	Reclassified Status = "reclassified"
-	// Expected is a setup item whose statuses the owner's config says to expect
-	// (connectors.<x>.expected); removing the rule opens it again.
+	// Expected is a setup item whose statuses the config expects (connectors.<x>.expected).
 	Expected Status = "expected"
-	// Merged is closed by segurata: another item owns the same problem (merged_into), as a
-	// connector's plain-text credential is the same secret as a rotate item's. It opens again when
-	// the two stop matching.
+	// Merged is closed by segurata: another item (merged_into) owns the same problem.
 	Merged Status = "merged"
 )
 
@@ -69,21 +60,18 @@ const (
 	Agent    Who = "agent"
 )
 
-// History event categories. Event.Action keeps the precise verb (done, auto-reopen,
-// snooze-expired, history-only, ...), which the rotation rules read back.
+// History event categories; Event.Action keeps the precise verb, which the rotation rules read.
 const (
-	EvFound    = "found"
-	EvSeen     = "seen"
-	EvStatus   = "status"
-	EvNote     = "note"
-	EvVerified = "verified"
-	EvReopened = "reopened"
-	EvDecided  = "decided"
-	EvPriority = "priority"
-	// EvReclassified closes an item segurata now rates as noise (status reclassified).
+	EvFound        = "found"
+	EvSeen         = "seen"
+	EvStatus       = "status"
+	EvNote         = "note"
+	EvVerified     = "verified"
+	EvReopened     = "reopened"
+	EvDecided      = "decided"
+	EvPriority     = "priority"
 	EvReclassified = "reclassified"
-	// EvMerged closes an item whose problem another item owns (status merged).
-	EvMerged = "merged"
+	EvMerged       = "merged"
 )
 
 // Event is one line of an item's history.
@@ -94,45 +82,36 @@ type Event struct {
 	Detail string    `json:"detail,omitempty"`
 }
 
-// FindingRef links a finding (or, for setup items, a connector status) to an item. Gone means the
+// FindingRef links a finding, or a setup item's connector status, to an item. Gone means the
 // latest run of its connector instance no longer reports it.
 type FindingRef struct {
-	ID        string `json:"id"`
-	Connector string `json:"connector"`
-	Instance  string `json:"instance,omitempty"`
-	Account   string `json:"account,omitempty"`
-	// Scope is finding.ScopeOf the finding; "" on refs recorded before scopes existed.
-	Scope    string           `json:"scope,omitempty"`
-	Title    string           `json:"title"`
-	Severity finding.Severity `json:"severity,omitempty"`
-	LastSeen time.Time        `json:"last_seen"`
-	Gone     bool             `json:"gone,omitempty"`
-	// Expected is, on a setup item's status ref, the reason of the config rule that expects it.
+	ID        string           `json:"id"`
+	Connector string           `json:"connector"`
+	Instance  string           `json:"instance,omitempty"`
+	Account   string           `json:"account,omitempty"`
+	Scope     string           `json:"scope,omitempty"` // "" on refs recorded before scopes existed
+	Title     string           `json:"title"`
+	Severity  finding.Severity `json:"severity,omitempty"`
+	LastSeen  time.Time        `json:"last_seen"`
+	Gone      bool             `json:"gone,omitempty"`
+	// Expected is the reason of the config rule that expects a setup item's status.
 	Expected string `json:"expected,omitempty"`
-	// Where the finding is, for decision rules (see Rule): a local path (a repository, a file), a
-	// GitHub repository (owner/name) or a GCP project.
-	Path    string `json:"path,omitempty"`
-	Repo    string `json:"repo,omitempty"`
-	Project string `json:"project,omitempty"`
-	// Type and Resource are the finding's resource type and id.
-	Type     string `json:"type,omitempty"`
-	Resource string `json:"resource,omitempty"`
-	// Blast and Unconfirmed are what the connector declared of the finding, which ranking reads
-	// (see score.go).
+	// Path, Repo and Project locate the finding for decision rules.
+	Path        string        `json:"path,omitempty"`
+	Repo        string        `json:"repo,omitempty"`
+	Project     string        `json:"project,omitempty"`
+	Type        string        `json:"type,omitempty"`
+	Resource    string        `json:"resource,omitempty"`
 	Blast       finding.Blast `json:"blast,omitempty"`
 	Unconfirmed bool          `json:"unconfirmed,omitempty"`
-	// Match, on a rotate item's ref, says how the connector's credential was matched with the
-	// secret: fingerprint, hint (redacted hint and service), path (the file holding it) or possible
-	// (a hint that fits this secret and others, in Item.Possible). Confidence says how sure:
-	// certain, high or medium (see correlate.go).
-	Match      string `json:"match,omitempty"`
-	Confidence string `json:"confidence,omitempty"`
-	// Key is what a provider's key finding says about the key, on a rotate item's ref.
-	Key *KeyFacts `json:"key,omitempty"`
+	// Match and Confidence say how a connector's credential matched a rotate item's secret
+	// (correlate.go).
+	Match      string    `json:"match,omitempty"`
+	Confidence string    `json:"confidence,omitempty"`
+	Key        *KeyFacts `json:"key,omitempty"`
 }
 
-// KeyFacts are a provider's facts about a key that a rotate item's secret is: its name in the
-// provider's console, its last use and its spend this month, when the connector reports them.
+// KeyFacts are what a provider reports about the key a rotate item's secret is.
 type KeyFacts struct {
 	Name          string     `json:"name,omitempty"`
 	LastUsed      *time.Time `json:"last_used,omitempty"`
@@ -152,16 +131,15 @@ type Next struct {
 
 // Decision is the question a decide item asks and, once answered, the answer.
 type Decision struct {
-	Question   string     `json:"question"`
-	Options    []string   `json:"options,omitempty"`
-	Answer     string     `json:"answer,omitempty"`
-	AnsweredAt *time.Time `json:"answered_at,omitempty"`
-	// Effects are the rules answering an option adds (track add --option "yes=ignore:path:~/src/old").
-	Effects []OptionEffect `json:"effects,omitempty"`
+	Question   string         `json:"question"`
+	Options    []string       `json:"options,omitempty"`
+	Answer     string         `json:"answer,omitempty"`
+	AnsweredAt *time.Time     `json:"answered_at,omitempty"`
+	Effects    []OptionEffect `json:"effects,omitempty"`
 }
 
-// Acceptance records why a risk is kept and until when. It stays on the item after it expires, so
-// the findings show "(acceptance expired)" until the owner acts.
+// Acceptance records why a risk is kept and until when. It outlives its last day, so findings show
+// "(acceptance expired)" until the owner acts.
 type Acceptance struct {
 	Reason     string    `json:"reason"`
 	Until      string    `json:"until,omitempty"` // YYYY-MM-DD, last day it applies
@@ -177,8 +155,8 @@ type Override struct {
 
 // Item is one thing to do.
 type Item struct {
-	ID               string              `json:"id"`  // T-0001, stable, never reused
-	Key              string              `json:"key"` // grouping key: what makes two findings the same item
+	ID               string              `json:"id"`  // T-0001, never reused
+	Key              string              `json:"key"` // what makes two findings the same item
 	Kind             Kind                `json:"kind"`
 	Theme            string              `json:"theme"`
 	Title            string              `json:"title"`
@@ -187,8 +165,7 @@ type Item struct {
 	PriorityOverride *Override           `json:"priority_override,omitempty"`
 	Severity         finding.Severity    `json:"severity,omitempty"` // worst linked finding
 	Findings         []FindingRef        `json:"findings,omitempty"`
-	// Possible are, on a rotate item, credential findings whose hint fits this secret and another:
-	// shown as possible, never merged, never raising the priority.
+	// Possible are credential findings whose hint fits this secret and another: never merged.
 	Possible     []FindingRef `json:"possible,omitempty"`
 	Fingerprint  string       `json:"fingerprint,omitempty"` // rotate items
 	Secret       *Secret      `json:"secret,omitempty"`      // rotate items
@@ -196,8 +173,8 @@ type Item struct {
 	Decision     *Decision    `json:"decision,omitempty"`
 	Accepted     *Acceptance  `json:"accepted,omitempty"`
 	SnoozedUntil string       `json:"snoozed_until,omitempty"`
-	MergedInto   string       `json:"merged_into,omitempty"` // status merged: the item that owns the problem
-	StatusAt     time.Time    `json:"status_at"`             // last status change
+	MergedInto   string       `json:"merged_into,omitempty"`
+	StatusAt     time.Time    `json:"status_at"`
 	VerifiedAt   *time.Time   `json:"verified_at,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
@@ -213,41 +190,32 @@ type Tracker struct {
 	NextID        int        `json:"next_id"`
 	LastSyncAt    *time.Time `json:"last_sync_at,omitempty"`
 	LastStatusAt  *time.Time `json:"last_status_at,omitempty"`
-	// Sources is, per connector instance, the newest run folded in; an older run is never folded
-	// over a newer one, so syncing two output folders cannot make items flap.
+	// Sources is the newest run folded in per connector instance; an older run is never folded
+	// over it, so syncing two output folders cannot make items flap.
 	Sources map[string]time.Time `json:"sources,omitempty"`
 	Themes  []Theme              `json:"themes"`
 	Items   []*Item              `json:"items"`
-	// Rules are the effects of answered decisions, applied at every sync.
-	Rules []Rule `json:"rules,omitempty"`
-	// Owned are the owner's accounts, projects, workspaces, GitHub owners and emails discovered in
-	// connector runs, kept across syncs (a sync that reads no aws run still knows the aws account).
-	// Config `owned` adds to them at every sync; see "Attribution" in docs/architecture.md.
+	Rules   []Rule               `json:"rules,omitempty"`
+	// Owned are the owner's accounts discovered in runs, kept across syncs so a sync that reads no
+	// aws run still knows the aws account.
 	Owned *attribution.Owned `json:"owned,omitempty"`
-	// Runs is, per connector instance, the newest run folded in and how complete it was: what the
-	// coverage line of status reports (see coverage.go).
-	Runs map[string]RunInfo `json:"runs,omitempty"`
+	Runs  map[string]RunInfo `json:"runs,omitempty"`
 
-	// read is the digest of the file this tracker was loaded from or last saved; nil for a tracker
-	// not read from a file. Save compares it with the file it would replace (see errChanged).
+	// read is the digest of the file last loaded or saved, so Save can refuse a file changed since.
 	read *[sha256.Size]byte
 }
 
 // RunInfo is what a sync keeps of a connector instance's newest run.
 type RunInfo struct {
-	At       time.Time `json:"at"`
-	Finished bool      `json:"finished"` // it has run_end
-	Complete bool      `json:"complete"` // finished, nothing skipped, no connector error
-	Error    string    `json:"error,omitempty"`
-	Expected int       `json:"expected,omitempty"` // scopes left out by statuses the config expects
-	// Skipped are the first scopes it did not inspect, "scope: reason"; SkippedCount counts them all.
-	Skipped      []string `json:"skipped,omitempty"`
-	SkippedCount int      `json:"skipped_count,omitempty"`
-	// Theme is the theme id the run declared, "" for a run written before connectors declared
-	// themes (see Tracker.Sync).
-	Theme string `json:"theme,omitempty"`
-	// Areas are the plan areas the connector covers, each with whether this run audited it.
-	Areas map[string]bool `json:"areas,omitempty"`
+	At           time.Time       `json:"at"`
+	Finished     bool            `json:"finished"` // it has run_end
+	Complete     bool            `json:"complete"` // finished, nothing skipped, no connector error
+	Error        string          `json:"error,omitempty"`
+	Expected     int             `json:"expected,omitempty"` // scopes left out by expected statuses
+	Skipped      []string        `json:"skipped,omitempty"`  // the first few, "scope: reason"
+	SkippedCount int             `json:"skipped_count,omitempty"`
+	Theme        string          `json:"theme,omitempty"`
+	Areas        map[string]bool `json:"areas,omitempty"` // plan area: audited by this run
 }
 
 // legacy reports whether the run was written before connectors declared themes and areas.

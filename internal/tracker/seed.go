@@ -10,9 +10,8 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// themes are created in every tracker, in this order (the briefing follows it): the tracker's own
-// around the ones connectors share. A connector's own theme is added when a run declares it
-// (declareThemes).
+// themes are created in every tracker, in briefing order; a connector's own theme is added when a
+// run declares it.
 var themes = slices.Concat([]Theme{
 	{ID: "rotations", Title: "Secrets to rotate", Description: "One item per secret fingerprint found by local-secrets: rotate it at the provider, then put the new value where it is used."},
 	{ID: "data-dumps", Title: "Data dumps in git", Description: "Database dumps committed to repositories, one item per repository: purge them from history in one pass, rotate what they hold, check breach duties."},
@@ -24,12 +23,9 @@ var themes = slices.Concat([]Theme{
 	finding.ThemeOther,
 })
 
-// coverageTheme holds the review items for what no connector audits on this machine (coverage.go);
-// status lists them apart from what is failing.
 const coverageTheme = "coverage"
 
-// themeOf is the theme of a finding whose run declared the theme declared ("" for none). The
-// tracker files local-secrets findings itself: data dumps apart from the secrets to rotate.
+// themeOf is the theme of a finding whose run declared the theme declared ("" for none).
 func themeOf(f finding.Finding, declared string) string {
 	if f.Connector == SecretsConnector {
 		if f.Resource.Type == "data_dump" {
@@ -40,8 +36,8 @@ func themeOf(f finding.Finding, declared string) string {
 	return cmp.Or(declared, finding.ThemeOther.ID)
 }
 
-// declareThemes adds, or renames, the themes of their own that the folded runs declare. A theme
-// segurata defines keeps its own title and description.
+// declareThemes adds or renames the connector themes the folded runs declare; segurata's own
+// themes keep their titles.
 func (t *Tracker) declareThemes(folded map[string]*run) {
 	labels := slices.Sorted(maps.Keys(folded))
 	for _, l := range labels {
@@ -57,23 +53,21 @@ func (t *Tracker) declareThemes(folded map[string]*run) {
 	}
 }
 
-// seedDecision is an open question the owner already knows about.
 type seedDecision struct {
 	slug, question string
 	options        []string
 	priority       secretrisk.Priority
 }
 
-// seedDecisions are generic questions every installation faces, created once each when absent;
-// answering or ignoring one keeps it from coming back. Questions about one owner's own projects
-// are added with `segurata track add --kind decide` and live only in that owner's tracker.
+// seedDecisions are questions every installation faces, created once when absent; answering or
+// ignoring one keeps it from coming back.
 var seedDecisions = []seedDecision{
 	{"daily-schedule", "Install the daily scheduled inventory?",
 		[]string{"yes: segurata schedule install --apply", "not now"}, secretrisk.P3},
 }
 
-// seed adds the themes and seeded decisions that are missing. A theme segurata defines keeps the
-// title and description of this version, so renaming one here renames it in every tracker.
+// seed adds missing themes and seeded decisions, and renames segurata's themes to this version's
+// titles.
 func (t *Tracker) seed(now time.Time) {
 	defined := map[string]Theme{}
 	for _, th := range themes {
@@ -99,7 +93,6 @@ func (t *Tracker) seed(now time.Time) {
 	}
 }
 
-// addDecision creates a decide item.
 func (t *Tracker) addDecision(key, question string, options []string, now time.Time) *Item {
 	it := t.newItem(KindDecide, key, "decisions", question, now)
 	it.Decision = &Decision{Question: question, Options: options}
@@ -109,7 +102,6 @@ func (t *Tracker) addDecision(key, question string, options []string, now time.T
 	return it
 }
 
-// themeTitle is the title of a theme id, or the id itself.
 func (t *Tracker) themeTitle(id string) string {
 	for _, th := range t.Themes {
 		if th.ID == id {

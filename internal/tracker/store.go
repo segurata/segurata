@@ -22,10 +22,10 @@ import (
 
 // Paths says where the tracker lives.
 type Paths struct {
-	Tracker string // tracker.json
+	Tracker string
 }
 
-// DefaultPaths is the tracker in Dir.
+// DefaultPaths is tracker.json in $SEGURATA_HOME or ~/.segurata.
 func DefaultPaths() (Paths, error) {
 	dir, err := config.StateDir()
 	if err != nil {
@@ -49,8 +49,7 @@ func New(now time.Time) *Tracker {
 	return t
 }
 
-// LoadOrNew loads the tracker, or returns a new one when tracker.json does not exist yet (saved by
-// the first command that changes it).
+// LoadOrNew loads the tracker, or returns a new unsaved one when tracker.json does not exist.
 func LoadOrNew(p Paths, now time.Time) (*Tracker, error) {
 	p, err := p.Resolve()
 	if err != nil {
@@ -63,8 +62,8 @@ func LoadOrNew(p Paths, now time.Time) (*Tracker, error) {
 	return t, err
 }
 
-// LoadFor resolves p and loads the tracker (LoadOrNew). With lock it first takes the tracker lock,
-// held until unlock, for a command that saves what it loaded. unlock is never nil.
+// LoadFor resolves p and loads the tracker (LoadOrNew), first taking the lock when exclusive.
+// unlock is never nil.
 func LoadFor(p Paths, now time.Time, exclusive bool) (t *Tracker, path string, unlock func(), err error) {
 	unlock = func() {}
 	if p, err = p.Resolve(); err != nil {
@@ -79,9 +78,8 @@ func LoadFor(p Paths, now time.Time, exclusive bool) (t *Tracker, path string, u
 	return t, p.Tracker, unlock, err
 }
 
-// Load reads and validates tracker.json. A missing file is fs.ErrNotExist; a file that does not
-// parse or validate is an error, never an empty tracker, so nothing is lost by a later save. The
-// tracker remembers the bytes it was read from, so Save can tell when another command saved since.
+// Load reads and validates tracker.json. A file that does not parse is an error, never an empty
+// tracker, so a later save cannot lose it.
 func Load(path string) (*Tracker, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -100,14 +98,10 @@ func digest(raw []byte) *[sha256.Size]byte {
 	return &d
 }
 
-// errChanged is Save refusing a tracker.json that changed after this tracker was loaded: writing
-// it would drop the other command's change.
 var errChanged = errors.New("changed since this command loaded it")
 
-// Update loads the tracker at path (a new one when there is none yet), applies fn and saves it,
-// holding the tracker lock throughout, so commands that change the tracker one after another never
-// lose each other's change. fn's error leaves the file alone. Commands that hold the tracker for
-// long (a confirmation, file rewrites) do that work first and record its outcome with Update.
+// Update loads the tracker, applies fn and saves it under the lock; fn's error leaves the file
+// alone. Commands that wait for long (a confirmation, file rewrites) do that first, then Update.
 func Update(path string, now time.Time, fn func(*Tracker) error) error {
 	unlock, err := lock(path)
 	if err != nil {
@@ -197,11 +191,9 @@ func (t *Tracker) validate() error {
 	return nil
 }
 
-// Save writes the tracker atomically with mode 0600 in a 0700 directory, after copying the file it
-// replaces to tracker.json.bak. It refuses to replace a file that no longer parses (edited by hand,
-// or by another program): that file may hold the only copy of something. It refuses with
-// ErrChanged a file other than the one this tracker was loaded from or last saved (another command
-// saved since, or the file appeared after a new tracker was made): saving would lose that change.
+// Save writes the tracker atomically (0600 in a 0700 directory), keeping the replaced file as
+// tracker.json.bak. It refuses a file that no longer parses, which may hold the only copy of
+// something, and with errChanged one saved since this tracker was loaded.
 func (t *Tracker) Save(path string) error {
 	if err := t.validate(); err != nil {
 		return fmt.Errorf("not saving an invalid tracker: %w", err)

@@ -18,57 +18,48 @@ import (
 
 // SyncOptions say which runs a sync folds in.
 type SyncOptions struct {
-	OutDir       string // inventory output directory; the latest run of every connector instance
-	From         string // a local-secrets output to use instead of its latest run ("" for none)
+	OutDir       string // the latest run of every connector instance in it
+	From         string // a local-secrets output to use instead of its latest run
 	IncludeNoise bool   // track noise-only secrets too, without a priority
-	// Expect applies the config's expected rules to each status read (config.Config.Expect); nil
-	// for none. Statuses are matched at every sync, so a rule added or removed since the run counts.
+	// Expect applies the config's expected rules to each status, at every sync, so a rule added
+	// since the run counts.
 	Expect func(*finding.Status)
-	// Owned are the owner's accounts the runs do not show (config `owned`, the git email): added to
-	// the ones discovered, for attribution.
-	Owned attribution.Owned
+	Owned  attribution.Owned // accounts the runs do not show: config `owned`, the git email
 }
 
 // SyncReport counts what a sync changed.
 type SyncReport struct {
 	Runs    []string // connector instances folded in
-	Stale   []string // connector instances whose run is older than one already folded: skipped
+	Stale   []string // skipped: older than the run already folded
 	Secrets SecretReport
 	// Items other than secrets.
 	Created, Verified, Reopened int
-	// Expected counts setup items closed (or created closed) because the config expects them.
-	Expected int
-	// Ruled counts items closed by a decision's rule.
-	Ruled int
-	// Merged counts connector items closed because a rotate item owns their secret.
-	Merged int
-	// Coverage counts coverage items opened (positive) and closed as covered.
-	Coverage CoverageReport
+	Expected                    int // setup items closed because the config expects them
+	Ruled                       int // items closed by a decision's rule
+	Merged                      int // connector items closed into the rotate item of their secret
+	Coverage                    CoverageReport
 	// Every item.
 	Woken, Lapsed int
-	// Unreadable are run files that could not be read (a torn line): skipped with their error, so
-	// their connector instance counts as not run and nothing it reported closes.
+	// Unreadable are run files skipped with their error: their instance counts as not run, so
+	// nothing it reported closes.
 	Unreadable []string
 }
 
-// run is one connector instance's latest output.
 type run struct {
 	label    string
 	at       time.Time
 	findings []finding.Finding
 	statuses []finding.Status
-	cov      finding.Coverage // which scopes it inspected
-	failed   string           // the connector's own error, from run_end
-	// fingerprints are the secrets the core resolved for the instance, by name (run_end).
-	fingerprints map[string]string
-	theme        finding.Theme  // the theme the connector declared (run_end)
-	covers       []finding.Area // the plan areas the connector audits (run_end)
+	cov      finding.Coverage
+	failed   string // the connector's own error, from run_end
+	// The rest comes from run_end.
+	fingerprints map[string]string // the secrets the core resolved for the instance, by name
+	theme        finding.Theme
+	covers       []finding.Area
 }
 
-// statusesUnproven reports, with the reason, a run whose statuses do not prove an earlier status
-// gone: one without run_end (killed, still running, or older), or one whose connector failed and
-// may have stopped before reporting. A finished run reports every status it has, whatever it
-// inspected: completeness protects findings, not statuses.
+// statusesUnproven reports, with the reason, a run whose statuses cannot prove an earlier one
+// gone: unfinished, or failed. Completeness of scopes protects findings, not statuses.
 func (r *run) statusesUnproven() (string, bool) {
 	if !r.cov.Known {
 		return r.cov.NoneChecked()
@@ -79,8 +70,7 @@ func (r *run) statusesUnproven() (string, bool) {
 	return "", false
 }
 
-// legacy reports whether the run was written before connectors declared their theme and how their
-// findings group: its run_end names no theme.
+// legacy reports whether the run predates connectors declaring their theme and grouping.
 func (r *run) legacy() bool { return r.theme.ID == "" }
 
 // wholeInstance reports whether the run has a status of that state for no account in particular.
@@ -90,26 +80,16 @@ func (r *run) wholeInstance(state finding.State) bool {
 	})
 }
 
-// notChecked is the history note for a finding a run did not inspect, the same for every item and
-// sync that folds that run, so each item logs it once.
+// notChecked is the same for every sync of one run, so each item logs it once.
 func (r *run) notChecked(why string) string {
 	return fmt.Sprintf("not checked in run %s of %s (%s)", r.label, r.at.Format(time.RFC3339), why)
 }
 
-// Sync folds the latest run of every connector instance into the items:
-//
-//   - local-secrets findings into rotate items (SyncSecrets);
-//   - every other finding at low or above into the item its grouping rule names, creating it
-//     when new; info findings never make an item;
-//   - every status other than ok into a setup item.
-//
-// Then the lifecycle: an open item whose findings no run reports any more is done, "verified (no
-// longer reported)"; a done item is verified once a run after it was marked done no longer reports
-// its findings, and reopened if a run after that reports one again; expired snoozes and
-// acceptances open their items again. Accepted and ignored items only get their findings updated.
-// A finding counts as gone only when its connector instance's run finished (ends with run_end) and
-// inspected the finding's scope; otherwise the item keeps it and logs "not checked in run …" once
-// per run instead of closing. See docs/architecture.md, "Run completeness".
+// Sync folds the latest run of every connector instance into the items: secrets into rotate
+// items, findings at low or above into their groups, statuses other than ok into setup items.
+// Then items no run reports any more close as verified, done items reported again reopen, and
+// expired snoozes and acceptances lapse. A finding is gone only when a finished run inspected its
+// scope. See docs/architecture.md, "Run completeness".
 func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	var rep SyncReport
 	runs, unreadable, err := readRuns(opt, now)
@@ -119,8 +99,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	rep.Unreadable = unreadable
 	folded := map[string]*run{}
 	for _, r := range runs {
-		// A source after now came from a future timestamp: it counts as absent, or it would hold
-		// every later run back as stale.
+		// A source after now (a future timestamp) would hold every later run back: absent.
 		if prev, ok := t.Sources[r.label]; ok && !prev.After(now) && r.at.Before(prev) {
 			rep.Stale = append(rep.Stale, r.label)
 			continue
@@ -143,8 +122,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 		byKey[it.Key] = it
 		was[it] = it.EffectivePriority()
 	}
-	// The owner's accounts are known before secrets are folded, so a secret attributed mine counts in
-	// full from its first sync (see SyncSecrets).
+	// Accounts first, so a secret attributed mine counts in full from its first sync.
 	t.discover(runs)
 	owned := t.ownedAll(opt.Owned)
 	for _, l := range rep.Runs {
@@ -154,8 +132,6 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 			t.markGoneLocations(r)
 		}
 	}
-	// A connector's credential that is a rotate item's secret goes to that item, not to a group of
-	// its own (see correlate.go).
 	claims, possible := t.correlate(folded)
 	props, regroup := t.propose(rep.Runs, folded, claims, byKey)
 	seen := t.applyProposals(props, byKey, now, &rep)
@@ -200,13 +176,12 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	return rep, nil
 }
 
-// proposals are the items a sync proposes, by key, in the order first proposed.
+// proposals are what a sync proposes, by item key, in the order first proposed.
 type proposals struct {
 	byKey map[string]*proposal
 	order []string
 }
 
-// at is the proposal for key, started from p when key is new.
 func (ps *proposals) at(key string, p proposal) *proposal {
 	if got, ok := ps.byKey[key]; ok {
 		return got
@@ -217,11 +192,9 @@ func (ps *proposals) at(key string, p proposal) *proposal {
 	return &p
 }
 
-// propose groups every finding and every status other than ok of the folded runs (labels, in
-// order) into the item it belongs to: a secret's trail into the transcript redaction item, a
-// finding into the item its grouping rule names, a status into a setup item. Secrets themselves,
-// claimed credentials and info findings make no proposal. regroup maps the id of each finding
-// that moves from the item holding it alone to its group's key.
+// propose groups the findings and statuses of the folded runs into the items they belong to.
+// Secrets, claimed credentials and info findings make none. regroup maps each finding that moves
+// from an item of its own into a group to that group's key.
 func (t *Tracker) propose(labels []string, folded map[string]*run, claims map[string]claim, byKey map[string]*Item) (props *proposals, regroup map[string]string) {
 	props, regroup = &proposals{byKey: map[string]*proposal{}}, map[string]string{}
 	holders := t.findingHolders()
@@ -258,33 +231,29 @@ func (t *Tracker) propose(labels []string, folded map[string]*run, claims map[st
 	return props, regroup
 }
 
-// placeFinding is the key and proposal of f's item, from run r: its grouping's, except that
-// a run from before declarations keeps f in the item that holds it (held), and a finding an item
-// holds on its own stays there unless its grouping now groups it, when moves is true.
+// placeFinding is the key and proposal of f's item: its grouping's, except that a legacy run keeps
+// f in the item that holds it, and a finding held on its own stays there unless its grouping now
+// groups it (moves).
 func placeFinding(f finding.Finding, r *run, held *Item, byKey map[string]*Item) (key string, p proposal, moves bool) {
 	g := groupingFor(f)
 	key, p = groupKey(f, g, themeOf(f, r.theme.ID))
 	if r.legacy() && held != nil && ruleKey(held.Key) {
-		// A run written before connectors declared how to group: its findings stay in the items
-		// that hold them, under the titles they have, until a run that declares it.
 		kept := *g
 		kept.keepTitle = true
 		key, p.grouping = held.Key, &kept
 	}
 	if pin, pinned := byKey[pinnedKey(f.ID)]; pinned && pin.Key != key {
 		if g.by == perFinding || pin.keptApart() {
-			// An item already holds this finding on its own: it stays there, titled by the finding.
 			p.grouping = &grouping{kind: g.kind}
 			return pinnedKey(f.ID), p, false
 		}
-		// Its grouping groups it now (data dumps per repository): it moves to the group.
 		return key, p, true
 	}
 	return key, p, false
 }
 
-// applyProposals folds each proposal into its item, creating the item when new (added to byKey)
-// and reopening a merged one, and returns the refs each item saw.
+// applyProposals folds each proposal into its item, creating or reopening it, and returns the
+// refs each item saw.
 func (t *Tracker) applyProposals(props *proposals, byKey map[string]*Item, now time.Time, rep *SyncReport) map[*Item]map[string]bool {
 	seen := map[*Item]map[string]bool{}
 	for _, key := range props.order {
@@ -328,9 +297,7 @@ func (t *Tracker) applyProposals(props *proposals, byKey map[string]*Item, now t
 	return seen
 }
 
-// noteRaised logs each item the sync raised to P1 or P0, from the priority it had before (was), so
-// the raise is news (Item.NewsSince). An item the sync created has no earlier priority: it is news
-// as found.
+// noteRaised logs each item the sync raised to P1 or P0, so the raise is news (NewsSince).
 func noteRaised(was map[*Item]secretrisk.Priority, now time.Time) {
 	for it, before := range was {
 		if p := it.EffectivePriority(); p.Rank() <= secretrisk.P1.Rank() && p.Rank() < before.Rank() {
@@ -339,7 +306,6 @@ func noteRaised(was map[*Item]secretrisk.Priority, now time.Time) {
 	}
 }
 
-// foldedSecrets reports whether a local-secrets run was folded in.
 func (r SyncReport) foldedSecrets() bool {
 	for _, l := range r.Runs {
 		if isSecretsLabel(l) {
@@ -349,7 +315,7 @@ func (r SyncReport) foldedSecrets() bool {
 	return false
 }
 
-// syncLine is the one-line summary of what a sync did to items other than secrets.
+// syncLine sums up what a sync did to items other than secrets.
 func syncLine(r SyncReport) string {
 	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config, %d closed by decisions, %d merged into the secret they hold; %d snoozes and %d acceptances expired.\n",
 		textfmt.Count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Merged, r.Woken, r.Lapsed)
@@ -388,7 +354,6 @@ func transcriptsProposal() proposal {
 			Action: "Review the dry run, then run it again with --apply. Rotation is still needed: these copies already reached the model provider or wherever the trail went."}}
 }
 
-// finishTranscripts names the trail item by the files it covers.
 func (p *proposal) finishTranscripts() {
 	files := map[string]bool{}
 	for _, f := range p.findings {
@@ -399,9 +364,8 @@ func (p *proposal) finishTranscripts() {
 	p.title = fmt.Sprintf("Redact secrets from %s (agent transcripts, shell histories, logs)", textfmt.Count(len(files), "trail file", "trail files"))
 }
 
-// readRuns reads the latest run of every connector instance as of now, and opt.From. A latest run that
-// cannot be read is left out and returned with its error in unreadable: one torn file must not
-// stop the sync of every other connector, and an instance with no run folded closes nothing.
+// readRuns reads the latest run of every connector instance, and opt.From. A run that cannot be
+// read goes to unreadable: one torn file must not stop every other connector's sync.
 func readRuns(opt SyncOptions, now time.Time) (runs []*run, unreadable []string, err error) {
 	files, err := runfile.LatestFiles(opt.OutDir, now)
 	if err != nil {
@@ -438,8 +402,7 @@ func readRunFile(file string) (*run, error) {
 		return nil, err
 	}
 	r := &run{label: rf.Label(file), findings: rf.Findings, statuses: rf.Statuses, cov: rf.Coverage()}
-	// A finished run's time is when it ended. A file without run_end falls back to its newest
-	// observed_at that is not in the future, then to its modification time.
+	// Without run_end: the newest observed_at not in the future, then the file's mtime.
 	if rf.End != nil {
 		r.at, r.failed, r.fingerprints, r.theme, r.covers = rf.End.EndedAt, rf.End.Error, rf.End.SecretFingerprints, rf.End.Theme, rf.End.Covers
 	} else {
@@ -461,7 +424,7 @@ func readRunFile(file string) (*run, error) {
 	return r, nil
 }
 
-// upsert adds or refreshes refs and returns how many were new to the item.
+// upsert adds or refreshes refs and returns how many were new.
 func (it *Item) upsert(refs []FindingRef, seen map[string]bool) int {
 	idx := make(map[string]int, len(it.Findings))
 	for i, r := range it.Findings {
@@ -484,14 +447,9 @@ func (it *Item) upsert(refs []FindingRef, seen map[string]bool) int {
 	return added
 }
 
-// markGone flags the refs this sync did not see, when their connector instance's run inspected
-// their scope; it returns, by ref id, the "not checked" note of each ref it held back instead. A
-// status ref (setup items) is gone as soon as a finished run (run_end, no connector error) lacks
-// that status, whatever that run inspected (an aws error replaced by noscope, a reauth no longer
-// emitted); even in an unfinished run when it reports the item's key with other details (the
-// details changed, or the ref predates one ref per detail), or the same state for the whole
-// instance (no account), which covers it: the core's one missing_credentials status replaces the
-// one a connector used to emit per account.
+// markGone flags the refs this sync did not see whose scope their run inspected, and returns the
+// "not checked" note of each ref it held back. A status ref is gone once a finished run lacks it,
+// or any run reports the item's key with other details or the same state for the whole instance.
 func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[string]string {
 	held := map[string]string{}
 	for i := range it.Findings {
@@ -519,8 +477,8 @@ func (it *Item) markGone(seen map[string]bool, folded map[string]*run) map[strin
 	return held
 }
 
-// noteHeld logs, once per run, why an item that would have closed or been verified did not: every
-// finding still counted as reported belongs to a scope its latest run did not inspect.
+// noteHeld logs, once per run, why an item that would have closed did not: every finding still
+// counted as reported lies in a scope its run did not inspect.
 func (it *Item) noteHeld(held map[string]string, now time.Time) {
 	if len(held) == 0 || (it.Closed() && !(it.Status == Done && it.VerifiedAt == nil)) {
 		return
@@ -532,7 +490,7 @@ func (it *Item) noteHeld(held map[string]string, now time.Time) {
 		}
 		note, ok := held[r.ID]
 		if !ok {
-			return // something inspected still reports it: nothing was held back
+			return
 		}
 		if !slices.Contains(notes, note) {
 			notes = append(notes, note)
@@ -545,17 +503,14 @@ func (it *Item) noteHeld(held map[string]string, now time.Time) {
 	}
 }
 
-// reported reports whether any of the item's findings is not gone.
 func (it *Item) reported() bool {
 	return slices.ContainsFunc(it.Findings, func(r FindingRef) bool { return !r.Gone })
 }
 
-// reportedAfter reports whether a finding that is not gone was last seen after t.
 func (it *Item) reportedAfter(t time.Time) bool {
 	return slices.ContainsFunc(it.Findings, func(r FindingRef) bool { return !r.Gone && r.LastSeen.After(t) })
 }
 
-// lifecycle moves an item with findings on after its refs were updated.
 func (t *Tracker) lifecycle(it *Item, folded map[string]*run, now time.Time, rep *SyncReport) {
 	present := it.reported()
 	switch it.Status {
@@ -599,8 +554,7 @@ func (it *Item) labelsPresent() []string {
 	return out
 }
 
-// ranAfter reports whether every connector instance the item's findings come from has a run
-// after t.
+// ranAfter reports whether every connector instance of the item's findings ran after at.
 func (t *Tracker) ranAfter(it *Item, folded map[string]*run, at time.Time) bool {
 	for _, r := range it.Findings {
 		when, ok := t.Sources[r.Label()]
@@ -614,8 +568,6 @@ func (t *Tracker) ranAfter(it *Item, folded map[string]*run, at time.Time) bool 
 	return true
 }
 
-// expireAll opens the items whose snooze or acceptance is over and recomputes what each item's
-// own data determines.
 func (t *Tracker) expireAll(now time.Time, rep *SyncReport) {
 	for _, it := range t.Items {
 		it.expire(now, rep)
@@ -623,7 +575,6 @@ func (t *Tracker) expireAll(now time.Time, rep *SyncReport) {
 	}
 }
 
-// expire opens an item whose snooze or acceptance is over.
 func (it *Item) expire(now time.Time, rep *SyncReport) {
 	switch {
 	case it.Status == Snoozed && it.snoozeOver(now):
@@ -635,12 +586,10 @@ func (it *Item) expire(now time.Time, rep *SyncReport) {
 	}
 }
 
-// withFinding returns the item (not a rotate item) that links the finding, or nil.
 func (t *Tracker) withFinding(id string) *Item { return t.findingHolders()[id] }
 
-// findingHolders maps each finding id to the item, other than a rotate item, that holds it.
-// When an item was replaced by another (its title, and so its family key, changed), both hold the
-// finding: the one that saw it last holds it, and an open item wins a tie over a closed one.
+// findingHolders maps each finding id to the item other than a rotate item that holds it. When
+// a renamed family key left two items holding it, the one that saw it last wins, open over closed.
 func (t *Tracker) findingHolders() map[string]*Item {
 	type holder struct {
 		it   *Item
@@ -665,18 +614,16 @@ func (t *Tracker) findingHolders() map[string]*Item {
 	return out
 }
 
-// ruleKey reports whether an item key is one grouping rules make: a group's or a pinned finding's.
+// ruleKey reports whether a grouping made the key.
 func ruleKey(key string) bool {
 	return strings.HasPrefix(key, "group:") || strings.HasPrefix(key, "finding:")
 }
 
-// pinnedKey is the key of an item that holds one finding on its own (a finding grouped nowhere
-// else, or accepted apart from its group): sync attaches that finding to it before any grouping.
+// pinnedKey is the key of an item that holds one finding on its own, which wins over its grouping.
 func pinnedKey(findingID string) string { return "finding:" + findingID }
 
-// AcceptFinding keeps a finding's risk on purpose. When its item groups other findings too, the
-// finding moves to an item of its own first, so accepting one org's setting does not hide the
-// other orgs'.
+// AcceptFinding keeps a finding's risk on purpose. A finding in a group moves to an item of its
+// own first, so accepting one org's setting does not hide the other orgs'.
 func (t *Tracker) AcceptFinding(f finding.Finding, reason, until string, now time.Time) (*Item, error) {
 	if strings.TrimSpace(reason) == "" {
 		return nil, errors.New("accept needs --reason (why this risk is kept on purpose)")
@@ -710,7 +657,7 @@ func (t *Tracker) AcceptFinding(f finding.Finding, reason, until string, now tim
 	return it, nil
 }
 
-// AcceptedItems are the items that carry an acceptance, in force or expired.
+// AcceptedItems are the items with an acceptance, in force or expired.
 func (t *Tracker) AcceptedItems() []*Item {
 	var out []*Item
 	for _, it := range t.Items {
@@ -721,8 +668,7 @@ func (t *Tracker) AcceptedItems() []*Item {
 	return out
 }
 
-// Unaccept lifts the acceptance of the item with that id, or of the one whose finding id is, or
-// starts with, ref.
+// Unaccept lifts the acceptance of the item with id ref, or whose finding id is or starts with ref.
 func (t *Tracker) Unaccept(ref string, now time.Time) (*Item, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -754,8 +700,8 @@ func (t *Tracker) Unaccept(ref string, now time.Time) (*Item, error) {
 	return hit, nil
 }
 
-// Annotator sets each finding's acceptance from the tracker, replacing whatever it carried, so a
-// finding loaded from an older run gets today's answer.
+// Annotator sets each finding's acceptance from the tracker, so a finding from an older run gets
+// today's answer.
 func (t *Tracker) Annotator(now func() time.Time) func(*finding.Finding) {
 	by := map[string]*Item{}
 	for _, it := range t.AcceptedItems() {
