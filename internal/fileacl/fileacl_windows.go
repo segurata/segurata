@@ -73,7 +73,17 @@ func read(path string, follow bool) (descriptor, string, error) {
 	if err != nil {
 		return descriptor{}, "", fmt.Errorf("%s: %w", path, err)
 	}
-	if !d.groupOwner && d.owner != user {
+	owner, err := winsys.CurrentOwnerSID()
+	if err != nil {
+		return descriptor{}, "", err
+	}
+	switch {
+	case d.owner == owner:
+		// The token's default owner, what this process gives the files it creates, stands for the
+		// user: an elevated administrator's token names BUILTIN\Administrators, which it holds the
+		// owner's rights through. Other owners are judged as they are.
+		d.owner, d.groupOwner = user, false
+	case !d.groupOwner && d.owner != user:
 		d.groupOwner = !userAccount(d.owner)
 	}
 	return d, user, nil
@@ -98,8 +108,9 @@ func isDir(path string) (bool, error) {
 	return st.IsDir(), nil
 }
 
-// OwnedByMe reports whether path's owner SID is the current user's. A symbolic link, as fi from
-// Lstat shows it, is judged itself and not its target.
+// OwnedByMe reports whether path's owner SID is the current user's, or the token's default owner,
+// which read counts as the user's. A symbolic link, as fi from Lstat shows it, is judged itself and
+// not its target.
 func OwnedByMe(path string, fi fs.FileInfo) (bool, error) {
 	d, user, err := read(path, fi == nil || fi.Mode()&fs.ModeSymlink == 0)
 	if err != nil {

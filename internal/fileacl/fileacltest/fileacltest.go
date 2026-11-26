@@ -32,8 +32,9 @@ func Expose(t testing.TB, path string) {
 	}
 }
 
-// GiveAway makes another account the owner of path: Administrators on Windows, which an elevated
-// token may name, and on Unix nobody, which only root may. It skips the test when it cannot.
+// GiveAway makes another account the owner of path: BUILTIN\Users on Windows, which takes the
+// SeRestorePrivilege an elevated token holds, and on Unix nobody, which only root may. It skips the
+// test when it cannot.
 func GiveAway(t testing.TB, path string) {
 	t.Helper()
 	if err := giveAway(path); err != nil {

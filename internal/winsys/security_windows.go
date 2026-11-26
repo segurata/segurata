@@ -45,6 +45,33 @@ var (
 // CurrentUserSID is the SID of the account this process runs as, in its S-1-... form.
 func CurrentUserSID() (string, error) { return currentUserSIDString() }
 
+// tokenOwner is TOKEN_OWNER.
+type tokenOwner struct{ Owner *syscall.SID }
+
+var currentOwnerSIDString = sync.OnceValues(func() (string, error) {
+	tok, err := syscall.OpenCurrentProcessToken()
+	if err != nil {
+		return "", err
+	}
+	defer tok.Close()
+	n := uint32(64)
+	for {
+		buf := make([]byte, n)
+		err := syscall.GetTokenInformation(tok, syscall.TokenOwner, &buf[0], n, &n)
+		if err == syscall.ERROR_INSUFFICIENT_BUFFER {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return (*tokenOwner)(unsafe.Pointer(&buf[0])).Owner.String()
+	}
+})
+
+// CurrentOwnerSID is the owner this process's token gives what it creates without naming one: the
+// user's SID, or BUILTIN\Administrators for an elevated administrator under Windows' default policy.
+func CurrentOwnerSID() (string, error) { return currentOwnerSIDString() }
+
 // SecurityDescriptor returns the parts of a file's security descriptor named by info, as SDDL.
 // The handle needs READ_CONTROL.
 func SecurityDescriptor(h syscall.Handle, info uint32) (string, error) {
