@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -47,5 +48,20 @@ func TestHungHoldsStdout(t *testing.T) {
 	out, err := proc.Command(ctx, Hung(t, "hung", "")).Output()
 	if err == nil || len(out) != 0 || time.Since(start) < 500*time.Millisecond {
 		t.Fatalf("a hung fake returned %q, %v after %s", out, err, time.Since(start))
+	}
+}
+
+// Scripts written and run by parallel tests never meet a descriptor a concurrent fork inherited:
+// on Linux that fails with "text file busy".
+func TestScriptsWrittenWhileOthersForkRun(t *testing.T) {
+	for i := range 16 {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+			for range 4 {
+				if out, err := exec.Command(Script(t, "", "s", "echo ok")).Output(); err != nil || string(out) != "ok\n" {
+					t.Fatalf("%q, %v", out, err)
+				}
+			}
+		})
 	}
 }

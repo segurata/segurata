@@ -152,11 +152,31 @@ func copyFile(from, to string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	return writeExecutable(to, func(out io.Writer) error {
+		_, err := io.Copy(out, in)
+		return err
+	})
+}
+
+// WriteExecutable writes a new program file that tests then run.
+func WriteExecutable(path string, data []byte) error {
+	return writeExecutable(path, func(out io.Writer) error {
+		_, err := out.Write(data)
+		return err
+	})
+}
+
+// writeExecutable keeps forks out while the file is open for writing. A process another test
+// forks in that window inherits the descriptor until it execs, and on Linux running the file
+// meanwhile fails with "text file busy" (ETXTBSY); syscall.ForkLock is what fork takes.
+func writeExecutable(path string, write func(io.Writer) error) error {
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if err := write(out); err != nil {
 		out.Close()
 		return err
 	}
@@ -173,7 +193,7 @@ func Script(t testing.TB, dir, name, body string) string {
 	}
 	if runtime.GOOS != "windows" {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		if err := WriteExecutable(path, []byte("#!/bin/sh\n"+body)); err != nil {
 			t.Fatal(err)
 		}
 		return path

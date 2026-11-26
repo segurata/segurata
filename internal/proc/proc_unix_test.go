@@ -30,7 +30,7 @@ func TestCancelKillsTheProcessGroup(t *testing.T) {
 			pidFile := filepath.Join(dir, "pid")
 			script := filepath.Join(dir, "spawn")
 			body := "#!/bin/sh\ncd '" + dir + "'\n" + child + "\necho $! > pid.tmp && mv pid.tmp pid\nwait\n"
-			if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+			if err := proctest.WriteExecutable(script, []byte(body)); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
