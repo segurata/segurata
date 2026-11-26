@@ -32,26 +32,22 @@ type Target struct {
 	Instance  config.Instance
 }
 
-// DefaultTimeout bounds one inventory of an instance whose config and connector name no timeout.
-const DefaultTimeout = time.Hour
+const defaultTimeout = time.Hour
 
-// Timeout bounds one inventory of the target: the instance's config `timeout`, else the
-// connector's declared default, else DefaultTimeout.
+// Timeout bounds one inventory: the instance's config, else the connector's, else an hour.
 func (t Target) Timeout() time.Duration {
 	for _, d := range []time.Duration{t.Instance.RunTimeout(), t.Connector.Describe().RunTimeout()} {
 		if d > 0 {
 			return d
 		}
 	}
-	return DefaultTimeout
+	return defaultTimeout
 }
 
-// Label is "name" or "name:label", the same spelling as the config key.
 func (t Target) Label() string { return finding.Label(t.Connector.Describe().Name, t.Instance.Label) }
 
-// Targets expands connectors into their configured instances. A selector "name" picks every
-// instance of that connector, "name:label" just one; no selectors means everything. Each instance
-// appears once, however many selectors name it.
+// Targets expands connectors into their configured instances, picked once each by selectors
+// "name" (every instance) or "name:label"; no selectors means everything.
 func Targets(cfg config.Config, conns []connector.Connector, selectors []string) ([]Target, error) {
 	var all []Target
 	for _, c := range conns {
@@ -89,11 +85,11 @@ type Result struct {
 	File     string
 	Findings []finding.Finding
 	Statuses []finding.Status
-	End      finding.RunEnd // the run_end record written last
+	End      finding.RunEnd
 	Err      error
 }
 
-// sink is the Emitter for one connector: it fills derived fields and appends to the JSONL file.
+// sink is the Emitter for one connector: it fills derived fields and appends to the run file.
 type sink struct {
 	mu       sync.Mutex
 	name     string
@@ -102,19 +98,17 @@ type sink struct {
 	out      io.Writer
 	verbose  io.Writer
 	annotate func(*finding.Finding)
-	tracker  connector.Tracker     // the built-in connector's grouping, nil for none
-	theme    finding.Theme         // the connector's theme, for run_end
-	covers   []finding.Area        // the plan areas the connector audits, for run_end
-	expect   func(*finding.Status) // the config's expected rules
+	tracker  connector.Tracker // nil for none
+	theme    finding.Theme
+	covers   []finding.Area
+	expect   func(*finding.Status)
 	res      *Result
 	tally    finding.Tally
 	werr     error // the first record that could not be written
 }
 
-// write appends one record as a JSON line. The first failure is kept for run_end: a run that lost
-// a record must not count as complete, or the lost findings would look resolved. Unlike
-// json.Encoder, which fails for good after one error, a later record is still tried, so run_end
-// can say what was lost. The caller holds mu.
+// write appends one record as a JSON line, keeping the first failure for run_end: a run that lost
+// a record must not look complete. Later records are still tried. The caller holds mu.
 func (s *sink) write(v any) error {
 	b, err := json.Marshal(v)
 	if err == nil {
@@ -129,8 +123,7 @@ func (s *sink) write(v any) error {
 func (s *sink) Finding(f finding.Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// The core owns observed_at: a connector's own value, a future one above all, would make the
-	// tracker take every later run as older (see tracker.Sync).
+	// The core owns observed_at: a future one would make the tracker take later runs as older.
 	now := time.Now()
 	f.Connector, f.Instance, f.ObservedAt = s.name, s.inst, now.UTC()
 	f.Fill(now)
@@ -156,7 +149,6 @@ func (s *sink) Status(st finding.Status) {
 	_ = s.write(st)
 }
 
-// Scope records coverage in the run_end record only; it writes no line of its own.
 func (s *sink) Scope(id string, inspected bool, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,9 +156,7 @@ func (s *sink) Scope(id string, inspected bool, reason string) {
 }
 
 // end writes the run_end record and reports whether it was written, with the first write error.
-// err is the connector's own error; a context that ended counts as one, with its cause (a
-// timeout), since the connector may have stopped early without saying so, and so does a record
-// that could not be written.
+// A context that ended counts as an error: the connector may have stopped early without saying so.
 func (s *sink) end(ctx context.Context, started time.Time, err error, fps map[string]string) (ended bool, werr error) {
 	if ctx.Err() != nil {
 		err = errors.Join(fmt.Errorf("interrupted: %w", context.Cause(ctx)), err)
@@ -187,28 +177,23 @@ func (s *sink) Log(msg string) {
 
 // Lent is what the tracker lends an inventory; the zero value lends nothing.
 type Lent struct {
-	// Annotate stamps each finding before it is written (accepted risks).
-	Annotate func(*finding.Finding)
-	// Known says whose each secret is, for built-in connectors (connector.Request.Known).
-	Known *attribution.Known
+	Annotate func(*finding.Finding) // stamps accepted risks before a finding is written
+	Known    *attribution.Known
 }
 
-// BraveCheck checks that Brave answers at a CDP address (cdp.Brave). It never starts a browser;
-// tests replace it, so that none reaches a real one.
-var BraveCheck = cdp.Brave
+// braveCheck is a variable so that no test reaches a real browser.
+var braveCheck = cdp.Brave
 
-// BrowserProbeTimeout bounds the check that Brave answers before the browser connectors run.
 const BrowserProbeTimeout = 15 * time.Second
 
-// Reasons the browser connectors do not run, the start of their run_end error.
+// Why the browser connectors do not run, the start of their run_end error.
 const (
 	ReasonUnreachable = "browser not reachable over CDP"
 	ReasonNotBrave    = "the browser on the debugging port is not Brave"
 )
 
-// BrowserProblem says why the browser connectors cannot run now, with check's error; "" when
-// Brave answers at cdpURL. Only Brave is driven: another browser on the port, or none, stops them,
-// and nothing is ever started in its place.
+// BrowserProblem says why the browser connectors cannot run, "" when Brave answers at cdpURL. Only
+// Brave is driven, and nothing is ever started in its place.
 func BrowserProblem(ctx context.Context, cdpURL string, check func(context.Context, string) (cdp.Version, error)) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, BrowserProbeTimeout)
 	defer cancel()
@@ -222,10 +207,8 @@ func BrowserProblem(ctx context.Context, cdpURL string, check func(context.Conte
 	return ReasonUnreachable, err
 }
 
-// Inventory runs the given targets concurrently and returns their results in input order. When
-// a target drives the browser over CDP, Brave is checked once first (BrowserProblem); if it does
-// not answer, each such target's run ends at once with the reason as its error: its run_end skips
-// every scope ("*"), so it proves neither a finding nor a status gone.
+// Inventory runs the targets concurrently, results in input order. Brave is checked once when a
+// target drives it; without it those runs end at once with the reason, skipping every scope.
 func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer, lent Lent) ([]*Result, error) {
 	dir := filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -233,7 +216,7 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 	}
 	var noBrowser error
 	if slices.ContainsFunc(targets, func(t Target) bool { return t.Connector.Describe().NeedsCDP() }) {
-		if reason, err := BrowserProblem(ctx, cfg.CDPURL, BraveCheck); reason != "" {
+		if reason, err := BrowserProblem(ctx, cfg.CDPURL, braveCheck); reason != "" {
 			noBrowser = fmt.Errorf("%s: %w", reason, err)
 		}
 	}
@@ -254,8 +237,7 @@ func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir 
 	return results, nil
 }
 
-// runOne runs one target and writes its run file. A refused target does not run and its secrets
-// are not resolved: its run ends at once with refused as its error.
+// runOne runs one target and writes its run file. A refused target resolves no secret.
 func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbose io.Writer, lent Lent, refused error) *Result {
 	name, label := t.Connector.Describe().Name, t.Label()
 	timeout := t.Timeout()
@@ -263,11 +245,8 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	defer cancel()
 	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, runfile.FileName(label))}
-	// The run writes to a partial file of its own and renames it over <file> only once run_end is
-	// written, so a killed run never truncates an earlier finished run of the same day, and two runs
-	// of the same instance at once never write into one file. The partial file does not match
-	// *.jsonl, so readers never pick it up. CreateTemp makes it 0600: the output names accounts,
-	// apps and services.
+	// A partial file of its own, renamed over the run file once run_end is written, so a killed or
+	// concurrent run never tears a finished one; readers skip it, and CreateTemp makes it 0600.
 	f, err := os.CreateTemp(dir, filepath.Base(res.File)+".*.partial")
 	if err != nil {
 		res.Err = err
@@ -285,14 +264,12 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		req, errs = NewRequest(ctx, cfg, t.Instance)
 		req.Known = lent.Known
 		if missing := unresolved(t.Connector, errs, s); !missing {
-			// What the connector prints never carries a secret value the core handed it.
 			scrub := connector.NewScrubEmitter(s, req.Secrets)
 			res.Err = scrub.Err(t.Connector.Inventory(ctx, req, scrub))
 		}
 	}
 	ended, werr := s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
 	res.Err = errors.Join(res.Err, werr)
-	// A file without its run_end, or one that did not close, never replaces an earlier run.
 	if err := f.Close(); err != nil || !ended {
 		res.Err = errors.Join(res.Err, err)
 		_ = os.Remove(partial)
@@ -305,11 +282,9 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	return res
 }
 
-// unresolved reports each secret reference that could not be resolved as one missing_credentials
-// status, with the connector's setup hint when it gives one, and says whether a secret the
-// connector needs is among them: then Inventory is not called, so the connector cannot report the
-// same problem again in its own words. The core owns unresolvable references; a connector still
-// reports a secret that is not configured at all.
+// unresolved emits one missing_credentials status per unresolvable reference, with the setup
+// hint, and reports whether a needed secret is among them: then Inventory is not called, so the
+// problem is not reported twice. A secret not configured at all is the connector's to report.
 func unresolved(c connector.Connector, errs []error, emit connector.Emitter) bool {
 	needs := c.Describe().Needs
 	hinter, _ := c.(connector.SetupHinter)
@@ -330,8 +305,8 @@ func unresolved(c connector.Connector, errs []error, emit connector.Emitter) boo
 	return missing
 }
 
-// StatusSummary prints, per result, its error and the statuses that need attention: those other
-// than ok, expected ones counted by reason, and the scopes an incomplete run left out.
+// StatusSummary prints each result's error, statuses other than ok (expected ones counted by
+// reason) and what an incomplete run left out.
 func StatusSummary(w io.Writer, results []*Result) {
 	for _, r := range results {
 		if r.Err != nil {
@@ -357,16 +332,15 @@ func StatusSummary(w io.Writer, results []*Result) {
 	}
 }
 
-// FingerprintKey is fingerprint.OpenDefault; a variable so tests use their own key.
-var FingerprintKey = fingerprint.OpenDefault
+// fingerprintKey is a variable so tests use their own key.
+var fingerprintKey = fingerprint.OpenDefault
 
-// secretFingerprints fingerprints the resolved secrets by name, for run_end: the tracker matches
-// them with leaked copies of the same values (see finding.RunEnd). nil without secrets or key.
+// secretFingerprints are run_end's finding.RunEnd.SecretFingerprints, nil without secrets or key.
 func secretFingerprints(secrets map[string]string) map[string]string {
 	if len(secrets) == 0 {
 		return nil
 	}
-	k, ok := FingerprintKey()
+	k, ok := fingerprintKey()
 	if !ok {
 		return nil
 	}
@@ -379,16 +353,14 @@ func secretFingerprints(secrets map[string]string) map[string]string {
 	return out
 }
 
-// NewRequest builds the request for one connector instance, resolving its secret references under
-// ctx. A secret that cannot be resolved is left out of the request and returned as an error.
+// NewRequest builds an instance's request; a secret that cannot be resolved is left out and
+// returned as an error.
 func NewRequest(ctx context.Context, cfg config.Config, in config.Instance) (connector.Request, []error) {
 	resolved, errs := secrets.ResolveAll(ctx, in.Secrets)
 	return connector.Request{Protocol: connector.ProtocolVersion, CDPURL: cfg.CDPURL, Config: in.Config, Secrets: resolved}, errs
 }
 
-// InstanceCredentials are what a remediation of the instance a finding came from may use (label
-// "" is the unnamed one): NewRequest, and the unresolved references of its remediation_secrets,
-// which only Apply resolves.
+// InstanceCredentials are the connector.Credentials of one configured instance.
 func InstanceCredentials(ctx context.Context, cfg config.Config, name, label string) (connector.Credentials, []error) {
 	for _, in := range cfg.Instances(name) {
 		if in.Label == label {

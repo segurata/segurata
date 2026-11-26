@@ -28,17 +28,45 @@ import (
 	"github.com/segurata/segurata/internal/runfile"
 )
 
-type fake struct{ got connector.Request }
-
-func (f *fake) Describe() connector.Description {
-	return connector.Description{Name: "fake", Version: "0", Protocol: 1}
+// fake is a built-in connector named "fake" unless desc says otherwise. Without inv it reports
+// one account ok and one high finding. It records the last request and counts its runs.
+type fake struct {
+	desc connector.Description
+	inv  func(context.Context, connector.Emitter) error
+	mu   sync.Mutex
+	got  []connector.Request
 }
 
-func (f *fake) Inventory(_ context.Context, req connector.Request, emit connector.Emitter) error {
-	f.got = req
+// emits is a fake whose inventory is inv.
+func emits(inv func(context.Context, connector.Emitter) error) *fake { return &fake{inv: inv} }
+
+func (f *fake) Describe() connector.Description {
+	if f.desc.Name == "" {
+		return connector.Description{Name: "fake", Version: "0", Protocol: 1, Timeout: f.desc.Timeout}
+	}
+	return f.desc
+}
+
+func (f *fake) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
+	f.mu.Lock()
+	f.got = append(f.got, req)
+	f.mu.Unlock()
+	if f.inv != nil {
+		return f.inv(ctx, emit)
+	}
 	emit.Status(finding.Status{Account: "acct", State: finding.StateOK})
 	emit.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "k1"}, Kind: finding.KindCredential, Severity: finding.SevHigh, Title: "old key"})
 	return nil
+}
+
+// last is the request of the latest run, zero when it never ran.
+func (f *fake) last() connector.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.got) == 0 {
+		return connector.Request{}
+	}
+	return f.got[len(f.got)-1]
 }
 
 func readLines(t *testing.T, path string) []map[string]any {
@@ -63,8 +91,8 @@ func readLines(t *testing.T, path string) []map[string]any {
 func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 	t.Setenv("SEGURATA_TEST_SECRET", "s3cret")
 	key := fingerprint.FromBytes([]byte("0123456789abcdef0123456789abcdef"))
-	defer func(old func() (fingerprint.Key, bool)) { FingerprintKey = old }(FingerprintKey)
-	FingerprintKey = func() (fingerprint.Key, bool) { return key, true }
+	defer func(old func() (fingerprint.Key, bool)) { fingerprintKey = old }(fingerprintKey)
+	fingerprintKey = func() (fingerprint.Key, bool) { return key, true }
 	cfg := config.Config{CDPURL: "http://cdp", Connectors: map[string]config.ConnectorConfig{
 		"fake": {Secrets: map[string]string{"OK": "env:SEGURATA_TEST_SECRET", "BAD": "env:SEGURATA_TEST_UNSET"}},
 	}}
@@ -73,10 +101,11 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 	if err != nil || len(res) != 1 || res[0].Err != nil {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
-	if fk.got.Secrets["OK"] != "s3cret" || fk.got.CDPURL != "http://cdp" || fk.got.Protocol != connector.ProtocolVersion {
-		t.Fatalf("request not built right: %+v", fk.got)
+	got := fk.last()
+	if got.Secrets["OK"] != "s3cret" || got.CDPURL != "http://cdp" || got.Protocol != connector.ProtocolVersion {
+		t.Fatalf("request not built right: %+v", got)
 	}
-	if _, leaked := fk.got.Secrets["BAD"]; leaked {
+	if _, leaked := got.Secrets["BAD"]; leaked {
 		t.Fatal("an unresolved secret reached the connector")
 	}
 	lines := readLines(t, res[0].File)
@@ -181,9 +210,7 @@ func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
 		"fake:work":     {Secrets: map[string]string{"K": "env:SEGURATA_TEST_A"}},
 		"fake:personal": {Secrets: map[string]string{"K": "env:SEGURATA_TEST_B"}},
 	}}
-	seen := map[string]string{}
-	var mu sync.Mutex
-	rec := recordingFake{onReq: func(req connector.Request) { mu.Lock(); seen[req.Secrets["K"]] = "x"; mu.Unlock() }}
+	rec := &fake{}
 	ts, err := Targets(cfg, []connector.Connector{rec}, nil)
 	if err != nil || len(ts) != 2 || ts[0].Label() != "fake:personal" || ts[1].Label() != "fake:work" {
 		t.Fatalf("targets %v, %v", ts, err)
@@ -192,7 +219,11 @@ func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(seen) != 2 {
+	seen := map[string]bool{}
+	for _, req := range rec.got {
+		seen[req.Secrets["K"]] = true
+	}
+	if len(seen) != 2 || !seen["key-a"] || !seen["key-b"] {
 		t.Fatalf("each instance must get its own secret, saw %v", seen)
 	}
 	if filepath.Base(res[0].File) != runfile.FileName("fake:personal") || filepath.Base(res[1].File) != runfile.FileName("fake:work") {
@@ -232,7 +263,7 @@ func TestConcurrentRunsOfOneInstanceNeverTearTheFile(t *testing.T) {
 	out, cfg := t.TempDir(), config.Config{}
 	var started sync.WaitGroup
 	started.Add(2)
-	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+	inv := emits(func(_ context.Context, e connector.Emitter) error {
 		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
 		started.Done()
 		started.Wait() // both runs have their partial file open
@@ -266,29 +297,6 @@ func TestConcurrentRunsOfOneInstanceNeverTearTheFile(t *testing.T) {
 	}
 }
 
-type recordingFake struct{ onReq func(connector.Request) }
-
-func (recordingFake) Describe() connector.Description {
-	return connector.Description{Name: "fake", Version: "0", Protocol: 1}
-}
-
-func (r recordingFake) Inventory(_ context.Context, req connector.Request, emit connector.Emitter) error {
-	r.onReq(req)
-	emit.Finding(finding.Finding{Account: "same-account-name", Resource: finding.Resource{Type: "key", ID: "k"}, Severity: finding.SevLow, Title: "t"})
-	return nil
-}
-
-// emitting is a connector whose inventory is a function.
-type emitting func(ctx context.Context, emit connector.Emitter) error
-
-func (emitting) Describe() connector.Description {
-	return connector.Description{Name: "fake", Version: "0", Protocol: 1}
-}
-
-func (e emitting) Inventory(ctx context.Context, _ connector.Request, emit connector.Emitter) error {
-	return e(ctx, emit)
-}
-
 // Every run ends with a run_end record: complete only when nothing was skipped and the connector
 // did not fail. A run killed before it is written has none (see Read).
 func TestRunEndRecordsCoverage(t *testing.T) {
@@ -297,7 +305,7 @@ func TestRunEndRecordsCoverage(t *testing.T) {
 	}
 	cases := []struct {
 		name     string
-		inv      emitting
+		inv      func(context.Context, connector.Emitter) error
 		cancel   bool
 		complete bool
 		skipped  []string
@@ -330,7 +338,7 @@ func TestRunEndRecordsCoverage(t *testing.T) {
 			if c.cancel {
 				cancel()
 			}
-			res, _ := Inventory(ctx, config.Config{}, mustTargets(t, config.Config{}, c.inv), t.TempDir(), nil, Lent{})
+			res, _ := Inventory(ctx, config.Config{}, mustTargets(t, config.Config{}, emits(c.inv)), t.TempDir(), nil, Lent{})
 			end := res[0].End
 			lines := readLines(t, res[0].File)
 			if last := lines[len(lines)-1]; last["type"] != "run_end" || last["complete"] != c.complete {
@@ -353,7 +361,7 @@ func TestRunEndRecordsCoverage(t *testing.T) {
 // A connector that skips thousands of scopes is capped in the record, and then counts as having
 // inspected nothing: the cut entries could be any of its findings.
 func TestRunEndCapsLists(t *testing.T) {
-	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+	inv := emits(func(_ context.Context, e connector.Emitter) error {
 		for i := range 300 {
 			e.Status(finding.Status{Account: fmt.Sprintf("ok-%d", i), State: finding.StateOK})
 			e.Scope(fmt.Sprintf("repo:%d", i), false, "rate limit")
@@ -383,7 +391,12 @@ func TestUnfinishedRunKeepsTheEarlierFile(t *testing.T) {
 	before, _ := os.ReadFile(first[0].File)
 
 	var during []byte
-	probe := probingFake{check: func() { during, _ = os.ReadFile(first[0].File) }}
+	probe := emits(func(_ context.Context, e connector.Emitter) error {
+		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
+		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "new"}, Severity: finding.SevLow, Title: "new"})
+		during, _ = os.ReadFile(first[0].File)
+		return nil
+	})
 	second, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, probe), out, nil, Lent{})
 	if err != nil || second[0].Err != nil {
 		t.Fatalf("second run: %v %v", err, second[0].Err)
@@ -398,19 +411,6 @@ func TestUnfinishedRunKeepsTheEarlierFile(t *testing.T) {
 	if left, _ := filepath.Glob(first[0].File + ".*.partial"); len(left) > 0 {
 		t.Fatalf("partial files left behind: %v", left)
 	}
-}
-
-type probingFake struct{ check func() }
-
-func (probingFake) Describe() connector.Description {
-	return connector.Description{Name: "fake", Version: "0", Protocol: 1}
-}
-
-func (p probingFake) Inventory(_ context.Context, _ connector.Request, emit connector.Emitter) error {
-	emit.Status(finding.Status{Account: "acct", State: finding.StateOK})
-	emit.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "new"}, Severity: finding.SevLow, Title: "new"})
-	p.check()
-	return nil
 }
 
 // needy needs a secret and says how to set it up; it reports a missing secret itself, as the AI
@@ -567,9 +567,9 @@ func TestALostRecordFailsTheRun(t *testing.T) {
 }
 
 // A connector instance that hangs is stopped at its deadline (the instance's timeout, else the
-// connector's own default, else DefaultTimeout), and its run ends failed so nothing closes.
+// connector's own default, else defaultTimeout), and its run ends failed so nothing closes.
 func TestAHungInstanceTimesOutAndClosesNothing(t *testing.T) {
-	hang := emitting(func(ctx context.Context, e connector.Emitter) error {
+	hang := emits(func(ctx context.Context, e connector.Emitter) error {
 		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
 		<-ctx.Done()
 		return nil
@@ -585,21 +585,16 @@ func TestAHungInstanceTimesOutAndClosesNothing(t *testing.T) {
 	}
 }
 
-type slow struct{ emitting }
-
-func (slow) Describe() connector.Description {
-	return connector.Description{Name: "fake", Version: "0", Protocol: 1, Timeout: "6h"}
-}
-
 func TestTheTimeoutComesFromTheInstanceThenTheConnector(t *testing.T) {
+	slow := &fake{desc: connector.Description{Timeout: "6h"}}
 	for _, c := range []struct {
 		conn connector.Connector
 		cfg  config.ConnectorConfig
 		want time.Duration
 	}{
-		{&fake{}, config.ConnectorConfig{}, DefaultTimeout},
-		{slow{}, config.ConnectorConfig{}, 6 * time.Hour},
-		{slow{}, config.ConnectorConfig{Timeout: "90m"}, 90 * time.Minute},
+		{&fake{}, config.ConnectorConfig{}, time.Hour},
+		{slow, config.ConnectorConfig{}, 6 * time.Hour},
+		{slow, config.ConnectorConfig{Timeout: "90m"}, 90 * time.Minute},
 		{&fake{}, config.ConnectorConfig{Timeout: "2h"}, 2 * time.Hour},
 	} {
 		tg := Target{Connector: c.conn, Instance: config.Instance{ConnectorConfig: c.cfg}}
@@ -612,19 +607,13 @@ func TestTheTimeoutComesFromTheInstanceThenTheConnector(t *testing.T) {
 // An external connector that hangs in a child it did not exec is stopped too.
 func TestAHungExternalConnectorTimesOut(t *testing.T) {
 	script := proctest.Hung(t, "segurata-hang", `[ "$1" = describe ] && { echo '{"name":"hang","version":"1","protocol":1,"summary":"t","needs":[]}'; exit 0; }`)
-	t.Setenv("PATH", filepath.Dir(script)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	var conns []connector.Connector
-	for _, e := range connector.Discover() {
-		if e.Describe().Name == "hang" {
-			conns = append(conns, e)
-		}
-	}
-	if len(conns) != 1 {
-		t.Fatal("external connector not discovered")
+	hang, err := connector.LoadExternal(script)
+	if err != nil {
+		t.Fatal(err)
 	}
 	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"hang": {Timeout: "200ms"}}}
 	start := time.Now()
-	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, conns...), t.TempDir(), nil, Lent{})
+	res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, hang), t.TempDir(), nil, Lent{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,10 +625,8 @@ func TestAHungExternalConnectorTimesOut(t *testing.T) {
 	}
 }
 
-// observed_at belongs to the core: a connector's own value, a future one above all, is replaced
-// with the time the record was written.
 // tracked is a built-in connector that declares a shared theme and how its findings group.
-type tracked struct{ emitting }
+type tracked struct{ *fake }
 
 func (tracked) Describe() connector.Description {
 	return connector.Description{Name: "fake", Version: "0", Protocol: 1, Theme: finding.Theme{ID: finding.ThemeCloud.ID},
@@ -653,13 +640,13 @@ func (tracked) Track(f finding.Finding) *finding.Track {
 // The core sets Track on each finding of a built-in connector that declares it, unless the finding
 // carries its own, and writes the declared theme, resolved, and covered areas in run_end.
 func TestTheCoreStampsTrackAndTheme(t *testing.T) {
-	c := tracked{func(_ context.Context, e connector.Emitter) error {
+	c := tracked{emits(func(_ context.Context, e connector.Emitter) error {
 		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
 		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "a"}, Severity: finding.SevLow, Title: "a"})
 		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "b"}, Severity: finding.SevLow, Title: "b",
 			Track: &finding.Track{Group: finding.GroupFinding}})
 		return nil
-	}}
+	})}
 	res, _ := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, c), t.TempDir(), nil, Lent{})
 	fs := res[0].Findings
 	if fs[0].Track == nil || fs[0].Track.Key != "acct/" || fs[1].Track.Group != finding.GroupFinding {
@@ -674,9 +661,11 @@ func TestTheCoreStampsTrackAndTheme(t *testing.T) {
 	}
 }
 
+// observed_at belongs to the core: a connector's own value, a future one above all, is replaced
+// with the time the record was written.
 func TestTheCoreStampsObservedAt(t *testing.T) {
 	future := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	inv := emitting(func(_ context.Context, e connector.Emitter) error {
+	inv := emits(func(_ context.Context, e connector.Emitter) error {
 		e.Status(finding.Status{Account: "acct", State: finding.StateOK})
 		e.Finding(finding.Finding{Account: "acct", Resource: finding.Resource{Type: "key", ID: "k"}, Severity: finding.SevLow, Title: "t", ObservedAt: future})
 		return nil
@@ -690,14 +679,13 @@ func TestTheCoreStampsObservedAt(t *testing.T) {
 
 func TestLentReachesTheConnector(t *testing.T) {
 	known := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
-	var got *attribution.Known
 	annotated := 0
-	rec := recordingFake{onReq: func(req connector.Request) { got = req.Known }}
+	rec := &fake{}
 	lent := Lent{Known: known, Annotate: func(*finding.Finding) { annotated++ }}
 	if _, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, rec), t.TempDir(), nil, lent); err != nil {
 		t.Fatal(err)
 	}
-	if got != known || annotated != 1 {
+	if got := rec.last().Known; got != known || annotated != 1 {
 		t.Errorf("known %v, annotated %d", got, annotated)
 	}
 	raw, _ := json.Marshal(connector.Request{Known: known})
@@ -754,25 +742,19 @@ esac
 	}
 }
 
-// browserFake is a connector that drives the browser over CDP and counts its runs.
-type browserFake struct{ ran *int }
-
-func (browserFake) Describe() connector.Description {
-	return connector.Description{Name: "browserfake", Protocol: 1, Needs: []string{"cdp"}}
-}
-
-func (b browserFake) Inventory(context.Context, connector.Request, connector.Emitter) error {
-	*b.ran++
-	return nil
+// browserFake drives the browser over CDP.
+func browserFake() *fake {
+	return &fake{desc: connector.Description{Name: "browserfake", Protocol: 1, Needs: []string{"cdp"}},
+		inv: func(context.Context, connector.Emitter) error { return nil }}
 }
 
 // setBraveCheck replaces the Brave probe for the test: no test reaches a real browser.
 func setBraveCheck(t *testing.T, check func(context.Context, string) (cdp.Version, error)) *int {
 	t.Helper()
 	calls := 0
-	old := BraveCheck
-	BraveCheck = func(ctx context.Context, url string) (cdp.Version, error) { calls++; return check(ctx, url) }
-	t.Cleanup(func() { BraveCheck = old })
+	old := braveCheck
+	braveCheck = func(ctx context.Context, url string) (cdp.Version, error) { calls++; return check(ctx, url) }
+	t.Cleanup(func() { braveCheck = old })
 	return &calls
 }
 
@@ -789,18 +771,17 @@ func TestBrowserConnectorsRunOnlyAgainstBrave(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			probes := setBraveCheck(t, func(context.Context, string) (cdp.Version, error) { return cdp.Version{}, tc.err })
-			ran := 0
-			other := &fake{}
+			browser, other := browserFake(), &fake{}
 			cfg := config.Config{CDPURL: "http://cdp.invalid", Connectors: map[string]config.ConnectorConfig{
 				"browserfake:work": {Secrets: map[string]string{"X": "env:SEGURATA_TEST_SECRET"}}, "browserfake:home": {},
 			}}
 			t.Setenv("SEGURATA_TEST_SECRET", "never-resolved-value")
-			res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, browserFake{&ran}, other), t.TempDir(), nil, Lent{})
+			res, err := Inventory(context.Background(), cfg, mustTargets(t, cfg, browser, other), t.TempDir(), nil, Lent{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ran != 0 || *probes != 1 || other.got.Protocol == 0 {
-				t.Fatalf("browser connector ran %d times, %d probes, other ran: %v", ran, *probes, other.got.Protocol != 0)
+			if len(browser.got) != 0 || *probes != 1 || len(other.got) != 1 {
+				t.Fatalf("browser connector ran %d times, %d probes, other ran %d times", len(browser.got), *probes, len(other.got))
 			}
 			for _, r := range res {
 				if r.Name == "fake" {
@@ -815,10 +796,10 @@ func TestBrowserConnectorsRunOnlyAgainstBrave(t *testing.T) {
 		})
 	}
 	probes := setBraveCheck(t, func(context.Context, string) (cdp.Version, error) { return cdp.Version{Browser: "Chrome/156"}, nil })
-	ran := 0
-	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, browserFake{&ran}), t.TempDir(), nil, Lent{})
-	if err != nil || res[0].Err != nil || ran != 1 || *probes != 1 {
-		t.Fatalf("with Brave: err %v %v, ran %d, probes %d", err, res[0].Err, ran, *probes)
+	browser := browserFake()
+	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, browser), t.TempDir(), nil, Lent{})
+	if err != nil || res[0].Err != nil || len(browser.got) != 1 || *probes != 1 {
+		t.Fatalf("with Brave: err %v %v, ran %d, probes %d", err, res[0].Err, len(browser.got), *probes)
 	}
 	*probes = 0
 	if _, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, &fake{}), t.TempDir(), nil, Lent{}); err != nil || *probes != 0 {
