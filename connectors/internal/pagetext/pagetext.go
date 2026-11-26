@@ -3,6 +3,7 @@ package pagetext
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -70,4 +71,16 @@ func Date(s string, now time.Time) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// Union is a followed by what b adds, in order and without repeats; never nil, so it is written
+// as [] rather than null.
+func Union(a, b []string) []string {
+	out := append([]string{}, a...)
+	for _, s := range b {
+		if !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }

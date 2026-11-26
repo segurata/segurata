@@ -189,7 +189,7 @@ func slackWorkspace(ctx context.Context, e *env, host string) {
 		if href == "" && team != "" {
 			href = "https://app.slack.com/apps-manage/" + team + "/integrations/profile/" + in.ID + "/permissions"
 		}
-		e.report(grant{who: host, scope: host, resType: "slack_app", name: in.Name, scopes: nonNil(in.BotScopes), userScopes: nonNil(in.UserScopes),
+		e.report(grant{who: host, scope: host, resType: "slack_app", name: in.Name, scopes: append([]string{}, in.BotScopes...), userScopes: append([]string{}, in.UserScopes...),
 			count: len(in.BotScopes) + len(in.UserScopes), note: a.note, url: href, revoke: slackRevoke,
 			extra: map[string]any{"pending_approval": false, "internal": in.Internal, "capabilities": slackCapList(slackCaps(in.BotScopes, in.UserScopes))}})
 	}
@@ -209,13 +209,6 @@ func slackWorkspace(ctx context.Context, e *env, host string) {
 		return
 	}
 	e.status(host, finding.StateOK, "%d apps", n)
-}
-
-func nonNil(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
 
 var slackTeamRE = regexp.MustCompile(`/apps-manage/(T[A-Z0-9]{6,})/`)

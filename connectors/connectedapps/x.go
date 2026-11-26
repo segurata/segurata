@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/pagetext"
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -130,7 +131,7 @@ func parseXApps(resp *cdp.Response) ([]xApp, error) {
 		}
 		a := &out[i]
 		a.grants++
-		a.scopes = union(a.scopes, xScopes(g))
+		a.scopes = pagetext.Union(a.scopes, xScopes(g))
 		if t := g.Approved.t; t != nil && (a.approved == nil || t.After(*a.approved)) {
 			a.approved = t
 		}
@@ -159,7 +160,7 @@ func xScopes(g xGrant) []string {
 		}
 	}
 	if g.EmailAccess {
-		s = union(s, []string{"users.email"})
+		s = pagetext.Union(s, []string{"users.email"})
 	}
 	return s
 }
@@ -206,20 +207,4 @@ func (f *flexTime) UnmarshalJSON(b []byte) error {
 		}
 	}
 	return nil
-}
-
-// union never returns nil.
-func union(a, b []string) []string {
-	out := append([]string{}, a...)
-	have := map[string]bool{}
-	for _, s := range a {
-		have[s] = true
-	}
-	for _, s := range b {
-		if !have[s] {
-			have[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
 }

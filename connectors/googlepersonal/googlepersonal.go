@@ -260,7 +260,7 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 			return inspected{err: errReauth}
 		}
 		d := parseDetail(dp.Text)
-		scopes = union(scopes, d.Scopes)
+		scopes = pagetext.Union(scopes, d.Scopes)
 		if t := pagetext.Date(d.GivenOn, now); t != nil {
 			if created == nil || t.Before(*created) {
 				created = t
@@ -277,7 +277,7 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 		resType, summary = "oauth_grant", summaryGrant
 	}
 	title := fmt.Sprintf("%s can %s", appName, label)
-	ev := map[string]any{"scopes": scopes, "cross_account_protection": ov.CrossAccount, "detail_urls": nonNil(page.Details)}
+	ev := map[string]any{"scopes": scopes, "cross_account_protection": ov.CrossAccount, "detail_urls": append([]string{}, page.Details...)}
 	if dep, ok := dependencies[appName]; ok && resType == "oauth_grant" {
 		title += " (" + dep.label + ")"
 		ev["dependency"] = dep.label
@@ -324,29 +324,6 @@ func overviewID(href string) string {
 		id = id[:i]
 	}
 	return id
-}
-
-// union never returns nil.
-func union(a, b []string) []string {
-	out := append([]string{}, a...)
-	have := map[string]bool{}
-	for _, s := range a {
-		have[s] = true
-	}
-	for _, s := range b {
-		if !have[s] {
-			have[s] = true
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func nonNil(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
 
 func firstLine(s string) string {

@@ -48,3 +48,12 @@ func TestDate(t *testing.T) {
 		}
 	}
 }
+
+func TestUnion(t *testing.T) {
+	if got := Union([]string{"a", "b"}, []string{"b", "c", "c"}); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+		t.Errorf("Union = %q", got)
+	}
+	if got := Union(nil, nil); got == nil || len(got) != 0 {
+		t.Errorf("Union(nil, nil) = %#v, want empty and non-nil", got)
+	}
+}
