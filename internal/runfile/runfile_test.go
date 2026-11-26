@@ -54,6 +54,38 @@ func TestHistoryKeepsLegacyAndNewInstancesSeparate(t *testing.T) {
 	}
 }
 
+// A legacy dash-joined file a killed run left empty, or torn in its first line, names no
+// instance: it joins the one instance its name spells, and is left out, and pruned once old, when
+// none does.
+func TestAnEmptyLegacyFileJoinsTheInstanceItsNameSpells(t *testing.T) {
+	out := t.TempDir()
+	path := func(date, name string) string { return filepath.Join(out, date, name) }
+	empty, torn, stray := path("2026-11-01", "github-work.jsonl"), path("2026-11-02", "github-work.jsonl"), path("2026-11-01", "gcp-old.jsonl")
+	for p, body := range map[string]string{empty: "", torn: `{"type":"find`, stray: ""} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current := path("2026-11-25", FileName("github:work"))
+	runtest.Write(t, current, finding.Status{Type: "status", Connector: "github", Instance: "work", State: finding.StateOK})
+	now := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	h, err := History(out, now)
+	if err != nil || len(h) != 1 || !slices.Equal(h["github:work"], []string{empty, torn, current}) {
+		t.Fatalf("history %v, %v", h, err)
+	}
+	removed, err := Prune(out, now, now.AddDate(0, 0, -7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(removed)
+	if want := []string{stray, empty}; !slices.Equal(removed, want) {
+		t.Fatalf("pruned %v, want %v", removed, want)
+	}
+}
+
 func TestHistoryFindsAnInstanceWithALongLabel(t *testing.T) {
 	out := t.TempDir()
 	label := strings.Repeat("Aa", 100)

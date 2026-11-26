@@ -90,16 +90,31 @@ func History(outDir string, now time.Time) (map[string][]string, error) {
 		}
 	}
 	sort.Strings(dates)
-	history := map[string][]string{}
+	files := map[string][]string{}
+	labels := map[string]string{}
+	var orphans []string
 	for _, d := range dates {
-		files, err := filepath.Glob(filepath.Join(outDir, d, "*.jsonl"))
+		day, err := filepath.Glob(filepath.Join(outDir, d, "*.jsonl"))
 		if err != nil {
 			return nil, err
 		}
-		day := make(map[string][]string, len(files))
-		for _, f := range files {
-			label := FileLabel(f)
-			day[label] = append(day[label], f)
+		files[d] = day
+		for _, f := range day {
+			if label, known := fileLabel(f); known {
+				labels[f] = label
+			} else {
+				orphans = append(orphans, f)
+			}
+		}
+	}
+	adoptOrphans(labels, orphans)
+	history := map[string][]string{}
+	for _, d := range dates {
+		day := map[string][]string{}
+		for _, f := range files[d] {
+			if label, ok := labels[f]; ok {
+				day[label] = append(day[label], f)
+			}
 		}
 		for label, paths := range day {
 			// Old and new binaries can write the same instance on the same day. A tie
@@ -127,6 +142,32 @@ func History(outDir string, now time.Time) (map[string][]string, error) {
 	return history, nil
 }
 
+// adoptOrphans files each legacy dash-joined file that holds no record (a run killed before its
+// first) under the one instance its name can spell, by the stem itself or with the colon as a dash.
+// One no instance claims is left out: it names nothing, and Prune deletes it once it is old.
+func adoptOrphans(labels map[string]string, orphans []string) {
+	known := map[string]bool{}
+	for _, l := range labels {
+		known[l] = true
+	}
+	for _, f := range orphans {
+		stem := filenameLabel(f)
+		if known[stem] {
+			labels[f] = stem
+			continue
+		}
+		var claims []string
+		for l := range known {
+			if strings.ReplaceAll(l, ":", "-") == stem {
+				claims = append(claims, l)
+			}
+		}
+		if len(claims) == 1 {
+			labels[f] = claims[0]
+		}
+	}
+}
+
 func filenameLabel(file string) string {
 	stem := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
 	if name, encoded, ok := strings.Cut(stem, "@"); ok && name != "" {
@@ -140,30 +181,39 @@ func filenameLabel(file string) string {
 // FileLabel returns the connector instance for a run file. Legacy filenames that merged the
 // connector and instance with a dash can recover the identity from their records.
 func FileLabel(file string) string {
+	label, _ := fileLabel(file)
+	return label
+}
+
+// fileLabel is FileLabel, and whether it is known: false for a legacy dash-joined or hashed file
+// that holds no record, whose label is only its stem.
+func fileLabel(file string) (string, bool) {
 	stem := filenameLabel(file)
 	base := strings.TrimSuffix(filepath.Base(file), ".jsonl")
 	hashed := strings.HasPrefix(base, "@")
 	if !hashed && (strings.Contains(base, "@") || !strings.Contains(base, "-")) {
-		return stem
+		return stem, true
 	}
-	name, instance := firstIdentity(file)
+	name, instance, records := firstIdentity(file)
 	if name == "" {
 		if end, err := endOf(file); err == nil && end != nil {
-			name, instance = end.Connector, end.Instance
+			name, instance, records = end.Connector, end.Instance, true
 		}
 	}
 	label := finding.Label(name, instance)
 	if name != "" && (hashed && FileName(label) == filepath.Base(file) ||
 		instance != "" && name+"-"+instance == stem) {
-		return label
+		return label, true
 	}
-	return stem
+	return stem, records
 }
 
-func firstIdentity(file string) (string, string) {
+// firstIdentity is the connector and instance the file's first record names, and whether it
+// has one.
+func firstIdentity(file string) (string, string, bool) {
 	f, err := os.Open(file)
 	if err != nil {
-		return "", ""
+		return "", "", false
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -174,10 +224,10 @@ func firstIdentity(file string) (string, string) {
 			Instance  string `json:"instance"`
 		}
 		if json.Unmarshal(sc.Bytes(), &first) == nil {
-			return first.Connector, first.Instance
+			return first.Connector, first.Instance, true
 		}
 	}
-	return "", ""
+	return "", "", false
 }
 
 // Prune removes the run files of days before cutoff that no LatestRuns entry as of now needs (its
