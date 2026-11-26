@@ -93,9 +93,8 @@ func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
 // child that keeps the pipes open after the plugin itself is killed.
 func TestPluginSubprocessesAreBounded(t *testing.T) {
 	t.Run("hung describe", func(t *testing.T) {
-		connector.SetDescribeTimeout(t, 200*time.Millisecond)
 		start := time.Now()
-		if _, err := connector.LoadExternal(connectortest.Script(t, "slow", `sleep 30; `+describing(`{"name":"slow","protocol":2}`))); err == nil || !strings.Contains(err.Error(), "no answer within") {
+		if _, err := connector.LoadExternalWithin(connectortest.Script(t, "slow", `sleep 30; `+describing(`{"name":"slow","protocol":2}`)), 200*time.Millisecond); err == nil || !strings.Contains(err.Error(), "no answer within") {
 			t.Errorf("a describe that hangs: %v", err)
 		}
 		if took := time.Since(start); took > 10*time.Second {

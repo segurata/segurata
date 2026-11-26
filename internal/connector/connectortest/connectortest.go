@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 )
@@ -31,10 +32,11 @@ func Script(t *testing.T, name, body string) string {
 	return p
 }
 
-// Plugin is Script followed by connector.LoadExternal; describe must succeed.
+// Plugin is Script followed by connector.LoadExternal; describe must succeed. It waits longer for
+// describe than the core does, so a loaded machine does not fail the test.
 func Plugin(t *testing.T, name, body string) *connector.External {
 	t.Helper()
-	e, err := connector.LoadExternal(Script(t, name, body))
+	e, err := connector.LoadExternalWithin(Script(t, name, body), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

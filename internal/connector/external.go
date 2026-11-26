@@ -71,24 +71,26 @@ func isExecutable(p string) bool {
 }
 
 // Bounds on a plugin's subprocesses, so one that hangs or floods its output cannot hang the core.
-var describeTimeout = 10 * time.Second
-
 const (
+	describeTimeout  = 10 * time.Second
 	maxDescribeBytes = 1 << 20
 	maxStderrBytes   = 1 << 20
 	maxPlanBytes     = 1 << 20
 )
 
 // LoadExternal runs `<path> describe` and checks that it names the connector its file name does.
-func LoadExternal(path string) (*External, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), describeTimeout)
+func LoadExternal(path string) (*External, error) { return LoadExternalWithin(path, describeTimeout) }
+
+// LoadExternalWithin is LoadExternal waiting up to timeout for describe.
+func LoadExternalWithin(path string, timeout time.Duration) (*External, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := proc.Command(ctx, path, "describe")
 	var raw bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &raw, n: maxDescribeBytes}
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			err = fmt.Errorf("no answer within %v", describeTimeout)
+			err = fmt.Errorf("no answer within %v", timeout)
 		}
 		return nil, fmt.Errorf("describe: %w", err)
 	}

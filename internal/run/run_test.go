@@ -140,12 +140,7 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 }
 
 func TestExternalConnectorSpeaksTheProtocol(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell script connector")
-	}
-	dir := t.TempDir()
-	script := `#!/bin/sh
-case "$1" in
+	ext := connectortest.Plugin(t, "ext", `case "$1" in
 describe) echo '{"name":"ext","version":"1.0","protocol":1,"summary":"test","needs":[],"theme":{"id":"breaches","title":"Breaches"}}';;
 inventory)
   req=$(cat)
@@ -155,20 +150,7 @@ inventory)
   echo '{"type":"scope","scope":"repo:a/b","inspected":false,"reason":"rate limit"}'
   echo '{"type":"log","msg":"done"}';;
 esac
-`
-	if err := os.WriteFile(filepath.Join(dir, "segurata-ext"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	var ext *connector.External
-	for _, e := range connector.Discover() {
-		if e.Describe().Name == "ext" {
-			ext = e
-		}
-	}
-	if ext == nil {
-		t.Fatal("external connector not discovered")
-	}
+`)
 	res, err := Inventory(context.Background(), config.Config{}, mustTargets(t, config.Config{}, ext), t.TempDir(), nil, Lent{})
 	if err != nil || res[0].Err != nil {
 		t.Fatalf("err=%v resErr=%v", err, res[0].Err)
