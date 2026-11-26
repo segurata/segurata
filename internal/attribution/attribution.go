@@ -1,11 +1,7 @@
-// Package attribution decides, offline, whose a leaked secret is: the owner's ("mine"), provably
-// someone else's ("not-mine"), or "unknown". It never uses a secret against a provider. The
-// evidence is what the value itself carries (the AWS account encoded in an access key id, the
-// Slack workspace in a webhook URL, the GCP project number in an OAuth client id), what the file
-// around it says (project_id in a credentials file), compared with the accounts, projects and
-// workspaces the owner is known to hold (config `owned` plus what the aws, gcp, connected-apps and
-// github connectors report). Who committed it and whose repository holds it are hints, never
-// proof. See docs/architecture.md, "Attribution".
+// Package attribution decides offline, never using a secret against a provider, whose a leaked
+// secret is: the accounts its value and the file around it name, compared with the accounts the
+// owner holds. Who committed it and whose repository holds it are hints, never proof. See
+// docs/architecture.md, "Attribution".
 package attribution
 
 import (
@@ -19,9 +15,8 @@ import (
 	"github.com/segurata/segurata/internal/proc"
 )
 
-// Claims are the account identifiers one sighting of a secret names. local-secrets fills them at
-// scan time, where the raw value is at hand, and stores only these derived identifiers: never the
-// key id or the value.
+// Claims are the account identifiers one sighting of a secret names, derived at scan time: never
+// the key id or the value.
 type Claims struct {
 	AWSAccount  string `json:"aws_account,omitempty"`  // decoded from an access key id
 	SlackTeam   string `json:"slack_team,omitempty"`   // T… from a webhook URL
@@ -30,7 +25,6 @@ type Claims struct {
 	AuthorEmail string `json:"author_email,omitempty"` // git history: the commit's author
 }
 
-// Owner is the verdict.
 type Owner string
 
 const (
@@ -63,15 +57,13 @@ func ParseOwners(s string) ([]Owner, error) {
 	return out, nil
 }
 
-// Confidence of a verdict.
 const (
 	High   = "high"   // one of the owner's accounts
 	Medium = "medium" // an account that is none of the owner's known ones
 	Low    = "low"    // no account named: hints only
 )
 
-// Owned are the owner's accounts, projects, workspaces, GitHub owners and emails. Config `owned`
-// gives some; Discover finds the rest in the connectors' runs.
+// Owned is what the owner holds: config `owned` plus what Discover finds in connector runs.
 type Owned struct {
 	AWSAccounts []string `json:"aws_accounts,omitempty"`
 	GCPProjects []string `json:"gcp_projects,omitempty"` // ids and numbers
@@ -80,34 +72,30 @@ type Owned struct {
 	Emails      []string `json:"emails,omitempty"`
 }
 
-// Merge is the union of both, each list sorted, without duplicates (GitHub owners and emails
-// compared without case).
+// Merge is the sorted union of both; GitHub owners and emails compare without case.
 func (o Owned) Merge(p Owned) Owned {
 	return Owned{AWSAccounts: union(o.AWSAccounts, p.AWSAccounts, false), GCPProjects: union(o.GCPProjects, p.GCPProjects, false),
 		SlackTeams: union(o.SlackTeams, p.SlackTeams, false), GitHub: union(o.GitHub, p.GitHub, true), Emails: union(o.Emails, p.Emails, true)}
 }
 
 func union(a, b []string, fold bool) []string {
-	seen := map[string]bool{}
 	var out []string
-	for _, v := range append(append([]string{}, a...), b...) {
-		v = strings.TrimSpace(v)
-		k := v
-		if fold {
-			k = strings.ToLower(v)
-		}
-		if v == "" || seen[k] {
-			continue
-		}
-		seen[k] = true
-		out = append(out, v)
+	for _, v := range slices.Concat(a, b) {
+		insert(&out, strings.TrimSpace(v), fold)
 	}
-	sort.Strings(out)
 	return out
 }
 
-// Facts are every claim a secret's sightings made, plus the GitHub owners of the repositories that
-// hold it.
+// insert adds v to the sorted list unless it is empty or already there.
+func insert(list *[]string, v string, fold bool) {
+	if v != "" && !contains(*list, v, fold) {
+		*list = append(*list, v)
+		sort.Strings(*list)
+	}
+}
+
+// Facts are every claim a secret's sightings made, plus the GitHub owners of the repositories
+// holding it.
 type Facts struct {
 	AWSAccounts  []string `json:"aws_accounts,omitempty"`
 	GCPProjects  []string `json:"gcp_projects,omitempty"`
@@ -117,36 +105,22 @@ type Facts struct {
 	RepoOwners   []string `json:"repo_owners,omitempty"`
 }
 
-// Add folds one sighting's claims in.
 func (f *Facts) Add(c Claims) {
-	add := func(list *[]string, v string, fold bool) {
-		if v != "" && !contains(*list, v, fold) {
-			*list = append(*list, v)
-			sort.Strings(*list)
-		}
-	}
-	add(&f.AWSAccounts, c.AWSAccount, false)
-	add(&f.GCPProjects, c.GCPProject, false)
-	add(&f.SlackTeams, c.SlackTeam, false)
-	add(&f.GitHubLogins, c.GitHubLogin, true)
-	add(&f.AuthorEmails, lower(c.AuthorEmail), false)
+	insert(&f.AWSAccounts, c.AWSAccount, false)
+	insert(&f.GCPProjects, c.GCPProject, false)
+	insert(&f.SlackTeams, c.SlackTeam, false)
+	insert(&f.GitHubLogins, c.GitHubLogin, true)
+	insert(&f.AuthorEmails, lower(c.AuthorEmail), false)
 }
 
-// Clone is a deep copy, so adding to it leaves f alone.
+// Clone is a deep copy.
 func (f Facts) Clone() Facts {
 	return Facts{AWSAccounts: slices.Clone(f.AWSAccounts), GCPProjects: slices.Clone(f.GCPProjects), SlackTeams: slices.Clone(f.SlackTeams),
 		GitHubLogins: slices.Clone(f.GitHubLogins), AuthorEmails: slices.Clone(f.AuthorEmails), RepoOwners: slices.Clone(f.RepoOwners)}
 }
 
-// AddRepoOwner records the GitHub owner of a repository that holds the secret.
-func (f *Facts) AddRepoOwner(owner string) {
-	if owner = strings.TrimSpace(owner); owner != "" && !slices.ContainsFunc(f.RepoOwners, func(o string) bool { return strings.EqualFold(o, owner) }) {
-		f.RepoOwners = append(f.RepoOwners, owner)
-		sort.Strings(f.RepoOwners)
-	}
-}
+func (f *Facts) AddRepoOwner(owner string) { insert(&f.RepoOwners, strings.TrimSpace(owner), true) }
 
-// Result is a verdict with its confidence, the reasons behind it and the facts it read.
 type Result struct {
 	Owner      Owner    `json:"owner"`
 	Confidence string   `json:"confidence"`
@@ -154,7 +128,6 @@ type Result struct {
 	Facts      Facts    `json:"facts"`
 }
 
-// account is one kind of account a secret can name.
 type account struct {
 	label, key string // "AWS account", "aws_accounts"
 	named      []string
@@ -162,11 +135,8 @@ type account struct {
 	fold       bool
 }
 
-// Attribute combines the facts with what the owner holds. A secret is mine when it names one of the
-// owner's accounts, projects or workspaces; not-mine when it names only ones that are none of the
-// owner's (and at least one of the owner's of that kind is known, so the comparison means
-// something); unknown otherwise. Commit authorship and repository ownership are reported as
-// hints and never decide.
+// Attribute is mine when the facts name one of the owner's accounts; not-mine when they name only
+// accounts of kinds the owner holds some of, none of them the owner's; unknown otherwise.
 func Attribute(f Facts, o Owned) Result {
 	kinds := []account{
 		{"AWS account", "aws_accounts", f.AWSAccounts, o.AWSAccounts, false},
@@ -207,16 +177,15 @@ func Attribute(f Facts, o Owned) Result {
 	return r
 }
 
-// Known is what the tracker knew when a scan started: the owner's accounts and, by fingerprint, the
-// facts earlier syncs gathered about each secret. A connector that must not act on someone else's
-// secret (the liveness check of local-secrets) asks it for a verdict at scan time.
+// Known is what the tracker knew when a scan started: the owner's accounts and, by fingerprint,
+// the facts earlier syncs gathered.
 type Known struct {
 	Owned Owned
 	Facts map[string]Facts
 }
 
-// Of is the verdict on the secret with fingerprint fp: the facts known before, plus the claims this
-// scan's sightings of it make, against the owner's accounts. Unknown without a Known.
+// Of is the verdict on the secret with fingerprint fp, adding this scan's claims; Unknown on a nil
+// Known.
 func (k *Known) Of(fp string, claims []Claims) Owner {
 	if k == nil {
 		return Unknown
@@ -228,7 +197,6 @@ func (k *Known) Of(fp string, claims []Claims) Owner {
 	return Attribute(f, k.Owned).Owner
 }
 
-// hints are what authorship and repository ownership suggest.
 func hints(f Facts, o Owned) []string {
 	var out []string
 	var by, others []string
@@ -266,8 +234,7 @@ func contains(list []string, v string, fold bool) bool {
 	return slices.ContainsFunc(list, func(x string) bool { return x == v || fold && strings.EqualFold(x, v) })
 }
 
-// GitEmail is the email `git config user.email` gives (global or system), or "" when git or the
-// setting is missing: the owner's commit email by default.
+// GitEmail is `git config user.email`, the owner's commit email by default; "" without one.
 func GitEmail() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

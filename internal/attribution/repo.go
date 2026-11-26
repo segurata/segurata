@@ -8,10 +8,8 @@ import (
 	"strings"
 )
 
-// RepoOwner is the GitHub owner (user or organization) of the repository that holds path, read
-// offline from its origin remote in .git/config; ok is false outside a repository, without an
-// origin, or with a remote that is not on GitHub. Worktrees are followed to their main
-// repository's config.
+// RepoOwner is the GitHub owner of the repository holding path, read from its origin remote;
+// worktrees are followed to their main repository's config.
 func RepoOwner(path string) (string, bool) {
 	cfg := gitConfig(path)
 	if cfg == "" {
@@ -20,8 +18,8 @@ func RepoOwner(path string) (string, bool) {
 	return githubOwner(originURL(cfg))
 }
 
-// gitConfig finds the config file of the repository holding path: the nearest .git above it, a
-// directory or a worktree's "gitdir:" file.
+// gitConfig is the config file of the nearest .git above path: a directory or a worktree's
+// "gitdir:" file.
 func gitConfig(path string) string {
 	for dir := filepath.Clean(path); ; dir = filepath.Dir(dir) {
 		dot := filepath.Join(dir, ".git")
@@ -56,7 +54,6 @@ func gitConfig(path string) string {
 	}
 }
 
-// originURL is the url of [remote "origin"] in a git config file.
 func originURL(cfg string) string {
 	f, err := os.Open(cfg)
 	if err != nil {
@@ -78,8 +75,8 @@ func originURL(cfg string) string {
 	return ""
 }
 
-// githubRemote reads the owner from git@github.com:o/r.git, ssh://git@github.com/o/r and
-// https://github.com/o/r(.git), with or without credentials or a port.
+// githubRemote reads the owner of scp-style, ssh:// and https:// remotes, credentials and port
+// allowed.
 var githubRemote = regexp.MustCompile(`(?i)^(?:[a-z+]+://)?(?:[^@/]+@)?github\.com(?::\d+)?[:/]([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/`)
 
 func githubOwner(url string) (string, bool) {

@@ -1,6 +1,7 @@
 package attribution
 
 import (
+	"cmp"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
@@ -8,18 +9,12 @@ import (
 	"strings"
 )
 
-// awsKeyID is an AWS access key id: a four-letter prefix (AKIA long-term, ASIA temporary) and 16
-// base32 characters.
 var awsKeyID = regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z2-7]{16}\b`)
 
-// AWSAccountFromKeyID decodes the AWS account id an access key id carries, offline: base32-decode
-// the 16 characters after the four-letter prefix, read the first 6 bytes as a big-endian 48-bit
-// integer, mask it with 0x7fffffffff80 and shift it right by 7 bits. Technique published by Tal
-// Be'ery ("A short note on AWS KEY ID", 2023), reproduced at
-// https://hackingthe.cloud/aws/enumeration/get-account-id-from-keys/; AKIASP2TPHJSQH3FJXYZ decodes
-// to 171436882533, the example of the aws_account_id_from_key_id crate. Key ids of the older
-// format, whose fifth character is I or J, do not carry the account: ok is false for them, and for
-// anything that is not a key id.
+// AWSAccountFromKeyID decodes the account an access key id carries: the first 6 base32-decoded
+// bytes after the prefix, big-endian, masked with 0x7fffffffff80 and shifted right by 7 (Tal
+// Be'ery, 2023; https://hackingthe.cloud/aws/enumeration/get-account-id-from-keys/). Ids of the
+// older format, fifth character I or J, carry none.
 func AWSAccountFromKeyID(id string) (string, bool) {
 	if len(id) != 20 || !awsKeyID.MatchString(id) || id[4] == 'I' || id[4] == 'J' {
 		return "", false
@@ -35,46 +30,38 @@ func AWSAccountFromKeyID(id string) (string, bool) {
 }
 
 var (
-	// slackHook is an incoming webhook or workflow trigger URL, whose first path element is the
-	// workspace (team) id.
-	slackHook = regexp.MustCompile(`hooks\.slack\.com/(?:services|workflows|triggers)/(T[A-Z0-9]{6,})/`)
-	// googleClientID is an OAuth client id: the GCP project number, a dash, a random label.
+	slackHook      = regexp.MustCompile(`hooks\.slack\.com/(?:services|workflows|triggers)/(T[A-Z0-9]{6,})/`)
 	googleClientID = regexp.MustCompile(`\b(\d{6,})-[a-z0-9]+\.apps\.googleusercontent\.com\b`)
 )
 
-// SlackTeam is the workspace id (T…) a Slack webhook URL names. Slack tokens (xox…) carry none
-// that is documented.
-func SlackTeam(s string) (string, bool) {
+// slackTeam is the workspace a webhook URL names; Slack tokens (xox…) carry none documented.
+func slackTeam(s string) (string, bool) {
 	if m := slackHook.FindStringSubmatch(s); m != nil {
 		return m[1], true
 	}
 	return "", false
 }
 
-// GCPProjectNumber is the project number a Google OAuth client id
-// (<number>-<label>.apps.googleusercontent.com) starts with. API keys (AIza…) carry no project:
-// only the file around them can tell (FromContext).
-func GCPProjectNumber(s string) (string, bool) {
+// gcpProjectOfClientID is the project number an OAuth client id starts with; API keys (AIza…)
+// carry none.
+func gcpProjectOfClientID(s string) (string, bool) {
 	if m := googleClientID.FindStringSubmatch(s); m != nil {
 		return m[1], true
 	}
 	return "", false
 }
 
-// FromValue reads the claims a secret's own value carries: the AWS account of an access key id
-// (alone, or inside a pre-signed URL), the Slack workspace of a webhook, the GCP project of an
-// OAuth client id.
+// FromValue reads the claims a secret's own value carries.
 func FromValue(value string) Claims {
 	var c Claims
 	if id := awsKeyID.FindString(value); id != "" {
 		c.AWSAccount, _ = AWSAccountFromKeyID(id)
 	}
-	c.SlackTeam, _ = SlackTeam(value)
-	c.GCPProject, _ = GCPProjectNumber(value)
+	c.SlackTeam, _ = slackTeam(value)
+	c.GCPProject, _ = gcpProjectOfClientID(value)
 	return c
 }
 
-// Context patterns: what a credentials file says about whose the secret next to it is.
 var (
 	gcpProjectID = []*regexp.Regexp{
 		regexp.MustCompile(`"project_id"\s*:\s*"([a-z][a-z0-9-]{4,28}[a-z0-9])"`),                     // service-account key, client_secret.json, google-services.json
@@ -86,10 +73,8 @@ var (
 	}
 )
 
-// FromContext reads the claims the text around a secret makes: the AWS account of the access key
-// id next to a secret access key, the GCP project of a credentials file (project_id,
-// project_number, an OAuth client id). A kind with two different values in the text claims
-// nothing: the file mixes accounts, so it cannot say which one the secret belongs to.
+// FromContext reads the claims the text around a secret makes. A kind with two different values
+// claims nothing: the file mixes accounts and cannot say which is the secret's.
 func FromContext(text string) Claims {
 	var c Claims
 	c.AWSAccount = only(func(add func(string)) {
@@ -118,7 +103,7 @@ func FromContext(text string) Claims {
 	return c
 }
 
-// only is the one distinct value collect adds, or "" for none or several.
+// only is the one distinct value collect adds, "" for none or several.
 func only(collect func(add func(string))) string {
 	seen := ""
 	several := false
@@ -136,28 +121,19 @@ func only(collect func(add func(string))) string {
 	return seen
 }
 
-// Or fills the claims c lacks from o: a value's own claims win over its context's.
+// Or fills the claims c lacks from o.
 func (c Claims) Or(o Claims) Claims {
-	pick := func(a, b string) string {
-		if a != "" {
-			return a
-		}
-		return b
-	}
-	return Claims{AWSAccount: pick(c.AWSAccount, o.AWSAccount), SlackTeam: pick(c.SlackTeam, o.SlackTeam),
-		GCPProject: pick(c.GCPProject, o.GCPProject), GitHubLogin: pick(c.GitHubLogin, o.GitHubLogin), AuthorEmail: pick(c.AuthorEmail, o.AuthorEmail)}
+	return Claims{AWSAccount: cmp.Or(c.AWSAccount, o.AWSAccount), SlackTeam: cmp.Or(c.SlackTeam, o.SlackTeam),
+		GCPProject: cmp.Or(c.GCPProject, o.GCPProject), GitHubLogin: cmp.Or(c.GitHubLogin, o.GitHubLogin), AuthorEmail: cmp.Or(c.AuthorEmail, o.AuthorEmail)}
 }
 
-// NamesAccount reports whether a claim names an account, project or workspace: what can make a
-// verdict, unlike the commit author, which is only a hint.
+// NamesAccount reports whether a claim can make a verdict, unlike the commit author.
 func (c Claims) NamesAccount() bool {
 	return c.AWSAccount != "" || c.SlackTeam != "" || c.GCPProject != "" || c.GitHubLogin != ""
 }
 
-// FromAccount reads the claims of the account a provider says a secret signs in as, in the
-// "<provider>:<id>" form the liveness check records: an AWS account id, a Slack workspace id, a
-// GitHub login. Other providers' accounts (a Hugging Face or npm user) name no account attribution
-// knows, and claim nothing.
+// FromAccount reads the claims of a liveness Account, "<provider>:<id>"; providers attribution
+// knows nothing of claim nothing.
 func FromAccount(account string) Claims {
 	kind, id, _ := strings.Cut(account, ":")
 	switch {
@@ -172,7 +148,6 @@ func FromAccount(account string) Claims {
 	return Claims{}
 }
 
-// Empty reports whether no claim is set.
 func (c Claims) Empty() bool { return c == Claims{} }
 
 func lower(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
