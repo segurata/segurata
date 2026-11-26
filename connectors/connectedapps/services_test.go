@@ -475,3 +475,17 @@ func TestDecodeGivesTheZeroValueForAnotherShape(t *testing.T) {
 		t.Fatalf("decode = %+v", p)
 	}
 }
+
+// Every readiness check gets the zero page when the page returns something of another shape, and
+// must not take it for a loaded page.
+func TestNoServiceTakesAPageOfAnotherShapeForReady(t *testing.T) {
+	for _, other := range []any{"not a page", map[string]any{}, []any{1, 2}} {
+		for _, s := range services {
+			b := &fakeBrowser{other: other}
+			run(t, b, ghFake{}, s.name)
+			if len(b.accepted) > 0 {
+				t.Errorf("%s accepted %v for %v", s.name, other, b.accepted)
+			}
+		}
+	}
+}

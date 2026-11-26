@@ -33,6 +33,10 @@ type fakeBrowser struct {
 	// them until its tries run out (a sign-in page with nothing on it, a list never fetched).
 	neverReady map[string]bool
 	unready    map[string]bool
+	// other, when set, is the value of every page not in pages; accepted records those of them
+	// a readiness check accepted.
+	other    any
+	accepted []string
 }
 
 func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
@@ -44,7 +48,10 @@ func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool, tries 
 	}
 	v, ok := b.pages[url]
 	if !ok {
-		v = map[string]any{}
+		v = b.other
+		if v == nil {
+			v = map[string]any{}
+		}
 	}
 	raw, _ := json.Marshal(v)
 	// Polled like the real browser: the same value until ready accepts it or tries run out.
@@ -52,7 +59,10 @@ func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool, tries 
 	for i := 0; i < tries && !accepted; i++ {
 		accepted = ready(raw)
 	}
-	if _, given := b.pages[url]; given && !accepted {
+	if !ok && accepted && b.other != nil {
+		b.accepted = append(b.accepted, url)
+	}
+	if ok && !accepted {
 		if b.unready == nil {
 			b.unready = map[string]bool{}
 		}
