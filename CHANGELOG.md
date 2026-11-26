@@ -40,7 +40,8 @@ Sixteen built-in connectors, each read-only on the systems it inspects:
 ### Platforms and distribution
 
 - macOS, Linux and Windows on amd64 and arm64. CI runs the tests on macOS (arm64), Linux (amd64)
-  and Windows (amd64); each release builds all six targets.
+  and Windows (amd64), on Windows both as an administrator and as a standard user; each release
+  builds all six targets.
 - Release archives signed with Sigstore (keyless, by this repository's release workflow) with an
   SPDX SBOM per archive; a Homebrew cask in `segurata/tap`; `go install` with Go 1.26 or later.
 
