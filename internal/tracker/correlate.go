@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -214,7 +215,7 @@ func (t *Tracker) correlate(folded map[string]*run) (claims map[string]claim, po
 				}
 			}
 		}
-		for _, name := range sortedKeys(r.fingerprints) {
+		for _, name := range slices.Sorted(maps.Keys(r.fingerprints)) {
 			it := x.byFP[r.fingerprints[name]]
 			if it == nil {
 				continue
@@ -243,15 +244,6 @@ func keyFactsOf(f finding.Finding, c *credential) *KeyFacts {
 		k.SpendMonthUSD = &v
 	}
 	return k
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // attachLive puts on each rotate item the claims and possible matches of this sync, replacing the
@@ -400,16 +392,7 @@ func (it *Item) reopenProvenLive(now time.Time) {
 
 // ignoredAfterProof reports whether the item's latest ignore came after a proof that it is live.
 func (it *Item) ignoredAfterProof() bool {
-	ignored := false
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Action {
-		case actIgnore:
-			ignored = true
-		case actProvenLive:
-			return ignored
-		}
-	}
-	return false
+	return it.latestOf(actProvenLive) != "" && it.latestOf(actIgnore, actProvenLive) == actIgnore
 }
 
 // live are the connector findings attached to a rotate item that are still reported: evidence the

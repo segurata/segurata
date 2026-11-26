@@ -277,7 +277,7 @@ func TestAWSKeyIDAloneIsP2(t *testing.T) {
 		t.Errorf("title %q", a.Title)
 	}
 	a.Secret.Liveness = &secretrisk.Liveness{State: secretrisk.Live, Provider: "aws-keys", CheckedAt: t0, Rules: secretrisk.LivenessRules}
-	a.refreshSecret()
+	a.derive()
 	if a.Priority != secretrisk.P0 {
 		t.Errorf("an active key whose id leaked: %s", a.Priority)
 	}
@@ -402,6 +402,31 @@ func TestUpstreamLocationsDoNotRaisePriority(t *testing.T) {
 	l.SyncSecrets([]Sighting{sight(mine), sight(theirs)}, t0, true)
 	if it.Priority != secretrisk.P0 {
 		t.Errorf("the owner's token pushed to a third-party repository: %s", it.Priority)
+	}
+}
+
+// Spots that tie in rank (both upstream copies) are listed in one order every time, not in map order.
+func TestAlsoReasonsHaveAStableOrder(t *testing.T) {
+	l := &Tracker{NextID: 1}
+	upstream := func(path, origin string) Sighting {
+		e := ev("aaaaaaaaaaaaaaaa", "github", path, "gitleaks", "repo", "", true, true)
+		e.Origin = origin
+		return sight(e)
+	}
+	l.SyncSecrets([]Sighting{
+		sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.zshrc", "scan", "config", "644", false, false)),
+		upstream("~/src/a/ci.yml", secretrisk.OriginThirdParty),
+		upstream("~/src/b/ci.yml", secretrisk.OriginForkUpstream),
+	}, t0, true)
+	it := l.Items[0]
+	want := strings.Join(it.Secret.Reasons, "\n")
+	if !strings.Contains(want, "fork inherited") || strings.Index(want, "fork inherited") > strings.Index(want, "third-party") {
+		t.Fatalf("reasons %q", it.Secret.Reasons)
+	}
+	for range 50 {
+		if it.derive(); strings.Join(it.Secret.Reasons, "\n") != want {
+			t.Fatalf("reasons changed order:\n%s\n---\n%s", want, strings.Join(it.Secret.Reasons, "\n"))
+		}
 	}
 }
 

@@ -221,16 +221,6 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool)
 	}
 }
 
-// factor is the score's factor of that name, or a neutral one.
-func (s Score) factor(name string) Factor {
-	for _, f := range s.Factors {
-		if f.Name == name {
-			return f
-		}
-	}
-	return Factor{Name: name, Value: 1}
-}
-
 // secretsDoc is the entry standing for the secrets of one priority: how many, and the next one to
 // rotate with why and the command that does it.
 func secretsDoc(p secretrisk.Priority, queue []*Item) doc.Item {
@@ -298,13 +288,19 @@ func itemDoc(it *Item, t *Tracker) doc.Item {
 	}
 	out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: it.Title, Meta: strings.Join(meta, " · ")}
 	if n := it.Next; n != nil {
-		out.Details = append(out.Details, doc.Fold("Next ("+string(n.Who)+")", n.Action, actionLen))
-		if n.Command != "" {
-			out.Details = append(out.Details, doc.Detail{Label: "Command", Text: n.Command, Kind: doc.DCode})
-		}
-		if n.URL != "" {
-			out.Details = append(out.Details, doc.Detail{Label: "Where", Text: n.URL, Kind: doc.DLink})
-		}
+		out.Details = nextDetails("Next ("+string(n.Who)+")", n)
+	}
+	return out
+}
+
+// nextDetails are a next step's action, under label, and its command and page when it has them.
+func nextDetails(label string, n *Next) []doc.Detail {
+	out := []doc.Detail{doc.Fold(label, n.Action, actionLen)}
+	if n.Command != "" {
+		out = append(out, doc.Detail{Label: "Command", Text: n.Command, Kind: doc.DCode})
+	}
+	if n.URL != "" {
+		out = append(out, doc.Detail{Label: "Where", Text: n.URL, Kind: doc.DLink})
 	}
 	return out
 }

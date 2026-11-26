@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -382,12 +383,27 @@ func (it *Item) unreclassify(now time.Time) bool {
 
 // lastDetail is the detail of the latest history event with that action, or "".
 func (it *Item) lastDetail(action string) string {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		if it.History[i].Action == action {
-			return it.History[i].Detail
-		}
+	if i := it.latestIndex(action); i >= 0 {
+		return it.History[i].Detail
 	}
 	return ""
+}
+
+// latestOf is which of the actions the history logged last, or "".
+func (it *Item) latestOf(actions ...string) string {
+	if i := it.latestIndex(actions...); i >= 0 {
+		return it.History[i].Action
+	}
+	return ""
+}
+
+func (it *Item) latestIndex(actions ...string) int {
+	for i, e := range slices.Backward(it.History) {
+		if slices.Contains(actions, e.Action) {
+			return i
+		}
+	}
+	return -1
 }
 
 // rotatedSeen handles a done item seen again. After a real rotation the old value is revoked, so
@@ -616,36 +632,52 @@ func impactByName(name string) secretrisk.Impact {
 	return secretrisk.Medium
 }
 
-// refreshSecret recomputes everything derived from a rotate item's locations: priority, severity,
-// reasons, used_in, rotate_url, title and next step.
-func (it *Item) refreshSecret() {
+// derive recomputes what a rotate item's locations decide: priority, severity, reasons, used_in,
+// rotate_url, title and next step. Other items get those from sync.
+func (it *Item) derive() {
 	s := it.Secret
+	if s == nil {
+		return
+	}
 	t := secretrisk.TypeFor(s.Type, s.Redacted)
 	s.Service, s.RotateURL = t.Service, t.RotateURL
-	worst, ok := it.worstSpot()
-	it.Priority = ""
-	if ok {
-		it.Priority = secretrisk.PriorityOf(impactByName(s.Impact), worst.Level)
-	}
-	// A connector that reports the same credential proves it live: the worse of the two priorities
-	// holds, and a live key that left the machine is P0 (see correlate.go).
+	worst, located := it.worstSpot()
 	live := it.live()
+	it.Priority = it.secretPriority(worst, located, live)
+	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
+	s.Reasons = it.secretReasons(t, worst, located, live)
+	s.UsedIn = it.usedIn()
+	it.secretTitleAndNext()
+}
+
+// secretPriority is the priority the worst location gives, raised to the worst of the connectors
+// that report the secret live, P0 for a live key that left the machine.
+func (it *Item) secretPriority(worst secretrisk.Spot, located bool, live []FindingRef) secretrisk.Priority {
+	if it.liveAndLeaked() {
+		return secretrisk.P0
+	}
+	var p secretrisk.Priority
+	if located {
+		p = secretrisk.PriorityOf(impactByName(it.Secret.Impact), worst.Level)
+	}
 	for _, r := range live {
-		if p := priorityOf(r.Severity); p != "" && p.Rank() < it.Priority.Rank() {
-			it.Priority = p
+		if lp := priorityOf(r.Severity); lp != "" && lp.Rank() < p.Rank() {
+			p = lp
 		}
 	}
 	if it.livenessIs(secretrisk.Unregistered) && len(live) == 0 {
-		it.Priority = it.Priority.Lower()
+		p = p.Lower()
 	}
+	return p
+}
+
+func (it *Item) secretReasons(t secretrisk.Type, worst secretrisk.Spot, located bool, live []FindingRef) []string {
 	var reasons []string
 	if it.liveAndLeaked() {
-		it.Priority = secretrisk.P0
 		if primary, ok := it.primaryLocation(); ok {
 			reasons = append(reasons, "live key, leaked in "+primary.name())
 		}
 	}
-	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
 	if it.reopenedStillPresent() {
 		reasons = append(reasons, StillPresent)
 	}
@@ -658,44 +690,48 @@ func (it *Item) refreshSecret() {
 	for _, r := range it.Possible {
 		reasons = append(reasons, "possibly: "+r.Label()+": "+r.Title)
 	}
-	if ok {
+	if located {
 		reasons = append(reasons, secretrisk.Reason(t, worst))
-		counts := map[string]int{}
-		phrase := map[string]string{}
-		for _, l := range it.current() {
-			sp := l.Spot()
-			counts[sp.Label]++
-			phrase[sp.Label] = sp.Phrase
-		}
-		labels := make([]string, 0, len(counts))
-		for lb := range counts {
-			labels = append(labels, lb)
-		}
-		sort.Slice(labels, func(i, j int) bool { return spotOrder[labels[i]] > spotOrder[labels[j]] })
-		for _, lb := range labels {
-			n := counts[lb]
-			if lb == worst.Label {
-				n--
-			}
-			if n > 0 {
-				reasons = append(reasons, fmt.Sprintf("also %s (%d %s)", phrase[lb], n, textfmt.Plural(n, "place", "places")))
-			}
-		}
+		reasons = append(reasons, it.alsoReasons(worst)...)
 	}
 	if it.Owner() == attribution.Mine && it.upstreamCopy() {
 		reasons = append(reasons, "yours by attribution ("+it.Secret.Attribution.Reasons[0]+"), so its copies in other people's repositories count in full")
 	}
-	s.Reasons = reasons
-	seen := map[string]bool{}
-	s.UsedIn = []string{}
-	for _, l := range s.Locations {
-		if l.working() && !l.Gone && !seen[l.Path] {
-			seen[l.Path] = true
-			s.UsedIn = append(s.UsedIn, l.Path)
+	return reasons
+}
+
+// alsoReasons count the current locations of each other kind of spot than the worst one, worst
+// first: "also in shell history (2 places)".
+func (it *Item) alsoReasons(worst secretrisk.Spot) []string {
+	counts := map[string]int{}
+	phrase := map[string]string{}
+	for _, l := range it.current() {
+		sp := l.Spot()
+		counts[sp.Label]++
+		phrase[sp.Label] = sp.Phrase
+	}
+	counts[worst.Label]--
+	labels := slices.Collect(maps.Keys(counts))
+	slices.SortFunc(labels, func(a, b string) int { return cmp.Or(spotOrder[b]-spotOrder[a], strings.Compare(a, b)) })
+	var out []string
+	for _, lb := range labels {
+		if n := counts[lb]; n > 0 {
+			out = append(out, fmt.Sprintf("also %s (%d %s)", phrase[lb], n, textfmt.Plural(n, "place", "places")))
 		}
 	}
-	sort.Strings(s.UsedIn)
-	it.secretTitleAndNext()
+	return out
+}
+
+// usedIn are the working files that still hold the secret, sorted.
+func (it *Item) usedIn() []string {
+	out := []string{}
+	for _, l := range it.Secret.Locations {
+		if l.working() && !l.Gone && !slices.Contains(out, l.Path) {
+			out = append(out, l.Path)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // secretTitleAndNext names a rotate item and says how to rotate it.
@@ -847,46 +883,20 @@ func (it *Item) lastCommitted() string {
 // upstreamCopy reports whether a location is in someone else's repository or in history a fork
 // inherited.
 func (it *Item) upstreamCopy() bool {
-	for _, l := range it.Secret.Locations {
-		if l.Origin == secretrisk.OriginThirdParty || l.Origin == secretrisk.OriginForkUpstream {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(it.Secret.Locations, func(l Location) bool {
+		return l.Origin == secretrisk.OriginThirdParty || l.Origin == secretrisk.OriginForkUpstream
+	})
 }
 
 // owned reports whether a location is in one of the owner's repositories.
 func (it *Item) owned() bool {
-	for _, l := range it.Secret.Locations {
-		if l.Origin == secretrisk.OriginOwned {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(it.Secret.Locations, func(l Location) bool { return l.Origin == secretrisk.OriginOwned })
 }
 
-// reopenedStillPresent: the last done/reopen event is an automatic reopen.
+// reopenedStillPresent: the last done or reopen is an automatic reopen.
 func (it *Item) reopenedStillPresent() bool {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Action {
-		case actAutoReopen:
-			return it.Status != Done
-		case actDone, actReopen:
-			return false
-		}
-	}
-	return false
+	return it.Status != Done && it.latestOf(actAutoReopen, actDone, actReopen) == actAutoReopen
 }
 
 // notedHistoryOnly reports whether the history-only note was logged since the last done.
-func (it *Item) notedHistoryOnly() bool {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Action {
-		case actHistory:
-			return true
-		case actDone:
-			return false
-		}
-	}
-	return false
-}
+func (it *Item) notedHistoryOnly() bool { return it.latestOf(actHistory, actDone) == actHistory }

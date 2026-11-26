@@ -91,9 +91,6 @@ func (it *Item) setStatus(at time.Time, st Status, event, action, detail string)
 	it.Log(at, event, action, detail)
 }
 
-// leaveAccepted drops an acceptance when the owner moves the item on by hand.
-func (it *Item) leaveAccepted() { it.Accepted = nil }
-
 // start marks the item in progress.
 func (it *Item) start(at time.Time, note string) error {
 	if it.Closed() {
@@ -107,7 +104,7 @@ func (it *Item) start(at time.Time, note string) error {
 // or reopens it when one does. A rotate item records the locations known at this moment, which
 // decide whether a later sighting reopens it (see rotatedSeen).
 func (it *Item) Done(at time.Time, note string) {
-	it.leaveAccepted()
+	it.Accepted = nil
 	it.setStatus(at, Done, EvStatus, actDone, note)
 	if s := it.Secret; s != nil {
 		s.RotatedLocations = make([]string, 0, len(s.Locations))
@@ -119,6 +116,13 @@ func (it *Item) Done(at time.Time, note string) {
 	it.derive()
 }
 
+// verifyDone closes the item as done, verified by a run.
+func (it *Item) verifyDone(now time.Time, detail string) {
+	it.setStatus(now, Done, EvVerified, actAutoDone, detail)
+	at := now.UTC()
+	it.VerifiedAt = &at
+}
+
 // snooze hides the item until a date (YYYY-MM-DD, a day in at's zone, as Accept reads it) after at.
 func (it *Item) snooze(at time.Time, until, note string) error {
 	d, err := time.ParseInLocation(time.DateOnly, until, at.Location())
@@ -128,7 +132,7 @@ func (it *Item) snooze(at time.Time, until, note string) error {
 	if !d.After(at) {
 		return fmt.Errorf("--until %s is not in the future", until)
 	}
-	it.leaveAccepted()
+	it.Accepted = nil
 	it.setStatus(at, Snoozed, EvStatus, actSnooze, strings.TrimSpace("until "+until+" "+note))
 	it.SnoozedUntil = until
 	return nil
@@ -139,14 +143,14 @@ func (it *Item) ignore(at time.Time, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return errors.New("ignore needs --reason (why this is not a real problem)")
 	}
-	it.leaveAccepted()
+	it.Accepted = nil
 	it.setStatus(at, Ignored, EvStatus, actIgnore, reason)
 	return nil
 }
 
 // reopen puts the item back on the open list.
 func (it *Item) reopen(at time.Time, note string) {
-	it.leaveAccepted()
+	it.Accepted = nil
 	it.setStatus(at, Open, EvReopened, actReopen, note)
 	if it.Secret != nil {
 		it.Secret.RotatedLocations = nil

@@ -565,9 +565,7 @@ func (t *Tracker) lifecycle(it *Item, folded map[string]*run, now time.Time, rep
 			if it.Kind == KindSetup {
 				detail = "verified (status no longer reported)"
 			}
-			it.setStatus(now, Done, EvVerified, actAutoDone, detail)
-			at := now.UTC()
-			it.VerifiedAt = &at
+			it.verifyDone(now, detail)
 			rep.Verified++
 		}
 	case Done:
@@ -634,14 +632,6 @@ func (it *Item) expire(now time.Time, rep *SyncReport) {
 	case it.Status == Accepted && it.AcceptanceExpired(now):
 		it.setStatus(now, Open, EvStatus, actAcceptLapse, "acceptance ended "+it.Accepted.Until)
 		rep.Lapsed++
-	}
-}
-
-// derive recomputes what an item's own data determines; for a rotate item, everything its
-// locations decide. Other items get title, severity and priority from sync.
-func (it *Item) derive() {
-	if it.Secret != nil {
-		it.refreshSecret()
 	}
 }
 

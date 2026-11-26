@@ -127,7 +127,7 @@ func (it *Item) closeDead(now time.Time) {
 	if it.reopenedSince(l.CheckedAt) || it.inWorkingFile() {
 		return
 	}
-	it.leaveAccepted()
+	it.Accepted = nil
 	it.setStatus(now, Done, EvStatus, actDead, fmt.Sprintf("key no longer valid (checked %s: %s)", l.CheckedAt.Format(time.DateOnly), l.Said()))
 	it.derive()
 }
@@ -148,17 +148,7 @@ func (it *Item) reopenUndead(now time.Time) {
 }
 
 // closedDead reports whether the item's latest done came from a dead check rather than the owner.
-func (it *Item) closedDead() bool {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Action {
-		case actDead:
-			return true
-		case actDone, actAutoDone:
-			return false
-		}
-	}
-	return false
-}
+func (it *Item) closedDead() bool { return it.latestOf(actDead, actDone, actAutoDone) == actDead }
 
 // livenessClaims are the claims of the account the latest check says the secret signs in as.
 func (it *Item) livenessClaims() attribution.Claims {

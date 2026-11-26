@@ -95,7 +95,8 @@ func (t *Tracker) coverageLine(instances []string, now time.Time) string {
 		case !info.Finished:
 			s += ", unfinished (no run_end)"
 		case info.Error != "":
-			s += ", failed: " + firstSentence(info.Error)
+			head, _ := textfmt.Clip(info.Error, 120)
+			s += ", failed: " + head
 		case !info.Complete && len(info.Skipped) > 0:
 			scope, _, _ := strings.Cut(info.Skipped[0], ": ")
 			what := scope + " not checked"
@@ -128,11 +129,6 @@ func age(d time.Duration) string {
 		return fmt.Sprintf("%d h ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%d d ago", int(d.Hours()/24))
-}
-
-func firstSentence(s string) string {
-	head, _ := textfmt.Clip(s, 120)
-	return head
 }
 
 // gap is one area of the plan (docs/plan.md) that may go unaudited on this machine, and the step
@@ -210,9 +206,7 @@ func (t *Tracker) syncCoverage(now time.Time) CoverageReport {
 		switch {
 		case !known:
 		case covered && it != nil && it.Active(now):
-			it.setStatus(now, Done, EvVerified, actAutoDone, "covered: "+how)
-			at := now.UTC()
-			it.VerifiedAt = &at
+			it.verifyDone(now, "covered: "+how)
 			rep.Covered++
 		case covered:
 		case it == nil:
@@ -233,10 +227,10 @@ func (t *Tracker) syncCoverage(now time.Time) CoverageReport {
 
 // lastAction is the action of the latest status-changing history event.
 func (it *Item) lastAction() string {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Event {
+	for _, e := range slices.Backward(it.History) {
+		switch e.Event {
 		case EvStatus, EvVerified, EvReopened, EvReclassified, EvMerged:
-			return it.History[i].Action
+			return e.Action
 		}
 	}
 	return ""
@@ -248,14 +242,8 @@ func notAudited(d *doc.Doc, items []*Item, now time.Time) {
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Theme == coverageTheme && it.Active(now) }) {
 		out := doc.Item{Badge: "not audited", Text: it.Title, Meta: it.ID}
-		if n := it.Next; n != nil {
-			out.Details = append(out.Details, doc.Fold("Cover it", n.Action, actionLen))
-			if n.Command != "" {
-				out.Details = append(out.Details, doc.Detail{Label: "Command", Text: n.Command, Kind: doc.DCode})
-			}
-			if n.URL != "" {
-				out.Details = append(out.Details, doc.Detail{Label: "Where", Text: n.URL, Kind: doc.DLink})
-			}
+		if it.Next != nil {
+			out.Details = nextDetails("Cover it", it.Next)
 		}
 		list = append(list, out)
 	}

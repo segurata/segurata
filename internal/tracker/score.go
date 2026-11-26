@@ -62,6 +62,16 @@ func (s Score) explain() string {
 	return strings.Join(parts, " ")
 }
 
+// factor is the score's factor of that name, or a neutral one.
+func (s Score) factor(name string) Factor {
+	for _, f := range s.Factors {
+		if f.Name == name {
+			return f
+		}
+	}
+	return Factor{Name: name, Value: 1}
+}
+
 func newScore(factors ...Factor) Score {
 	total := 1.0
 	for _, f := range factors {

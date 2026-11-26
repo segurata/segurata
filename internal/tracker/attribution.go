@@ -41,10 +41,11 @@ func ConfiguredSync(path string, opt SyncOptions) (SyncOptions, error) {
 // ownedAll is what attribution compares with: the accounts discovered so far merged with extra
 // (config `owned`, the git email).
 func (t *Tracker) ownedAll(extra attribution.Owned) attribution.Owned {
-	if t.Owned == nil {
-		return attribution.Owned{}.Merge(extra)
+	var o attribution.Owned
+	if t.Owned != nil {
+		o = *t.Owned
 	}
-	return t.Owned.Merge(extra)
+	return o.Merge(extra)
 }
 
 // Known is what attribution knows now, for a scan to ask before it acts on a secret: the

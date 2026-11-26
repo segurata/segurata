@@ -277,7 +277,7 @@ func (t *Tracker) reopenReattributed(it *Item, now time.Time) {
 		if len(r.Owners) == 0 || !strings.HasPrefix(detail, r.closing()+"; attributed ") || !r.inScope(it) || r.ownerMatches(it) {
 			continue
 		}
-		it.leaveAccepted()
+		it.Accepted = nil
 		it.setStatus(now, Open, EvReopened, actAutoReopen, "now attributed "+string(it.Owner())+", which "+r.spec()+" leaves open")
 		return
 	}

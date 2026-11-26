@@ -102,7 +102,7 @@ func (it *Item) expect(at time.Time, rule config.Expected, where string) {
 			it.Findings[i].Expected = rule.Reason
 		}
 	}
-	it.leaveAccepted()
+	it.Accepted = nil
 	it.setStatus(at, Expected, EvStatus, actExpected, "expected by your config: "+rule.Reason+" (rule in "+where+")")
 	it.Next = &Next{Who: You, Action: "Nothing: expected by your config (" + rule.Reason + ")."}
 }
