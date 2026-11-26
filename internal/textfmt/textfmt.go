@@ -3,6 +3,7 @@ package textfmt
 
 import (
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +18,11 @@ func Terminal(s string) string {
 	}
 	quoted := strconv.QuoteToGraphic(s)
 	return quoted[1 : len(quoted)-1]
+}
+
+// Line writes one formatted line to a terminal user, its control characters made visible.
+func Line(w io.Writer, format string, a ...any) {
+	fmt.Fprintln(w, Terminal(fmt.Sprintf(format, a...)))
 }
 
 // OrDash is s, or "-" when s is empty, for table cells.

@@ -298,7 +298,7 @@ func (r *replacement) rewrite(f *fileEdit, v string) string {
 func (r *replacement) print(w io.Writer, v string, backup bool) {
 	it := r.item
 	before, after := it.Secret.Redacted, secretrisk.Redact(it.Secret.Type, r.hint.Prefix, v)
-	fmt.Fprintln(w, textfmt.Terminal(fmt.Sprintf("Replace %s  %s/%s  %s → %s", it.Secret.ID, it.Secret.Service, it.Secret.Type, before, after)))
+	textfmt.Line(w, "Replace %s  %s/%s  %s → %s", it.Secret.ID, it.Secret.Service, it.Secret.Type, before, after)
 	for _, f := range r.files {
 		where := f.path
 		if f.link {
@@ -307,12 +307,13 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 		if len(f.also) > 0 {
 			where += ", also " + strings.Join(f.also, ", ")
 		}
-		fmt.Fprintf(w, "\n%s  mode %o\n", textfmt.Terminal(where), f.mode)
+		fmt.Fprintln(w)
+		textfmt.Line(w, "%s  mode %o", where, f.mode)
 		for _, le := range f.lines {
 			if le.keychain {
-				fmt.Fprintf(w, "  line %d: %s%s → %s%s\n", le.n, textfmt.Terminal(le.head), textfmt.Terminal(before), textfmt.Terminal(le.head), lookupLine(r.service))
+				textfmt.Line(w, "  line %d: %s%s → %s%s", le.n, le.head, before, le.head, lookupLine(r.service))
 			} else {
-				fmt.Fprintf(w, "  line %d: %s → %s\n", le.n, textfmt.Terminal(before), textfmt.Terminal(after))
+				textfmt.Line(w, "  line %d: %s → %s", le.n, before, after)
 			}
 		}
 	}
@@ -326,7 +327,7 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 		fmt.Fprintln(w, "No backup (a backup would be one more plaintext copy of the old value); --backup keeps one.")
 	}
 	for _, x := range r.warn {
-		fmt.Fprintln(w, "Warning: "+textfmt.Terminal(x))
+		textfmt.Line(w, "Warning: %s", x)
 	}
 }
 
@@ -603,7 +604,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		if len(written) > 0 {
 			note += "; already written: " + strings.Join(written, ", ")
 		}
-		if rerr := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, textfmt.Terminal(note)) }); rerr != nil {
+		if rerr := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, note) }); rerr != nil {
 			fmt.Fprintln(c.Err, "rotations:", rerr)
 		}
 		return c.fail(errors.New(note))
@@ -634,7 +635,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	if err := r.verify(v); err != nil {
 		return failed(fmt.Errorf("written, but the check failed: %w", err), written)
 	}
-	if err := record(func(it *tracker.Item) { it.Done(now, textfmt.Terminal(r.note(written))) }); err != nil {
+	if err := record(func(it *tracker.Item) { it.Done(now, r.note(written)) }); err != nil {
 		return c.fail(err)
 	}
 	fmt.Fprintf(c.Out, "\nReplaced in %s and checked. %s is now rotated.\n", textfmt.Count(len(r.files), "file", "files"), it.Secret.ID)

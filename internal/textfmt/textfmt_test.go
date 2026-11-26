@@ -1,6 +1,9 @@
 package textfmt
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestOrDash(t *testing.T) {
 	if got := OrDash(""); got != "-" {
@@ -114,5 +117,13 @@ func TestUpperFirst(t *testing.T) {
 		if got := UpperFirst(in); got != want {
 			t.Errorf("UpperFirst(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLineEscapesTheWholeLineOnce(t *testing.T) {
+	var b strings.Builder
+	Line(&b, "%s · %d · %v", "a\x1b[2J", 3, "b\nc")
+	if got, want := b.String(), `a\x1b[2J · 3 · b\nc`+"\n"; got != want {
+		t.Errorf("Line wrote %q, want %q", got, want)
 	}
 }

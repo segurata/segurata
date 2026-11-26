@@ -401,7 +401,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 	}
 	fmt.Fprintln(w, "\nhistory:")
 	for _, e := range it.History {
-		fmt.Fprintf(w, "  %s  %-9s %-18s %s\n", e.At.Format(time.RFC3339), e.Event, e.Action, e.Detail)
+		textfmt.Line(w, "  %s  %-9s %-18s %s", e.At.Format(time.RFC3339), e.Event, e.Action, e.Detail)
 	}
 	return 0
 }

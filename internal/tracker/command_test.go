@@ -98,6 +98,17 @@ func TestTrackCommands(t *testing.T) {
 	if _, _, code := x.run(t, "note", id, "bought", "a", "disk"); code != 0 || lastAction(x.item(t, "No Time Machine")) != actNote {
 		t.Error("note")
 	}
+	// The ledger keeps a note as typed; show makes its control characters visible.
+	const hostile = "title\x1b]0;owned\a"
+	if _, _, code := x.run(t, "note", id, hostile); code != 0 {
+		t.Fatal("note")
+	}
+	if h := x.item(t, "No Time Machine").History; h[len(h)-1].Detail != hostile {
+		t.Errorf("note stored as %q", h[len(h)-1].Detail)
+	}
+	if o, _, _ := x.run(t, "show", id); strings.ContainsAny(o, "\x1b\a") || !strings.Contains(o, `title\x1b]0;owned\a`) {
+		t.Errorf("show printed a note's control characters:\n%q", o)
+	}
 	if _, e, code := x.run(t, "prioritize", id, "P0"); code != 1 || !strings.Contains(e, "--reason") {
 		t.Errorf("prioritize without a reason: %d %q", code, e)
 	}
