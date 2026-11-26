@@ -61,10 +61,14 @@ func TestTaskSchedulerRegistersQueriesAndDeletesTheTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	registered := text(xml.Bytes())
-	for _, want := range []string{"InteractiveToken", "LeastPrivilege", "IgnoreNew", "--log", "conhost.exe</Command>", "<Arguments>--headless "} {
+	for _, want := range []string{"InteractiveToken", "IgnoreNew", "--log", "conhost.exe</Command>", "<Arguments>--headless "} {
 		if !strings.Contains(registered, want) {
 			t.Errorf("registered task lacks %s:\n%s", want, registered)
 		}
+	}
+	// Task Scheduler leaves the default run level, LeastPrivilege, out of the definition it returns.
+	if strings.Contains(registered, "<RunLevel>") && !strings.Contains(registered, "<RunLevel>LeastPrivilege</RunLevel>") {
+		t.Errorf("registered task runs above least privilege:\n%s", registered)
 	}
 	out.Reset()
 	if err := env.Status(ctx); err != nil || !strings.Contains(out.String(), "installed, registered") {
