@@ -24,22 +24,16 @@ import (
 	"github.com/segurata/segurata/internal/statefile"
 )
 
-// The data-dump check runs in every repository under repos_root: it lists the files tracked now
-// (git ls-files) and every file ever added (git log --all --diff-filter=A), keeps the names that
-// look like dumps (datadump.go), and asks git for their blob sizes, the commit that added them and
-// whether a remote-tracking ref holds them. The first 4 KiB of one blob per path are read to
-// recognise a dump header; nothing else of the content is read.
-//
-// History facts are cached per repository and reused while its tips (historycache.go) are
-// unchanged; blob sizes and headers are cached by blob id, which never changes meaning.
+// The data-dump check lists every path tracked or ever added whose name looks like a dump, then
+// asks git for blob sizes, first commits and remote branches, and reads the first bytes of one
+// blob per path. History facts are cached per repository while its tips are unchanged, blobs by id.
 
-// dumpMode is the data_dumps setting.
 type dumpMode int
 
 const (
-	dumpsOn   dumpMode = iota // default: alongside the secret scan
-	dumpsOff                  // data_dumps: false
-	dumpsOnly                 // data_dumps: "only": nothing else runs
+	dumpsOn dumpMode = iota
+	dumpsOff
+	dumpsOnly
 )
 
 func parseDumpMode(v any) (dumpMode, error) {
@@ -60,18 +54,12 @@ func parseDumpMode(v any) (dumpMode, error) {
 }
 
 const (
-	// dumpCacheVersion changes whenever classifyDumpName or the history queries do: the cache
-	// holds the candidates they selected.
-	dumpCacheVersion = 2
-	// maxDumpBlobs bounds the versions of one path whose size is asked, newest first.
-	maxDumpBlobs = 32
-	// dumpPathsPerCall keeps pathspec lists well under any argument limit.
+	dumpCacheVersion = 2 // goes up with classifyDumpName and the history queries
+	maxDumpBlobs     = 32
 	dumpPathsPerCall = 100
-	// visibilityTTL is how long a repository's GitHub visibility is trusted from the cache.
-	visibilityTTL = 7 * 24 * time.Hour
+	visibilityTTL    = 7 * 24 * time.Hour
 )
 
-// dumpCache is one repository's cache file under the datadumps directory.
 type dumpCache struct {
 	Version      int                 `json:"version"`
 	Repo         string              `json:"repo"`
@@ -81,15 +69,14 @@ type dumpCache struct {
 	Visibility   string              `json:"visibility,omitempty"`
 	VisibilityAt time.Time           `json:"visibility_at,omitzero"`
 
-	dirty bool // changed since it was read: write it back
+	dirty bool
 }
 
-// dumpHistory is what the history says about one path whose name looks like a dump.
 type dumpHistory struct {
 	Path        string   `json:"path"`
 	FirstCommit string   `json:"first_commit"`
 	FirstDate   string   `json:"first_date"`
-	Blobs       []string `json:"blobs"` // newest first, at most maxDumpBlobs
+	Blobs       []string `json:"blobs"` // newest first
 	Versions    int      `json:"versions"`
 	OnRemote    bool     `json:"on_remote,omitempty"`
 }
@@ -101,8 +88,7 @@ type dumpBlob struct {
 	Header  string `json:"header,omitempty"`
 }
 
-// dumpState holds the data-dump results of one run, computed once per repository whichever of
-// the dump pass and the gitleaks replay asks first.
+// dumpState is computed once per repository, by the dump pass or the gitleaks replay.
 type dumpState struct {
 	mu     sync.Mutex
 	repos  map[string]*dumpRepo
@@ -115,7 +101,7 @@ type dumpRepo struct {
 	once   sync.Once
 	hits   []dumpHit
 	byPath map[string]int
-	leaks  map[string]int // gitleaks rows inside each dump
+	leaks  map[string]int
 	err    error
 }
 
@@ -133,7 +119,6 @@ func (s *scan) dumpRepoOf(repo string) *dumpRepo {
 	return d
 }
 
-// dumpsIn returns the data dumps of one repository, finding them on first use.
 func (s *scan) dumpsIn(repo string) *dumpRepo {
 	d := s.dumpRepoOf(repo)
 	d.once.Do(func() {
@@ -155,8 +140,7 @@ func (s *scan) dumpsAll() {
 	})
 }
 
-// markDump flags a gitleaks match inside a detected dump (in_data_dump): the dump finding covers
-// it, and secretrisk treats it as noise unless it is a high-impact key with a known prefix.
+// markDump flags a gitleaks match inside a dump, which the dump finding covers.
 func (s *scan) markDump(repo string, ev *secretrisk.Evidence) {
 	if s.cfg.dumps == dumpsOff {
 		return
@@ -172,7 +156,6 @@ func (s *scan) markDump(repo string, ev *secretrisk.Evidence) {
 	s.dumps.mu.Unlock()
 }
 
-// dumpFindings are the data dumps found in this run, sorted by repository and path.
 func (s *scan) dumpFindings() (out []finding.Finding, repos int) {
 	s.dumps.mu.Lock()
 	defer s.dumps.mu.Unlock()
@@ -189,7 +172,6 @@ func (s *scan) dumpFindings() (out []finding.Finding, repos int) {
 	return out, repos
 }
 
-// findDumps is the check for one repository.
 func (s *scan) findDumps(repo string) ([]dumpHit, error) {
 	tips, err := s.tips(repo)
 	if err != nil {
@@ -204,7 +186,7 @@ func (s *scan) findDumps(repo string) ([]dumpHit, error) {
 	} else {
 		blobs := map[string]dumpBlob{}
 		if c != nil {
-			blobs = c.Blobs // blob ids are content addresses: still valid
+			blobs = c.Blobs // content addresses: still valid
 		}
 		c = &dumpCache{Version: dumpCacheVersion, Repo: repo, Tips: tips, Blobs: blobs, dirty: true}
 		if len(tips) > 0 {
@@ -230,7 +212,7 @@ func (s *scan) findDumps(repo string) ([]dumpHit, error) {
 	var hits []dumpHit
 	for _, p := range slices.Sorted(maps.Keys(paths)) {
 		name := classifyDumpName(p)
-		h := hist[p] // zero when the path is tracked but not in the cached history
+		h := hist[p]
 		blobs := h.Blobs
 		cur, isTracked := tracked[p]
 		if isTracked && !slices.Contains(blobs, cur) {
@@ -276,7 +258,6 @@ func (s *scan) findDumps(repo string) ([]dumpHit, error) {
 	return hits, nil
 }
 
-// dumpCacheDir sits beside the gitleaks history cache: ~/.cache/segurata/datadumps.
 func (s *scan) dumpCacheDir() string {
 	return filepath.Join(s.c.cacheRoot(s.home), "datadumps")
 }
@@ -296,8 +277,6 @@ func (s *scan) loadDumpCache(path, repo string) *dumpCache {
 	return &c
 }
 
-// dumpHistory lists every path ever added whose name looks like a dump, then, for those, the
-// blobs and dates of the commits that added or changed them, and which a remote-tracking ref holds.
 func (s *scan) dumpHistory(repo string) ([]dumpHistory, error) {
 	git := guardGit(s.c.Git)
 	out, err := git.Run(s.ctx, gitDirArg(repo), "log", "--all", "--no-renames", "--diff-filter=A", "--name-only", "--format=", "-z")
@@ -351,7 +330,6 @@ func (s *scan) dumpHistory(repo string) ([]dumpHistory, error) {
 	return hist, nil
 }
 
-// nameOnlyPaths splits `git log --name-only --format= -z` output into its non-empty paths.
 func nameOnlyPaths(out []byte) []string {
 	var paths []string
 	for _, p := range strings.Split(string(out), "\x00") {
@@ -362,7 +340,7 @@ func nameOnlyPaths(out []byte) []string {
 	return paths
 }
 
-// literalPathspecs keeps git from reading *, ? or [ in a file name as a glob.
+// literalPathspecs keeps git from reading a file name as a glob.
 func literalPathspecs(paths []string) []string {
 	out := make([]string, len(paths))
 	for i, p := range paths {
@@ -373,9 +351,8 @@ func literalPathspecs(paths []string) []string {
 
 var hexID = regexp.MustCompile(`\A[0-9a-f]{40}([0-9a-f]{24})?\z`)
 
-// parseDumpLog reads `git log --raw --no-abbrev -z --format=%x01%H%x09%ct`: a \x01 commit line,
-// then pairs of ":<modes> <old> <new> <status>" and path. Blobs are recorded newest first (log
-// order); the first commit is the oldest that added the path.
+// parseDumpLog reads `git log --raw --no-abbrev -z --format=%x01%H%x09%ct`: blobs newest first,
+// the first commit the oldest that added the path.
 func parseDumpLog(out string, byPath map[string]*dumpHistory, firstAt map[string]int64) {
 	var commit string
 	var at int64
@@ -413,7 +390,6 @@ func parseDumpLog(out string, byPath map[string]*dumpHistory, firstAt map[string
 	}
 }
 
-// trackedDumps maps each path in the index whose name looks like a dump to its blob.
 func (s *scan) trackedDumps(repo string) (map[string]string, error) {
 	out, err := guardGit(s.c.Git).Run(s.ctx, append([]string{gitDirArg(repo), "--work-tree=" + repo, "ls-files", "-s", "-z"}, gitlocal.WholeTree()...)...)
 	if err != nil {
@@ -431,7 +407,6 @@ func (s *scan) trackedDumps(repo string) (map[string]string, error) {
 	return m, nil
 }
 
-// blobInfo is a blob's size, from the cache or `git cat-file -s`.
 func (s *scan) blobInfo(repo, blob string, c *dumpCache) (dumpBlob, error) {
 	if info, ok := c.Blobs[blob]; ok {
 		return info, nil
@@ -449,8 +424,7 @@ func (s *scan) blobInfo(repo, blob string, c *dumpCache) (dumpBlob, error) {
 	return info, nil
 }
 
-// peekBlob reads the first dumpPeekSize bytes of a blob, once, to recognise a dump header. A
-// failure leaves the content unknown: the name and size still count.
+// peekBlob reads a blob's first bytes once; a failure leaves the content unknown.
 func (s *scan) peekBlob(repo, blob string, c *dumpCache) dumpBlob {
 	info := c.Blobs[blob]
 	if info.Peeked || s.c.GitHead == nil || blob == "" {
@@ -467,9 +441,7 @@ func (s *scan) peekBlob(repo, blob string, c *dumpCache) dumpBlob {
 	return info
 }
 
-// visibility is the GitHub visibility of the repository's remote (PUBLIC, PRIVATE, INTERNAL),
-// from the cache while fresh, else `gh repo view`. "" when there is no GitHub remote, gh is
-// missing or cannot see it.
+// visibility is "" when there is no GitHub remote or gh cannot see it.
 func (s *scan) visibility(repo string, c *dumpCache) string {
 	if c.Visibility != "" && s.now.Sub(c.VisibilityAt) < visibilityTTL {
 		return c.Visibility
@@ -500,13 +472,12 @@ func (s *scan) visibility(repo string, c *dumpCache) string {
 
 var githubSlugRe = regexp.MustCompile(`\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z`)
 
-// headExec runs a command and returns at most Limit bytes of its standard output, then stops it:
-// enough of a blob to recognise a dump without reading the rest into memory.
+// headExec returns at most Limit bytes of a command's output, then stops it.
 type headExec struct {
 	Path    string
 	Limit   int
 	Timeout time.Duration
-	Env     []string // KEY=VALUE pairs added to the inherited environment
+	Env     []string
 }
 
 func (h headExec) Run(ctx context.Context, args ...string) ([]byte, error) {
@@ -530,14 +501,12 @@ func (h headExec) Run(ctx context.Context, args ...string) ([]byte, error) {
 	switch {
 	case rerr != nil && !errors.Is(rerr, io.EOF) && !errors.Is(rerr, io.ErrUnexpectedEOF):
 		return nil, rerr
-	case n < h.Limit && werr != nil:
-		// It ended on its own before filling the buffer, with an error (a missing object).
+	case n < h.Limit && werr != nil: // it failed before filling the buffer (a missing object)
 		return nil, fmt.Errorf("%s %s: %w", filepath.Base(h.Path), strings.Join(args, " "), werr)
 	}
 	return buf[:n], nil
 }
 
-// emitDumps emits the data-dump findings and the run's status, with the dump count appended.
 func (s *scan) emitDumps(st finding.Status) error {
 	if s.ctx.Err() != nil {
 		return s.ctx.Err()

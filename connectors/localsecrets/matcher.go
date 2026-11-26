@@ -11,21 +11,15 @@ import (
 	"unicode/utf8"
 )
 
-// matcher finds the matches of a list of patterns joined into one leftmost-first alternation
-// (combined), as regexp.FindAllStringIndex would, without running that alternation over the whole
-// text. Go's regexp has no DFA: the 55-way alternation runs at about 2 MB/s, and transcript lines
-// are megabytes long.
+// matcher gives the matches of the patterns' leftmost-first alternation (combined) without
+// running it over the whole text: Go's regexp has no DFA, the alternation runs at about 2 MB/s and
+// transcript lines are megabytes long.
 //
-// Each pattern gets an anchor, derived from its syntax tree: a set of literals one of which every
-// match contains, at a bounded byte offset from the match start ("sk-ant-" at 0, "://" at 2..21
-// for URL credentials). One pass over the text finds the anchors; each occurrence yields the few
-// positions where that pattern could start, and the pattern is tried there alone, anchored. Taking
-// the candidates in order, and at each position the patterns in list order, is exactly what the
-// alternation does: the leftmost start wins, among patterns starting there the first, and the scan
-// goes on after the match. A pattern whose anchor is unbounded (the generic assignment) or missing
-// sends the text to the alternation, restricted to the patterns whose literals occur in it; a
-// pattern none of whose literals occur cannot match and is left out. Both paths give the
-// alternation's result.
+// Each pattern gets an anchor from its syntax tree: literals one of which every match holds, at a
+// bounded offset from the match start ("sk-ant-" at 0, "://" at 2..21). One pass finds the
+// anchors; each yields the few starts where its pattern is tried alone. Candidates in position
+// order, then pattern order, reproduce the alternation. A text holding a pattern without a bounded
+// anchor goes to the alternation of the patterns whose literals it holds.
 type matcher struct {
 	all     *regexp.Regexp
 	ps      []pattern
@@ -38,21 +32,17 @@ type matcher struct {
 	subsets sync.Map           // uint64 pattern mask -> *regexp.Regexp
 }
 
-// anchor is what the matcher knows about one pattern.
 type anchor struct {
-	lits       []string // every match contains one of them (lowercased when fold); nil when unknown
+	lits       []string // every match contains one (lowercased when fold); nil when unknown
 	fold       bool
-	dmin, dmax int // byte offset range of the literal from the match start; dmax < 0 when unbounded
-	// back, when set, is a byte class the match may start with any run of, before that offset:
-	// the name in `NAME_TOKEN=…`.
-	back *[256]bool
-	// at is the pattern anchored at the start of the text, without its leading \b (checked by
-	// hand, as it looks at the byte before); nil when the pattern cannot be tried at a position.
+	dmin, dmax int        // offset range of the literal from the match start; dmax < 0: unbounded
+	back       *[256]bool // a class the match may start with any run of, before the offset
+	// at is the pattern anchored at the text start without its leading \b (wordStart), which
+	// reads the byte before; nil when it cannot be tried at a position.
 	at        *regexp.Regexp
 	wordStart bool
 }
 
-// placeable reports whether the pattern can be tried at the positions its anchor gives.
 func (a *anchor) placeable() bool { return a.lits != nil && a.dmax >= 0 && a.at != nil }
 
 type needle struct {
@@ -107,14 +97,13 @@ var lower = func() (t [256]byte) {
 	return t
 }()
 
-// foldsToASCII are the only non-ASCII runes that case folding maps onto ASCII letters: the long s
-// (U+017F, folds to s) and the Kelvin sign (U+212A, folds to k). A case-insensitive pattern can
-// match them; the lowered-ASCII anchor search cannot see them.
+// foldsToASCII are the only non-ASCII runes that fold onto ASCII letters (ſ to s, K to k): the
+// lowered-ASCII anchor search cannot see them.
 var foldsToASCII = []string{"\u017f", "\u212a"}
 
 type cand struct{ pos, pat int }
 
-// findAll returns the alternation's matches in text, as FindAllStringIndex(text, -1) would.
+// findAll is FindAllStringIndex(text, -1) of the alternation.
 func (m *matcher) findAll(text string) [][]int {
 	var present uint64
 	var cands []cand
@@ -167,15 +156,14 @@ func (m *matcher) findAll(text string) [][]int {
 	return out
 }
 
-// walkBack adds the starts before e within the run of the pattern's back class that ends at e. A
-// run already walked is not walked again: anchors inside one long run would make it quadratic.
+// walkBack adds the starts within the back-class run ending at e, skipping what an earlier anchor
+// walked: anchors inside one long run would make it quadratic.
 func (m *matcher) walkBack(cands []cand, text string, e, i int, walked map[int][2]int) []cand {
 	back := m.anchors[i].back
 	w, seen := walked[i]
 	s := e - 1
 	for ; s >= 0 && back[text[s]]; s-- {
 		if seen && w[0] <= s && s <= w[1] {
-			// The rest of this run, down to its start, was added when an earlier anchor walked it.
 			s = w[0] - 1
 			break
 		}
@@ -191,7 +179,6 @@ func (m *matcher) walkBack(cands []cand, text string, e, i int, walked map[int][
 	return cands
 }
 
-// matchAt tries pattern i alone, starting exactly at pos, with the text before pos as context.
 func (m *matcher) matchAt(i int, text string, pos int) (int, bool) {
 	a := &m.anchors[i]
 	if pos >= len(text) {
@@ -207,11 +194,9 @@ func (m *matcher) matchAt(i int, text string, pos int) (int, bool) {
 	return pos + loc[1], true
 }
 
-// isWordByte is syntax.IsWordChar for the rune a byte starts or continues: a byte >= 0x80 belongs
-// to a non-ASCII rune, never a word character.
+// isWordByte: a byte >= 0x80 belongs to a non-ASCII rune, never a word character.
 func isWordByte(b byte) bool { return b < utf8.RuneSelf && syntax.IsWordChar(rune(b)) }
 
-// scan calls f with every occurrence of every needle in text.
 func (m *matcher) scan(text string, f func(id, pos int)) {
 	for i := 0; i < len(text); i++ {
 		b0 := lower[text[i]]
@@ -251,8 +236,7 @@ func (m *matcher) needleAt(id int32, text string, i int) bool {
 	return true
 }
 
-// subset is the alternation of the patterns in mask, in their order: patterns that cannot match a
-// text never take part in its leftmost-first result, so leaving them out changes nothing.
+// subset is the alternation of the patterns in mask, in their order.
 func (m *matcher) subset(mask uint64) *regexp.Regexp {
 	if mask == 1<<len(m.ps)-1 {
 		return m.all
@@ -270,7 +254,6 @@ func (m *matcher) subset(mask uint64) *regexp.Regexp {
 	return re.(*regexp.Regexp)
 }
 
-// anchorOf derives a pattern's anchor from its source.
 func anchorOf(src string) anchor {
 	flags, body := "", src
 	if strings.HasPrefix(body, "(?i)") {
@@ -323,8 +306,8 @@ func asciiLower(s string) string {
 	return string(b)
 }
 
-// looksBehind reports whether an assertion that reads the byte before the match (\b, \B, ^) can be
-// evaluated at the match start: a pattern tried on text[pos:] would see the start of text there.
+// looksBehind reports whether an assertion reading the byte before (\b, \B, ^) can apply at the
+// match start, where text[pos:] would show the start of text instead.
 func looksBehind(re *syntax.Regexp) bool {
 	switch re.Op {
 	case syntax.OpWordBoundary, syntax.OpNoWordBoundary, syntax.OpBeginLine, syntax.OpBeginText:
@@ -349,8 +332,7 @@ func looksBehind(re *syntax.Regexp) bool {
 	return false
 }
 
-// lenBounds is the range of byte lengths re can match; hi < 0 when unbounded. A rune counts 1 to
-// 4 bytes (an invalid byte matches as one rune of width 1).
+// lenBounds is the range of byte lengths re can match; hi < 0 when unbounded.
 func lenBounds(re *syntax.Regexp) (lo, hi int) {
 	switch re.Op {
 	case syntax.OpLiteral:
@@ -418,7 +400,7 @@ func maxBound(a, b int) int {
 	return max(a, b)
 }
 
-// runeBytes is the byte length range of a literal rune, over its case-fold orbit when fold.
+// runeBytes is a literal rune's byte length range, over its case-fold orbit when fold.
 func runeBytes(r rune, fold bool) (lo, hi int) {
 	lo, hi = utf8.RuneLen(r), utf8.RuneLen(r)
 	if r == utf8.RuneError {
@@ -432,17 +414,15 @@ func runeBytes(r rune, fold bool) (lo, hi int) {
 	return lo, hi
 }
 
-// factor is a set of literals every match of a node contains, at a byte offset from the node's
-// start between dmin and dmax (dmax < 0: unbounded).
+// factor is literals one of which every match of a node holds, at an offset in [dmin, dmax].
 type factor struct {
 	lits       []string
 	dmin, dmax int
 	back       *[256]bool
 }
 
-// factors lists the literal sets of re, starting at offset [dmin, dmax] from the match start,
-// after any run of back bytes. Consecutive pieces with a small finite set of strings are joined
-// (sk|rk then _live_).
+// factors lists the literal sets of re at offset [dmin, dmax] after any run of back bytes,
+// joining consecutive small finite pieces (sk|rk then _live_).
 func factors(re *syntax.Regexp, dmin, dmax int, back *[256]bool) []factor {
 	if lits, ok := exact(re); ok {
 		return []factor{{lits, dmin, dmax, back}}
@@ -455,7 +435,6 @@ func factors(re *syntax.Regexp, dmin, dmax int, back *[256]bool) []factor {
 			return factors(re.Sub[0], dmin, dmax, back)
 		}
 	case syntax.OpAlternate:
-		// Every branch must contribute: the union of their anchors, over the union of offsets.
 		var u factor
 		for i, s := range re.Sub {
 			f := pick(factors(s, dmin, dmax, back))
@@ -484,8 +463,7 @@ func factors(re *syntax.Regexp, dmin, dmax int, back *[256]bool) []factor {
 		}
 		for _, s := range re.Sub {
 			if c := starClass(s); c != nil && dmin == 0 && dmax == 0 && back == nil {
-				// A leading run of one class: the offsets after it count from where it ends.
-				flush()
+				flush() // the offsets after a leading class run count from its end
 				back = c
 				continue
 			}
@@ -510,8 +488,8 @@ func factors(re *syntax.Regexp, dmin, dmax int, back *[256]bool) []factor {
 	return nil
 }
 
-// starClass is the byte set of `[class]*` when the class is ASCII. Under (?i) a class holds the
-// long s and the Kelvin sign too; those are covered by the fold-risk check of findAll.
+// starClass is the byte set of an ASCII `[class]*`; under (?i) the fold-risk check of findAll
+// covers its ſ and K.
 func starClass(re *syntax.Regexp) *[256]bool {
 	if re.Op != syntax.OpStar || re.Sub[0].Op != syntax.OpCharClass {
 		return nil
@@ -532,8 +510,7 @@ func starClass(re *syntax.Regexp) *[256]bool {
 	return &set
 }
 
-// pick chooses the anchor: bounded before unbounded, then the longest shortest literal, then the
-// fewest literals.
+// pick prefers bounded, then the longest shortest literal, then the fewest literals.
 func pick(fs []factor) *factor {
 	var best *factor
 	score := func(f *factor) (bool, int, int) {
@@ -561,7 +538,7 @@ func pick(fs []factor) *factor {
 	return best
 }
 
-// exact is the finite set of strings re matches, when small and ASCII.
+// exact is the strings re matches, when few and ASCII.
 func exact(re *syntax.Regexp) ([]string, bool) {
 	switch re.Op {
 	case syntax.OpEmptyMatch, syntax.OpWordBoundary, syntax.OpNoWordBoundary, syntax.OpBeginLine, syntax.OpEndLine,

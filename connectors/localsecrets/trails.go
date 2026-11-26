@@ -16,28 +16,23 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// Trails is the part of a scan that covers trail files (shell histories, logs, agent
-// transcripts), for `segurata redact`: it finds in them exactly the secrets an inventory would
-// report, with the bytes each one occupies on its line, so they can be replaced in place.
+// Trails finds in trail files (histories, logs, transcripts) exactly the secrets an inventory
+// reports there, with their byte spans, for `segurata redact`.
 type Trails struct {
 	s      *scan
 	failed *trailFailure
 }
 
-// Hit is one secret found in a piece of text, as an inventory would classify it. It never holds
-// the value: Start and End delimit it inside the text that was searched.
+// Hit is one secret in the searched text, delimited by Start and End; it never holds the value.
 type Hit struct {
 	Start, End  int
 	Type        string
 	Fingerprint string
 	Impact      secretrisk.Impact
-	// Priority is the rotation priority of this one copy (impact × the file's exposure); "" for
-	// noise.
-	Priority secretrisk.Priority
+	Priority    secretrisk.Priority // of this copy; "" for noise
 }
 
-// Trails prepares a trail scan with the connector's config. It needs the fingerprint key an
-// inventory created: a new key would match nothing in the rotation ledger.
+// Trails needs the fingerprint key an inventory created: a new one would match no ledger item.
 func (c *Connector) Trails(ctx context.Context, cfg map[string]any) (*Trails, error) {
 	home, err := c.Home()
 	if err != nil {
@@ -61,18 +56,14 @@ func (c *Connector) Trails(ctx context.Context, cfg map[string]any) (*Trails, er
 	return &Trails{s: newScan(ctx, c, home, set, fp, failed), failed: failed}, nil
 }
 
-// Home is the home folder the trails live under.
 func (t *Trails) Home() string { return t.s.home }
 
-// Tilde writes a path under the home folder as ~/…, as findings do.
 func (t *Trails) Tilde(p string) string { return t.s.tilde(p) }
 
-// isTrail reports whether a path is a trail: a transcript, a shell history or a log.
 func isTrail(kind string) bool { return kind == "transcript" || kind == "history" || kind == "log" }
 
-// Lines runs ripgrep with the inventory's patterns and returns every trail file holding a
-// candidate match, with the candidate line numbers in ascending order. Without files it covers
-// every trail an inventory scans; with files, just those (to check them again after a rewrite).
+// Lines is the candidate lines, ascending, of every trail file ripgrep matches: all trails an
+// inventory scans, or just files (to check them again after a rewrite).
 func (t *Trails) Lines(files []string) (map[string][]int, error) {
 	var passes []pass
 	if files == nil {
@@ -87,7 +78,6 @@ func (t *Trails) Lines(files []string) (map[string][]int, error) {
 			passes = append(passes, pass{patternsFor(k), paths, nil})
 		}
 	}
-	// The passes run at once, as an inventory's do.
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	seen := map[string]map[int]bool{}
@@ -122,8 +112,7 @@ func (t *Trails) Lines(files []string) (map[string][]int, error) {
 	return out, nil
 }
 
-// combined joins patterns into one alternation, as ripgrep does with several -e: the leftmost
-// match wins, and among matches at the same place the first pattern.
+// combined is the alternation ripgrep runs for several -e: leftmost match, then first pattern.
 func combined(ps []pattern) *regexp.Regexp {
 	parts := make([]string, len(ps))
 	for i, p := range ps {
@@ -142,7 +131,6 @@ var (
 	matcherSpecific, matcherAll *matcher
 )
 
-// matcherFor finds the matches of patternsFor(kind) joined into one alternation.
 func matcherFor(kind string) *matcher {
 	matchersOnce.Do(func() {
 		matcherSpecific, matcherAll = newMatcher(specific), newMatcher(withAssignment)
@@ -153,14 +141,11 @@ func matcherFor(kind string) *matcher {
 	return matcherAll
 }
 
-// Find returns the secrets in text, line by line, that an inventory would report for a file at
-// path. Matches an inventory drops for trails (a private-key header without its body, a
-// service-account marker) are not hits. mode is the file's effective mode, used for exposure.
+// Find is the secrets an inventory would report in text for a file at path with effective mode.
 func (t *Trails) Find(path, mode, text string) []Hit {
 	return t.find(path, mode, text, matcherFor(t.s.kindOf(path)).findAll)
 }
 
-// find is Find with the function that places the alternation's matches on a line.
 func (t *Trails) find(path, mode, text string, matches func(string) [][]int) []Hit {
 	kind := t.s.kindOf(path)
 	patterns := patternsFor(kind)
@@ -200,7 +185,6 @@ func (t *Trails) find(path, mode, text string, matches func(string) [][]int) []H
 	return hits
 }
 
-// Mode is a file's effective mode for other accounts, as findings report it.
 func (t *Trails) Mode(p string) string {
 	eff, _ := modeOf(p, t.s.home)
 	return eff

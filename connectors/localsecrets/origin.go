@@ -14,35 +14,25 @@ import (
 	"github.com/segurata/segurata/internal/statefile"
 )
 
-// A secret committed to someone else's repository (a clone of instructure/canvas-lms, fastai,
-// testssl.sh) is that project's to rotate, and so is one a fork inherited from its upstream. This
-// file decides whose each repository is, from its GitHub remotes and the owner's GitHub account
-// and organizations: those come from config (owned_owners) and from `gh api user` and every page
-// of `gh api user/orgs`, asked once a week and cached in ~/.cache/segurata/github-owners.json
-// when both answered.
-//
-// Limits: a repository without a GitHub remote has no known origin and counts as the owner's; so
-// does every repository when neither gh nor owned_owners names an owner. A fork's inherited
-// history is recognised only when the upstream is a configured remote whose branches were fetched.
+// A secret in someone else's repository, or inherited by a fork from its upstream, is that
+// project's to rotate. Whose a repository is comes from its GitHub remotes and the owner's names
+// (owned_owners and gh, cached weekly). Without a GitHub remote or any known owner its origin is
+// unknown and it counts as the owner's.
 
-// ownersTTL is how long the owner's GitHub account and organizations are trusted from the cache.
 const ownersTTL = 7 * 24 * time.Hour
 
-// ownersCache is ~/.cache/segurata/github-owners.json.
 type ownersCache struct {
 	Login string    `json:"login"`
 	Orgs  []string  `json:"orgs"`
 	At    time.Time `json:"at"`
 }
 
-// repoOrigin is whose a repository is: secretrisk.OriginOwned, OriginThirdParty or "" (unknown),
-// and for an owned fork the name of the remote that tracks its third-party upstream.
+// repoOrigin is whose a repository is ("" unknown) and, for an owned fork, its upstream remote.
 type repoOrigin struct {
 	origin   string
 	upstream string
 }
 
-// ownership holds the owner's names and the origins of the repositories seen in one run.
 type ownership struct {
 	once    sync.Once
 	names   map[string]bool // lowercased GitHub logins and organizations
@@ -50,8 +40,6 @@ type ownership struct {
 	origins map[string]repoOrigin
 }
 
-// ownerNames is the set of GitHub owners that are the user, from config and gh; empty when none
-// is known.
 func (s *scan) ownerNames() map[string]bool {
 	s.own.once.Do(func() {
 		names := map[string]bool{}
@@ -74,7 +62,6 @@ func (s *scan) ownersCachePath() string {
 	return filepath.Join(filepath.Dir(s.c.CacheDir(s.home)), "github-owners.json")
 }
 
-// githubOwners is the gh user's login and organizations, from the cache while fresh, else from gh.
 func (s *scan) githubOwners() (ownersCache, bool) {
 	path := s.ownersCachePath()
 	var c ownersCache
@@ -98,8 +85,7 @@ func (s *scan) githubOwners() (ownersCache, bool) {
 		s.emit.Log("gh api user: repository ownership unknown (set owned_owners): " + errString(err))
 		return c, false
 	}
-	// Without every organization, their repositories would pass for third-party ones: an answer
-	// short of a page is no answer, and it is not cached.
+	// A missing organization would pass its repositories for third-party ones: all pages or none.
 	out, err = gh.Run(s.ctx, ghOrgsArgs...)
 	if err != nil {
 		s.emit.Log("gh api user/orgs: repository ownership unknown (set owned_owners): " + err.Error())
@@ -112,7 +98,6 @@ func (s *scan) githubOwners() (ownersCache, bool) {
 	return c, true
 }
 
-// ghOrgsArgs read the user's organizations, every page, one login per line.
 var ghOrgsArgs = []string{"api", "--paginate", "--jq", ".[].login", "user/orgs?per_page=100"}
 
 func errString(err error) string {
@@ -122,7 +107,6 @@ func errString(err error) string {
 	return err.Error()
 }
 
-// originOf is whose the repository at root is.
 func (s *scan) originOf(root string) repoOrigin {
 	names := s.ownerNames()
 	s.own.mu.Lock()
@@ -138,10 +122,8 @@ func (s *scan) originOf(root string) repoOrigin {
 	return o
 }
 
-// classifyOrigin judges a repository by its GitHub remotes, origin first: owned when the owner of
-// origin is one of names, third-party otherwise. An owned repository with another remote whose
-// owner is not the user is a fork, and that remote its upstream. Unknown without names or GitHub
-// remotes.
+// classifyOrigin judges by origin's owner; an owned repository with a third-party remote is a fork
+// of it.
 func classifyOrigin(remotes []githubRemote, names map[string]bool) repoOrigin {
 	if len(remotes) == 0 || len(names) == 0 {
 		return repoOrigin{}
@@ -159,10 +141,8 @@ func classifyOrigin(remotes []githubRemote, names map[string]bool) repoOrigin {
 	return o
 }
 
-// inheritedCommits returns which of commits (abbreviated ids, as evidence keeps them) a fork has
-// from its upstream: those reachable from the upstream's remote-tracking branches. nil when the
-// upstream has no fetched branches or git cannot tell (an id it does not know): no copy is then
-// counted as inherited.
+// inheritedCommits are the commits (abbreviated) reachable from the upstream's fetched branches;
+// nil when git cannot tell.
 func (s *scan) inheritedCommits(repo, upstream string, commits []string) map[string]bool {
 	commits = sortedUnique(commits)
 	if len(commits) == 0 || !remoteNameRe.MatchString(upstream) {
@@ -174,13 +154,12 @@ func (s *scan) inheritedCommits(repo, upstream string, commits []string) map[str
 	if err != nil || strings.TrimSpace(string(tips)) == "" {
 		return nil
 	}
-	// The commits reachable from the leaks but not from the upstream: the fork's own history.
 	out, err := git.Run(s.ctx, append(append([]string{gitDirArg(repo), "rev-list"}, commits...), "--not", refs)...)
 	if err != nil {
 		s.emit.Log("fork history " + s.tilde(repo) + ": " + err.Error())
 		return nil
 	}
-	own := strings.Fields(string(out))
+	own := strings.Fields(string(out)) // the fork's own history
 	inherited := map[string]bool{}
 	for _, c := range commits {
 		mine := false
@@ -199,14 +178,13 @@ func (s *scan) inheritedCommits(repo, upstream string, commits []string) map[str
 
 var remoteNameRe = regexp.MustCompile(`\A[A-Za-z0-9._-]+\z`)
 
-// githubRemote is one remote of a repository on GitHub.
 type githubRemote struct{ name, slug string }
 
 func (r githubRemote) owner() string { o, _, _ := strings.Cut(r.slug, "/"); return o }
 
 var githubURL = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$`)
 
-// githubRemotes reads a git config file for its GitHub remotes, origin first, then in file order.
+// githubRemotes are origin first, then in file order.
 func githubRemotes(configPath string) []githubRemote {
 	f, err := os.Open(configPath)
 	if err != nil {
@@ -241,7 +219,6 @@ func githubRemotes(configPath string) []githubRemote {
 	return out
 }
 
-// githubSlug is the owner/name of a repository's first GitHub remote, origin first.
 func githubSlug(configPath string) string {
 	if rs := githubRemotes(configPath); len(rs) > 0 {
 		return rs[0].slug

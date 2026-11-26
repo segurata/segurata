@@ -14,33 +14,27 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// A database dump committed to git (production_latest_backup.sql, app.sqlite3) exposes every row
-// it holds to whoever can clone the repository: personal data, password hashes, session tokens.
-// gitleaks reports the dump only as thousands of hash columns that look like tokens; this file
-// recognises the dump itself, by name and by the first bytes of its content, so it is reported
-// once per file. dumpscan.go finds the candidates in each repository's tree and history.
+// A database dump committed to git exposes every row to whoever can clone it; gitleaks sees only
+// thousands of token-like hashes. Dumps are recognised by name and first bytes, once per file.
 
 const (
-	dumpMinSize   = 4 << 10  // files up to this size are schemas, samples or empty databases (one SQLite page)
-	dumpRowsSize  = 64 << 10 // INSERT or COPY rows in a smaller file are a script, not a dump
-	dumpLargeSize = 1 << 20  // data exports by name, fixtures under test folders, schema-only SQL
-	dumpPeekSize  = 4 << 10  // bytes of a blob read to recognise a dump header
+	dumpMinSize   = 4 << 10  // a schema, a sample or an empty database (one SQLite page)
+	dumpRowsSize  = 64 << 10 // rows in a smaller file are a script
+	dumpLargeSize = 1 << 20  // for exports by name, test fixtures and schema-only SQL
+	dumpPeekSize  = 4 << 10
 )
 
-// dumpName is what a path's name says about a possible dump.
 type dumpName struct {
 	match    bool
-	prodLike bool  // production, backup or dump in the path, or a .bak file
-	minSize  int64 // the blob must be bigger than this to count
+	prodLike bool
+	minSize  int64
 }
 
-// dumpExts are extensions of SQL dumps and database files, longest first.
 var dumpExts = []string{".sql.gz", ".sql.zip", ".sql.bz2", ".sql.xz", ".dump.gz", ".sql", ".dump", ".pgdump", ".sqlite3", ".sqlite", ".db"}
 
-// dataExts are export formats that count only with a production or backup name and a large size.
+// dataExts count only with a production name and a large size.
 var dataExts = []string{".csv", ".json", ".xlsx", ".csv.gz", ".json.gz"}
 
-// prodWords in a name mark a copy of real data; dbWords make a .bak file a database backup.
 var (
 	prodWords = map[string]bool{"prod": true, "production": true, "prd": true, "live": true, "backup": true, "backups": true, "bkp": true, "dump": true, "dumps": true}
 	dbWords   = map[string]bool{"db": true, "sql": true, "database": true, "dump": true, "backup": true, "postgres": true, "postgresql": true, "pg": true, "pgsql": true, "mysql": true, "mariadb": true, "mongo": true, "sqlite": true}
@@ -55,10 +49,8 @@ func anyWord(ws []string, set map[string]bool) bool {
 	return slices.ContainsFunc(ws, func(w string) bool { return set[w] })
 }
 
-// classifyDumpName judges a repository-relative path by its name alone. Schema, structure and
-// migration files, seeds, vendored code (their sample databases are not the owner's data) and
-// Thumbs.db never match; files under test folders need dumpLargeSize. Test and vendor folders are
-// the ones secretrisk.RoleOf uses for secrets.
+// classifyDumpName never matches schemas, migrations, seeds, vendored code or Thumbs.db; under
+// test folders a file needs dumpLargeSize.
 func classifyDumpName(rel string) dumpName {
 	lower := strings.ToLower(rel)
 	base := path.Base(lower)
@@ -69,8 +61,7 @@ func classifyDumpName(rel string) dumpName {
 		return dumpName{}
 	}
 	ws := words(base)
-	// The name without its extension, plus the folders: a backups/ folder counts as much as a
-	// name, and the .dump extension alone (erl_crash.dump) is not a production name.
+	// The stem, not the extension: erl_crash.dump is not a production name.
 	stem := base
 	if i := strings.IndexByte(base, '.'); i > 0 {
 		stem = base[:i]
@@ -97,16 +88,14 @@ func hasAnySuffix(s string, suffixes []string) bool {
 	return slices.ContainsFunc(suffixes, func(x string) bool { return strings.HasSuffix(s, x) })
 }
 
-// Content classes found in a dump's first bytes.
 const (
-	contentData   = "data"   // a dump tool's header or a database file
-	contentRows   = "rows"   // INSERT or COPY statements: a dump when the file is big, else a script
-	contentSchema = "schema" // CREATE TABLE and nothing that proves rows follow
-	contentNone   = ""       // unrecognised, compressed in a format not read, or not peeked
+	contentData   = "data"
+	contentRows   = "rows"
+	contentSchema = "schema"
+	contentNone   = ""
 )
 
-// dumpHeaders are checked in order on the first dumpPeekSize bytes; the first match names the
-// header in the finding.
+// dumpHeaders are tried in order; the first match names the header.
 var dumpHeaders = []struct {
 	label, class string
 	re           *regexp.Regexp
@@ -120,8 +109,7 @@ var dumpHeaders = []struct {
 	{"CREATE TABLE", contentSchema, regexp.MustCompile(`(?i)\bCREATE\s+TABLE\b`)},
 }
 
-// sniffDump recognises a dump header in the first bytes of a blob. A gzip stream is inflated as
-// far as those bytes allow; UTF-16 text (SQL Server Management Studio scripts) is read as ASCII.
+// sniffDump inflates gzip as far as the bytes allow and reads UTF-16 (SSMS scripts) as ASCII.
 func sniffDump(head []byte) (class, label string) {
 	if len(head) > 2 && head[0] == 0x1f && head[1] == 0x8b {
 		if zr, err := gzip.NewReader(bytes.NewReader(head)); err == nil {
@@ -140,28 +128,24 @@ func sniffDump(head []byte) (class, label string) {
 	return contentNone, ""
 }
 
-// dumpHit is one data dump found in one repository: a path whose name matched, with what git
-// says about it. Repo is ~-relative.
 type dumpHit struct {
 	Repo, Path     string
-	Size           int64 // largest blob seen under this path
-	Versions       int   // distinct blobs seen
-	Tracked        bool  // in the index (the current tree)
-	InWorkingTree  bool  // the file exists on disk
+	Size           int64 // largest blob
+	Versions       int
+	Tracked        bool
+	InWorkingTree  bool
 	FirstCommit    string
-	FirstDate      string // YYYY-MM-DD
-	Remote         bool   // the repository has a remote
-	OnRemoteBranch bool   // added in a commit reachable from a remote-tracking ref
-	Visibility     string // PUBLIC, PRIVATE, INTERNAL from gh; "" when unknown
-	Content        string // contentData, contentSchema, contentNone
+	FirstDate      string
+	Remote         bool
+	OnRemoteBranch bool
+	Visibility     string // from gh; "" when unknown
+	Content        string
 	Header         string
 	ProdName       bool
-	Leaks          int // gitleaks matches inside, reported as noise for rotation
+	Leaks          int // gitleaks matches inside
 }
 
-// strong means the file is almost certainly a copy of real data: a production or backup name, a
-// dump tool's header or a database file, rows in a file too big to be a script, or CREATE TABLE in
-// a file too big to be only a schema.
+// strong means almost certainly real data.
 func (h dumpHit) strong() bool {
 	return h.ProdName || h.Content == contentData || (h.Content == contentRows && h.Size >= dumpRowsSize) ||
 		(h.Content == contentSchema && h.Size >= dumpLargeSize)
@@ -169,9 +153,6 @@ func (h dumpHit) strong() bool {
 
 func (h dumpHit) public() bool { return h.Visibility == "PUBLIC" }
 
-// severity: a real dump in a pushed repository is critical when the remote is public and high
-// otherwise; local only, medium. Name-only matches are medium (pushed) or low when large, and
-// schema-only or small files are info.
 func (h dumpHit) severity() finding.Severity {
 	switch {
 	case h.strong() && h.Remote && h.public():
@@ -200,7 +181,6 @@ func (h dumpHit) label() string {
 	return possibleDump
 }
 
-// possibleDump labels a file only named like a dump: its finding is unconfirmed.
 const possibleDump = "Possible database dump"
 
 func (h dumpHit) exposure() string {

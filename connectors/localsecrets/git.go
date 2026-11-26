@@ -21,7 +21,6 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// gitCache remembers repository roots, their tracked files and whether they have a remote.
 type gitCache struct {
 	mu     sync.Mutex
 	roots  map[string]string          // dir -> repository root ("" when none)
@@ -29,7 +28,7 @@ type gitCache struct {
 	remote map[string]bool
 }
 
-// rootOf walks up from dir, inside the home directory, to the closest folder holding .git.
+// rootOf is the closest folder holding .git, from dir up to the home folder.
 func (s *scan) rootOf(dir string) string {
 	if !strings.HasPrefix(dir, s.home+string(filepath.Separator)) {
 		return ""
@@ -47,17 +46,14 @@ func (s *scan) rootOf(dir string) string {
 	return r
 }
 
-// repoRoot is the repository a path is in, "" for none.
 func (s *scan) repoRoot(abs string) string {
 	s.git.mu.Lock()
 	defer s.git.mu.Unlock()
 	return s.rootOf(filepath.Dir(abs))
 }
 
-// trackedFile says whether git tracks the file, and whether that repository has a remote. When
-// git cannot list a repository's files, whether they are tracked is unknown: the run reports the
-// files scope of that repository as failed, once, instead of taking it for a repository that
-// tracks nothing.
+// trackedFile says whether git tracks the file and the repository has a remote. A repository git
+// cannot list is reported failed once, not taken for one that tracks nothing.
 func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	s.git.mu.Lock()
 	defer s.git.mu.Unlock()
@@ -80,7 +76,6 @@ func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 	return true, s.hasRemoteLocked(root)
 }
 
-// lsFiles is the set of absolute paths git tracks in the repository at root.
 func (s *scan) lsFiles(root string) (map[string]bool, error) {
 	out, err := guardGit(s.c.Git).Run(s.ctx, append([]string{gitDirArg(root), "--work-tree=" + root, "ls-files", "-z"}, gitlocal.WholeTree()...)...)
 	if err != nil {
@@ -110,8 +105,7 @@ func (s *scan) hasRemoteLocked(root string) bool {
 	return r
 }
 
-// gitConfigPath finds a repository's config file, following the .git file of worktrees and
-// submodules to the common git directory.
+// gitConfigPath follows the .git file of worktrees and submodules to the common git directory.
 func gitConfigPath(root string) string {
 	dotgit := filepath.Join(root, ".git")
 	st, err := os.Stat(dotgit)
@@ -140,7 +134,6 @@ func gitConfigPath(root string) string {
 	return filepath.Join(dir, "config")
 }
 
-// configHasRemote reads a git config file for a [remote "…"] section, without running git.
 func configHasRemote(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -190,21 +183,20 @@ func (s *scan) findRepos() []string {
 	return out
 }
 
-// leak is the part of a gitleaks finding this connector reads. Match is left out on purpose.
+// leak is the part of a gitleaks finding this connector reads.
 type leak struct {
 	RuleID    string
 	File      string
 	StartLine int
 	Secret    string
 	Match     string
-	Line      string // the whole line, in gitleaks versions that report it
+	Line      string // in gitleaks versions that report it
 	Commit    string
 	Date      string
 	Email     string // the commit's author
 }
 
-// gitleaksRules maps gitleaks rule ids onto this connector's types, for secrets its own patterns
-// do not recognise whole. Other rules keep their gitleaks id.
+// gitleaksRules maps gitleaks rules onto this connector's types; others keep their id.
 var gitleaksRules = map[string]string{
 	"aws-access-token":        "aws-access-key-id",
 	"gcp-api-key":             "google-api-key",
@@ -266,11 +258,8 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 	return len(s.repos()), int(n.Load())
 }
 
-// runGitleaks scans one repository's history with the JSON report on stdout, so raw values only
-// travel through a pipe into this process (never a file, never the terminal): each is
-// fingerprinted and dropped. logOpts, when set, limits the scan to those commits (`git log`
-// arguments); else every commit is scanned, as gitleaks does by default. It returns the prepared
-// leaks and how many were omitted because the evidence would have held the value.
+// runGitleaks scans the commits logOpts names (all when empty), the report piped to this process
+// so values never reach a file. It returns the prepared leaks and how many were omitted.
 func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
 	defer cancel()
@@ -306,9 +295,8 @@ func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	return found, omitted, nil
 }
 
-// prepareLeak turns one gitleaks finding into evidence. ok is false for values that are not
-// secrets (placeholders, low entropy, short PEM bodies); dropped is true when the evidence would
-// have held the value.
+// prepareLeak turns one gitleaks finding into evidence: ok is false for a non-secret, dropped true
+// when the evidence would have held the value.
 func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool) {
 	ev := secretrisk.Evidence{Source: "gitleaks", Kind: "repo", Line: l.StartLine, Tracked: true,
 		Repo: s.tilde(repo), Commit: leading(l.Commit, 10), Date: leading(l.Date, 10)}
@@ -358,14 +346,11 @@ func (s *scan) prepareLeak(repo string, l leak) (c cachedLeak, ok, dropped bool)
 	return c, true, false
 }
 
-// leakKeyName is the key name a gitleaks match starts with (`app_secret_access_key: "…`,
-// `"secretAccessKey": "…`).
 var leakKeyName = regexp.MustCompile(`^["'\s]*([A-Za-z0-9_.-]+)`)
 
-// markAWSSecretLeaks gives the rule id aws-secret-key to the generic-api-key leaks that are AWS
-// secret access keys, which gitleaks has no rule for: under a name that holds secret_access_key,
-// or under a secret-ish name within awsPairLines lines of a long-term key id reported in the same
-// file and commit (awsSecretNearKeyID), as the working-tree scan judges them.
+// markAWSSecretLeaks makes aws-secret-key the generic-api-key leaks the working-tree scan would
+// call one (gitleaks has no rule): a secret_access_key name, or a secret-ish one near a key id of
+// the same file and commit.
 func markAWSSecretLeaks(leaks []leak) {
 	for i, l := range leaks {
 		if l.RuleID != "generic-api-key" || !awsSecretShaped(l.Secret) {
@@ -381,8 +366,6 @@ func markAWSSecretLeaks(leaks []leak) {
 	}
 }
 
-// keyIDLeakNear reports whether a long-term AWS key id was reported within awsPairLines lines of
-// l, in the same file and commit.
 func keyIDLeakNear(leaks []leak, l leak) bool {
 	for _, k := range leaks {
 		if k.File == l.File && k.Commit == l.Commit && pairableKeyID(k.Secret) && nearKeyID([]int{k.StartLine}, l.StartLine) {
@@ -394,13 +377,10 @@ func keyIDLeakNear(leaks []leak, l leak) bool {
 	return false
 }
 
-// errGitUnderGitleaks is a git failure gitleaks logged and then reported as a clean scan.
 var errGitUnderGitleaks = errors.New("git failed under gitleaks")
 
-// gitleaksStderr judges the error log of a gitleaks run that exited 0. gitleaks reports the leaks
-// it got before the git it runs failed (a bad revision in --log-opts, a corrupt object) and only
-// logs git's error: such a scan is incomplete, and caching it would mark the commits scanned.
-// git's warnings and gitleaks' own errors about finding links leave the scan whole.
+// gitleaksStderr fails a run that exited 0 after the git under it failed (a bad revision, a
+// corrupt object), which gitleaks only logs: caching it would mark the commits scanned.
 func gitleaksStderr(stderr string) error {
 	for _, l := range strings.Split(stderr, "\n") {
 		if _, msg, ok := strings.Cut(l, " ERR [git] "); ok && (strings.HasPrefix(msg, "fatal:") || strings.HasPrefix(msg, "error:")) {
@@ -410,10 +390,8 @@ func gitleaksStderr(stderr string) error {
 	return nil
 }
 
-// gitleaksDefaultLogOpts is what gitleaks scans without --log-opts: every commit.
 const gitleaksDefaultLogOpts = "--full-history --all"
 
-// leading is the first n bytes of s, for ASCII values such as commit hashes and dates.
 func leading(s string, n int) string {
 	if len(s) > n {
 		return s[:n]

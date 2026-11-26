@@ -17,22 +17,15 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// The liveness check (connectors/internal/liveness), run here because the scan is the only moment
-// segurata holds the values: each distinct secret the run reports (not noise), attributed to an
-// owner the config allows, of a type a provider endpoint takes, is tried once, and every finding
-// of it gets the result in its evidence. Values stay in memory for the length of the run. See
-// docs/architecture.md, "Liveness".
+// The liveness check runs here because only the scan holds the values: each reported secret of an
+// allowed owner and a supported type is tried once, and its findings get the result.
 
-// livenessTimeout bounds the whole check, and livenessMargin is the time it leaves before the
-// run's deadline: the findings are emitted after it, and a slow provider never costs the scan
-// them (livenessDeadline).
+// livenessMargin is left before the run's deadline, so a slow provider never costs the findings.
 const (
 	livenessTimeout = 10 * time.Minute
 	livenessMargin  = time.Minute
 )
 
-// livenessDeadline is when the check stops: livenessTimeout from now, or livenessMargin before the
-// run's deadline when that comes first.
 func livenessDeadline(ctx context.Context, now time.Time) time.Time {
 	at := now.Add(livenessTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Add(-livenessMargin).Before(at) {
@@ -41,30 +34,24 @@ func livenessDeadline(ctx context.Context, now time.Time) time.Time {
 	return at
 }
 
-// awsPairLines is how many lines apart an AWS secret access key and its key id may be written and
-// still pair by proximity. A credentials file, an .env or an Ansible vars block puts the two on
-// consecutive lines, sometimes with a region, a bucket or a session token between; five lines
-// take such a block and stop short of an unrelated key id further down the file.
+// awsPairLines takes a credentials block (key id, region, bucket, token, secret key) and stops
+// short of an unrelated key id further down.
 const awsPairLines = 5
 
-// nearKeyID reports whether line is within awsPairLines of one of the key id lines.
 func nearKeyID(keyIDLines []int, line int) bool {
 	return slices.ContainsFunc(keyIDLines, func(l int) bool { return max(l-line, line-l) <= awsPairLines })
 }
 
-// awsSighting is one AWS key id or secret access key seen in a place, by fingerprint and line.
 type awsSighting struct {
 	fp   string
 	line int
 }
 
-// awsPlace is what one place (a file, or a file in one commit) holds of AWS credentials.
+// awsPlace is the AWS credentials of a file, or of a file in one commit.
 type awsPlace struct{ ids, secrets []awsSighting }
 
-// awsPlaces are the AWS key ids and secret keys seen, by place.
 type awsPlaces map[string]*awsPlace
 
-// add records a key id (id) or a secret key seen at a place.
 func (ps *awsPlaces) add(place string, id bool, ev secretrisk.Evidence) {
 	if *ps == nil {
 		*ps = awsPlaces{}
@@ -82,8 +69,7 @@ func (ps *awsPlaces) add(place string, id bool, ev secretrisk.Evidence) {
 	}
 }
 
-// pairs pairs every place's secret keys with its key ids (awsPlace.pair), places in order, so a
-// key id paired in one place is not paired again in another.
+// pairs pairs place by place, in order, so a key id is paired in one place only.
 func (ps awsPlaces) pairs(taken map[string]bool) [][2]string {
 	var out [][2]string
 	for _, place := range slices.Sorted(maps.Keys(ps)) {
@@ -92,20 +78,17 @@ func (ps awsPlaces) pairs(taken map[string]bool) [][2]string {
 	return out
 }
 
-// pair matches the place's secret keys with its key ids, one to one, and returns the pairs as
-// {secret key, key id} fingerprints; fingerprints in taken are left alone, and those paired are
-// added to it. A secret key pairs with a key id at most awsPairLines lines away, on the side the
-// place writes key ids (above the secret key when its first key id comes first, below otherwise),
-// the nearest first: in
+// pair matches secret keys with key ids one to one, as {secret key, key id} fingerprints, leaving
+// those in taken alone. A secret key takes the nearest key id within awsPairLines, on the side
+// the place writes key ids first: in
 //
 //	a_access_key_id: AKIA…1
 //	a_region: eu-west-1
 //	a_secret_access_key: …1
 //	b_access_key_id: AKIA…2
 //
-// the first secret key is two lines below its key id and one above the next block's, and pairs
-// with its own. A secret key that finds none pairs with the place's only key id, however far, as
-// a place holding one key id was always read.
+// the first secret key pairs with its own key id, not the next block's. One left over takes the
+// place's only key id, however far.
 func (p awsPlace) pair(taken map[string]bool) [][2]string {
 	if len(p.ids) == 0 || len(p.secrets) == 0 {
 		return nil
@@ -157,19 +140,17 @@ func (p awsPlace) pair(taken map[string]bool) [][2]string {
 	return out
 }
 
-// heldValues are the values of the secrets the check may try, by fingerprint, and the AWS access
-// key ids, which are tried only with a secret access key found in the same place.
+// heldValues are the values the check may try, by fingerprint; long-term AWS key ids pair with a
+// secret key of the same place.
 type heldValues struct {
-	byFP map[string]heldValue
-	// awsIDs are the long-term access key ids, by fingerprint.
+	byFP   map[string]heldValue
 	awsIDs map[string]string
-	// aws are the access key ids and secret access keys seen, by place (path and commit).
-	aws awsPlaces
+	aws    awsPlaces
 }
 
 type heldValue struct{ typ, value string }
 
-// hold keeps the value of a prepared secret the check could try. The caller holds s.mu.
+// hold needs s.mu.
 func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 	if !s.cfg.liveness.Enabled || ev.Public || ev.Encrypted {
 		return
@@ -185,7 +166,7 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 		h.aws.add(place, true, ev)
 		return
 	case ev.Type == "cloudflare-token" && !namesCloudflare(ev):
-		return // CF_TOKEN may be any provider's: it is never sent to Cloudflare
+		return // CF_TOKEN may be any provider's
 	case ev.Type == awsSecretType:
 		h.aws.add(place, false, ev)
 	case !liveness.Supported(ev.Type):
@@ -197,10 +178,8 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 	h.byFP[ev.Fingerprint] = heldValue{ev.Type, value}
 }
 
-// probes are the held secrets to try, one per fingerprint: an AWS secret access key with the key
-// id its place pairs it with (awsPlace.pair; both fingerprints get the result). A secret key
-// without its key id is a probe too, which the checker answers from its cache or counts as
-// unsupported; a key id without its secret key is looked up in the owner's IAM inventory.
+// probes are the held secrets, one per fingerprint, a secret key with its paired key id. A lone
+// secret key is answered from the cache; a lone key id is looked up in the owner's IAM.
 func (h heldValues) probes() []liveness.Probe {
 	var out []liveness.Probe
 	paired := map[string]bool{}
@@ -220,8 +199,7 @@ func (h heldValues) probes() []liveness.Probe {
 	return out
 }
 
-// checkLiveness tries the secrets of the findings about to be emitted and writes each result into
-// the evidence of every finding of that secret. It returns the line for the status detail.
+// checkLiveness writes each result into every finding of that secret and returns the status part.
 func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *attribution.Known) string {
 	if !s.cfg.liveness.Enabled {
 		return ""
@@ -231,9 +209,9 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	}
 	claims := map[string][]attribution.Claims{}
 	types := map[string]string{}
-	history := map[string]secretrisk.Evidence{}    // fingerprint -> a sighting in git history
-	var historyAWS awsPlaces                       // AWS key ids and secret keys committed, by place
-	historyIDs := map[string]secretrisk.Evidence{} // fingerprint -> a sighting of a long-term key id
+	history := map[string]secretrisk.Evidence{} // a sighting in git history
+	var historyAWS awsPlaces
+	historyIDs := map[string]secretrisk.Evidence{} // a long-term key id in git history
 	for _, f := range fs {
 		ev, ok := secretrisk.EvidenceOf(f)
 		if !ok || isNoise(f) {
@@ -254,10 +232,8 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 			}
 		}
 	}
-	// Every reported secret a provider could judge: with its value when the run read it, else (git
-	// history replayed from the cache) with a way to read it again from the commit, or only to
-	// look in the liveness cache. AWS secret keys go first, so their key ids ride along with them,
-	// paired place by place as the held ones are.
+	// Secrets the run did not read (history replayed from the cache) are read again from their
+	// commit. Secret keys go first, so their key ids ride along.
 	candidates := s.held.probes()
 	covered := map[string]bool{}
 	for _, p := range candidates {
@@ -300,17 +276,13 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 		}
 		candidates = append(candidates, p)
 	}
-	// A probe of a secret no longer reported (noise, or dropped after it was held) is left out; the
-	// checker refuses any other whose fingerprints are not all attributed to an owner it allows.
+	// Only reported secrets; the checker refuses any not attributed to an owner it allows.
 	probes := slices.DeleteFunc(candidates, func(p liveness.Probe) bool {
 		_, reported := claims[p.Fingerprints[0]]
 		return !reported
 	})
-	// A pair is the account's its key id names: the secret key, which names none by itself (or two,
-	// in a file of several pairs), is attributed as its key id is, which also keeps a pair whose
-	// key id is someone else's from ever being sent.
-	// Each half of a pair names the other (Evidence.Pair), so the tracker folds the key id into its
-	// secret key's item: one key to deactivate, one item.
+	// A secret key is attributed as its key id is, so a pair with someone else's key id is never
+	// sent. Each half names the other (Evidence.Pair): the tracker makes them one item.
 	pairOf := map[string]string{}
 	for _, p := range probes {
 		if p.Type == awsSecretType && len(p.Fingerprints) == 2 {
@@ -352,30 +324,22 @@ func (s *scan) checkLiveness(ctx context.Context, fs []finding.Finding, known *a
 	return line
 }
 
-// namesCloudflare reports whether a Cloudflare token's context names Cloudflare: gitleaks' rule
-// requires the word, this connector's pattern also takes a bare CF_ key, kept in the note.
+// namesCloudflare: gitleaks' rule requires the word; this connector's pattern also takes CF_ keys.
 func namesCloudflare(ev secretrisk.Evidence) bool {
 	return ev.Source == "gitleaks" || strings.Contains(strings.ToLower(ev.Note), "cloudflare")
 }
 
-// pairableKeyID reports whether an AWS access key id (or its redacted hint) can be tried with a
-// secret key: a long-term AKIA id. A temporary ASIA id needs its session token, which segurata does
-// not pair; signed without it, STS would reject a pair that works.
+// pairableKeyID: a temporary ASIA id needs a session token, without which STS rejects a live pair.
 func pairableKeyID(s string) bool { return strings.HasPrefix(s, "AKIA") }
 
-// historyPlace is where a history leak sits: repository, file and commit.
 func historyPlace(ev secretrisk.Evidence) string {
 	return ev.Repo + "\x00" + ev.Path + "\x00" + ev.Commit
 }
 
-// maxRecoverBlob is the largest committed file read to recover a value: a secret in a bigger one
-// (a database dump) stays unchecked.
 const maxRecoverBlob = 8 << 20
 
-// recoverer reads a history leak's value again at check time, and the key id's when one is given:
-// the line gitleaks reported (and its neighbours) in the file as committed, searched for the
-// window whose fingerprint is the secret's (fingerprint.Key.Find, as `rotations replace` locates
-// an old value). The value lives only in the probe for the length of the check.
+// recoverer reads a history leak's value again, and id's: the window of the reported line and its
+// neighbours, as committed, whose fingerprint matches.
 func (s *scan) recoverer(ev secretrisk.Evidence, id *secretrisk.Evidence) func(context.Context) (string, string, bool) {
 	return func(ctx context.Context) (string, string, bool) {
 		value, ok := s.recoverValue(ctx, ev)
@@ -414,8 +378,6 @@ func (s *scan) recoverValue(ctx context.Context, ev secretrisk.Evidence) (string
 	return "", false
 }
 
-// checker is the real checker unless a test gives one: the providers' hosts, the cache beside the
-// other caches (~/.cache/segurata/liveness.json), and the owner's gh, aws and ssh for the lookups.
 func (c *Connector) checker(home string, cfg liveness.Config) *liveness.Checker {
 	if c.NewChecker != nil {
 		return c.NewChecker(home, cfg)

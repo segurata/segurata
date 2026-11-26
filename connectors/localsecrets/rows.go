@@ -12,14 +12,10 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// The steps of findings that look at every row at once.
-
-// fileValueKey identifies one value in one file.
 func fileValueKey(ev secretrisk.Evidence) string { return ev.Path + "\x00" + ev.Fingerprint }
 
-// inheritForkUpstream marks a fork's working copy of a file as inherited when git history shows
-// that same value at that path in a commit the upstream already had: the working tree has no
-// commit of its own to judge by.
+// inheritForkUpstream makes a fork's working copy inherited when history shows that value at that
+// path in an upstream commit.
 func inheritForkUpstream(evs []secretrisk.Evidence) []secretrisk.Evidence {
 	inherited := map[string]bool{}
 	for _, ev := range evs {
@@ -35,11 +31,8 @@ func inheritForkUpstream(evs []secretrisk.Evidence) []secretrisk.Evidence {
 	return evs
 }
 
-// markReused flags the copies in other people's repositories of a value that one of the owner's
-// own files also holds (a config or .env file, a working file or commit in the owner's
-// repositories): the owner's secret, leaked into a third-party repository, so it counts. Trails
-// do not count as the owner's here: an agent that read a third-party file left its value in a
-// transcript without making it the owner's.
+// markReused flags third-party copies of a value one of the owner's config or repository files
+// holds. A trail copy does not make it the owner's: an agent may have read a third-party file.
 func markReused(evs []secretrisk.Evidence) []secretrisk.Evidence {
 	owned := map[string]bool{}
 	for _, ev := range evs {
@@ -55,12 +48,10 @@ func markReused(evs []secretrisk.Evidence) []secretrisk.Evidence {
 	return evs
 }
 
-// collapseTemporaryAWS reports the temporary AWS key ids and pre-signed URLs of one file as a
-// single finding: a page of signed links (197 in one committed JSON file on 2026-11-24) is one
-// thing to clean up, not 197 keys to rotate. The row kept is the one with the smallest
-// fingerprint, so the same file keeps the same finding across runs; it counts every match and is
-// expired only when all of them are. folded maps the kept row's fingerprint to the rows it stands
-// for, so the noise summary still names their fingerprints when it is noise.
+// collapseTemporaryAWS reports a file's temporary key ids and pre-signed URLs as one finding (a
+// page of signed links is one cleanup, not hundreds of rotations), kept under the smallest
+// fingerprint so it is stable across runs, expired only when all are. folded maps it to the rows
+// it stands for, which the noise summary still names.
 func collapseTemporaryAWS(evs []secretrisk.Evidence) (out []secretrisk.Evidence, folded map[string][]secretrisk.Evidence) {
 	groups := map[string][]int{}
 	folded = map[string][]secretrisk.Evidence{}
@@ -101,9 +92,8 @@ func collapseTemporaryAWS(evs []secretrisk.Evidence) (out []secretrisk.Evidence,
 	return out, folded
 }
 
-// noiseCounts counts the noise findings left out of the output, by type and by place (the
-// repository for git history, else the kind of file), for the run's status line, and keeps the
-// fingerprints of those values (all of whose copies are noise) for the noise summary.
+// noiseCounts counts the noise left out, by type and place (repository or kind of file), and keeps
+// the types of the noise-only fingerprints for the summary.
 type noiseCounts struct {
 	total           int
 	byType, byPlace map[string]int
@@ -124,8 +114,7 @@ func (n *noiseCounts) add(ev secretrisk.Evidence) {
 	n.name(ev)
 }
 
-// name records a noise-only fingerprint for the summary without counting a match: a row a
-// collapsed one stands for (collapseTemporaryAWS), already counted in it.
+// name records a noise-only fingerprint without counting it: a folded row, already counted.
 func (n *noiseCounts) name(ev secretrisk.Evidence) {
 	if n.types == nil {
 		n.types = map[string]string{}
@@ -135,12 +124,10 @@ func (n *noiseCounts) name(ev secretrisk.Evidence) {
 	}
 }
 
-// NoiseSummaryType is the resource type of the one finding that stands for the noise left out:
-// its evidence maps every noise-only fingerprint to its type (noise_fingerprints), so the tracker
-// can close items whose secret a corrected rule made noise without every copy being emitted.
+// NoiseSummaryType is the resource type of the finding standing for the noise left out: its
+// noise_fingerprints let the tracker close items whose secret became noise.
 const NoiseSummaryType = "noise_summary"
 
-// summary is that finding; false when no noise was left out.
 func (n noiseCounts) summary() (finding.Finding, bool) {
 	if n.total == 0 {
 		return finding.Finding{}, false
@@ -157,10 +144,8 @@ func (n noiseCounts) summary() (finding.Finding, bool) {
 	}, true
 }
 
-// maxNoisePlaces bounds the places listed in the status line; the rest are summed.
 const maxNoisePlaces = 25
 
-// String is the status-line part, "" when nothing was left out.
 func (n noiseCounts) String() string {
 	if n.total == 0 {
 		return ""
@@ -170,8 +155,7 @@ func (n noiseCounts) String() string {
 	return fmt.Sprintf("; noise not emitted (emit_noise: true lists it): %d; by type: %s; by place: %s", n.total, types, places)
 }
 
-// topCounts lists "key n" pairs, largest first, at most limit of them (0 for all) and the rest
-// summed.
+// topCounts lists "key n", largest first, at most limit (0: all) and the rest summed.
 func topCounts(m map[string]int, limit int) string {
 	keys := slices.SortedFunc(maps.Keys(m), func(a, b string) int { return cmp.Or(cmp.Compare(m[b], m[a]), cmp.Compare(a, b)) })
 	var parts []string
