@@ -146,8 +146,8 @@ jobs:
   # CreateProcessWithLogonW, an interactive logon (the token holds INTERACTIVE, as a signed-in
   # user's does) with the profile loaded and the runner's window station and desktop granted to
   # the new logon, so the clipboard, Credential Manager and Task Scheduler behave as for a user at
-  # the keyboard. A scheduled task (batch logon, session 0, no desktop) would not. The script
-  # checks those token properties before it runs anything.
+  # the keyboard. A scheduled task (batch logon, session 0, no desktop) would not.
+  # .github/scripts/go-test-as-user.ps1 checks those token properties before it runs anything.
   test-windows-standard-user:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -195,36 +195,16 @@ jobs:
           }
           $work = Join-Path $env:RUNNER_TEMP 'standard-user'
           New-Item -ItemType Directory -Path $work | Out-Null
-          $script = Join-Path $work 'run.ps1'
-          # The user's environment comes from its own profile; only PATH is extended.
-          @"
-          `$ErrorActionPreference = 'Stop'
-          `$env:PATH = '$(Split-Path $go);$(Split-Path $rg);' + `$env:PATH
-          `$env:GOTOOLCHAIN = 'local'
-          # A disposable VM: the native clipboard test clears the clipboard.
-          `$env:SEGURATA_TEST_DISPOSABLE_CLIPBOARD = '1'
-          `$groups = whoami /groups /fo csv | ConvertFrom-Csv
-          whoami /user /groups /priv
-          `$checks = [ordered]@{
-            'runs as the standard user' = ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq '$sid')
-            'not an administrator'      = -not (`$groups | Where-Object SID -eq 'S-1-5-32-544')
-            'medium integrity'          = [bool](`$groups | Where-Object SID -eq 'S-1-16-8192')
-            'interactive logon'         = [bool](`$groups | Where-Object SID -eq 'S-1-5-4')
-            'own profile loaded'        = (Test-Path (Join-Path `$env:USERPROFILE 'NTUSER.DAT')) -and `$env:USERPROFILE -like '*\$name*'
-            'temp in the profile'       = `$env:TEMP.StartsWith(`$env:USERPROFILE, 'OrdinalIgnoreCase')
-          }
-          `$checks.GetEnumerator() | ForEach-Object { '{0}: {1}' -f `$_.Key, `$_.Value }
-          if (`$checks.Values -contains `$false) { 'the token is not a standard user''s'; exit 2 }
-          & '$go' env GOCACHE GOMODCACHE GOTMPDIR
-          & '$go' test ./...
-          exit `$LASTEXITCODE
-          "@ | Set-Content -Path $script -Encoding utf8
+          $script = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\go-test-as-user.ps1'
 
           $out = Join-Path $work 'out.log'
           $err = Join-Path $work 'err.log'
           $credential = [pscredential]::new("$env:COMPUTERNAME\$name", $password)
           $pwsh = (Get-Process -Id $PID).Path
-          $p = Start-Process -FilePath $pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script `
+          # Start-Process joins the arguments with spaces: the paths are quoted here.
+          $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$script`" -Sid $sid " +
+            "-GoBin `"$(Split-Path $go)`" -RgBin `"$(Split-Path $rg)`""
+          $p = Start-Process -FilePath $pwsh -ArgumentList $arguments `
             -Credential $credential -LoadUserProfile -WorkingDirectory $env:GITHUB_WORKSPACE `
             -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
           $null = $p.Handle # keeps the handle, so the exit code survives the process
