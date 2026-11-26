@@ -114,21 +114,10 @@ func parseSettings(cfg map[string]any, home string) (settings, error) {
 	if v, ok := cfg["emit_noise"].(bool); ok {
 		s.emitNoise = v
 	}
-	if v, ok := cfg["owned_owners"]; ok {
-		errOwners := fmt.Errorf("owned_owners must be a list of GitHub user or organization names")
-		list, _ := v.([]any)
-		if list == nil {
-			return s, errOwners
-		}
-		for _, o := range list {
-			name, ok := o.(string)
-			if !ok || name == "" {
-				return s, errOwners
-			}
-			s.ownedOwners = append(s.ownedOwners, name)
-		}
-	}
 	var err error
+	if s.ownedOwners, err = connector.Strings(cfg, "local-secrets", "owned_owners"); err != nil {
+		return s, err
+	}
 	if s.liveness, err = liveness.ParseConfig(cfg["liveness"]); err != nil {
 		return s, err
 	}

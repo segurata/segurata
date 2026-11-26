@@ -64,22 +64,13 @@ type settings struct {
 }
 
 func parseSettings(m map[string]any) (settings, error) {
-	s := settings{maxRepos: defaultMaxRepos}
-	if v, ok := m["max_repos"]; ok && v != nil {
-		n, ok := v.(float64)
-		if !ok || n < 1 || n != float64(int(n)) {
-			return s, errors.New(`github config: "max_repos" must be a whole number above 0`)
-		}
-		s.maxRepos = int(n)
+	var s settings
+	var err error
+	if s.maxRepos, err = connector.PositiveInt(m, "github", "max_repos", defaultMaxRepos); err != nil {
+		return s, err
 	}
-	if v, ok := m["branch_protection"]; ok && v != nil {
-		b, ok := v.(bool)
-		if !ok {
-			return s, errors.New(`github config: "branch_protection" must be true or false`)
-		}
-		s.branchProtection = b
-	}
-	return s, nil
+	s.branchProtection, err = connector.Bool(m, "github", "branch_protection")
+	return s, err
 }
 
 type run struct {

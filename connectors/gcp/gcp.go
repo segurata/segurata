@@ -63,38 +63,18 @@ type settings struct {
 func parseSettings(m map[string]any) (settings, error) {
 	var s settings
 	var err error
-	if s.accounts, err = stringList(m, "accounts"); err != nil {
+	if s.accounts, err = connector.Strings(m, "gcp", "accounts"); err != nil {
 		return s, err
 	}
-	if s.projects, err = stringList(m, "projects"); err != nil {
+	if s.projects, err = connector.Strings(m, "gcp", "projects"); err != nil {
 		return s, err
 	}
-	if s.skipProjects, err = stringList(m, "skip_projects"); err != nil {
+	if s.skipProjects, err = connector.Strings(m, "gcp", "skip_projects"); err != nil {
 		return s, err
 	}
 	s.billingProject, _ = m["billing_project"].(string)
 	s.gcloudPath, _ = m["gcloud_path"].(string)
 	return s, nil
-}
-
-func stringList(m map[string]any, key string) ([]string, error) {
-	v, ok := m[key]
-	if !ok || v == nil {
-		return nil, nil
-	}
-	items, ok := v.([]any)
-	if !ok {
-		return nil, fmt.Errorf("gcp config: %q must be a list of strings", key)
-	}
-	out := make([]string, 0, len(items))
-	for _, it := range items {
-		s, ok := it.(string)
-		if !ok {
-			return nil, fmt.Errorf("gcp config: %q must be a list of strings", key)
-		}
-		out = append(out, s)
-	}
-	return out, nil
 }
 
 // target is one project and the accounts that list it, in config or `gcloud auth list` order.

@@ -112,12 +112,9 @@ func parseSettings(m map[string]any, home string) (settings, error) {
 	if s.domain != "" && !domainRE.MatchString(s.domain) {
 		return s, fmt.Errorf("workspace config: %q does not look like a domain", s.domain)
 	}
-	if v, ok := m["inactive_days"]; ok && v != nil {
-		n, ok := v.(float64)
-		if !ok || n <= 0 || n != float64(int(n)) {
-			return s, errors.New("workspace config: \"inactive_days\" must be a whole number of days")
-		}
-		s.inactiveDays = int(n)
+	var err error
+	if s.inactiveDays, err = connector.PositiveInt(m, "workspace", "inactive_days", defaultInactiveDays); err != nil {
+		return s, err
 	}
 	switch {
 	case strings.HasPrefix(s.cloudsdkConfig, "~/"):

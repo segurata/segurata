@@ -78,20 +78,12 @@ func (GooglePersonal) Inventory(ctx context.Context, req connector.Request, emit
 // accountFilter: other accounts signed in to the browser, such as a mailbox you were given access
 // to, get no status, only a skipped scope.
 func accountFilter(cfg map[string]any) (map[string]bool, error) {
-	raw, ok := cfg["accounts"]
-	if !ok || raw == nil {
-		return nil, nil
-	}
-	list, ok := raw.([]any)
-	if !ok {
-		return nil, errors.New(`google-personal config: "accounts" must be a list of emails`)
+	list, err := connector.Strings(cfg, "google-personal", "accounts")
+	if list == nil || err != nil {
+		return nil, err
 	}
 	only := map[string]bool{}
-	for _, v := range list {
-		s, ok := v.(string)
-		if !ok {
-			return nil, errors.New(`google-personal config: "accounts" must be a list of emails`)
-		}
+	for _, s := range list {
 		only[strings.ToLower(s)] = true
 	}
 	return only, nil

@@ -80,15 +80,8 @@ func (c *Connector) Describe() connector.Description {
 type settings struct{ maxZones int }
 
 func parseSettings(m map[string]any) (settings, error) {
-	s := settings{maxZones: defaultMaxZones}
-	if v, ok := m["max_zones"]; ok && v != nil {
-		n, ok := v.(float64)
-		if !ok || n < 1 || n != float64(int(n)) {
-			return s, errors.New(`cloudflare config: "max_zones" must be a whole number above 0`)
-		}
-		s.maxZones = int(n)
-	}
-	return s, nil
+	n, err := connector.PositiveInt(m, "cloudflare", "max_zones", defaultMaxZones)
+	return settings{maxZones: n}, err
 }
 
 // pacer spaces request starts at least every apart, across goroutines.

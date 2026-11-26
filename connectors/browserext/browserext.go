@@ -56,14 +56,9 @@ func (c *Connector) Track(finding.Finding) *finding.Track {
 }
 
 // primaries reads config "primary": extension ids that win a duplicate check in their category.
+// A malformed entry is dropped: without it the duplicate check still runs, it only names no primary.
 func primaries(cfg map[string]any) []string {
-	var ids []string
-	list, _ := cfg["primary"].([]any)
-	for _, v := range list {
-		if s, ok := v.(string); ok {
-			ids = append(ids, s)
-		}
-	}
+	ids, _ := connector.LenientStrings(cfg, "primary")
 	return ids
 }
 

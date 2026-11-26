@@ -113,14 +113,8 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 }
 
 func (c *Connector) profiles(ctx context.Context, cfg map[string]any) ([]string, error) {
-	if raw, ok := cfg["profiles"].([]any); ok {
-		var out []string
-		for _, p := range raw {
-			if s, ok := p.(string); ok && s != "" {
-				out = append(out, s)
-			}
-		}
-		return out, nil
+	if listed, ok := connector.LenientStrings(cfg, "profiles"); ok {
+		return listed, nil
 	}
 	out, err := c.aws(ctx, "configure", "list-profiles")
 	if err != nil {

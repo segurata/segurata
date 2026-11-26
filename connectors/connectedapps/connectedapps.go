@@ -7,7 +7,6 @@ package connectedapps
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -64,24 +63,19 @@ var services = []service{
 }
 
 func selectServices(cfg map[string]any) ([]service, error) {
-	v, ok := cfg["services"]
-	if !ok || v == nil {
-		return services, nil
-	}
-	items, ok := v.([]any)
-	if !ok {
-		return nil, errors.New(`connected-apps config: "services" must be a list of strings`)
+	names, err := connector.Strings(cfg, "connected-apps", "services")
+	if names == nil || err != nil {
+		return services, err
 	}
 	var out []service
-	for _, it := range items {
-		n, _ := it.(string)
+	for _, n := range names {
 		i := slices.IndexFunc(services, func(s service) bool { return s.name == n })
 		if i < 0 {
 			var known []string
 			for _, s := range services {
 				known = append(known, s.name)
 			}
-			return nil, fmt.Errorf("connected-apps config: unknown service %v (known: %s)", it, strings.Join(known, ", "))
+			return nil, fmt.Errorf("connected-apps config: unknown service %v (known: %s)", n, strings.Join(known, ", "))
 		}
 		out = append(out, services[i])
 	}

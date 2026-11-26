@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -42,16 +43,14 @@ func ParseConfig(raw any) (Config, error) {
 	if !ok {
 		return c, fmt.Errorf(`liveness must be an object such as {"enabled": true, "owners": ["mine"]}`)
 	}
-	if v, ok := m["enabled"]; ok {
-		if c.Enabled, ok = v.(bool); !ok {
-			return c, fmt.Errorf("liveness.enabled must be true or false")
-		}
+	if c.Enabled, err = connector.Bool(m, "liveness", "enabled"); err != nil {
+		return c, err
 	}
-	if v, ok := m["owners"]; ok {
-		list, err := stringList(v, "liveness.owners")
-		if err != nil {
-			return c, err
-		}
+	list, err := connector.Strings(m, "liveness", "owners")
+	if err != nil {
+		return c, err
+	}
+	if list != nil {
 		owners, err := attribution.ParseOwners(strings.Join(list, ","))
 		if err != nil {
 			return c, fmt.Errorf("liveness.owners: %w", err)
@@ -61,53 +60,29 @@ func ParseConfig(raw any) (Config, error) {
 		}
 		c.Owners = owners
 	}
-	if v, ok := m["providers"]; ok {
-		list, err := stringList(v, "liveness.providers")
-		if err != nil {
-			return c, err
-		}
-		for _, p := range list {
-			if byName(p) == nil {
-				return c, fmt.Errorf("liveness.providers: unknown provider %q (known: %s)", p, strings.Join(Providers(), ", "))
-			}
-		}
-		c.Providers = list
+	if c.Providers, err = connector.Strings(m, "liveness", "providers"); err != nil {
+		return c, err
 	}
-	if v, ok := m["aws_profiles"]; ok {
-		if c.AWSProfiles, err = stringList(v, "liveness.aws_profiles"); err != nil {
-			return c, err
+	for _, p := range c.Providers {
+		if byName(p) == nil {
+			return c, fmt.Errorf("liveness.providers: unknown provider %q (known: %s)", p, strings.Join(Providers(), ", "))
 		}
 	}
-	if v, ok := m["ssh_hosts"]; ok {
-		if c.SSHHosts, err = stringList(v, "liveness.ssh_hosts"); err != nil {
-			return c, err
-		}
-		if len(c.SSHHosts) > maxSSHHosts {
-			return c, fmt.Errorf("liveness.ssh_hosts: at most %d hosts", maxSSHHosts)
-		}
-		for _, h := range c.SSHHosts {
-			if !sshHost.MatchString(h) {
-				return c, fmt.Errorf("liveness.ssh_hosts: %q is not a host name or user@host", h)
-			}
+	if c.AWSProfiles, err = connector.Strings(m, "liveness", "aws_profiles"); err != nil {
+		return c, err
+	}
+	if c.SSHHosts, err = connector.Strings(m, "liveness", "ssh_hosts"); err != nil {
+		return c, err
+	}
+	if len(c.SSHHosts) > maxSSHHosts {
+		return c, fmt.Errorf("liveness.ssh_hosts: at most %d hosts", maxSSHHosts)
+	}
+	for _, h := range c.SSHHosts {
+		if !sshHost.MatchString(h) {
+			return c, fmt.Errorf("liveness.ssh_hosts: %q is not a host name or user@host", h)
 		}
 	}
 	return c, nil
-}
-
-func stringList(v any, key string) ([]string, error) {
-	list, ok := v.([]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must be a list of strings", key)
-	}
-	out := make([]string, 0, len(list))
-	for _, x := range list {
-		s, ok := x.(string)
-		if !ok || s == "" {
-			return nil, fmt.Errorf("%s must be a list of strings", key)
-		}
-		out = append(out, s)
-	}
-	return out, nil
 }
 
 // Allows reports whether the check may try a secret of the type attributed to owner. A lookup
