@@ -7,26 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"syscall"
 	"time"
 	"unicode/utf16"
 	"unsafe"
-)
 
-var (
-	user32                     = syscall.NewLazyDLL("user32.dll")
-	kernel32                   = syscall.NewLazyDLL("kernel32.dll")
-	openClipboard              = user32.NewProc("OpenClipboard")
-	closeClipboard             = user32.NewProc("CloseClipboard")
-	emptyClipboard             = user32.NewProc("EmptyClipboard")
-	getClipboardData           = user32.NewProc("GetClipboardData")
-	isClipboardFormatAvailable = user32.NewProc("IsClipboardFormatAvailable")
-	globalLock                 = kernel32.NewProc("GlobalLock")
-	globalUnlock               = kernel32.NewProc("GlobalUnlock")
-	globalSize                 = kernel32.NewProc("GlobalSize")
+	"github.com/segurata/segurata/internal/winsys"
 )
-
-const cfUnicodeText = 13 // CF_UNICODETEXT
 
 func Default() Clipboard { return Windows{} }
 
@@ -37,20 +23,19 @@ type Windows struct{}
 func (Windows) Read(ctx context.Context) ([]byte, error) {
 	var out []byte
 	err := withClipboard(ctx, func() error {
-		if r, _, _ := isClipboardFormatAvailable.Call(cfUnicodeText); r == 0 {
+		if !winsys.IsClipboardFormatAvailable(winsys.CFUnicodeText) {
 			return nil
 		}
-		h, _, e := getClipboardData.Call(cfUnicodeText)
-		if h == 0 {
-			return e
+		h, err := winsys.GetClipboardData(winsys.CFUnicodeText)
+		if err != nil {
+			return err
 		}
-		p, _, e := globalLock.Call(h)
-		if p == 0 {
-			return e
+		p, err := winsys.GlobalLock(h)
+		if err != nil {
+			return err
 		}
-		defer globalUnlock.Call(h)
-		size, _, _ := globalSize.Call(h)
-		text := unsafe.Slice((*uint16)(unsafe.Add(nil, p)), size/2)
+		defer winsys.GlobalUnlock(h)
+		text := unsafe.Slice((*uint16)(unsafe.Add(nil, p)), winsys.GlobalSize(h)/2)
 		for i, c := range text {
 			if c == 0 {
 				text = text[:i]
@@ -72,10 +57,7 @@ func (Windows) Read(ctx context.Context) ([]byte, error) {
 
 func (Windows) Clear(ctx context.Context) error {
 	err := withClipboard(ctx, func() error {
-		if r, _, e := emptyClipboard.Call(); r == 0 {
-			return e
-		}
-		return nil
+		return winsys.EmptyClipboard()
 	})
 	if err != nil {
 		return fmt.Errorf("clearing the clipboard: %w", err)
@@ -93,8 +75,8 @@ func withClipboard(ctx context.Context, f func() error) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	for try := 0; ; try++ {
-		r, _, e := openClipboard.Call(0)
-		if r != 0 {
+		e := winsys.OpenClipboard()
+		if e == nil {
 			break
 		}
 		if try == 20 {
@@ -106,6 +88,6 @@ func withClipboard(ctx context.Context, f func() error) error {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	defer closeClipboard.Call()
+	defer winsys.CloseClipboard()
 	return f()
 }

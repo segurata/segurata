@@ -11,22 +11,17 @@ import (
 	"syscall"
 	"testing"
 	"unicode/utf16"
-	"unsafe"
-)
 
-var credDelete = advapi32.NewProc("CredDeleteW")
+	"github.com/segurata/segurata/internal/winsys"
+)
 
 // testTarget is a synthetic target name, deleted when the test ends.
 func testTarget(t *testing.T) string {
 	t.Helper()
 	target := "segurata-test-" + rand.Text()
 	t.Cleanup(func() {
-		p, err := syscall.UTF16PtrFromString(target)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if r, _, e := credDelete.Call(uintptr(unsafe.Pointer(p)), credTypeGeneric, 0); r == 0 && !errors.Is(winError(e), ErrNotFound) {
-			t.Errorf("deleting %s: %v", target, e)
+		if err := winsys.CredDelete(target, credTypeGeneric); err != nil && !errors.Is(winError(err), ErrNotFound) {
+			t.Errorf("deleting %s: %v", target, err)
 		}
 	})
 	return target

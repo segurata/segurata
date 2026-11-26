@@ -9,11 +9,8 @@ import (
 	"testing"
 	"unicode/utf16"
 	"unsafe"
-)
 
-var (
-	setClipboardData = user32.NewProc("SetClipboardData")
-	globalAlloc      = kernel32.NewProc("GlobalAlloc")
+	"github.com/segurata/segurata/internal/winsys"
 )
 
 // copyText puts text on the clipboard as CF_UNICODETEXT, as a paste source would.
@@ -21,23 +18,20 @@ func copyText(t *testing.T, text string) {
 	t.Helper()
 	u := append(utf16.Encode([]rune(text)), 0)
 	err := withClipboard(context.Background(), func() error {
-		if r, _, e := emptyClipboard.Call(); r == 0 {
-			return e
+		if err := winsys.EmptyClipboard(); err != nil {
+			return err
 		}
-		h, _, e := globalAlloc.Call(0x0002, uintptr(2*len(u))) // GMEM_MOVEABLE
-		if h == 0 {
-			return e
+		h, err := winsys.GlobalAlloc(winsys.GmemMoveable, uintptr(2*len(u)))
+		if err != nil {
+			return err
 		}
-		p, _, e := globalLock.Call(h)
-		if p == 0 {
-			return e
+		p, err := winsys.GlobalLock(h)
+		if err != nil {
+			return err
 		}
 		copy(unsafe.Slice((*uint16)(unsafe.Add(nil, p)), len(u)), u)
-		globalUnlock.Call(h)
-		if r, _, e := setClipboardData.Call(cfUnicodeText, h); r == 0 {
-			return e
-		}
-		return nil
+		winsys.GlobalUnlock(h)
+		return winsys.SetClipboardData(winsys.CFUnicodeText, h)
 	})
 	if err != nil {
 		t.Skipf("no clipboard in this session: %v", err)

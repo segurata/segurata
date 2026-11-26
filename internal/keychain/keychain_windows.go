@@ -11,13 +11,8 @@ import (
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
-)
 
-var (
-	advapi32  = syscall.NewLazyDLL("advapi32.dll")
-	credWrite = advapi32.NewProc("CredWriteW")
-	credRead  = advapi32.NewProc("CredReadW")
-	credFree  = advapi32.NewProc("CredFree")
+	"github.com/segurata/segurata/internal/winsys"
 )
 
 const (
@@ -30,22 +25,6 @@ const (
 )
 
 var errNoLogonSession = errors.New("Credential Manager is not available in this logon session (a scheduled task must run as the logged-on user)")
-
-// credential is CREDENTIALW.
-type credential struct {
-	Flags              uint32
-	Type               uint32
-	TargetName         *uint16
-	Comment            *uint16
-	LastWritten        syscall.Filetime
-	CredentialBlobSize uint32
-	CredentialBlob     *byte
-	Persist            uint32
-	AttributeCount     uint32
-	Attributes         uintptr
-	TargetAlias        *uint16
-	UserName           *uint16
-}
 
 // Default is the Windows Credential Manager, storing generic credentials under account.
 func Default(account string) Store { return CredentialManager{Account: account} }
@@ -108,7 +87,7 @@ func writeBlob(target, account string, blob []byte) error {
 	if err != nil {
 		return err
 	}
-	c := credential{Type: credTypeGeneric, TargetName: t, Persist: credPersistLocalMachine, CredentialBlobSize: uint32(len(blob))}
+	c := winsys.Credential{Type: credTypeGeneric, TargetName: t, Persist: credPersistLocalMachine, CredentialBlobSize: uint32(len(blob))}
 	if len(blob) > 0 {
 		c.CredentialBlob = &blob[0]
 	}
@@ -117,10 +96,10 @@ func writeBlob(target, account string, blob []byte) error {
 			return err
 		}
 	}
-	r, _, e := credWrite.Call(uintptr(unsafe.Pointer(&c)), 0)
+	err = winsys.CredWrite(&c)
 	runtime.KeepAlive(blob)
-	if r == 0 {
-		return winError(e)
+	if err != nil {
+		return winError(err)
 	}
 	return nil
 }
@@ -134,16 +113,11 @@ type stored struct {
 
 // readCredential copies the item and zeroes the API's buffer before freeing it.
 func readCredential(target string) (stored, error) {
-	t, err := syscall.UTF16PtrFromString(target)
+	p, err := winsys.CredRead(target, credTypeGeneric)
 	if err != nil {
-		return stored{}, err
+		return stored{}, winError(err)
 	}
-	var p *credential
-	r, _, e := credRead.Call(uintptr(unsafe.Pointer(t)), credTypeGeneric, 0, uintptr(unsafe.Pointer(&p)))
-	if r == 0 {
-		return stored{}, winError(e)
-	}
-	defer credFree.Call(uintptr(unsafe.Pointer(p)))
+	defer winsys.CredFree(p)
 	n := p.CredentialBlobSize
 	var src []byte
 	if n > 0 && p.CredentialBlob != nil {
@@ -155,17 +129,9 @@ func readCredential(target string) (stored, error) {
 	}
 	s := stored{blob: append([]byte(nil), src...), typ: p.Type, persist: p.Persist}
 	if p.UserName != nil {
-		s.user = utf16PtrToString(p.UserName)
+		s.user = winsys.UTF16PtrToString(p.UserName)
 	}
 	return s, nil
-}
-
-func utf16PtrToString(p *uint16) string {
-	n := 0
-	for *(*uint16)(unsafe.Add(unsafe.Pointer(p), 2*n)) != 0 {
-		n++
-	}
-	return syscall.UTF16ToString(unsafe.Slice(p, n))
 }
 
 func winError(e error) error {
