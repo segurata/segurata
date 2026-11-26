@@ -164,6 +164,8 @@ class MappingTest(unittest.TestCase):
         self.assertEqual(prowler.classify("<HttpError 403 when requesting https://x returned \"Permission denied on resource\">"), "denied")
         self.assertEqual(prowler.classify("PermissionError: [Errno 13] Permission denied: '/tmp/out/prowler.log'"), "error",
                          "a local file error is no cloud refusal")
+        self.assertEqual(prowler.classify("[Module: iam_service]\t ERROR: [403] Permission denied on project"), "denied",
+                         "a bracketed log prefix does not hide a cloud refusal")
 
     def test_log_problems(self):
         def call(host, path, body):
@@ -530,6 +532,16 @@ class RelevanceTest(unittest.TestCase):
         self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), kind="exposure"), ("medium", ""),
                          "a hygiene check whose categories say internet-exposed is protected")
         self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), kind="credential"), ("medium", ""))
+        exposures = ["compute_firewall_rdp_access_from_the_internet_allowed", "compute_instance_public_ip",
+                     "compute_image_not_publicly_shared", "compute_public_address_shodan",
+                     "cloudstorage_bucket_public_access", "cloudsql_instance_public_ip", "cloudsql_instance_public_access",
+                     "bigquery_dataset_public_access", "cloudfunction_function_not_publicly_accessible",
+                     "kms_key_not_publicly_accessible", "secretmanager_secret_not_publicly_accessible",
+                     "vertexai_workbench_instance_public_ip_disabled", "apikeys_api_restricted_with_gemini_api",
+                     "apikeys_key_rotated_in_90_days", "iam_sa_no_administrative_privileges", "iam_sa_user_managed_key_unused"]
+        for check in exposures:
+            with self.subTest(check):
+                self.assertEqual(self.weigh(check, "high", profile("empty")), ("high", ""))
 
     def test_toggle_and_overrides(self):
         self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), relevance=False), ("medium", ""))

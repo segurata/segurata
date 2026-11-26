@@ -127,8 +127,8 @@ BILLING_OFF = re.compile(r"check billing account associated|requires billing to 
 API_OFF = re.compile(r"SERVICE_DISABLED|API has not been used in project")
 SERVICEUSAGE_TARGET = re.compile(r"services/([a-z0-9-]+)\.googleapis\.com")
 TOKEN_LIKE = re.compile(r"ya29\.[A-Za-z0-9_\-.]+")
-# "(?<!\] )" leaves out Python's local "PermissionError: [Errno 13] Permission denied".
-DENIED = re.compile(r"HttpError 403|\b403 Forbidden|PERMISSION_DENIED|(?<!\] )[Pp]ermission denied|does not have permission|"
+# The lookbehind leaves out Python's local "PermissionError: [Errno 13] Permission denied".
+DENIED = re.compile(r"HttpError 403|\b403 Forbidden|PERMISSION_DENIED|(?<!\[Errno 13\] )[Pp]ermission denied|does not have permission|"
                     r"GCPNoAccesibleProjectsError|No (Input )?Project IDs (are active or )?can be accessed")
 REAUTH = re.compile(r"HttpError 401|\b401 Unauthorized|invalid_grant|UNAUTHENTICATED|Reauthentication|"
                     r"does not have any valid credentials|invalid authentication credentials")
@@ -616,6 +616,7 @@ def prowler_args(prowler, project, outdir, config):
 
 
 # Prowler runs in sessions of its own, so the SIGTERM segurata sends the plugin's group misses it.
+# Set operations are atomic under the GIL; the handler only reads a copy.
 RUNNING = set()
 OUTDIRS = set()
 

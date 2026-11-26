@@ -100,6 +100,7 @@ filter=(--replace-text "$secret_dir/expressions" --replace-message "$secret_dir/
   --replace-refs delete-no-add --quiet)
 if [ ${#drop[@]} -gt 0 ]; then filter+=("${drop[@]}" --invert-paths); fi
 if [ -n "$mailmap" ]; then filter+=(--mailmap "$mailmap"); fi
+# filter-repo removes origin, expires reflogs and repacks, so no pre-rewrite object survives.
 (cd "$public" && git filter-repo "${filter[@]}")
 
 after_commits="$(git -C "$public" rev-list --count "$branch_ref")"

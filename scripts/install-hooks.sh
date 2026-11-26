@@ -2,7 +2,8 @@
 # Installs the leak gate (check-public.sh --pre-push) as this clone's pre-push hook without taking
 # any hook away: .git/hooks-segurata becomes this clone's core.hooksPath, links every hook of the
 # directory git used before (which may be a global one), and chains the gate to its pre-push.
-# Run it again to pick up hooks added there since.
+# Writing the gate into that directory would replace its pre-push and, for a global one, gate every
+# other repository with a script they lack. Run it again to pick up hooks added there since.
 #
 # Usage: scripts/install-hooks.sh [--identifiers FILE] [--allow-author ID]... [--skip-authors]
 #   --identifiers FILE   passed to the gate; default as check-public.sh's

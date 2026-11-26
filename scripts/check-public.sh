@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Leak gate: gitleaks and the owner's private identifiers (format in scripts/identifiers.py) over
 # the content and paths of what is about to go out, by default the tracked files of the working tree.
-# With an identifiers file, all output goes through identifiers.py's mask.
+# The identifiers file lives outside the repository, because it would leak what it lists. With
+# it, all output goes through identifiers.py's mask.
 #
 # Usage: scripts/check-public.sh [--identifiers FILE] [--require-identifiers]
 #                                [--allow-author ID]... [--skip-authors]
