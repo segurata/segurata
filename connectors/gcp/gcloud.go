@@ -81,7 +81,6 @@ const deniedPrefix = "permission denied: "
 // http403 matches the status code alone, not a project number that happens to contain 403.
 var http403 = regexp.MustCompile(`\b403\b`)
 
-// classify turns a gcloud failure into a status state and a short reason without secrets.
 func classify(err error) (finding.State, string) {
 	s := errText(err)
 	switch {
@@ -106,7 +105,6 @@ func containsAny(s string, subs ...string) bool {
 	return false
 }
 
-// summarize keeps the first meaningful line of gcloud's stderr, without help tokens or links.
 func summarize(stderr string, err error) string {
 	line := strings.TrimSpace(stderr)
 	if i := strings.IndexByte(line, '\n'); i >= 0 {

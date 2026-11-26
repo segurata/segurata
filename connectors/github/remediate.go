@@ -55,7 +55,6 @@ func scanningStep(full, status string, features []string) connector.Step {
 	return ghStep(args...)
 }
 
-// workflowStep keeps whether workflows may approve pull requests as it is.
 func workflowStep(base, perm string, canApprove bool) connector.Step {
 	return ghStep("--method", "PUT", "--silent", base+"/actions/permissions/workflow",
 		"-f", "default_workflow_permissions="+perm, "-F", "can_approve_pull_request_reviews="+strconv.FormatBool(canApprove))
@@ -325,7 +324,6 @@ func (c *Connector) PlanGroup(ctx context.Context, fs []finding.Finding) (connec
 	return st.plan()
 }
 
-// ApplyGroup reads again and runs the confirmed plan through the allowlist of that read.
 func (c *Connector) ApplyGroup(ctx context.Context, fs []finding.Finding, p connector.Plan, io connector.IO) error {
 	st, err := c.read(ctx, fs)
 	if err != nil {

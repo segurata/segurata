@@ -177,7 +177,6 @@ func (r *run) gh(ctx context.Context, flag, path string) ([]byte, error) {
 	return ghGet(ctx, r.c.Run, flag, path)
 }
 
-// ghGet runs `gh api --method GET [flag] path` through the read-only guard.
 func ghGet(ctx context.Context, run cli.Runner, flag, path string) ([]byte, error) {
 	args := []string{"api", "--method", "GET"}
 	if flag != "" {
@@ -190,7 +189,6 @@ func ghGet(ctx context.Context, run cli.Runner, flag, path string) ([]byte, erro
 	return out, nil
 }
 
-// forEach calls fn for 0..n-1, concurrency at a time.
 func forEach(n int, fn func(int)) {
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -308,7 +306,6 @@ func stateOf(err error) finding.State {
 	return finding.StateError
 }
 
-// describe says what to do next about a failure.
 func describe(err error, fallback string) string {
 	switch stateOf(err) {
 	case finding.StateUnsupported:

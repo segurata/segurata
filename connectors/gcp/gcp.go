@@ -358,7 +358,6 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	}
 }
 
-// billing collects billing accounts seen through accounts and projects, then judges each once.
 type billing struct {
 	g              *gcloud
 	billingProject string
@@ -406,7 +405,6 @@ func (b *billing) link(account string, p linkedProject, id string) {
 	st.linked = append(st.linked, p)
 }
 
-// judge reads budgets for every billing account that is open or pays for a project seen.
 func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 	for _, id := range slices.Sorted(maps.Keys(b.accounts)) {
 		st := b.accounts[id]

@@ -30,7 +30,6 @@ type credFile struct {
 	QuotaProjectID string `json:"quota_project_id"`
 }
 
-// gcloudConfigDir follows gcloud: CLOUDSDK_CONFIG, else %APPDATA%\gcloud on Windows, else ~/.config/gcloud.
 func gcloudConfigDir(getenv func(string) string, home string) string {
 	if d := getenv("CLOUDSDK_CONFIG"); d != "" {
 		return d
