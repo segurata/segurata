@@ -580,9 +580,11 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   <path>`. On Windows it sets, in-process, the descriptor segurata gives its own files (owner, a
   protected DACL, full control for the user and SYSTEM), refuses a file another account owns, and
   records the old owner and DACL as SDDL, so a plan whose access list changed before apply is
-  stale. The undo is `powershell.exe` from System32 with `-NoProfile -NonInteractive` running
-  `Get-Acl`, `SetSecurityDescriptorSddlForm('<old SDDL>')` and `Set-Acl`; a path with a single
-  quote, or SDDL outside `[A-Za-z0-9;:()-]` (conditional entries), is left out, to be fixed by hand.
+  stale. The undo is `powershell.exe` from System32 with `-NoProfile -NonInteractive`, calling .NET
+  and no cmdlet: it loads only the owner and DACL of the old SDDL and writes them with
+  `File.SetAccessControl`, so the file's audit entries (SACL) stay as they are and a standard user,
+  who lacks SeSecurityPrivilege, can run it. SDDL outside `[A-Za-z0-9;:()-]` (conditional entries)
+  is left out, to be fixed by hand.
   With a group it changes every file once and leaves out, by name, files already private.
 - An external connector remediates through protocol 2: it declares its actions in `describe`
   (`remediates`), returns a plan from `segurata-<name> plan` and runs it in
