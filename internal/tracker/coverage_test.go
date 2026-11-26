@@ -51,6 +51,22 @@ func TestCoverageLine(t *testing.T) {
 	}
 }
 
+// Only a reason that is "expected" or starts "expected:" says the config left a scope out; one
+// that merely begins with the word reports a failure, so the run stays partial.
+func TestSkipReasonStartingWithExpectedIsNotExpected(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	writeRun(t, out, t0, "supabase.jsonl", okStatus("supabase", "me"),
+		finding.Skipped{Scope: "project:p1", Reason: "expected a 200, got 403"})
+	tr := New(t0)
+	if _, err := tr.Sync(SyncOptions{OutDir: out}, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	info := tr.Runs["supabase"]
+	if info.Complete || info.Expected != 0 || len(info.Skipped) != 1 || info.Skipped[0] != "project:p1: expected a 200, got 403" {
+		t.Fatalf("run info %+v", info)
+	}
+}
+
 // Areas no connector audits are coverage items, apart from what fails: the owner's own GitHub
 // 2FA while gh lacks read:user (closed once a run reads it), hibp until it runs, and the manual
 // areas, which stay until the owner marks them done.
