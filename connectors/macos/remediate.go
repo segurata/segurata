@@ -8,24 +8,21 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Remediation actions this connector can apply.
 const (
-	ActionFirewallEnable  = "macos.firewall.enable"
-	ActionFirewallStealth = "macos.firewall.stealth"
-	ActionShareRemove     = "macos.smb.share-remove"
-	ActionShareGuestOff   = "macos.smb.guest-off"
-	ActionHomePrivate     = "macos.home.private"
+	actionFirewallEnable  = "macos.firewall.enable"
+	actionFirewallStealth = "macos.firewall.stealth"
+	actionShareRemove     = "macos.smb.share-remove"
+	actionShareGuestOff   = "macos.smb.guest-off"
+	actionHomePrivate     = "macos.home.private"
 )
 
-// allowed is every fixed command line a remediation may run, exactly, sudo included. It is written
-// out by hand rather than derived from the plans, so a wrong plan is refused instead of run. The
-// share point and home folder actions take a path or a name, so their allowlists are built at
-// apply time from what exists then (shareAllowlist, homeAllowlist), never from the finding.
+// allowed is written out by hand rather than derived from the plans, so a wrong plan is refused.
+// Actions on a share or the home folder build theirs at apply time from what exists then.
 var allowed = connector.Allowlist{
-	ActionFirewallEnable: {
+	actionFirewallEnable: {
 		{Argv: []string{socketfilterfw, "--setglobalstate", "on"}, Sudo: true},
 	},
-	ActionFirewallStealth: {
+	actionFirewallStealth: {
 		{Argv: []string{socketfilterfw, "--setstealthmode", "on"}, Sudo: true},
 	},
 }
@@ -36,13 +33,13 @@ func firewallStep(flag, value string) connector.Step {
 
 func (c *Connector) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
 	switch f.Remediation.Action {
-	case ActionShareRemove, ActionShareGuestOff:
+	case actionShareRemove, actionShareGuestOff:
 		return c.sharePlan(ctx, f)
-	case ActionHomePrivate:
+	case actionHomePrivate:
 		return c.homePlan()
-	case ActionFirewallEnable:
+	case actionFirewallEnable:
 		return connector.Plan{
-			Action:   ActionFirewallEnable,
+			Action:   actionFirewallEnable,
 			Summary:  "Turn on the macOS application firewall, which then asks before an app accepts incoming connections.",
 			Commands: []connector.Step{firewallStep("--setglobalstate", "on")},
 			Undo:     []connector.Step{firewallStep("--setglobalstate", "off")},
@@ -51,9 +48,9 @@ func (c *Connector) Plan(ctx context.Context, f finding.Finding) (connector.Plan
 				"Connections from this Mac to localhost are not affected.",
 			},
 		}, nil
-	case ActionFirewallStealth:
+	case actionFirewallStealth:
 		return connector.Plan{
-			Action:   ActionFirewallStealth,
+			Action:   actionFirewallStealth,
 			Summary:  "Turn on firewall stealth mode: the Mac stops answering pings and probes of closed ports.",
 			Commands: []connector.Step{firewallStep("--setstealthmode", "on")},
 			Undo:     []connector.Step{firewallStep("--setstealthmode", "off")},
@@ -74,13 +71,11 @@ func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Pl
 	return allow.Run(ctx, p, c.Exec, io)
 }
 
-// allowlistFor is the allowlist an action is checked against: the fixed one, or for actions that
-// name a live object, one built now from what exists.
 func (c *Connector) allowlistFor(ctx context.Context, action string) (connector.Allowlist, error) {
 	switch action {
-	case ActionShareRemove, ActionShareGuestOff:
+	case actionShareRemove, actionShareGuestOff:
 		return c.shareAllowlist(ctx)
-	case ActionHomePrivate:
+	case actionHomePrivate:
 		return c.homeAllowlist()
 	}
 	return allowed, nil

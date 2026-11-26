@@ -31,7 +31,7 @@ func homeTest(t *testing.T, mode os.FileMode) (*Connector, string, *recordingExe
 func TestHomeFolderReadableByOthers(t *testing.T) {
 	c, home, _ := homeTest(t, 0o755)
 	f := inventory(t, c).ByResource(t, "macos_setting", "home-private")
-	if f.Severity != finding.SevMedium || f.Remediation.Action != ActionHomePrivate {
+	if f.Severity != finding.SevMedium || f.Remediation.Action != actionHomePrivate {
 		t.Fatalf("%s %q", f.Severity, f.Remediation.Action)
 	}
 	if f.Evidence["path"] != home || f.Evidence["mode"] != "755" || f.Evidence["acl"] != true ||
@@ -60,7 +60,7 @@ func TestPrivateOrTraversableHomeIsOK(t *testing.T) {
 func TestHomePrivatePlanAndApply(t *testing.T) {
 	c, home, ex := homeTest(t, 0o755)
 	// Whatever path a finding claims, the plan acts on the home folder the OS reports.
-	f := finding.Finding{Connector: "macos", Evidence: map[string]any{"path": "/etc"}, Remediation: finding.Remediation{Action: ActionHomePrivate}}
+	f := finding.Finding{Connector: "macos", Evidence: map[string]any{"path": "/etc"}, Remediation: finding.Remediation{Action: actionHomePrivate}}
 	p, err := c.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestHomePrivatePlanAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := connector.Plan{Action: ActionHomePrivate, Commands: []connector.Step{{Argv: []string{chmodBin, "700", "/Users/someone-else"}}}}
+	other := connector.Plan{Action: actionHomePrivate, Commands: []connector.Step{{Argv: []string{chmodBin, "700", "/Users/someone-else"}}}}
 	if err := allow.Run(context.Background(), other, ex, termIO()); !errors.Is(err, connector.ErrRefused) {
 		t.Fatalf("chmod of another folder allowed: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestHomePrivateKeepsACLsOnARealFolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allow := connector.Allowlist{ActionHomePrivate: p.Commands}
+	allow := connector.Allowlist{actionHomePrivate: p.Commands}
 	if err := allow.Run(context.Background(), p, connector.System{}, termIO()); err != nil {
 		t.Fatal(err)
 	}

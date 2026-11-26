@@ -12,9 +12,8 @@ import (
 	"time"
 )
 
-// parsePlist decodes an XML property list (what `tmutil -X` and `plutil -convert xml1` print)
-// into dict → map[string]any, array → []any, string, integer → int64, real → float64,
-// true/false → bool, date → time.Time and data → []byte.
+// parsePlist decodes an XML property list: dict → map[string]any, array → []any, integer → int64,
+// real → float64, date → time.Time, data → []byte.
 func parsePlist(raw []byte) (any, error) {
 	d := xml.NewDecoder(bytes.NewReader(raw))
 	d.Strict = false
@@ -29,7 +28,7 @@ func parsePlist(raw []byte) (any, error) {
 	}
 }
 
-// plistDict decodes a property list whose root is a dict. Empty input is an empty dict.
+// plistDict: empty input is an empty dict.
 func plistDict(raw []byte) (map[string]any, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return map[string]any{}, nil
@@ -113,7 +112,6 @@ func plistValue(d *xml.Decoder, se xml.StartElement) (any, error) {
 	return s, nil
 }
 
-// plistText reads the character data up to the end of the current element.
 func plistText(d *xml.Decoder) (string, error) {
 	var b strings.Builder
 	for {

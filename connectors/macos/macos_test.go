@@ -198,8 +198,8 @@ func TestExposedMacGradesEachCheckAndAttachesActions(t *testing.T) {
 		action string
 	}{
 		"filevault":                      {"macos_setting", finding.SevHigh, ""},
-		"firewall":                       {"macos_setting", finding.SevMedium, ActionFirewallEnable},
-		"firewall-stealth":               {"macos_setting", finding.SevLow, ActionFirewallStealth},
+		"firewall":                       {"macos_setting", finding.SevMedium, actionFirewallEnable},
+		"firewall-stealth":               {"macos_setting", finding.SevLow, actionFirewallStealth},
 		"update-AutomaticDownload":       {"macos_setting", finding.SevMedium, ""},
 		"auto-login":                     {"macos_setting", finding.SevHigh, ""},
 		"screen-lock":                    {"macos_setting", finding.SevMedium, ""},
@@ -207,7 +207,7 @@ func TestExposedMacGradesEachCheckAndAttachesActions(t *testing.T) {
 		"listen-5000":                    {"listening_port", finding.SevMedium, ""},
 		"listen-7000":                    {"listening_port", finding.SevMedium, ""},
 		"listen-445":                     {"listening_port", finding.SevMedium, ""},
-		"smb-share:Public of Pat":        {"share_point", finding.SevHigh, ActionShareRemove},
+		"smb-share:Public of Pat":        {"share_point", finding.SevHigh, actionShareRemove},
 		"listen-57621":                   {"listening_port", finding.SevInfo, ""},
 		"brave-remote-debugging":         {"macos_setting", finding.SevHigh, ""},
 		"btm:8.com.example.job":          {"background_item", finding.SevLow, ""},
@@ -301,11 +301,11 @@ func withAction(a string) finding.Finding {
 func TestPlansAreExact(t *testing.T) {
 	c, _, _ := newTest(t, healthy())
 	cases := map[string]struct{ do, undo []string }{
-		ActionFirewallEnable: {
+		actionFirewallEnable: {
 			do:   []string{"sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on"},
 			undo: []string{"sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off"},
 		},
-		ActionFirewallStealth: {
+		actionFirewallStealth: {
 			do:   []string{"sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on"},
 			undo: []string{"sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode off"},
 		},
@@ -346,7 +346,7 @@ func stepStrings(steps []connector.Step) []string {
 
 func TestApplyRunsThePlanAndRefusesAnythingElse(t *testing.T) {
 	c, _, ex := newTest(t, healthy())
-	f := withAction(ActionFirewallEnable)
+	f := withAction(actionFirewallEnable)
 	p, _ := c.Plan(context.Background(), f)
 	if err := c.Apply(context.Background(), f, p, termIO()); err != nil {
 		t.Fatal(err)
@@ -365,7 +365,7 @@ func TestApplyRunsThePlanAndRefusesAnythingElse(t *testing.T) {
 	if err := allowed.Run(context.Background(), tampered, ex, termIO()); !errors.Is(err, connector.ErrRefused) || len(ex.ran) != 0 {
 		t.Fatalf("allowlist let %v through: %v", ex.ran, err)
 	}
-	crossed := connector.Plan{Action: ActionFirewallStealth, Commands: []connector.Step{firewallStep("--setglobalstate", "off")}}
+	crossed := connector.Plan{Action: actionFirewallStealth, Commands: []connector.Step{firewallStep("--setglobalstate", "off")}}
 	if err := allowed.Run(context.Background(), crossed, ex, termIO()); !errors.Is(err, connector.ErrRefused) {
 		t.Fatalf("undo command allowed as a forward step: %v", err)
 	}

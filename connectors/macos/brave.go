@@ -16,8 +16,7 @@ var (
 	debugFlag    = regexp.MustCompile(`--remote-debugging-(port|address)=\S+`)
 )
 
-// braveDebugging flags Brave running with --remote-debugging-port: while it is open any local
-// process can drive the browser with every signed-in session.
+// braveDebugging: while the port is open any local process can drive every signed-in session.
 func (c *Connector) braveDebugging(ctx context.Context) check {
 	ch := check{id: "brave-remote-debugging", sev: finding.SevHigh, blast: finding.BlastBrowser,
 		title: "Brave runs with a remote debugging port: any local process can act as every signed-in account",

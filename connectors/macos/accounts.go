@@ -21,13 +21,11 @@ const (
 	lastBin        = "/usr/bin/last"
 )
 
-// The account listings inventory reads; both cover every local record, service accounts included.
 var (
 	listUIDs  = []string{dsclBin, ".", "list", "/Users", "UniqueID"}
 	listHomes = []string{dsclBin, ".", "list", "/Users", "NFSHomeDirectory"}
 )
 
-// firstHumanUID is where macOS starts numbering the accounts people create (the first is 501).
 const firstHumanUID = 500
 
 type localUser struct {
@@ -36,13 +34,11 @@ type localUser struct {
 	home string
 }
 
-// human reports whether the record is an account a person signs in to: not a service account
-// (UID below 500, or a name starting with "_", like _sophos at 502).
+// human: service accounts have a UID below 500 or a name starting with "_" (_sophos is 502).
 func (u localUser) human() bool { return u.uid >= firstHumanUID && !strings.HasPrefix(u.name, "_") }
 
-// localUsers reads every local user record with its UID and home folder.
 func (c *Connector) localUsers(ctx context.Context) ([]localUser, error) {
-	out, err := guard(c.Run).Run(ctx, listUIDs...)
+	out, err := c.read(ctx, listUIDs...)
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +46,7 @@ func (c *Connector) localUsers(ctx context.Context) ([]localUser, error) {
 	return parseUsers(string(out), homes), nil
 }
 
-// parseUsers reads `dscl . list /Users UniqueID` ("name   501") and the NFSHomeDirectory listing
-// ("name   /Users/name", where the path may hold spaces).
+// parseUsers reads the UniqueID and NFSHomeDirectory listings; a home may hold spaces.
 func parseUsers(uids, homes string) []localUser {
 	home := map[string]string{}
 	for _, l := range strings.Split(homes, "\n") {
@@ -74,7 +69,6 @@ func parseUsers(uids, homes string) []localUser {
 	return users
 }
 
-// safeName is an account name that can go on a command line as one plain argument.
 var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func adminArgv(u string) []string {
@@ -82,9 +76,7 @@ func adminArgv(u string) []string {
 }
 func lastArgv(u string) []string { return []string{lastBin, "-1", u} }
 
-// accountChecks reports every human account other than the one running segurata. The guest
-// account is the guest-account check; a deleted account's File Sharing record is the share point
-// check (shareCheck names the deleted account).
+// accountChecks reports every human account other than the one running segurata.
 func (c *Connector) accountChecks(ctx context.Context, users []localUser) []check {
 	me := c.UID()
 	var others []localUser
@@ -98,7 +90,7 @@ func (c *Connector) accountChecks(ctx context.Context, users []localUser) []chec
 	if len(others) == 0 {
 		return []check{{id: "local-accounts", ok: true, detail: "no human account besides yours"}}
 	}
-	run := guardWith(c.Run, extra...)
+	run := guard(c.Run, extra...)
 	var out []check
 	for _, u := range others {
 		res, err := run.Run(ctx, adminArgv(u.name)...)
@@ -109,11 +101,10 @@ func (c *Connector) accountChecks(ctx context.Context, users []localUser) []chec
 	return out
 }
 
-// lastLogin is what `last -1 <user>` says: the session line, or that there is none since wtmp
-// begins.
+// lastLogin is what `last -1 <user>` says.
 type lastLogin struct {
 	when  string // "lun 23 nov 22:33 - 22:33 (00:00)", or "" for never
-	since string // "wtmp begins ..." line, which bounds "never"
+	since string // when wtmp begins, which bounds "never"
 }
 
 func parseLast(out string) lastLogin {
@@ -176,8 +167,7 @@ func accountCheck(u localUser, admin, homeExists bool, ll lastLogin) check {
 	return ch
 }
 
-// ownerRoot is a shared folder searched for items no account owns. depth 1 is the folder's
-// entries; depth 2 adds their children.
+// ownerRoot is a shared folder searched for items no account owns, depth levels down.
 type ownerRoot struct {
 	dir       string
 	depth     int
@@ -191,17 +181,13 @@ var ownerRoots = []ownerRoot{
 	{"/Library/Application Support", 2, false},
 }
 
-// maxListed caps the paths a finding lists; the count is always complete.
 const maxListed = 20
 
-// fileUID returns the owner of a file; it is a variable so tests can give files any owner.
 var fileUID = ownerUID
 
-// orphanedFiles reports, per shared folder, items owned by a UID that no local account has: what a
-// deleted account leaves behind. Outside the launchd folders only UIDs in the range of accounts
-// people create count, because uninstalled security agents (ESET, for one) leave folders owned by
-// their removed service accounts below 500. In LaunchAgents and LaunchDaemons any unknown owner
-// counts: those files start a program automatically.
+// orphanedFiles reports items owned by a UID no local account has, as a deleted account leaves.
+// Outside the launchd folders only human UIDs count: uninstalled security agents leave folders of
+// their removed service accounts. In the launchd folders any unknown owner counts.
 func (c *Connector) orphanedFiles(users []localUser) []check {
 	known := map[uint32]bool{}
 	for _, u := range users {
@@ -252,8 +238,7 @@ func orphanCheck(root ownerRoot, byUID map[uint32][]string) check {
 	return ch
 }
 
-// walkDepth calls fn for every entry under dir down to depth levels, without following symbolic
-// links. Folders it cannot read are skipped.
+// walkDepth does not follow symbolic links and skips folders it cannot read.
 func walkDepth(dir string, depth int, fn func(string, fs.FileInfo)) {
 	if depth == 0 {
 		return
