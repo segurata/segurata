@@ -28,7 +28,7 @@ func (r *Report) document() *doc.Doc {
 		r.Generated.Format("2006-01-02 15:04"), r.OutDir, r.MinSev))
 	r.headline(d)
 	r.completeness(d)
-	tracker.Blockers(d, r.tr.Items, r.Generated, nil)
+	r.tr.Blockers(d, r.tr.Items, r.Generated, nil)
 	d.H(2, "Changes in the last 7 days")
 	tracker.Changes(d, r.tr.Items, r.Generated.AddDate(0, 0, -7), true)
 	r.topFindings(d)

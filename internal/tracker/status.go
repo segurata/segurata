@@ -78,7 +78,7 @@ func (t *Tracker) status(path string, now time.Time, v View) *doc.Doc {
 	}
 	t.doNext(d, items, now, v.Explain)
 	t.decisions(d, items, now)
-	Blockers(d, items, now, v.Browser)
+	t.Blockers(d, items, now, v.Browser)
 	notAudited(d, items, now)
 	t.changes(d, items, now)
 	accepted(d, items, now)
@@ -193,7 +193,7 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool)
 		return entries[i].prio.Rank() < entries[j].prio.Rank()
 	})
 	if len(entries) == 0 {
-		d.P("Nothing open.")
+		d.P(nothingRanked(items, now))
 		return
 	}
 	var list []doc.Item
@@ -207,6 +207,41 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool)
 	if !explain {
 		d.P("Ranked by blast radius × confidence ÷ effort; ", doc.Code("segurata status --explain"), " shows each score.")
 	}
+}
+
+// nothingRanked says why "Do next" is empty without contradicting the headline's open count:
+// decisions that unblock nothing and setup items have sections of their own.
+func nothingRanked(items []*Item, now time.Time) string {
+	decide, setup, other := 0, 0, 0
+	for _, it := range items {
+		switch {
+		case !it.Active(now) || it.Theme == coverageTheme:
+		case it.Kind == KindDecide:
+			decide++
+		case it.Kind == KindSetup:
+			setup++
+		default:
+			other++
+		}
+	}
+	var where []string
+	if decide > 0 {
+		where = append(where, "Pending decisions")
+	}
+	if setup > 0 {
+		where = append(where, "Setup blockers")
+	}
+	switch {
+	case other > 0:
+		return "Nothing to rank: segurata track list shows the open items."
+	case len(where) > 0:
+		lead := "the open item is"
+		if decide+setup > 1 {
+			lead = fmt.Sprintf("the %d open items are", decide+setup)
+		}
+		return "Nothing to rank: " + lead + " under " + strings.Join(where, " and ") + "."
+	}
+	return "Nothing open."
 }
 
 func secretsDoc(p secretrisk.Priority, queue []*Item) doc.Item {
@@ -301,7 +336,7 @@ func (t *Tracker) decisions(d *doc.Doc, items []*Item, now time.Time) {
 
 // Blockers lists the active setup items and sums up the expected statuses in one line; report
 // shows it too. browser, when set, names the connectors that drive the browser.
-func Blockers(d *doc.Doc, items []*Item, now time.Time, browser func(connector string) bool) {
+func (t *Tracker) Blockers(d *doc.Doc, items []*Item, now time.Time, browser func(connector string) bool) {
 	d.H(2, "Setup blockers")
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Kind == KindSetup && it.Active(now) }) {
@@ -315,8 +350,12 @@ func Blockers(d *doc.Doc, items []*Item, now time.Time, browser func(connector s
 		}
 		list = append(list, out)
 	}
-	if len(list) == 0 {
-		d.P("None: every connector could inspect every account.")
+	switch {
+	case len(list) > 0:
+	case len(t.Sources) == 0:
+		d.P("None yet: no connector has run; segurata inventory runs them.")
+	default:
+		d.P("None: every connector that ran could inspect every account.")
 	}
 	d.List(list)
 	if slices.ContainsFunc(items, func(it *Item) bool { return it.BrowserSignIn(browser, now) }) {

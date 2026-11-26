@@ -60,7 +60,7 @@ func TestBrowserSignInAndTheStatusLine(t *testing.T) {
 	}
 	render := func(items []*Item, browser func(string) bool) string {
 		d := &doc.Doc{}
-		Blockers(d, items, now, browser)
+		(&Tracker{}).Blockers(d, items, now, browser)
 		var b bytes.Buffer
 		if err := doc.Render(&b, d, doc.Text); err != nil {
 			t.Fatal(err)
@@ -80,5 +80,45 @@ func TestBrowserSignInAndTheStatusLine(t *testing.T) {
 	}
 	if s := render(all, nil); strings.Contains(s, line) {
 		t.Fatalf("signin line without the browser connectors (report):\n%s", s)
+	}
+}
+
+// An empty "Do next" and an empty "Setup blockers" must not contradict the headline or claim
+// a run that did not happen.
+func TestEmptySectionsSayWhy(t *testing.T) {
+	now := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	render := func(fill func(d *doc.Doc)) string {
+		d := &doc.Doc{}
+		fill(d)
+		var b bytes.Buffer
+		if err := doc.Render(&b, d, doc.Text); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	fresh := &Tracker{}
+	if s := render(func(d *doc.Doc) { fresh.Blockers(d, nil, now, nil) }); !strings.Contains(s, "None yet: no connector has run") {
+		t.Errorf("blockers before any run:\n%s", s)
+	}
+	ran := &Tracker{Sources: map[string]time.Time{"github": now}}
+	if s := render(func(d *doc.Doc) { ran.Blockers(d, nil, now, nil) }); !strings.Contains(s, "None: every connector that ran could inspect every account.") {
+		t.Errorf("blockers after a clean run:\n%s", s)
+	}
+
+	decision := &Item{ID: "T-1", Kind: KindDecide, Status: Open, Decision: &Decision{Question: "Install?"}}
+	setup := signInItem("T-2", "setup:github|me|noscope", Open, "lacks read:org")
+	cases := []struct {
+		items []*Item
+		want  string
+	}{
+		{nil, "Nothing open."},
+		{[]*Item{decision}, "Nothing to rank: the open item is under Pending decisions."},
+		{[]*Item{decision, setup}, "Nothing to rank: the 2 open items are under Pending decisions and Setup blockers."},
+	}
+	for _, c := range cases {
+		tr := &Tracker{Items: c.items}
+		if s := render(func(d *doc.Doc) { tr.doNext(d, c.items, now, false) }); !strings.Contains(s, c.want) {
+			t.Errorf("do next with %d items: want %q in\n%s", len(c.items), c.want, s)
+		}
 	}
 }
