@@ -72,20 +72,18 @@ func selectServices(cfg map[string]any) ([]service, error) {
 	if !ok {
 		return nil, errors.New(`connected-apps config: "services" must be a list of strings`)
 	}
-	byName := map[string]service{}
-	var known []string
-	for _, s := range services {
-		byName[s.name] = s
-		known = append(known, s.name)
-	}
 	var out []service
 	for _, it := range items {
 		n, _ := it.(string)
-		s, ok := byName[n]
-		if !ok {
+		i := slices.IndexFunc(services, func(s service) bool { return s.name == n })
+		if i < 0 {
+			var known []string
+			for _, s := range services {
+				known = append(known, s.name)
+			}
 			return nil, fmt.Errorf("connected-apps config: unknown service %v (known: %s)", it, strings.Join(known, ", "))
 		}
-		out = append(out, s)
+		out = append(out, services[i])
 	}
 	return out, nil
 }

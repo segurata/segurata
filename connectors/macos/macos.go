@@ -188,10 +188,7 @@ func (c *Connector) text(ctx context.Context, args ...string) (string, bool) {
 
 // pref is "" for an unset defaults key.
 func (c *Connector) pref(ctx context.Context, args ...string) string {
-	if s, ok := c.text(ctx, args...); ok {
-		return s
-	}
-	return ""
+	return c.readSetting(ctx, args...).value
 }
 
 func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit connector.Emitter) error {
