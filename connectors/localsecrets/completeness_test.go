@@ -51,6 +51,9 @@ echo "rg: /x/b: Input/output error (os error 5)" >&2; exit 2`, time.Minute, true
 		{"unreadable files only", `echo "rg: /x/Mail: Operation not permitted (os error 1)" >&2
 echo "rg: /x/a: Permission denied (os error 13)" >&2
 echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, false, []string{"/x/Mail", "/x/a"}},
+		{"unreadable and vanished files", `echo "rg: /x/a: Permission denied (os error 13)" >&2
+echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, time.Minute, false, []string{"/x/a"}},
+		{"vanished root", lastRoot + `echo "rg: $root: No such file or directory (os error 2)" >&2; exit 2`, time.Minute, true, nil},
 		{"no match", `exit 1`, time.Minute, false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

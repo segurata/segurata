@@ -152,26 +152,40 @@ func (s *scan) rgOutput(args []string) []byte {
 	return out
 }
 
-// unreadableErrs end ripgrep's message for a path it was not allowed to read.
-var unreadableErrs = []string{": Permission denied (os error 13)", ": Operation not permitted (os error 1)"}
+// unreadableErrs end ripgrep's message for a path it was not allowed to read; vanishedErr for a
+// path removed while it searched, which holds nothing any more.
+var (
+	unreadableErrs = []string{": Permission denied (os error 13)", ": Operation not permitted (os error 1)"}
+	vanishedErr    = ": No such file or directory (os error 2)"
+)
 
-// unreadableBelow is the paths ripgrep's stderr reports unreadable, and whether that is all it
-// reports and none of them is a root of the search.
+// unreadableBelow is the paths ripgrep's stderr reports unreadable, and whether all it reports
+// is paths below its roots that it could not read or that vanished.
 func unreadableBelow(stderr string, roots []string) ([]string, bool) {
 	var paths []string
+	lines := 0
 	for line := range strings.Lines(strings.TrimSpace(stderr)) {
-		line = strings.TrimSuffix(line, "\n")
-		i := slices.IndexFunc(unreadableErrs, func(e string) bool { return strings.HasSuffix(line, e) })
-		if i < 0 || !strings.HasPrefix(line, "rg: ") {
+		msg, ok := strings.CutPrefix(strings.TrimSuffix(line, "\n"), "rg: ")
+		if !ok {
 			return nil, false
 		}
-		path := strings.TrimSuffix(strings.TrimPrefix(line, "rg: "), unreadableErrs[i])
+		path, vanished := strings.CutSuffix(msg, vanishedErr)
+		if !vanished {
+			i := slices.IndexFunc(unreadableErrs, func(e string) bool { return strings.HasSuffix(msg, e) })
+			if i < 0 {
+				return nil, false
+			}
+			path = strings.TrimSuffix(msg, unreadableErrs[i])
+		}
 		if slices.Contains(roots, path) {
 			return nil, false
 		}
-		paths = append(paths, path)
+		if !vanished {
+			paths = append(paths, path)
+		}
+		lines++
 	}
-	return paths, len(paths) > 0
+	return paths, lines > 0
 }
 
 // rgRoots are the paths a ripgrep command line searches: everything after "--".
