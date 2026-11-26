@@ -1,7 +1,5 @@
-// Package budget judges spend budgets with rules that do not depend on the provider. A connector
-// maps its provider's budgets to Budget, describes the container that holds them (a billing
-// account, an account, a subscription) and the spend risks it found there, and gets back findings
-// that mean the same on every provider. See docs/connectors.md, "Spend and budgets".
+// Package budget judges spend budgets with provider-neutral rules, so the findings mean the same on
+// every provider. See docs/connectors.md, "Spend and budgets".
 package budget
 
 import (
@@ -170,12 +168,7 @@ func (j judge) finding(res finding.Resource, sev finding.Severity, title string,
 	return finding.Finding{Resource: res, Kind: finding.KindSpend, Severity: sev, Title: title, Evidence: ev, Blast: blast, Remediation: rem}
 }
 
-func (j judge) console() string {
-	if j.w.ConsoleURL != "" {
-		return j.w.ConsoleURL
-	}
-	return j.w.DocsURL
-}
+func (j judge) console() string { return cmp.Or(j.w.ConsoleURL, j.w.DocsURL) }
 
 func (j judge) budgetRes(kind string, b Budget) finding.Resource {
 	return finding.Resource{Type: kind, ID: j.c.ID + "/" + b.ID, Name: b.Name}
