@@ -2,7 +2,6 @@ package connectedapps
 
 import (
 	"context"
-	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
@@ -68,15 +67,13 @@ func parseNotionRow(cells [][]string) notionIntegration {
 func notionListed(p notionPage) bool { return len(p.Cells) > 0 || notionEmptyRE.MatchString(p.Text) }
 
 func notion(ctx context.Context, e *env) {
-	raw, err := e.b.Load(ctx, notionURL, notionJS, func(raw json.RawMessage) bool {
-		p, ok := decode[notionPage](raw)
-		return ok && (notionSignedOutRE.MatchString(p.URL) || notionListed(p))
+	p, err := load(ctx, e, notionURL, notionJS, func(p notionPage) bool {
+		return notionSignedOutRE.MatchString(p.URL) || notionListed(p)
 	}, 50)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[notionPage](raw)
 	if p.URL == "" || notionSignedOutRE.MatchString(p.URL) {
 		e.status("", finding.StateSignedOut, "not signed in to Notion in the browser: %s", notionURL)
 		return

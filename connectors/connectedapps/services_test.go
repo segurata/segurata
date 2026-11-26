@@ -145,7 +145,7 @@ func TestSlackReadsEachSignedInWorkspace(t *testing.T) {
 		}
 	}
 
-	rec = run(t, &fakeBrowser{pages: map[string]any{slackSignin: page(slackSignin, "Sign in to Slack", nil)}}, nil, "slack")
+	rec = run(t, &fakeBrowser{pages: map[string]any{slackSignin: page(slackSignin, "Sign in to Slack", nil)}, neverReady: map[string]bool{slackSignin: true}}, nil, "slack")
 	if !reflect.DeepEqual(rec.state("slack"), []finding.State{finding.StateSignedOut}) {
 		t.Errorf("no workspaces: %+v", rec.statuses)
 	}
@@ -230,7 +230,8 @@ func TestSlackGradesAppsByTheirDeclaredScopes(t *testing.T) {
 	b = &fakeBrowser{pages: map[string]any{
 		slackSignin: page(slackSignin, "Your workspaces", rows(row{Href: "https://acme-team.slack.com/"})),
 		"https://acme-team.slack.com/apps/manage": map[string]any{"url": acmeURL, "text": "Installed apps\nFilter"},
-	}, responses: map[string]*cdp.Response{"https://acme-team.slack.com/apps/manage": {Status: 200, Body: []byte(`{"ok":false,"error":"not_allowed"}`)}}}
+	}, responses: map[string]*cdp.Response{"https://acme-team.slack.com/apps/manage": {Status: 200, Body: []byte(`{"ok":false,"error":"not_allowed"}`)}},
+		neverReady: map[string]bool{"https://acme-team.slack.com/apps/manage": true}}
 	rec = run(t, b, nil, "slack")
 	if d := rec.detail("slack:acme-team.slack.com", finding.StateUnverified); !strings.Contains(d, `the app list answered "not_allowed"`) || len(rec.findings) != 0 {
 		t.Errorf("unlisted workspace: %+v %+v", rec.statuses, rec.findings)
@@ -463,5 +464,14 @@ func TestGitHubCLIIsADependencyToNarrowNotRevoke(t *testing.T) {
 	e.report(grant{who: "octo", resType: "github_oauth_app", name: "Some CLI", scopes: []string{"Delete repositories"}})
 	if other := e.emit.(*recorder).findings[1]; other.Evidence["dependency"] != nil {
 		t.Errorf("only segurata's own dependencies are labelled: %+v", other)
+	}
+}
+
+func TestDecodeGivesTheZeroValueForAnotherShape(t *testing.T) {
+	if p := decode[listPage]([]byte(`{"url":"https://example.com/login","rows":"not a list"}`)); p.URL != "" {
+		t.Fatalf("decode kept part of a value of another shape: %+v", p)
+	}
+	if p := decode[listPage]([]byte(`{"url":"https://example.com/"}`)); p.URL != "https://example.com/" {
+		t.Fatalf("decode = %+v", p)
 	}
 }

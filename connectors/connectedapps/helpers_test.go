@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,9 +28,13 @@ type fakeBrowser struct {
 	responses map[string]*cdp.Response
 	fail      map[string]error
 	opened    []string
+	// neverReady are given pages the readiness check must reject, so the real browser polls
+	// them until its tries run out (a sign-in page with nothing on it, a list never fetched).
+	neverReady map[string]bool
+	unready    map[string]bool
 }
 
-func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool) (json.RawMessage, error) {
+func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.opened = append(b.opened, url)
@@ -41,16 +46,26 @@ func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool) (json.
 		v = map[string]any{}
 	}
 	raw, _ := json.Marshal(v)
-	ready(raw) // exercised so the readiness predicates are covered
+	// Polled like the real browser: the same value until ready accepts it or tries run out.
+	accepted := false
+	for i := 0; i < tries && !accepted; i++ {
+		accepted = ready(raw)
+	}
+	if _, given := b.pages[url]; given && !accepted {
+		if b.unready == nil {
+			b.unready = map[string]bool{}
+		}
+		b.unready[url] = true
+	}
 	return raw, nil
 }
 
-func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
-	return b.value(url, ready)
+func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
+	return b.value(url, ready, tries)
 }
 
-func (b *fakeBrowser) Capture(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int, re *regexp.Regexp) (json.RawMessage, *cdp.Response, error) {
-	raw, err := b.value(url, ready)
+func (b *fakeBrowser) Capture(_ context.Context, url, _ string, ready func(json.RawMessage) bool, tries int, _ *regexp.Regexp) (json.RawMessage, *cdp.Response, error) {
+	raw, err := b.value(url, ready, tries)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -67,6 +82,17 @@ func (b *fakeBrowser) openedOnce(t *testing.T) {
 			t.Errorf("%s loaded twice", u)
 		}
 		seen[u] = true
+	}
+}
+
+// readiness fails the test when a given page's readiness check did not do what the test says:
+// accept the page, or reject one in neverReady.
+func (b *fakeBrowser) readiness(t *testing.T) {
+	t.Helper()
+	for u := range b.pages {
+		if b.unready[u] != b.neverReady[u] && slices.Contains(b.opened, u) {
+			t.Errorf("%s: ready = %t, want %t", u, !b.unready[u], !b.neverReady[u])
+		}
 	}
 }
 
@@ -152,6 +178,7 @@ func run(t *testing.T, b *fakeBrowser, gh cli.Runner, svc ...string) *recorder {
 		t.Fatal(err)
 	}
 	b.openedOnce(t)
+	b.readiness(t)
 	return rec
 }
 

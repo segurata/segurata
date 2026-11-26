@@ -2,7 +2,6 @@ package connectedapps
 
 import (
 	"context"
-	"encoding/json"
 	"net/url"
 	"regexp"
 
@@ -102,15 +101,13 @@ func parseFacebookDetail(text string) fbDetail {
 func fbListed(p fbListPage) bool { return len(p.Rows) > 0 || fbLoadedRE.MatchString(p.Text) }
 
 func facebook(ctx context.Context, e *env) {
-	raw, err := e.b.Load(ctx, fbURL, fbListJS, func(raw json.RawMessage) bool {
-		p, ok := decode[fbListPage](raw)
-		return ok && (fbSignedOutRE.MatchString(p.URL) || fbReauthRE.MatchString(p.URL) || fbListed(p))
+	p, err := load(ctx, e, fbURL, fbListJS, func(p fbListPage) bool {
+		return fbSignedOutRE.MatchString(p.URL) || fbReauthRE.MatchString(p.URL) || fbListed(p)
 	}, 40)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[fbListPage](raw)
 	switch {
 	case p.URL == "" || fbSignedOutRE.MatchString(p.URL):
 		e.status("", finding.StateSignedOut, "not signed in to Facebook in the browser: %s", fbURL)
@@ -128,16 +125,12 @@ func facebook(ctx context.Context, e *env) {
 			return
 		}
 		a := parseFacebookRow(r)
-		raw, err := e.b.Load(ctx, a.href, pageTextJS, func(raw json.RawMessage) bool {
-			d, _ := decode[listPage](raw)
-			return fbSharingRE.MatchString(d.Text)
-		}, 30)
+		dp, err := load(ctx, e, a.href, pageTextJS, func(p listPage) bool { return fbSharingRE.MatchString(p.Text) }, 30)
 		var d fbDetail
 		if err != nil {
 			failed++
 			e.status("", finding.StateError, "%s: %v", a.name, err)
 		} else {
-			dp, _ := decode[listPage](raw)
 			d = parseFacebookDetail(dp.Text)
 		}
 		e.report(grant{resType: "facebook_app", name: a.name, scopes: d.scopes, created: pagetext.Date(a.added, e.now),

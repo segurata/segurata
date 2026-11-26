@@ -287,10 +287,31 @@ type browser interface {
 	Capture(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int, re *regexp.Regexp) (json.RawMessage, *cdp.Response, error)
 }
 
-// decode reads a page value into T; a value of the wrong shape gives the zero T and false.
-func decode[T any](raw json.RawMessage) (T, bool) {
+// decode reads a page value into T; a value of the wrong shape gives the zero T.
+func decode[T any](raw json.RawMessage) T {
 	var v T
-	return v, json.Unmarshal(raw, &v) == nil
+	if json.Unmarshal(raw, &v) != nil {
+		var zero T
+		return zero
+	}
+	return v
+}
+
+// readyWhen is match over decoded page values; every match is false on the zero value.
+func readyWhen[T any](match func(T) bool) func(json.RawMessage) bool {
+	return func(raw json.RawMessage) bool { return match(decode[T](raw)) }
+}
+
+// load reads url in a hidden page until ready accepts its value, and decodes the last one.
+func load[T any](ctx context.Context, e *env, url, expr string, ready func(T) bool, tries int) (T, error) {
+	raw, err := e.b.Load(ctx, url, expr, readyWhen(ready), tries)
+	return decode[T](raw), err
+}
+
+// capture is load that also returns the last response the page fetched whose URL matches re.
+func capture[T any](ctx context.Context, e *env, url, expr string, ready func(T) bool, tries int, re *regexp.Regexp) (T, *cdp.Response, error) {
+	raw, resp, err := e.b.Capture(ctx, url, expr, readyWhen(ready), tries, re)
+	return decode[T](raw), resp, err
 }
 
 // pageHelpers are injected into every listing page. rowOf climbs from a link to the largest
@@ -347,21 +368,14 @@ type fetchPage struct {
 
 // twice passes once ready has accepted two values in a row, for pages that pass a moment before
 // they are done (a response still finishing, a redirect still under way).
-func twice(ready func(json.RawMessage) bool) func(json.RawMessage) bool {
+func twice[T any](ready func(T) bool) func(T) bool {
 	n := 0
-	return func(raw json.RawMessage) bool {
-		if ready(raw) {
+	return func(p T) bool {
+		if ready(p) {
 			n++
 		} else {
 			n = 0
 		}
 		return n >= 2
-	}
-}
-
-func readyWhen(match func(listPage) bool) func(json.RawMessage) bool {
-	return func(raw json.RawMessage) bool {
-		p, ok := decode[listPage](raw)
-		return ok && match(p)
 	}
 }

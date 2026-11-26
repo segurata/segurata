@@ -138,7 +138,7 @@ func TestMSLoginState(t *testing.T) {
 }
 
 func TestMSReadyWaitsOutTheSignInHop(t *testing.T) {
-	ready := msReady()
+	ready := readyWhen(msReady())
 	hop, _ := json.Marshal(fetchPage{URL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"})
 	form, _ := json.Marshal(fetchPage{URL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize", Text: "Pick an account"})
 	loading, _ := json.Marshal(fetchPage{URL: msWorkAppsURL, Text: "Apps"})
@@ -153,7 +153,7 @@ func TestMSReadyWaitsOutTheSignInHop(t *testing.T) {
 	}
 	prompt, _ := json.Marshal(fetchPage{URL: msStepUpURL, Text: "someone@example.com"})
 	filled, _ := json.Marshal(fetchPage{URL: msStepUpURL, Text: "someone@example.com\nEnter code"})
-	ready = msReady()
+	ready = readyWhen(msReady())
 	for i, c := range []struct {
 		raw  []byte
 		want bool

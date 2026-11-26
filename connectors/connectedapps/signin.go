@@ -1,7 +1,6 @@
 package connectedapps
 
 import (
-	"encoding/json"
 	"net/url"
 	"strings"
 
@@ -53,20 +52,18 @@ func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
 		}), true
 	case "notion":
 		if signedOut {
-			return connector.SignInPage{URL: notionURL, Do: "sign in to Notion", Expr: notionJS, Done: func(raw json.RawMessage) bool {
-				p, ok := decode[notionPage](raw)
-				return ok && p.URL != "" && !notionSignedOutRE.MatchString(p.URL) && notionListed(p)
-			}}, true
+			return connector.SignInPage{URL: notionURL, Do: "sign in to Notion", Expr: notionJS, Done: readyWhen(func(p notionPage) bool {
+				return p.URL != "" && !notionSignedOutRE.MatchString(p.URL) && notionListed(p)
+			})}, true
 		}
 	case "facebook":
 		do := "sign in to Facebook"
 		if !signedOut {
 			do = "confirm your identity on Facebook"
 		}
-		return connector.SignInPage{URL: fbURL, Do: do, Expr: fbListJS, Done: func(raw json.RawMessage) bool {
-			p, ok := decode[fbListPage](raw)
-			return ok && p.URL != "" && !fbSignedOutRE.MatchString(p.URL) && !fbReauthRE.MatchString(p.URL) && fbListed(p)
-		}}, true
+		return connector.SignInPage{URL: fbURL, Do: do, Expr: fbListJS, Done: readyWhen(func(p fbListPage) bool {
+			return p.URL != "" && !fbSignedOutRE.MatchString(p.URL) && !fbReauthRE.MatchString(p.URL) && fbListed(p)
+		})}, true
 	case "microsoft-work":
 		if st.Scope == msWorkSecurityScope {
 			return msSignIn(msWorkSecurityURL, "complete the Microsoft sign-in check (MFA) until Security info lists your sign-in methods", msWorkSecurityJS, func(p fetchPage) bool {
@@ -80,10 +77,9 @@ func (*Connector) SignInPage(st finding.Status) (connector.SignInPage, bool) {
 		return msSignIn(msWorkAppsURL, do, msWorkAppsJS, func(p fetchPage) bool { return p.Fetched }), true
 	case "dropbox":
 		if signedOut {
-			return connector.SignInPage{URL: dropboxURL, Do: "sign in to Dropbox", Expr: dropboxJS, Done: func(raw json.RawMessage) bool {
-				p, ok := decode[fetchPage](raw)
-				return ok && !dropboxOut(p) && p.Fetched
-			}}, true
+			return connector.SignInPage{URL: dropboxURL, Do: "sign in to Dropbox", Expr: dropboxJS, Done: readyWhen(func(p fetchPage) bool {
+				return !dropboxOut(p) && p.Fetched
+			})}, true
 		}
 	default:
 		if s, ok := pageOnlyServices[service]; ok && signedOut {
@@ -107,10 +103,9 @@ var pageOnlyServices = map[string]struct {
 
 // msSignIn is a Microsoft page, through once it has left the sign-in host and through accepts it.
 func msSignIn(u, do, expr string, through func(fetchPage) bool) connector.SignInPage {
-	return connector.SignInPage{URL: u, Do: do, Expr: expr, Done: func(raw json.RawMessage) bool {
-		p, ok := decode[fetchPage](raw)
-		return ok && p.URL != "" && msLoginState(p) == "" && through(p)
-	}}
+	return connector.SignInPage{URL: u, Do: do, Expr: expr, Done: readyWhen(func(p fetchPage) bool {
+		return p.URL != "" && msLoginState(p) == "" && through(p)
+	})}
 }
 
 // listSignIn is a sign-in page whose expression returns a listPage: through once the URL is set and

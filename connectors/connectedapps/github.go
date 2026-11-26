@@ -129,12 +129,11 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 	login := ""
 	for next, seen := ghSettings+"/applications", map[string]bool{}; next != "" && !seen[next]; {
 		seen[next] = true
-		raw, err := e.b.Load(ctx, next, ghOAuthJS, readyWhen(ghListReady), 40)
+		p, err := load(ctx, e, next, ghOAuthJS, ghListReady, 40)
 		if err != nil {
 			e.fail(login, err)
 			return login, false
 		}
-		p, _ := decode[listPage](raw)
 		if p.URL == "" || ghSignedOut(p) {
 			e.status("", finding.StateSignedOut, "not signed in to GitHub in the browser: %s/applications", ghSettings)
 			return "", false
@@ -157,15 +156,13 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 		sem <- struct{}{}
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			raw, err := e.b.Load(ctx, a.href, ghDetailJS, func(raw json.RawMessage) bool {
-				p, _ := decode[listPage](raw)
+			p, err := load(ctx, e, a.href, ghDetailJS, func(p listPage) bool {
 				return strings.Contains(p.Text, "Permissions") || strings.Contains(p.Text, "Organization access")
 			}, 30)
 			if err != nil {
 				errs[i] = err
 				return
 			}
-			p, _ := decode[listPage](raw)
 			details[i] = parseGitHubDetail(p.Text)
 		}()
 	}
@@ -236,12 +233,11 @@ func between(lines []string, start, end, skip *regexp.Regexp) []string {
 // asks for the password, that is reported as reauth and nothing is typed.
 func githubAuthorized(ctx context.Context, e *env, login string) {
 	u := ghSettings + "/apps/authorizations"
-	raw, err := e.b.Load(ctx, u, ghAuthorizedJS, readyWhen(ghListReady), 30)
+	p, err := load(ctx, e, u, ghAuthorizedJS, ghListReady, 30)
 	if err != nil {
 		e.fail(login, err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	if ghSudo(p) {
 		e.status(login, finding.StateReauth, "authorized GitHub Apps need sudo mode: open %s, confirm your identity, and run again within a few minutes", u)
 		return
@@ -256,12 +252,11 @@ func githubAuthorized(ctx context.Context, e *env, login string) {
 // githubInstalled lists GitHub Apps installed on the personal account. Their permissions are on
 // the installation page, which needs sudo mode, so they are not read.
 func githubInstalled(ctx context.Context, e *env, login string) {
-	raw, err := e.b.Load(ctx, ghSettings+"/installations", ghInstalledJS, readyWhen(ghListReady), 30)
+	p, err := load(ctx, e, ghSettings+"/installations", ghInstalledJS, ghListReady, 30)
 	if err != nil {
 		e.fail(login, err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	if ghSudo(p) {
 		e.status(login, finding.StateReauth, "installed GitHub Apps need sudo mode: open %s/installations, confirm your identity, and run again", ghSettings)
 		return
@@ -290,12 +285,11 @@ func parseGitHubInstalled(r row) (name, note string) {
 
 // githubSessions lists open web sessions.
 func githubSessions(ctx context.Context, e *env, login string) {
-	raw, err := e.b.Load(ctx, ghSettings+"/sessions", ghSessionsJS, readyWhen(func(p listPage) bool { return len(p.Rows) > 0 || ghSudo(p) }), 30)
+	p, err := load(ctx, e, ghSettings+"/sessions", ghSessionsJS, func(p listPage) bool { return len(p.Rows) > 0 || ghSudo(p) }, 30)
 	if err != nil {
 		e.fail(login, err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	for _, r := range p.Rows {
 		s := parseGitHubSession(r)
 		e.report(grant{who: login, resType: "github_session", kind: finding.KindCredential, name: s.name, key: lastSegment(r.Href),

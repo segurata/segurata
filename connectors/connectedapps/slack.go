@@ -139,10 +139,9 @@ func slackListed(p listPage) bool { return len(p.Rows) > 0 || slackEmptyRE.Match
 
 // slackReady passes once the page is a sign-in page, or has fetched its app list or shown its rows
 // for two reads in a row (the response can finish a moment after its timing entry appears).
-func slackReady() func(json.RawMessage) bool {
-	return twice(func(raw json.RawMessage) bool {
-		p, ok := decode[slackPage](raw)
-		return ok && p.URL != "" && (slackSignedOutRE.MatchString(p.URL) || p.Fetched || slackListed(p.listPage))
+func slackReady() func(slackPage) bool {
+	return twice(func(p slackPage) bool {
+		return p.URL != "" && (slackSignedOutRE.MatchString(p.URL) || p.Fetched || slackListed(p.listPage))
 	})
 }
 
@@ -150,12 +149,11 @@ func slackReady() func(json.RawMessage) bool {
 func slackSignedIn(p listPage) bool { return len(slackWorkspaces(p.Rows)) > 0 }
 
 func slack(ctx context.Context, e *env) {
-	raw, err := e.b.Load(ctx, slackSignin, slackSigninJS, readyWhen(slackSignedIn), 30)
+	p, err := load(ctx, e, slackSignin, slackSigninJS, slackSignedIn, 30)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	hosts := slackWorkspaces(p.Rows)
 	if len(hosts) == 0 {
 		e.status("", finding.StateSignedOut, "no Slack workspace signed in to the browser: %s", slackSignin)
@@ -174,12 +172,11 @@ func slack(ctx context.Context, e *env) {
 // waiting for approval), by their scope count. The page is loaded once; no app page is opened.
 func slackWorkspace(ctx context.Context, e *env, host string) {
 	manage := "https://" + host + "/apps/manage"
-	raw, resp, err := e.b.Capture(ctx, manage, slackAppsJS, slackReady(), 40, slackListRE)
+	p, resp, err := capture(ctx, e, manage, slackAppsJS, slackReady(), 40, slackListRE)
 	if err != nil {
 		e.fail(host, err)
 		return
 	}
-	p, _ := decode[slackPage](raw)
 	if p.URL == "" || slackSignedOutRE.MatchString(p.URL) {
 		e.status(host, finding.StateSignedOut, "signed out of this workspace: %s", manage)
 		return

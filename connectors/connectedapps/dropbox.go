@@ -35,10 +35,9 @@ func dropboxOut(p fetchPage) bool { return p.URL == "" || dropboxSignedOutRE.Mat
 
 // dropboxReady passes once the page is the sign-in page, or has held the fetched app list for two
 // reads in a row: the response can finish a moment after the resource timing entry appears.
-func dropboxReady() func(json.RawMessage) bool {
-	return twice(func(raw json.RawMessage) bool {
-		p, ok := decode[fetchPage](raw)
-		return ok && p.URL != "" && (dropboxSignedOutRE.MatchString(p.URL) || p.Fetched)
+func dropboxReady() func(fetchPage) bool {
+	return twice(func(p fetchPage) bool {
+		return p.URL != "" && (dropboxSignedOutRE.MatchString(p.URL) || p.Fetched)
 	})
 }
 
@@ -47,12 +46,11 @@ var dropboxOld = oldBatch{title: "Dropbox", verb: "Disconnect", approved: "linke
 	each: `expand it under "View Dropbox content" and choose "Disconnect"`, again: "Apps you still use ask you to connect again."}
 
 func dropbox(ctx context.Context, e *env) {
-	raw, resp, err := e.b.Capture(ctx, dropboxURL, dropboxJS, dropboxReady(), 50, dropboxListRE)
+	p, resp, err := capture(ctx, e, dropboxURL, dropboxJS, dropboxReady(), 50, dropboxListRE)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[fetchPage](raw)
 	if dropboxOut(p) {
 		e.status("", finding.StateSignedOut, "not signed in to Dropbox in the browser: %s", dropboxURL)
 		return

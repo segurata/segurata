@@ -120,7 +120,7 @@ func TestDropboxStates(t *testing.T) {
 }
 
 func TestDropboxReadyWaitsForTwoReadsOfTheFetchedList(t *testing.T) {
-	ready := dropboxReady()
+	ready := readyWhen(dropboxReady())
 	fetched, _ := json.Marshal(fetchPage{URL: dropboxURL, Fetched: true})
 	loading, _ := json.Marshal(fetchPage{URL: dropboxURL})
 	for i, c := range []struct {

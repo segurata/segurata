@@ -80,13 +80,12 @@ func msStepUpMethod(text string) string {
 // msReady passes once the page has fetched what fetchedJS looks for, or shows the same text on the
 // sign-in host, two reads in a row: My Apps passes through the sign-in host on every load, and a
 // prompt fills in after its URL is set.
-func msReady() func(json.RawMessage) bool {
+func msReady() func(fetchPage) bool {
 	var prev *fetchPage
-	return func(raw json.RawMessage) bool {
-		p, ok := decode[fetchPage](raw)
+	return func(p fetchPage) bool {
 		was := prev
 		prev = nil
-		if !ok || p.URL == "" {
+		if p.URL == "" {
 			return false
 		}
 		login := !p.Fetched && msLoginState(p) != "" && strings.TrimSpace(p.Text) != ""
@@ -99,12 +98,11 @@ func msReady() func(json.RawMessage) bool {
 }
 
 func microsoftWork(ctx context.Context, e *env) {
-	raw, resp, err := e.b.Capture(ctx, msWorkAppsURL, msWorkAppsJS, msReady(), 60, msWorkTilesRE)
+	p, resp, err := capture(ctx, e, msWorkAppsURL, msWorkAppsJS, msReady(), 60, msWorkTilesRE)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[fetchPage](raw)
 	switch st := msLoginState(p); {
 	case p.URL == "" || st == finding.StateSignedOut:
 		e.status("", finding.StateSignedOut, "not signed in to a Microsoft work or school account in the browser: %s", msWorkAppsURL)
@@ -178,12 +176,11 @@ func msWorkSecurityInfo(ctx context.Context, e *env) {
 	status := func(st finding.State, format string, args ...any) {
 		e.emit.Status(finding.Status{Account: e.account(""), Scope: msWorkSecurityScope, State: st, Detail: fmt.Sprintf(format, args...)})
 	}
-	raw, err := e.b.Load(ctx, msWorkSecurityURL, msWorkSecurityJS, msReady(), 60)
+	p, err := load(ctx, e, msWorkSecurityURL, msWorkSecurityJS, msReady(), 60)
 	if err != nil {
 		status(finding.StateError, "%v", err)
 		return
 	}
-	p, _ := decode[fetchPage](raw)
 	switch msLoginState(p) {
 	case finding.StateReauth:
 		why := "tenant policy"

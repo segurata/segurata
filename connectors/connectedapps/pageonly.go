@@ -19,14 +19,13 @@ type pageOnly struct {
 }
 
 func (s pageOnly) run(ctx context.Context, e *env) {
-	raw, err := e.b.Load(ctx, s.url, pageTextJS, readyWhen(func(p listPage) bool {
+	p, err := load(ctx, e, s.url, pageTextJS, func(p listPage) bool {
 		return s.signedOut.MatchString(p.URL) || s.loaded.MatchString(p.Text)
-	}), 40)
+	}, 40)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	switch {
 	case p.URL == "" || s.signedOut.MatchString(p.URL):
 		e.status("", finding.StateSignedOut, "not signed in in the browser: %s%s", s.url, s.hint)

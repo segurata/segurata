@@ -39,12 +39,11 @@ func xReady(p listPage) bool {
 }
 
 func xService(ctx context.Context, e *env) {
-	raw, resp, err := e.b.Capture(ctx, xURL, xJS, readyWhen(xReady), 50, xListRE)
+	p, resp, err := capture(ctx, e, xURL, xJS, xReady, 50, xListRE)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	if p.URL == "" || xSignedOutRE.MatchString(p.URL) {
 		e.status("", finding.StateSignedOut, "not signed in to X in the browser: %s", xURL)
 		return
