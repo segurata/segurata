@@ -1,8 +1,6 @@
-// Package cloudflare inventories a Cloudflare user through the REST API with a read-only API
-// token: the user's API tokens (expiry, idleness, IP restrictions, broad edit policies), each
-// account's two-factor enforcement, members and super administrators, and per zone the SSL mode,
-// Always Use HTTPS, minimum TLS version and DNSSEC. GET only. Endpoints and their documentation
-// are listed in docs/cloud-connectors.md.
+// Package cloudflare inventories a Cloudflare user with a read-only API token, GET only: API
+// tokens, each account's 2FA enforcement and members, and each zone's TLS settings and DNSSEC.
+// Endpoints are listed in docs/cloud-connectors.md.
 package cloudflare
 
 import (
@@ -11,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -27,16 +26,15 @@ const (
 	secretName     = "CLOUDFLARE_API_TOKEN"
 	DefaultBaseURL = "https://api.cloudflare.com/client/v4"
 
-	// userAccount labels findings about the user rather than one Cloudflare account.
-	userAccount = "user"
+	userAccount = "user" // findings about the user rather than one Cloudflare account
 
 	defaultMaxZones = 200
-	perPage         = 50 // the maximum every listing used here accepts
+	perPage         = 50 // the most every listing here accepts
 	maxPages        = 1000
 	workers         = 4
 
-	// DefaultInterval spaces request starts so a run stays at 1000 requests per five minutes,
-	// under Cloudflare's 1200 per user (dashboard and other tokens count against the same quota).
+	// DefaultInterval keeps a run at 1000 requests per five minutes, under Cloudflare's 1200 per
+	// user, which the dashboard and other tokens share.
 	DefaultInterval = 300 * time.Millisecond
 )
 
@@ -63,7 +61,6 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
-// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
 	return connector.HintFor(secret, secretName, setupHint)
 }
@@ -93,7 +90,7 @@ func parseSettings(m map[string]any) (settings, error) {
 	return s, nil
 }
 
-// pacer hands out request start times at least every apart, across goroutines.
+// pacer spaces request starts at least every apart, across goroutines.
 type pacer struct {
 	mu    sync.Mutex
 	next  time.Time
@@ -124,7 +121,6 @@ func (p *pacer) wait(ctx context.Context) error {
 
 var errRateLimited = errors.New("Cloudflare answered HTTP 429: the per-user API quota (1200 requests per 5 minutes) is spent and every call is blocked for 5 minutes; the rest of this run was skipped, run it again later")
 
-// client is the paced, GET-only API access one run shares across goroutines.
 type client struct {
 	api     *httpx.Client
 	pace    *pacer
@@ -139,7 +135,8 @@ func (c *Connector) client(tok string) *client {
 	return &client{api: httpx.New(httpx.Base(c.BaseURL, DefaultBaseURL), http.Header{"Authorization": {"Bearer " + tok}}), pace: &pacer{every: every}}
 }
 
-// get decodes the "result" of Cloudflare's envelope into out. After a 429 it stops calling.
+// get decodes the envelope's "result" into out; after a 429 it stops calling, since Cloudflare
+// blocks every call for five minutes.
 func (cl *client) get(ctx context.Context, path string, q url.Values, out any) (resultInfo, error) {
 	if cl.limited.Load() {
 		return resultInfo{}, errRateLimited
@@ -167,8 +164,7 @@ type resultInfo struct {
 	TotalCount int `json:"total_count"`
 }
 
-// list follows page=1,2,… until a short page, the last page, or max items (0: no cap). total is
-// the provider's total_count when it gave one.
+// list stops at a short page, the last page or max items (0: no cap); total is total_count.
 func list[T any](ctx context.Context, cl *client, path string, q url.Values, max int) (items []T, total int, err error) {
 	for page := 1; page <= maxPages; page++ {
 		qq := url.Values{"per_page": {fmt.Sprint(perPage)}, "page": {fmt.Sprint(page)}}
@@ -192,7 +188,6 @@ func list[T any](ctx context.Context, cl *client, path string, q url.Values, max
 	return items, total, fmt.Errorf("GET %s: pagination did not end", path)
 }
 
-// verify checks the token itself; any failure there means nothing else can run.
 func verify(ctx context.Context, cl *client) (tokenStatus, error) {
 	var v tokenStatus
 	_, err := cl.get(ctx, "/user/tokens/verify", nil, &v)
@@ -205,8 +200,7 @@ type tokenStatus struct {
 	ExpiresOn *string `json:"expires_on"`
 }
 
-// rejected reports whether err means the token itself was refused (Cloudflare answers 400 with
-// "Invalid API Token" or 401/403 depending on the failure).
+// rejected: Cloudflare refuses a bad token with 400 "Invalid API Token", 401 or 403.
 func rejected(err error) bool {
 	return httpx.IsStatus(err, http.StatusBadRequest) || httpx.IsStatus(err, http.StatusUnauthorized) ||
 		httpx.IsStatus(err, http.StatusForbidden)
@@ -236,10 +230,10 @@ type scan struct {
 	cfg  settings
 
 	labels   []string            // accounts seen, in order, for one status each
-	failures map[string]*failure // by account label + what failed + HTTP code
+	failures map[string]*failure // by account label, what failed and HTTP code
 }
 
-// failure is one kind of error on one account, counted instead of repeated for every zone.
+// failure is counted instead of repeated for every zone.
 type failure struct {
 	account string
 	what    string
@@ -248,12 +242,9 @@ type failure struct {
 }
 
 func (s *scan) see(account string) {
-	for _, l := range s.labels {
-		if l == account {
-			return
-		}
+	if !slices.Contains(s.labels, account) {
+		s.labels = append(s.labels, account)
 	}
-	s.labels = append(s.labels, account)
 }
 
 func (s *scan) fail(account, what string, err error) {
@@ -276,8 +267,6 @@ func (s *scan) finding(f finding.Finding) {
 	s.emit.Finding(f)
 }
 
-// Account and zone findings come from the account and zone lists, so when a list fails or is
-// capped, every finding it would have produced is declared unread by scope.
 func accountScope(label string) string { return "account:" + label }
 func zoneScope(name string) string     { return "zone:" + name }
 
@@ -343,7 +332,6 @@ func (s *scan) accounts() {
 	}
 }
 
-// zoneResult is what one worker read about one zone.
 type zoneResult struct {
 	findings []finding.Finding
 	errs     []zoneErr
@@ -366,21 +354,15 @@ func (s *scan) zones() {
 		s.emit.Scope(zoneScope("*"), false, msg) // which zones were left out is unknown
 	}
 	results := make([]zoneResult, len(zones))
-	jobs := make(chan int)
+	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				results[i] = s.zone(zones[i])
-			}
-		}()
+	for i, z := range zones {
+		sem <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-sem }()
+			results[i] = s.zone(z)
+		})
 	}
-	for i := range zones {
-		jobs <- i
-	}
-	close(jobs)
 	wg.Wait()
 	for i, r := range results {
 		label := zones[i].accountLabel()
@@ -393,8 +375,7 @@ func (s *scan) zones() {
 	}
 }
 
-// zoneSettings are the settings read one by one: the bulk "get all zone settings" endpoint is
-// deprecated.
+// zoneSettings are read one by one: the bulk endpoint is deprecated.
 var zoneSettings = []string{"ssl", "always_use_https", "min_tls_version"}
 
 func (s *scan) zone(z zone) zoneResult {
@@ -454,8 +435,8 @@ func (s *scan) statuses() {
 	}
 }
 
-// Doctor verifies the token and probes one page of each listing the inventory reads, so a missing
-// permission shows before a run. Nothing is printed from the token.
+// Doctor probes one page of each listing the inventory reads, so a missing permission shows
+// before a run.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
 	tok := req.Secrets[secretName]
 	if tok == "" {
@@ -495,7 +476,7 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 	if !probe("zones", "/zones", firstPage, "Zone > Zone > Read", &zones) || len(zones) == 0 {
 		return checks
 	}
-	// Per-zone permissions can only be probed on a zone; the first one stands for all.
+	// Per-zone permissions can only be probed on a zone: the first stands for all.
 	base := "/zones/" + url.PathEscape(zones[0].ID)
 	var st zoneSetting
 	var d dnssec
