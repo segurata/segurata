@@ -133,7 +133,7 @@ when a skipped scope matches its scope or its account (`finding.Coverage`).
   key again with other details (stale details, or a ref recorded before one ref per detail), or
   the same state for the whole instance (no account, which covers the per-account one), still
   retires the old ref.
-- `remediate --apply` returns "could not verify the fix" (`remediate.ErrUnverified`) when the
+- `remediate --apply` returns "could not verify the fix" (`remediate.errUnverified`) when the
   check run did not inspect the finding's scope, instead of reporting it fixed.
 
 **Older files.** Files without `run_end` (from before this record, or killed) stay usable for
@@ -561,7 +561,7 @@ file changes, whether it needs sudo, the side effects and the exact commands tha
   <path>`. With a group it changes every file once and leaves out, by name, files already private.
 - An external connector remediates through protocol 2: it declares its actions in `describe`
   (`remediates`), returns a plan from `segurata-<name> plan` and runs it in
-  `segurata-<name> apply` (`remediate.External`). As for a built-in, the core shows the plan, confirms
+  `segurata-<name> apply` (`remediate.external`). As for a built-in, the core shows the plan, confirms
   and refuses a plan that changed since it was shown; it also refuses any
   plan that needs sudo: a plugin's command line is never on the hand-written allowlist, so the core
   cannot vet it and will not run it as root. The plugin runs its plan as the owner; the allowlist

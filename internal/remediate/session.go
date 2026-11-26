@@ -225,7 +225,8 @@ func groupLines(group []finding.Finding) []string {
 
 // stillPresent reports whether a fresh run still offers any target's action under the target's id.
 // The same finding without that action (a grant with fewer scopes) is fixed as far as this action
-// goes. A run that did not inspect a target's scope is errUnverified.
+// goes. A run that could not start is an error, not a pass: its silence proves nothing. One that did
+// not inspect a target's scope is errUnverified.
 func stillPresent(results []*run.Result, targets ...finding.Finding) (bool, error) {
 	if len(results) == 0 {
 		return false, errors.New("no connector ran")

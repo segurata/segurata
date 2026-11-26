@@ -115,8 +115,12 @@ func TestExternalPlansAreVetted(t *testing.T) {
 	}
 	e, _ := demoPlugin(t, replies...) // answers each plan with the next reply
 	for _, c := range refused {
-		if _, err := (external{conn: e}).Plan(context.Background(), pluginFinding); err == nil || !strings.Contains(err.Error(), c.err) {
+		_, err := (external{conn: e}).Plan(context.Background(), pluginFinding)
+		if err == nil || !strings.Contains(err.Error(), c.err) {
 			t.Errorf("%s: want %q, got %v", c.why, c.err, err)
+		}
+		if c.err == errPluginSudo.Error() && !errors.Is(err, errPluginSudo) {
+			t.Errorf("%s: want errPluginSudo wrapped, got %v", c.why, err)
 		}
 	}
 }
