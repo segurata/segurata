@@ -769,7 +769,7 @@ func TestTrailsLinesFailsWhenRipgrepFails(t *testing.T) {
 	}{
 		{"regex error", `echo "rg: regex parse error" >&2; exit 2`, true},
 		{"killed", `kill -9 $$`, true},
-		{"unreadable files only", `echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, false},
+		{"unreadable files only", `echo "rg: /x/a: ` + denied + `" >&2; exit 2`, false},
 		{"no match", `exit 1`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
