@@ -193,6 +193,25 @@ func TestDuplicatePrimary(t *testing.T) {
 	}
 }
 
+func TestCategoryOfPasswordTools(t *testing.T) {
+	for _, tc := range []struct{ id, name, want string }{
+		{"pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud", catPasswords},
+		{"x", "iCloud Passwords", catPasswords},
+		{"x", "Contraseñas de iCloud", catPasswords},
+		{"x", "Password Boss", catPasswords},
+		{"x", "LastPass: Free Password Manager", catPasswords},
+		{"x", "KeePassXC-Browser", catPasswords},
+		{"x", "Dashlane: gestor de contraseñas", catPasswords},
+		{"x", "Strong Password Generator", ""},
+		{"x", "Show Password", ""},
+		{"x", "Mostrar contraseña", ""},
+	} {
+		if got := category(tc.id, tc.name); got != tc.want {
+			t.Errorf("category(%q, %q) = %q, want %q", tc.id, tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestNoBrowserIsUnsupported(t *testing.T) {
 	c := &Connector{Home: func() (string, error) { return t.TempDir(), nil }, Now: func() time.Time { return now }, OS: "darwin"}
 	rec := run(t, c)

@@ -49,6 +49,7 @@ const (
 var categoryByID = map[string]string{
 	"aeblfdkhhhdcdjpifhhbdiojplfjncoa": catPasswords, // 1Password
 	"nngceckbapebfimnlniiiahkandclblb": catPasswords, // Bitwarden
+	"pejdijmoenmkgeppbflobdenhhabjlaj": catPasswords, // iCloud Passwords
 	"nkbihfbeogaeaoehlefnkodbefgpgknn": catWallet,    // MetaMask
 	"acmacodkjbdgmoleebolmdjonilkdbch": catWallet,    // Rabby Wallet
 	"dmkamcknogkgcdfhhbddcghachkejeap": catWallet,    // Keplr
@@ -61,6 +62,7 @@ var categoryWords = []struct{ word, cat string }{
 	// password manager, and so a remove verdict.
 	{"password manager", catPasswords}, {"1password", catPasswords}, {"keepass", catPasswords},
 	{"gestor de contraseñas", catPasswords}, {"administrador de contraseñas", catPasswords},
+	{"icloud passwords", catPasswords}, {"contraseñas de icloud", catPasswords}, {"password boss", catPasswords},
 	{"wallet", catWallet},
 	{"chatgpt", catAI}, {"claude", catAI}, {"gemini", catAI}, {"copilot", catAI},
 	{"price tracker", catShopping}, {"coupon", catShopping},
