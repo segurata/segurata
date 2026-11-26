@@ -4,6 +4,7 @@
 package openrouter
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -43,12 +44,10 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
-// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
 	return connector.HintFor(secret, secretName, setupHint)
 }
 
-// base is the API base URL: BaseURL, or the real API.
 func (c *Connector) base() string { return httpx.Base(c.BaseURL, DefaultBaseURL) }
 
 func (c *Connector) Describe() connector.Description {
@@ -116,7 +115,7 @@ type apiKey struct {
 	WorkspaceID      string   `json:"workspace_id"`
 }
 
-// list pages an offset-paginated endpoint; a page shorter than pageSize is the last one.
+// list stops at a page shorter than pageSize.
 func list[T any](s *scan, path string, q url.Values) ([]T, error) {
 	var out []T
 	for offset := 0; offset < 1_000_000; offset += pageSize {
@@ -141,8 +140,7 @@ func list[T any](s *scan, path string, q url.Values) ([]T, error) {
 func (s *scan) run() {
 	workspaces, err := list[workspace](s, "/workspaces", url.Values{"limit": {strconv.Itoa(pageSize)}})
 	switch {
-	case httpx.IsStatus(err, http.StatusForbidden):
-		// A workspace-scoped management key cannot list workspaces; its key list is its own workspace.
+	case httpx.IsStatus(err, http.StatusForbidden): // a workspace-scoped key lists its own keys only
 		s.emit.Log("management key cannot list workspaces; inventorying its own workspace only")
 		workspaces = []workspace{{}}
 	case httpx.IsStatus(err, http.StatusUnauthorized):
@@ -206,18 +204,11 @@ func (s *scan) workspace(w workspace) {
 	})
 }
 
-func (w workspace) label() string {
-	switch {
-	case w.Name != "":
-		return w.Name
-	case w.Slug != "":
-		return w.Slug
-	}
-	return w.ID
-}
+func (w workspace) label() string { return cmp.Or(w.Name, w.Slug, w.ID) }
 
-// credits is prepaid balance: the outer bound on what an uncapped key can burn. Only an
-// organization-scoped management key may read it.
+func (k apiKey) label() string { return cmp.Or(k.Name, k.Hash) }
+
+// credits bound what an uncapped key can burn; only an organization-scoped key may read them.
 func (s *scan) credits() {
 	var c struct {
 		Data struct {
@@ -254,8 +245,8 @@ func (s *scan) credits() {
 	})
 }
 
-// keyAssessment applies the severity rules. OpenRouter has recorded last use only since the end
-// of 2025: a null last_used_at with past usage means idle since then, not never used.
+// keyAssessment: OpenRouter records last use only since the end of 2025, so a null last_used_at
+// with past usage means idle since then, not never used.
 func keyAssessment(k apiKey, now time.Time) httpx.Assessment {
 	var a httpx.Assessment
 	if e := httpx.ParseTime(k.ExpiresAt); e != nil && e.Before(now) {
@@ -278,12 +269,9 @@ func keyAssessment(k apiKey, now time.Time) httpx.Assessment {
 
 func keyFinding(acct string, k apiKey, now time.Time) finding.Finding {
 	a := keyAssessment(k, now)
-	n := k.Name
-	if n == "" {
-		n = k.Hash
-	}
+	n := k.label()
 	ev := map[string]any{
-		"redacted":      secretrisk.Masked(k.Label, 0), // from OpenRouter's label, which gives no length
+		"redacted":      secretrisk.Masked(k.Label, 0), // the label gives no length
 		"issues":        a.Reasons,
 		"usage_usd":     k.Usage,
 		"usage_month":   k.UsageMonthly,
@@ -320,5 +308,4 @@ func deref(s *string) string {
 	return *s
 }
 
-// Track groups the account's API keys by severity (keytrack).
 func (c *Connector) Track(f finding.Finding) *finding.Track { return keytrack.Track("OpenRouter", f) }

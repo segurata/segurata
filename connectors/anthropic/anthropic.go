@@ -4,6 +4,7 @@
 package anthropic
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -44,7 +45,6 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
-// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
 	return connector.HintFor(secret, secretName, setupHint)
 }
@@ -100,13 +100,9 @@ func (s *scan) run() {
 		s.fail(err) // most likely a wrong or non-admin key; nothing else will work either
 		return
 	}
-	if org.Name != "" {
-		s.account = org.Name
-	} else if org.ID != "" {
-		s.account = org.ID
-	}
+	s.account = cmp.Or(org.Name, org.ID, s.account)
 
-	// Archived workspaces still hold keys, so list them too, or those keys show a bare id.
+	// Archived workspaces still hold keys, which would otherwise show a bare id.
 	workspaces, err := list[workspace](s, "/v1/organizations/workspaces", url.Values{"include_archived": {"true"}})
 	if err != nil {
 		s.fail(err)
@@ -156,14 +152,12 @@ func (s *scan) run() {
 	}
 }
 
-// page is the Admin API's cursor list envelope.
 type page[T any] struct {
 	Data    []T     `json:"data"`
 	HasMore bool    `json:"has_more"`
 	LastID  *string `json:"last_id"`
 }
 
-// list follows after_id=last_id until has_more is false.
 func list[T any](s *scan, path string, q url.Values) ([]T, error) {
 	var out []T
 	after := ""
@@ -188,7 +182,6 @@ func list[T any](s *scan, path string, q url.Values) ([]T, error) {
 	return out, fmt.Errorf("GET %s: pagination did not end", path)
 }
 
-// report pages a usage or cost report through next_page.
 func report[T any](s *scan, path string, q url.Values, each func(start time.Time, results []T)) error {
 	for range 1000 {
 		var p struct {
@@ -246,11 +239,10 @@ type apiKey struct {
 	} `json:"scope"`
 }
 
-// usageWindow is how far back key usage is read: the idle threshold plus a margin of one day.
+// usageWindow is the idle threshold plus a day of margin.
 func usageWindow() time.Duration { return httpx.IdleAfter + day }
 
-// lastUsePerKey reads the daily usage report grouped by API key and keeps, per key, the start of
-// the latest day with any tokens. A key missing from the map had no usage in the window.
+// lastUsePerKey keeps, per key, the start of the latest day with any tokens in the window.
 func (s *scan) lastUsePerKey() (map[string]time.Time, error) {
 	type row struct {
 		APIKeyID      *string `json:"api_key_id"`
@@ -287,8 +279,8 @@ func (s *scan) lastUsePerKey() (map[string]time.Time, error) {
 	return out, err
 }
 
-// costPerWorkspace sums the cost report (cents as decimal strings) per workspace in USD.
-// The default workspace is reported with a null workspace_id, kept here as "".
+// costPerWorkspace converts the report's cents, decimal strings, to USD; the default workspace
+// has a null workspace_id, kept as "".
 func (s *scan) costPerWorkspace() (map[string]float64, error) {
 	type row struct {
 		Amount      string  `json:"amount"`
@@ -322,8 +314,7 @@ func (s *scan) costPerWorkspace() (map[string]float64, error) {
 	return out, err
 }
 
-// keyAssessment applies the severity rules. Anthropic has no per-key spend limit, so the
-// "no limit" rule does not apply; ownership and use do. members or lastUse nil means unknown.
+// keyAssessment: Anthropic has no per-key spend limit. members or lastUse nil means unknown.
 func keyAssessment(k apiKey, created *time.Time, members map[string]bool, lastUse map[string]time.Time, now time.Time) httpx.Assessment {
 	var a httpx.Assessment
 	if k.Status != "active" {
@@ -374,8 +365,7 @@ func (s *scan) keyFinding(k apiKey, wsName map[string]string, members map[string
 	if e := httpx.ParseTime(k.ExpiresAt); e != nil {
 		ev["expires_at"] = e
 	}
-	// The usage report gives the last day with tokens, not a last-used timestamp, so LastUsedAt
-	// stays nil and the day goes into the evidence.
+	// The usage report gives a day, not a last-used timestamp, so LastUsedAt stays nil.
 	if t, ok := lastUse[k.ID]; ok {
 		ev["last_usage_day"] = t.Format("2006-01-02")
 	}
@@ -394,8 +384,7 @@ func (s *scan) keyFinding(k apiKey, wsName map[string]string, members map[string
 	}
 }
 
-// emitSpend reports 30-day cost for the organization and each workspace. Spend limits for Claude
-// Console organizations are not readable through the Admin API, so these stay low: look in Limits.
+// emitSpend stays low: spend limits are not readable through the Admin API.
 func (s *scan) emitSpend(workspaces []workspace, costs map[string]float64) {
 	const note = "spend limits are not readable through the Admin API"
 	remediation := finding.Remediation{
@@ -443,5 +432,4 @@ func (s *scan) emitSpend(workspaces []workspace, costs map[string]float64) {
 	}
 }
 
-// Track groups the account's API keys by severity (keytrack).
 func (c *Connector) Track(f finding.Finding) *finding.Track { return keytrack.Track("Anthropic", f) }
