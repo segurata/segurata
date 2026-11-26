@@ -1,8 +1,6 @@
-// Package doctor checks, read-only, everything segurata needs before an inventory: the config
-// and its secret references, the browser's debugging port for connectors that drive it, each
-// connector's CLIs and sign-ins, and the modes of segurata's own state files. It prints OK, WARN
-// or FAIL with the exact fix, and never a secret: references are resolved and the values dropped.
-// See docs/architecture.md, "Doctor".
+// Package doctor checks, read-only, what an inventory needs: the config and its secret references,
+// the browser's debugging port, each connector's CLIs and sign-ins, and the modes of segurata's
+// state files. It prints the exact fix, never a secret. See docs/architecture.md, "Doctor".
 package doctor
 
 import (
@@ -24,28 +22,25 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/secrets"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-// Env is everything doctor reads. The command fills it from the defaults; tests point it at a
-// temporary home and inject fakes.
 type Env struct {
 	Out        io.Writer
 	ConfigPath string
-	KeyPath    string        // fingerprint key
-	Tracker    tracker.Paths // tracker.json
-	OutDir     string        // inventory output directory
+	KeyPath    string // fingerprint key
+	Tracker    tracker.Paths
+	OutDir     string
 	GOOS       string
 	Connectors []connector.Connector
-	// Request builds a connector request, resolving its secret references (run.NewRequest).
-	Request func(context.Context, config.Config, config.Instance) (connector.Request, []error)
-	// CDPVersion reads the browser's /json/version (cdp.ReadVersion).
-	CDPVersion func(ctx context.Context, url string) (cdp.Version, error)
+	Request    func(context.Context, config.Config, config.Instance) (connector.Request, []error) // run.NewRequest
+	CDPVersion func(ctx context.Context, url string) (cdp.Version, error)                         // cdp.ReadVersion
 	LookPath   func(string) (string, error)
 }
 
-// Result is one check about one subject: "config", "state", "cdp" or a connector instance.
-type Result struct {
+// result is one check about one subject: "config", "state", "cdp" or a connector instance.
+type result struct {
 	Subject string
 	connector.Check
 }
@@ -55,10 +50,10 @@ const cdpTimeout = 5 * time.Second
 // Run checks the connectors the selectors pick (all when none) and prints the results. It returns
 // 1 when any check failed, 2 for an unknown selector, 0 otherwise.
 func (e Env) Run(ctx context.Context, selectors []string) int {
-	var results []Result
+	var results []result
 	add := func(subject string, checks ...connector.Check) {
 		for _, c := range checks {
-			results = append(results, Result{subject, c})
+			results = append(results, result{subject, c})
 		}
 	}
 	cfg, checks, ok := e.config()
@@ -75,11 +70,11 @@ func (e Env) Run(ctx context.Context, selectors []string) int {
 		}
 	}
 	add("state", e.state()...)
-	return Print(e.Out, results)
+	return printResults(e.Out, results)
 }
 
-// Print writes the results and a count, and returns 1 when any failed.
-func Print(w io.Writer, results []Result) int {
+// printResults writes the results and a count, and returns 1 when any failed.
+func printResults(w io.Writer, results []result) int {
 	width := 0
 	for _, r := range results {
 		width = max(width, len(r.Subject))
@@ -206,13 +201,13 @@ func (e Env) target(ctx context.Context, cfg config.Config, t run.Target) []conn
 	return checks
 }
 
-// secretChecks reports each configured reference by key: resolved, or why not. Values never
-// leave the request.
+// secretChecks reports each configured reference by key: resolved, or why not.
 func secretChecks(t run.Target, req connector.Request, errs []error) []connector.Check {
 	failed := map[string]string{}
 	for _, err := range errs {
-		key, why, _ := strings.Cut(err.Error(), ": ")
-		failed[key] = why
+		if re, ok := errors.AsType[*secrets.ResolveError](err); ok {
+			failed[re.Key] = re.Err.Error()
+		}
 	}
 	var checks []connector.Check
 	for _, k := range slices.Sorted(maps.Keys(t.Instance.Secrets)) {
@@ -299,8 +294,7 @@ func dirCheck(label, dir, creator string) connector.Check {
 	return connector.Check{Level: connector.OK, What: what, Detail: "mode 0700"}
 }
 
-// keychainService is the Keychain service name the connectors' own setup messages suggest:
-// segurata-<connector>, with -admin for admin and management keys (OpenAI, Anthropic, OpenRouter).
+// keychainService is the Keychain service the connectors' setup messages suggest.
 func keychainService(connector, secret string) string {
 	if strings.Contains(secret, "ADMIN") || strings.Contains(secret, "MANAGEMENT") {
 		return "segurata-" + connector + "-admin"

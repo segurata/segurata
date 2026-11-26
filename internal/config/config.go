@@ -17,20 +17,15 @@ import (
 type ConnectorConfig struct {
 	Config  map[string]any    `json:"config,omitempty"`
 	Secrets map[string]string `json:"secrets,omitempty"` // key -> reference (env:, keychain:, op://)
-	// RemediationSecrets are write credentials (key -> reference) that only `segurata remediate
-	// --apply` resolves, after the owner confirmed a plan. Inventory never resolves them, so the
+	// RemediationSecrets are write credentials only `segurata remediate --apply` resolves, so the
 	// inventory keys can stay read-only.
 	RemediationSecrets map[string]string `json:"remediation_secrets,omitempty"`
-	// Expected are the statuses other than ok this instance reports on purpose (see Expect).
-	Expected []Expected `json:"expected,omitempty"`
-	// Timeout bounds one inventory of this instance, as a Go duration ("3h"); empty means the
-	// connector's own default (connector.Description.Timeout), else one hour.
-	Timeout string `json:"timeout,omitempty"`
+	Expected           []Expected        `json:"expected,omitempty"`
+	Timeout            string            `json:"timeout,omitempty"` // a Go duration ("3h")
 }
 
-// Instance is one configured account of a connector. A config key "openrouter" gives the unnamed
-// instance; "openrouter:personal" gives the instance labelled "personal", so one connector can
-// inspect several accounts of the same provider.
+// Instance is one configured account of a connector: key "openrouter" is the unnamed instance,
+// "openrouter:personal" the one labelled "personal".
 type Instance struct {
 	Label string
 	ConnectorConfig
@@ -39,36 +34,28 @@ type Instance struct {
 type Config struct {
 	CDPURL     string                     `json:"cdp_url"`
 	Connectors map[string]ConnectorConfig `json:"connectors"`
-	// Owned are the owner's accounts, projects, workspaces, GitHub owners and emails that the
-	// connectors cannot discover (an old AWS account no profile reaches): attribution counts a
-	// secret naming one of them as the owner's. See internal/attribution.
+	// Owned are the owner's accounts the connectors cannot discover (internal/attribution).
 	Owned attribution.Owned `json:"owned,omitempty"`
-	// KeepRunsDays is how many days of run files a scheduled run keeps under out/ (0: the default,
-	// DefaultKeepRunsDays; negative: keep everything). See RunRetention.
-	KeepRunsDays int `json:"keep_runs_days,omitempty"`
-	// BrowserStaleDays is how many days scheduled runs may skip the browser connectors (the browser
-	// was not reachable over CDP) before one notification says so (0: the default,
-	// DefaultBrowserStaleDays; negative: never). See BrowserStaleAfter.
+	// KeepRunsDays and BrowserStaleDays: 0 is the default, negative is never.
+	KeepRunsDays     int `json:"keep_runs_days,omitempty"`
 	BrowserStaleDays int `json:"browser_stale_days,omitempty"`
 }
 
 const (
-	// DefaultKeepRunsDays is the retention of run files when the config names none.
-	DefaultKeepRunsDays = 30
-	// DefaultBrowserStaleDays is BrowserStaleDays when the config names none.
-	DefaultBrowserStaleDays = 7
+	defaultKeepRunsDays     = 30
+	defaultBrowserStaleDays = 7
 )
 
 // RunRetention is how old a run file may grow before a scheduled run prunes it, 0 for never.
-func (c Config) RunRetention() time.Duration { return days(c.KeepRunsDays, DefaultKeepRunsDays) }
+func (c Config) RunRetention() time.Duration { return days(c.KeepRunsDays, defaultKeepRunsDays) }
 
 // BrowserStaleAfter is how long scheduled runs may skip the browser connectors before the owner is
 // notified, 0 for never.
 func (c Config) BrowserStaleAfter() time.Duration {
-	return days(c.BrowserStaleDays, DefaultBrowserStaleDays)
+	return days(c.BrowserStaleDays, defaultBrowserStaleDays)
 }
 
-// days is a config count of days as a duration: 0 is def, negative is 0 (never).
+// days is n days, def for 0, and 0 (never) for a negative n.
 func days(n, def int) time.Duration {
 	switch {
 	case n < 0:
@@ -79,8 +66,7 @@ func days(n, def int) time.Duration {
 	return time.Duration(n) * 24 * time.Hour
 }
 
-// DefaultPath is ~/.config/segurata/config.json on every OS, like most CLIs, unless
-// SEGURATA_CONFIG says otherwise.
+// DefaultPath is $SEGURATA_CONFIG, else ~/.config/segurata/config.json on every OS.
 func DefaultPath() string {
 	if p := os.Getenv("SEGURATA_CONFIG"); p != "" {
 		return p
@@ -116,14 +102,13 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// RunTimeout is the instance's timeout, 0 when it sets none. Load has validated it.
+// RunTimeout is the instance's timeout, 0 for none; Load validated it.
 func (cc ConnectorConfig) RunTimeout() time.Duration {
 	d, _ := time.ParseDuration(cc.Timeout)
 	return d
 }
 
-// Instances returns the configured instances of a connector sorted by label, or one unnamed,
-// empty instance when the config does not mention it.
+// Instances are a connector's configured instances by label, or one empty unnamed instance.
 func (c Config) Instances(name string) []Instance {
 	var out []Instance
 	for key, cc := range c.Connectors {
@@ -153,8 +138,7 @@ func StateDir() (string, error) {
 	return filepath.Join(home, ".segurata"), nil
 }
 
-// DefaultOutDir is where inventories write their runs when --out is not given: $SEGURATA_OUT, or
-// out/ in StateDir. It never depends on the directory segurata is run from.
+// DefaultOutDir is $SEGURATA_OUT, else out/ in StateDir, never relative to the working directory.
 func DefaultOutDir() string {
 	if d := os.Getenv("SEGURATA_OUT"); d != "" {
 		return d

@@ -23,9 +23,9 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-// Watchable are the connectors whose config takes an accounts list; an account the list leaves
-// out is declared a skipped scope (docs/connectors.md, "Coverage").
-var Watchable = []string{"gcp", "google-personal"}
+// watchable are the connectors whose config takes an accounts list; an account it leaves out is a
+// skipped scope (docs/connectors.md, "Coverage").
+var watchable = []string{"gcp", "google-personal"}
 
 const usage = `usage: segurata accounts <command>
   list    [connector[:label]] [--out out]   accounts each connector saw, watched or not, and when (default: gcp, google-personal)
@@ -34,14 +34,12 @@ const usage = `usage: segurata accounts <command>
   owned   [--out out]   the owner's accounts attribution compares secrets with, and where each comes from
 watch and unwatch rewrite the config atomically (mode 0600) and keep the previous file as config.json.segurata-bak-<time>.`
 
-// CLI is the `segurata accounts` command family.
 type CLI struct {
 	Out, Err io.Writer
 	Config   string        // config file
 	Paths    tracker.Paths // zero means tracker.DefaultPaths
 	Now      func() time.Time
-	// Email is the owner's commit email by default (attribution.GitEmail); nil for none.
-	Email func() string
+	Email    func() string // the owner's commit email (attribution.GitEmail); nil for none
 }
 
 func (c CLI) fail(err error) int {
@@ -49,7 +47,6 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// Run executes one subcommand and returns the exit code.
 func (c CLI) Run(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(c.Err, usage)
@@ -74,24 +71,22 @@ func (c CLI) Run(args []string) int {
 	return 2
 }
 
-// Seen is one account a connector instance reported.
-type Seen struct {
+// seen is one account a connector instance reported, as the latest run naming it did.
+type seen struct {
 	Account  string
-	State    string // the state of its latest status, or "skipped: <reason>" when declared skipped
+	State    string // its latest status's state, or "skipped: <reason>"
 	LastSeen time.Time
-	// Skipped is true when the latest run that names it declared it skipped (not watched).
-	Skipped bool
+	Skipped  bool // left out by the config's accounts list
 }
 
-// SeenAccounts reads every run of the connector instance lbl under out: the accounts its statuses
-// name and those its run_end declares skipped because the config's accounts list leaves them out,
-// each with what the latest run naming it said.
-func SeenAccounts(out, lbl string) ([]Seen, error) {
-	history, err := runfile.History(out, time.Now())
+// seenAccounts are the accounts every run of lbl names in its statuses, or declares skipped by the
+// config's accounts list.
+func (c CLI) seenAccounts(out, lbl string) ([]seen, error) {
+	history, err := runfile.History(out, c.Now())
 	if err != nil {
 		return nil, err
 	}
-	by := map[string]*Seen{}
+	by := map[string]*seen{}
 	for _, file := range history[lbl] {
 		rf, err := runfile.Read(file)
 		if err != nil {
@@ -106,7 +101,7 @@ func SeenAccounts(out, lbl string) ([]Seen, error) {
 			if s, ok := by[key]; ok && s.LastSeen.After(at) {
 				return
 			}
-			by[key] = &Seen{Account: account, State: state, LastSeen: at, Skipped: skipped}
+			by[key] = &seen{Account: account, State: state, LastSeen: at, Skipped: skipped}
 		}
 		for _, st := range rf.Statuses {
 			if st.Scope == "" { // a status for one project or service says nothing about the account
@@ -121,7 +116,7 @@ func SeenAccounts(out, lbl string) ([]Seen, error) {
 			}
 		}
 	}
-	list := make([]Seen, 0, len(by))
+	list := make([]seen, 0, len(by))
 	for _, s := range by {
 		list = append(list, *s)
 	}
@@ -129,7 +124,7 @@ func SeenAccounts(out, lbl string) ([]Seen, error) {
 	return list, nil
 }
 
-// runTime is when a run ended, or the file's modification time for a run without run_end.
+// runTime is when a run ended, else the file's mtime.
 func runTime(file string, rf runfile.Output) time.Time {
 	if rf.End != nil && !rf.End.EndedAt.IsZero() {
 		return rf.End.EndedAt
@@ -147,14 +142,13 @@ func (c CLI) loadConfig() (config.Config, error) {
 	return config.Load(c.Config)
 }
 
-// labels are the instances to list: the one named, or every configured (or default) instance of
-// the watchable connectors.
+// labels are the instance named, or every instance of the watchable connectors.
 func labels(cfg config.Config, named []string) []string {
 	if len(named) == 1 {
 		return named
 	}
 	var out []string
-	for _, name := range Watchable {
+	for _, name := range watchable {
 		for _, in := range cfg.Instances(name) {
 			out = append(out, finding.Label(name, in.Label))
 		}
@@ -168,7 +162,7 @@ func (c CLI) list(out string, named []string) int {
 		return c.fail(err)
 	}
 	for i, lbl := range labels(cfg, named) {
-		seen, err := SeenAccounts(out, lbl)
+		seen, err := c.seenAccounts(out, lbl)
 		if err != nil {
 			return c.fail(err)
 		}
@@ -177,7 +171,7 @@ func (c CLI) list(out string, named []string) int {
 		}
 		list, set := cfg.Accounts(lbl)
 		switch {
-		case !watchable(lbl):
+		case !isWatchable(lbl):
 			fmt.Fprintf(c.Out, "%s (no accounts list in its config: every account it reaches is inspected)\n", lbl)
 		case set:
 			fmt.Fprintf(c.Out, "%s (connectors.%q.config.accounts: %d watched)\n", lbl, lbl, len(list))
@@ -212,21 +206,20 @@ func containsFold(list []string, v string) bool {
 	return slices.ContainsFunc(list, func(x string) bool { return strings.EqualFold(x, v) })
 }
 
-func watchable(lbl string) bool {
+func isWatchable(lbl string) bool {
 	name, _, _ := strings.Cut(lbl, ":")
-	return slices.Contains(Watchable, name)
+	return slices.Contains(watchable, name)
 }
 
-// unwatchedReason is the reason unwatch closes an account's setup items with; watch reopens the
-// items closed with it.
+// unwatchedReason closes an account's setup items on unwatch; watch reopens what it closed.
 func unwatchedReason(lbl string) string {
 	return fmt.Sprintf("not watched: taken out of connectors.%q.config.accounts by segurata accounts unwatch", lbl)
 }
 
 // watch adds an account to the instance's accounts list or takes it out, and moves its setup items.
 func (c CLI) watch(out, lbl, account string, on bool) int {
-	if !watchable(lbl) {
-		return c.fail(fmt.Errorf("%s has no accounts list in its config (watchable: %s)", lbl, strings.Join(Watchable, ", ")))
+	if !isWatchable(lbl) {
+		return c.fail(fmt.Errorf("%s has no accounts list in its config (watchable: %s)", lbl, strings.Join(watchable, ", ")))
 	}
 	cfg, err := c.loadConfig()
 	if err != nil {
@@ -250,7 +243,7 @@ func (c CLI) watch(out, lbl, account string, on bool) int {
 		next = slices.DeleteFunc(slices.Clone(list), func(x string) bool { return strings.EqualFold(x, account) })
 	default:
 		// No list yet: every account seen is watched; the list is all of them but this one.
-		seen, err := SeenAccounts(out, lbl)
+		seen, err := c.seenAccounts(out, lbl)
 		if err != nil {
 			return c.fail(fmt.Errorf("no list to take %s out of, and no run to write one from: %w", account, err))
 		}
@@ -306,8 +299,7 @@ func (c CLI) moveSetup(lbl, account string, on bool) int {
 	return 0
 }
 
-// owned prints the owner's accounts by kind, each with where it comes from: config `owned`, the
-// tracker (discovered by earlier syncs), the latest runs, git.
+// owned prints the owner's accounts by kind, each with its sources: config, tracker, runs, git.
 func (c CLI) owned(out string) int {
 	cfg, err := c.loadConfig()
 	if err != nil {
@@ -329,7 +321,7 @@ func (c CLI) owned(out string) int {
 	if t.Owned != nil {
 		sources = append(sources, source{"tracker", *t.Owned})
 	}
-	if runs, err := latestOwned(out); err == nil {
+	if runs, err := latestOwned(out, c.Now()); err == nil {
 		sources = append(sources, source{"runs in " + out, runs})
 	} else {
 		fmt.Fprintf(c.Err, "accounts: latest runs not read: %v\n", err)
@@ -373,10 +365,10 @@ func (c CLI) owned(out string) int {
 	return 0
 }
 
-// latestOwned is what attribution.Discover reads in the latest run of every connector instance
-// that reports accounts (local-secrets reports none, and its runs are large).
-func latestOwned(out string) (attribution.Owned, error) {
-	files, err := runfile.LatestFiles(out, time.Now())
+// latestOwned is what attribution.Discover reads in the latest runs, but local-secrets': it
+// reports no account, and its runs are large.
+func latestOwned(out string, now time.Time) (attribution.Owned, error) {
+	files, err := runfile.LatestFiles(out, now)
 	if err != nil {
 		return attribution.Owned{}, err
 	}
