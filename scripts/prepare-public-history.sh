@@ -8,12 +8,14 @@
 # never pushes: what the owner runs afterwards is in docs/releasing.md, "Going public".
 #
 # Usage: scripts/prepare-public-history.sh [options]
-#   --source URL|PATH      repository to copy; default: this repository's origin
+#   --source URL|PATH      repository to copy; default: this local repository
 #   --branch NAME          the branch to publish; default: main
 #   --identifiers FILE     default: $SEGURATA_PUBLIC_GATE, else ~/.config/segurata/public-gate.txt
 #   --drop-path-glob GLOB  remove matching files from every commit, e.g. '*.pyc'; repeatable
 #   --mailmap FILE         rewrite author, committer and tagger names and emails (git-filter-repo
 #                          --mailmap)
+#   --allow-author ID      accept an exact public identity "Name <email>" in Git headers.
+#                          May be repeated. File, ref and message text still gets scanned.
 #   --keep-authors         publish the authors, committers and taggers as they are; without this or
 #                          --mailmap the authors gate fails. The report lists them either way
 #   --workdir DIR          where to build; must not exist yet; default: a new temporary folder
@@ -21,12 +23,14 @@
 # Exit status: 0 every gate passed, 1 a gate failed (the result stays for inspection), 2 usage or
 # tool error.
 set -euo pipefail
+umask 077
 
 usage() { sed -n '/^# Usage:/,/^# tool error/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "prepare-public-history: $*" >&2; exit 2; }
+absolute_file() { printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"; }
 
 here="$(cd "$(dirname "$0")" && pwd)"
-repo="$(git -C "$here" rev-parse --show-toplevel)"
+repo="$(cd "$here/.." && pwd -P)"
 source=""
 branch=main
 identifiers="${SEGURATA_PUBLIC_GATE:-$HOME/.config/segurata/public-gate.txt}"
@@ -34,6 +38,7 @@ mailmap=""
 keep_authors=false
 workdir=""
 drop=()
+allow_authors=()
 self=("$0" "$@")
 while [ $# -gt 0 ]; do
   if [ "$1" = --keep-authors ]; then keep_authors=true; shift; continue; fi
@@ -44,6 +49,7 @@ while [ $# -gt 0 ]; do
     --identifiers) identifiers="$2" ;;
     --drop-path-glob) drop+=(--path-glob "$2") ;;
     --mailmap) mailmap="$2" ;;
+    --allow-author) allow_authors+=(--allow-author "$2") ;;
     --workdir) workdir="$2" ;;
     *) usage ;;
   esac
@@ -54,7 +60,13 @@ if [ -n "$mailmap" ] && $keep_authors; then die "--mailmap and --keep-authors ex
 for tool in git-filter-repo gitleaks python3; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
-[ -n "$source" ] || source="$(git -C "$repo" remote get-url origin)" || die "no origin; pass --source"
+[ -n "$source" ] || source="$repo"
+case "$source" in
+  http://*|https://*)
+    authority="${source#*://}"
+    case "${authority%%/*}" in *@*) die "use a credential helper instead of credentials in the source URL" ;; esac
+    ;;
+esac
 [ -f "$identifiers" ] || die "no identifiers file at $identifiers (--identifiers or SEGURATA_PUBLIC_GATE)"
 python3 "$here/identifiers.py" check "$identifiers" "$repo" || exit 2
 if [ -d "$source" ]; then python3 "$here/identifiers.py" check "$identifiers" "$source" || exit 2; fi
@@ -63,9 +75,12 @@ if [ -z "${SEGURATA_GATE_MASKED:-}" ]; then
   SEGURATA_GATE_MASKED=1 exec python3 "$here/identifiers.py" run-masked "$identifiers" "$BASH" "${self[@]}"
 fi
 [ -z "$mailmap" ] || [ -f "$mailmap" ] || die "no mailmap at $mailmap"
+identifiers="$(absolute_file "$identifiers")"
+if [ -n "$mailmap" ]; then mailmap="$(absolute_file "$mailmap")"; fi
 if [ -n "$workdir" ]; then
   [ ! -e "$workdir" ] || die "$workdir already exists; pick a new folder"
-  mkdir -p "$workdir"
+  mkdir -p "$(dirname "$workdir")"
+  mkdir "$workdir"
 else
   workdir="$(mktemp -d "${TMPDIR:-/tmp}/segurata-public.XXXXXX")"
 fi
@@ -79,28 +94,26 @@ trap 'rm -rf "$secret_dir"' EXIT
 python3 "$here/identifiers.py" replace-file "$identifiers" "$secret_dir/expressions"
 
 echo "== cloning $branch into $public"
-git clone --quiet --bare --single-branch --branch "$branch" "$source" "$public"
-# No remote at all from here on: nothing in this folder can push by accident.
-git -C "$public" remote remove origin
-before_commits="$(git -C "$public" rev-list --count "$branch")"
-before_tree="$(git -C "$public" rev-parse "$branch^{tree}")"
+git clone --quiet --bare --no-local --single-branch --branch "$branch" -- "$source" "$public"
+branch_ref="refs/heads/$branch"
+before_commits="$(git -C "$public" rev-list --count "$branch_ref")"
+before_tree="$(git -C "$public" rev-parse "$branch_ref^{tree}")"
 
 echo "== rewriting history"
 filter=(--replace-text "$secret_dir/expressions" --replace-message "$secret_dir/expressions"
   --replace-refs delete-no-add --quiet)
 if [ ${#drop[@]} -gt 0 ]; then filter+=("${drop[@]}" --invert-paths); fi
 if [ -n "$mailmap" ]; then filter+=(--mailmap "$mailmap"); fi
-# filter-repo also expires the reflogs and repacks, so the old objects are gone.
+# filter-repo removes origin, expires reflogs and repacks the rewritten objects.
 (cd "$public" && git filter-repo "${filter[@]}")
 
-after_commits="$(git -C "$public" rev-list --count "$branch")"
-after_tree="$(git -C "$public" rev-parse "$branch^{tree}")"
+after_commits="$(git -C "$public" rev-list --count "$branch_ref")"
+after_tree="$(git -C "$public" rev-parse "$branch_ref^{tree}")"
 status=0
 fail() { status=1; echo "FAIL: $*"; }
 
 gates() {
   echo "segurata public history report, $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "source: $source"
   echo "branch: $branch"
   echo "result: $public"
   echo "commits: $before_commits before, $after_commits after"
@@ -109,8 +122,8 @@ gates() {
 
   echo "== refs"
   unexpected="$(git -C "$public" for-each-ref --format='%(refname)' |
-    grep -v -x -e "refs/heads/$branch" -e 'refs/tags/.*' || true)"
-  if [ -n "$unexpected" ]; then fail "refs other than refs/heads/$branch and tags:"; echo "$unexpected"; else echo "ok"; fi
+    grep -v -x -e "$branch_ref" -e 'refs/tags/.*' || true)"
+  if [ -n "$unexpected" ]; then fail "refs other than $branch_ref and tags:"; echo "$unexpected"; else echo "ok"; fi
   if [ -n "$(git -C "$public" remote)" ]; then fail "a remote is configured"; fi
 
   echo "== authors"
@@ -129,26 +142,9 @@ gates() {
     fail "the tip's files changed ($before_tree -> $after_tree); clean the branch itself first"
   fi
 
-  echo "== private identifiers"
-  local rc=0 hits
-  hits="$(python3 "$here/identifiers.py" scan-history "$public" "$identifiers")" || rc=$?
-  case $rc in
-    0) echo "ok: none" ;;
-    1) fail "identifiers left (filter-repo does not rewrite file names or authors: use --drop-path-glob or --mailmap)"
-       echo "$hits" ;;
-    *) fail "the identifier scan did not run" ;;
-  esac
-
-  echo "== gitleaks"
-  config="$secret_dir/gitleaks.toml"
-  # The rules of the published tip; gitleaks' defaults when it has none (an empty file has no rules).
-  git -C "$public" show "$branch:.gitleaks.toml" >"$config" 2>/dev/null ||
-    printf '[extend]\nuseDefault = true\n' >"$config"
-  if gitleaks git --no-banner --no-color --redact --log-level warn --log-opts=--all -c "$config" "$public"; then
-    echo "ok: no leaks"
-  else
-    fail "gitleaks found leaks; rerun it on $public with --verbose (values redacted) to see where"
-  fi
+  echo "== leak gate"
+  (cd "$public" && "$here/check-public.sh" --history --require-identifiers --identifiers "$identifiers" ${allow_authors[@]+"${allow_authors[@]}"}) ||
+    fail "history did not pass the leak gate"
 
   echo
   if [ "$status" -eq 0 ]; then

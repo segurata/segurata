@@ -18,6 +18,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // ErrStillPresent means the remediation ran but the connector still reports the finding.
@@ -279,9 +280,10 @@ func StillPresent(results []*run.Result, targets ...finding.Finding) (bool, erro
 
 // Print shows the exact scope of a plan.
 func Print(w io.Writer, f finding.Finding, p connector.Plan) {
-	fmt.Fprintf(w, "Finding  %s [%s] %s · %s · %s\n", f.ID, f.Severity, f.Selector(), f.Account, f.Title)
-	fmt.Fprintf(w, "Action   %s\n", p.Action)
-	fmt.Fprintf(w, "Plan     %s\n", p.Summary)
+	fmt.Fprintf(w, "Finding  %s [%s] %s · %s · %s\n", textfmt.Terminal(f.ID), textfmt.Terminal(string(f.Severity)),
+		textfmt.Terminal(f.Selector()), textfmt.Terminal(f.Account), textfmt.Terminal(f.Title))
+	fmt.Fprintf(w, "Action   %s\n", textfmt.Terminal(p.Action))
+	fmt.Fprintf(w, "Plan     %s\n", textfmt.Terminal(p.Summary))
 	runs := "Runs, as you:"
 	switch {
 	case p.NeedsSudo():
@@ -306,7 +308,7 @@ func printSection[T any](w io.Writer, title, bullet string, items []T) {
 	}
 	fmt.Fprintln(w, "\n"+title)
 	for _, it := range items {
-		fmt.Fprintf(w, "  %s%v\n", bullet, it)
+		fmt.Fprintf(w, "  %s%s\n", bullet, textfmt.Terminal(fmt.Sprint(it)))
 	}
 }
 

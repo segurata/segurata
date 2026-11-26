@@ -190,6 +190,24 @@ func TestNoBrowserIsUnsupported(t *testing.T) {
 	}
 }
 
+func TestUnreadablePreferencesKeepTheBrowserUninspected(t *testing.T) {
+	c := fixture(t)
+	home, _ := c.Home()
+	b := browsers[0]
+	mustWrite(t, filepath.Join(home, b.dirs[c.OS], "Profile 4", "Secure Preferences"), "{")
+	rec := run(t, c)
+	rec.ByResource(t, "browser_extension", "reactdev")
+	if len(rec.Findings) != 1 {
+		t.Fatalf("incomplete Brave profiles produced aggregate findings: %v", rec.Findings)
+	}
+	for _, st := range rec.Statuses {
+		if st.Account == b.name && st.State == finding.StateError && strings.Contains(st.Detail, "Secure Preferences") {
+			return
+		}
+	}
+	t.Fatalf("missing incomplete browser status: %v", rec.Statuses)
+}
+
 func TestChromeTime(t *testing.T) {
 	if got := chromeTime("13358625205255503"); got.Format(time.DateOnly) != "2024-04-26" {
 		t.Errorf("got %s", got)

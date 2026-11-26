@@ -2,6 +2,8 @@ package browserext
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -90,9 +92,12 @@ type localState struct {
 	} `json:"profile"`
 }
 
-func readJSON(path string, v any) bool {
+func readJSON(path string, v any) error {
 	raw, err := os.ReadFile(path)
-	return err == nil && json.Unmarshal(raw, v) == nil
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, v)
 }
 
 // readBrowser returns every user-installed extension in every profile of one browser's data
@@ -105,21 +110,45 @@ func readBrowser(dir string, now time.Time) ([]install, error) {
 	var ls localState
 	readJSON(filepath.Join(dir, "Local State"), &ls)
 	var out []install
+	var failures []error
 	for _, e := range entries {
 		if !e.IsDir() || !profileDir.MatchString(e.Name()) {
 			continue
 		}
 		active := ls.Profile.InfoCache[e.Name()].ActiveTime
 		daily := active > 0 && now.Sub(time.Unix(int64(active), 0)) < dailyWindow
-		out = append(out, readProfile(dir, e.Name(), daily)...)
+		installs, err := readProfile(dir, e.Name(), daily)
+		out = append(out, installs...)
+		if err != nil {
+			failures = append(failures, err)
+		}
 	}
-	return out, nil
+	return out, errors.Join(failures...)
 }
 
-func readProfile(dir, prof string, daily bool) []install {
+func readProfile(dir, prof string, daily bool) ([]install, error) {
 	var prefs, secure prefsFile
-	readJSON(filepath.Join(dir, prof, "Preferences"), &prefs)
-	readJSON(filepath.Join(dir, prof, "Secure Preferences"), &secure)
+	var failures []error
+	var read int
+	for _, file := range []struct {
+		name  string
+		prefs *prefsFile
+	}{{"Preferences", &prefs}, {"Secure Preferences", &secure}} {
+		var parsed *prefsFile
+		err := readJSON(filepath.Join(dir, prof, file.name), &parsed)
+		switch {
+		case err == nil && parsed != nil:
+			*file.prefs = *parsed
+			read++
+		case err == nil:
+			failures = append(failures, fmt.Errorf("profile %q: %s is null", prof, file.name))
+		case !errors.Is(err, os.ErrNotExist):
+			failures = append(failures, fmt.Errorf("profile %q: could not read %s: %w", prof, file.name, err))
+		}
+	}
+	if read == 0 && len(failures) == 0 {
+		return nil, fmt.Errorf("profile %q has no preferences files", prof)
+	}
 	name := prefs.Profile.Name
 	if name == "" {
 		name = prof
@@ -129,18 +158,19 @@ func readProfile(dir, prof string, daily bool) []install {
 	maps.Copy(settings, secure.Extensions.Settings)
 	var out []install
 	for _, id := range slices.Sorted(maps.Keys(settings)) {
-		var e extSettings
-		if json.Unmarshal(settings[id], &e) != nil {
+		var e *extSettings
+		if err := json.Unmarshal(settings[id], &e); err != nil || e == nil {
+			failures = append(failures, fmt.Errorf("profile %q: invalid extension record %q", prof, id))
 			continue
 		}
 		switch e.Location {
 		case locWebStore, locUnpacked, locExternal, locCmdLine:
-			in := newInstall(filepath.Join(dir, prof), id, e)
+			in := newInstall(filepath.Join(dir, prof), id, *e)
 			in.profile, in.daily = name, daily
 			out = append(out, in)
 		}
 	}
-	return out
+	return out, errors.Join(failures...)
 }
 
 func newInstall(profDir, id string, e extSettings) install {

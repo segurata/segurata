@@ -180,6 +180,12 @@ never shows in a process listing) and rewrites the line to
 `export ANTHROPIC_API_KEY="$(security find-generic-password -a "$USER" -s ANTHROPIC_API_KEY -w)"`,
 the same lookup as `kc` written out, so the line works without the function.
 
+The command checks each destination before applying the plan. Any file that would receive
+plaintext must be untracked by Git and private under POSIX permissions. It refuses the plan if
+an index cannot be read or if a destination's mode, identity or contents changed after preview.
+On macOS, it also requires ACLs on the file and its parent directories to contain only deny
+entries.
+
 Better still, do not export it to every shell; fetch it where it is used:
 `ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)" command`. With 1Password, the same with
 `op read op://…` or `op run`. The first read from a new binary asks for Keychain permission.
@@ -344,7 +350,7 @@ secret inside the transcripts and keeps them readable. Or delete the transcripts
 (the list comes from the jsonl, without values):
 
 ```bash
-jq -r 'select(.evidence.kind=="transcript") | .evidence.path' out/*/local-secrets.jsonl | sort -u
+jq -r 'select(.evidence.kind=="transcript") | .evidence.path' /path/to/local-secrets-run.jsonl | sort -u
 ```
 
 or, for one secret, `segurata rotations show <id>` lists every transcript that holds it.

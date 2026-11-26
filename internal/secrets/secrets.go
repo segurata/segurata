@@ -50,7 +50,7 @@ func Resolve(ctx context.Context, ref string) (string, error) {
 		}
 		return v, nil
 	}
-	return "", fmt.Errorf("unsupported secret reference %q: use env:, keychain: or op://", ref)
+	return "", errors.New("unsupported secret reference: use env:, keychain: or op://")
 }
 
 // ResolveError is a reference that could not be resolved, naming its key, never the value.

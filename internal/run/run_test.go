@@ -25,6 +25,7 @@ import (
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/proc/proctest"
+	"github.com/segurata/segurata/internal/runfile"
 )
 
 type fake struct{ got connector.Request }
@@ -194,7 +195,7 @@ func TestInstancesRunSeparatelyWithTheirOwnSecrets(t *testing.T) {
 	if len(seen) != 2 {
 		t.Fatalf("each instance must get its own secret, saw %v", seen)
 	}
-	if filepath.Base(res[0].File) != "fake-personal.jsonl" || filepath.Base(res[1].File) != "fake-work.jsonl" {
+	if filepath.Base(res[0].File) != runfile.FileName("fake:personal") || filepath.Base(res[1].File) != runfile.FileName("fake:work") {
 		t.Fatalf("files %s %s", res[0].File, res[1].File)
 	}
 	a, b := res[0].Findings[0], res[1].Findings[0]

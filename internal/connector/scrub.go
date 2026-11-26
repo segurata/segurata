@@ -52,6 +52,15 @@ func (s scrubber) String(text string) string {
 	return s.replacer.Replace(text)
 }
 
+// ScrubChecks removes known credential values from doctor diagnostics in place.
+func ScrubChecks(checks []Check, secrets map[string]string) {
+	s := newScrubber(secrets)
+	for i := range checks {
+		c := &checks[i]
+		c.What, c.Detail, c.Fix = s.String(c.What), s.String(c.Detail), s.String(c.Fix)
+	}
+}
+
 // Error is err, or an error with its text scrubbed when it carries a secret value.
 func (s scrubber) Error(err error) error {
 	if err == nil {

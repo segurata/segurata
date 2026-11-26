@@ -9,10 +9,7 @@ backports to older lines.
 
 Report privately. Do not open a public issue, discussion or pull request for a vulnerability.
 
-- **GitHub private vulnerability reporting** (preferred): on the repository's Security tab,
-  "Report a vulnerability".
-- **Email**: `security@<domain>`.
-  **TODO (owner):** replace with a real, monitored address before publishing.
+Use **Report a vulnerability** on the repository's Security tab to contact the maintainers.
 
 Include the segurata version (`segurata version`), the OS, the connector or command involved, and
 steps to reproduce. Never send real secret values, tokens or inventories (`out/`): describe them,
@@ -64,7 +61,8 @@ These are the properties segurata promises. Breaking one is a vulnerability.
 - **Allowlisted commands.** Built-in remediations run only exact argument lists from a
   hand-written allowlist, never through a shell. Plugin plans run as the user; a plugin plan that
   needs sudo is refused.
-- **Private files.** Inventories and state files are written with mode 0600.
+- **Private files.** On Unix, inventories and state files are written with mode 0600. On Windows,
+  run preview builds with configuration and output directories restricted by Windows ACLs.
 - **Standard library only.** No third-party Go modules, so no transitive dependency supply chain.
   Release binaries are built with `CGO_ENABLED=0 -trimpath`, and their checksums file is signed
   with Sigstore cosign ([docs/releasing.md](docs/releasing.md#verifying-a-release)).

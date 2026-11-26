@@ -34,12 +34,12 @@ type CLI struct {
 }
 
 const usage = `usage: segurata rotations <command>
-  sync    [--from out/<date>/local-secrets.jsonl] [--out out] [--include-noise]
+  sync    [--from <run-file>] [--out out] [--include-noise]
   list    [--all] [--priority P0,P1] [--service stripe,aws] [--owner mine,not-mine,unknown]
   next    [--priority P0] [--service stripe] [--log]   the most urgent item, with what to do (--log records it was shown)
   show    <id>   with whose it is (owner, confidence, the reasons and claims behind it)
   replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
-          put the new value in every used_in file (see: segurata rotations replace --help)
+          replace the old value in eligible working files (see: segurata rotations replace --help)
   done    <id> [--note text]
   snooze  <id> --until YYYY-MM-DD [--note text]
   ignore  <id> --reason text
@@ -86,7 +86,7 @@ func (c CLI) Run(args []string) int {
 }
 
 func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, "rotations:", err)
+	fmt.Fprintln(c.Err, "rotations:", textfmt.Terminal(err.Error()))
 	return 1
 }
 

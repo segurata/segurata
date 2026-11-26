@@ -272,10 +272,10 @@ class PushTest(Base):
         unknown = "1" * 40
         cases = {
             "update": ((("refs/heads/main", self.tip, "refs/heads/main", self.published),),
-                       [self.tip, "^" + self.published, "--not", "--remotes"]),
-            "new ref": ((("refs/heads/main", self.tip, "refs/heads/new", self.ZERO),), [self.tip, "--not", "--remotes"]),
+                       [self.tip, "^" + self.published]),
+            "new ref": ((("refs/heads/main", self.tip, "refs/heads/new", self.ZERO),), [self.tip]),
             "remote commit not here": ((("refs/heads/main", self.tip, "refs/heads/main", unknown),),
-                                       [self.tip, "--not", "--remotes"]),
+                                       [self.tip]),
             "deletion": ((("(delete)", self.ZERO, "refs/heads/gone", self.published),), []),
         }
         for name, (rows, revs) in cases.items():

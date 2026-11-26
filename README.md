@@ -1,45 +1,38 @@
 # segurata
 
-segurata — your digital night watchman. Patrols your accounts and machines, sweeps out leaked keys,
-locks the doors you left open.
+Segurata is a CLI for auditing accounts and computers you manage. It inventories connected
+apps, cloud and AI credentials, browser extensions and secrets on disk. Its local tracker
+keeps findings and decisions between scans, including which credentials you still need to rotate.
 
-It inventories, assesses and cleans up a personal digital footprint: Google and other consumer
-accounts, clouds, AI providers and secrets on disk. Design: [docs/architecture.md](docs/architecture.md).
-
-The name: "segurata" is Spanish slang for a security guard.
+"Segurata" is Spanish slang for a security guard. See the [architecture](docs/architecture.md).
 
 ## Install
 
-Release binaries for macOS, Linux and Windows (amd64 and arm64) are static, with a SHA-256
-`checksums.txt` signed keylessly with Sigstore cosign and an SPDX SBOM per archive.
+Build from a clone with Go 1.26 or later.
 
 ```bash
-brew install --cask segurata/tap/segurata                      # Homebrew tap
-go install github.com/segurata/segurata/cmd/segurata@latest     # from source, Go 1.26+
-segurata version
+go build -o segurata ./cmd/segurata
+./segurata version
 ```
 
-Until the repository is public at `github.com/segurata/segurata` (the module path), neither line
-works yet: build from a clone with `go build -o segurata ./cmd/segurata`.
-
-Or download an archive from the releases page, verify `checksums.txt` with `cosign verify-blob`
-and the archive with `sha256sum -c`, and put `segurata` on your `PATH`. The exact commands, the
-certificate identity to expect and the caveats while the repository is private:
-[docs/releasing.md](docs/releasing.md#verifying-a-release).
+Published releases provide standalone binaries for macOS and Linux, and preview builds for
+Windows (amd64 and arm64). See the [installation and signature verification instructions](docs/releasing.md#installing)
+for release archives, `go install` and Homebrew.
 
 ## Quickstart
 
 ```bash
-segurata doctor                   # read-only: config, CLIs, sign-ins, file modes, and the fix for each problem
-segurata connectors               # built-in and external connectors
-segurata inventory [name ...]     # read-only; every connector when none is given
-segurata status                   # what to do next
-segurata remediate --list         # findings segurata can fix
-segurata remediate <id>           # the exact plan; nothing changes without --apply
+./segurata connectors
+./segurata doctor --connector browser-extensions
+./segurata inventory browser-extensions
+./segurata status
 ```
 
+This first scan reads local Brave and Chrome profiles on macOS or Linux. It needs no provider
+credentials. With an installed binary, use `segurata` in place of `./segurata`.
+
 The config is `~/.config/segurata/config.json` (`SEGURATA_CONFIG` overrides it); each connector's
-section below lists its keys. To build from a clone: `go build -o segurata ./cmd/segurata`.
+section below lists its keys. Pass a connector name to `inventory` to limit what runs.
 
 Before the first inventory, `segurata doctor` checks, read-only, the config and its secret
 references (resolved, never printed), the browser's debugging port, each connector's CLIs and
@@ -51,9 +44,9 @@ An external connector is any `segurata-<name>` executable on `PATH`, in any lang
 write one, built-in or external: [docs/connectors.md](docs/connectors.md). Contributing:
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Output goes to `~/.segurata/out/<date>/<connector>.jsonl` (mode 0600, in a 0700 folder, because it
-holds email addresses and each account's services), whatever folder you run segurata from;
-`SEGURATA_OUT` or `--out` choose another place. The summary is sorted by severity. Each inventory
+Output goes to `~/.segurata/out/<date>/`. The inventory summary prints each JSONL path.
+Unix runs use mode 0600 for those files in a 0700 directory because they contain account and
+service details. Set `SEGURATA_OUT` or pass `--out` to choose another directory. Each inventory
 ends with `segurata track sync`, which folds the latest runs into the tracker.
 
 ## Safety model
@@ -69,9 +62,11 @@ confirmation. The full list of guarantees, each of which counts as a vulnerabili
 - Read requests to the providers you configure, with your own credentials: the provider CLIs
   (`gh`, `gcloud`, `aws`, `az`), GET requests to provider APIs with the token your config
   references, and pages of your own signed-in browser through its local debugging port.
-- Never a secret value found on disk: secrets are fingerprinted locally
-  ([Fingerprints](#fingerprints)) and attributed offline ([Attribution](#attribution)).
-- Results stay on disk, in `~/.segurata` with mode 0600.
+- Secrets found on disk are fingerprinted and attributed locally by default. If you enable
+  [liveness checks](#liveness), supported checks authenticate against the provider with the
+  candidate credential. AWS STS uses a request signed locally with the secret access key.
+- Results stay on disk. Unix systems use mode 0600 for state files. On Windows, use folders
+  with access restricted by Windows ACLs.
 - `segurata remediate --apply` sends exactly the commands or requests its plan showed.
 - External connectors (`segurata-<name>` on `PATH`) run as you and send what they send: the
   [hibp example](examples/hibp/README.md) sends your email addresses to Have I Been Pwned. Read one
@@ -500,7 +495,7 @@ every secret as new.
 ### Rotation ledger
 
 ```bash
-./segurata rotations sync                    # from the latest out/<date>/local-secrets.jsonl
+./segurata rotations sync                    # from the latest local-secrets inventory
 ./segurata rotations list --priority P0,P1   # what to rotate first
 ./segurata rotations list --owner not-mine    # secrets that name someone else's account (mine, not-mine, unknown)
 ./segurata rotations next --priority P0      # the most urgent item and exactly what to do (--log records it was shown)
@@ -515,6 +510,9 @@ every secret as new.
 ```
 
 `rotations sync`, `done`, `snooze`, `ignore` and `reopen` are `track`'s verbs on secrets only.
+Plaintext replacement requires a file owned by your account, outside the Git index and private
+under POSIX permissions. The command checks the entire plan again before updating the Keychain
+or writing files. See the [rotation instructions](docs/secrets.md#shell-variables-from-the-keychain).
 
 One item per secret fingerprint, with its priority (P0 to P3), the reasons in plain words, every
 location, `used_in` (the config, `.env` and rc files that hold it, where the new value must go)
@@ -558,14 +556,15 @@ distinct secret once, at scan time, against its provider's read-only identity en
 Anthropic models, OpenRouter key, GitHub and GitLab user, AWS `sts:GetCallerIdentity`, Google
 Gemini models, Slack `auth.test`, Stripe balance, SendGrid scopes, Telegram `getMe`, Hugging Face
 and npm whoami, xAI key info, Groq models, Notion bot user, Cloudflare token verify, DigitalOcean
-account, Sentry organizations, Linear viewer), none of which changes, charges or sends anything.
-Secrets seen only in cached git history are read again from their commit when needed:
+account, Sentry organizations, Linear viewer). These calls read identity or account metadata.
+Secrets seen only in cached git history are read again from their commit when needed.
 
 ```json
-{"connectors": {"local-secrets": {"config": {"liveness": {"enabled": true, "owners": ["mine", "unknown"]}}}}}
+{"connectors": {"local-secrets": {"config": {"liveness": {"enabled": true, "owners": ["mine"]}}}}}
 ```
 
-`owners` defaults to `["mine"]`; `not-mine` is refused, so someone else's key is never tried.
+`owners` defaults to `["mine"]`. Candidates attributed to another owner are refused.
+Adding `"unknown"` also tries credentials whose owner could not be determined.
 `providers` narrows the list. A live key that left the machine is P0; a dead one (the provider's
 body carries its documented signal for an invalid, revoked or expired key; a bare 401 is unknown)
 is closed as done, "key no longer valid (checked <date>)", once no working file holds it, and opens

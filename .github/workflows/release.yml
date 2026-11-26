@@ -16,9 +16,26 @@ concurrency:
 # How to cut a release and verify it: docs/releasing.md.
 
 jobs:
+  preflight:
+    # The cosign identity, the cask and go install name this public repository.
+    if: github.repository == 'segurata/segurata' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/install-gitleaks
+      - run: scripts/check-public.sh --history
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go test ./...
+
   release:
-    # Only the public repository: the cosign identity, the cask and go install name it.
-    if: github.repository == 'segurata/segurata'
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -33,8 +50,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: go test
-        run: go test ./...
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v3.1.4

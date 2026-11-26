@@ -39,7 +39,7 @@ func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {
 		{"partial output, then an error", `printf '%s\0001:x\n' "$HOME/.zshrc"; echo "rg: something broke" >&2; exit 2`, time.Minute, true},
 		{"killed", `kill -9 $$`, time.Minute, true},
 		{"timed out", `exec sleep 5`, 100 * time.Millisecond, true},
-		{"unreadable files only", `exit 2`, time.Minute, false},
+		{"unreadable files only", `exit 2`, time.Minute, true},
 		{"no match", `exit 1`, time.Minute, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

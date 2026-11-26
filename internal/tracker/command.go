@@ -40,7 +40,7 @@ const trackUsage = `usage: segurata track <command>
   add        --title text [--kind fix|decide|setup|review] [--theme t] [--priority P2] [--note text]
              --kind decide --question text --option a --option "b=ignore:path:~/src/old"   (an option's effect applies when it is the answer;
              "b=ignore@not-mine:path:~/src/old" closes only secrets attributed not-mine)
-  sync       [--out out] [--from out/<date>/local-secrets.jsonl] [--include-noise]
+  sync       [--out out] [--from <run-file>] [--include-noise]
 <id> is T-0012 (or T-12), or a secret's short id. done, snooze, ignore and reopen take --path <prefix>
 instead of an id: every item (open, or closed for reopen) whose locations all lie under that path,
 e.g. a test log full of fixtures.`

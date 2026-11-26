@@ -7,6 +7,7 @@ package browserext
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -85,11 +86,17 @@ func (c *Connector) Inventory(_ context.Context, req connector.Request, emit con
 		}
 		dir := filepath.Join(home, rel)
 		ins, err := readBrowser(dir, now)
-		if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			emit.Log(fmt.Sprintf("%s: no profiles in %s", b.name, dir))
 			continue
 		}
 		found = true
+		if err != nil {
+			// A finding is aggregated across profiles. Partial data could lower an existing
+			// finding's severity even when missing findings are kept by the tracker.
+			emit.Status(finding.Status{Account: b.name, State: finding.StateError, Detail: err.Error()})
+			continue
+		}
 		for _, f := range findings(b, assess(ins, now, primaries(req.Config))) {
 			emit.Finding(f)
 		}

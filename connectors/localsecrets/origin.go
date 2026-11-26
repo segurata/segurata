@@ -25,10 +25,6 @@ import (
 // does every repository when neither gh nor owned_owners names an owner. A fork's inherited
 // history is recognised only when the upstream is a configured remote whose branches were fetched.
 
-// selfModule is segurata's own module path: its repositories (and worktrees) hold the synthetic
-// secrets of the test corpus, so they are left out of the secret scan.
-const selfModule = "github.com/segurata/segurata"
-
 // ownersTTL is how long the owner's GitHub account and organizations are trusted from the cache.
 const ownersTTL = 7 * 24 * time.Hour
 
@@ -52,7 +48,6 @@ type ownership struct {
 	names   map[string]bool // lowercased GitHub logins and organizations
 	mu      sync.Mutex
 	origins map[string]repoOrigin
-	self    map[string]bool
 }
 
 // ownerNames is the set of GitHub owners that are the user, from config and gh; empty when none
@@ -205,37 +200,6 @@ func (s *scan) inheritedCommits(repo, upstream string, commits []string) map[str
 }
 
 var remoteNameRe = regexp.MustCompile(`\A[A-Za-z0-9._-]+\z`)
-
-// isSelf reports whether the repository at root is segurata's own (its go.mod names selfModule).
-func (s *scan) isSelf(root string) bool {
-	s.own.mu.Lock()
-	defer s.own.mu.Unlock()
-	if v, ok := s.own.self[root]; ok {
-		return v
-	}
-	if s.own.self == nil {
-		s.own.self = map[string]bool{}
-	}
-	v := goModule(filepath.Join(root, "go.mod")) == selfModule
-	s.own.self[root] = v
-	return v
-}
-
-// goModule is the module path a go.mod file declares, "" when there is none.
-func goModule(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "module "); ok {
-			return strings.Trim(strings.TrimSpace(rest), `"`)
-		}
-	}
-	return ""
-}
 
 // githubRemote is one remote of a repository on GitHub.
 type githubRemote struct{ name, slug string }

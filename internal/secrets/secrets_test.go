@@ -83,7 +83,8 @@ func TestErrorsNameTheKeyNeverTheValue(t *testing.T) {
 }
 
 func TestPlainValuesAreRejected(t *testing.T) {
-	if _, err := Resolve(context.Background(), "sk-plaintext"); err == nil {
-		t.Fatal("a literal secret in config must be rejected")
+	const plain = "sk-plaintext"
+	if _, err := Resolve(context.Background(), plain); err == nil || strings.Contains(err.Error(), plain) {
+		t.Fatal("a literal secret in config must be rejected without echoing it")
 	}
 }

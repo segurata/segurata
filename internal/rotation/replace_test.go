@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -153,11 +155,82 @@ func (fx *fixture) id() string { return fx.key.Of(fx.old)[:8] }
 // run executes one rotations command with stdin, as a terminal or not.
 func (fx *fixture) run(t *testing.T, stdin string, tty bool, args ...string) (string, string, int) {
 	t.Helper()
+	return fx.runInput(t, strings.NewReader(stdin), tty, args...)
+}
+
+func (fx *fixture) runInput(t *testing.T, stdin io.Reader, tty bool, args ...string) (string, string, int) {
+	t.Helper()
 	var o, e bytes.Buffer
-	code := CLI{Out: &o, Err: &e, In: strings.NewReader(stdin), TTY: tty, Paths: tracker.Paths{Tracker: fx.state}, User: "tester",
+	code := CLI{Out: &o, Err: &e, In: stdin, TTY: tty, Paths: tracker.Paths{Tracker: fx.state}, User: "tester",
 		Home: func() (string, error) { return fx.home, nil }, Exec: fx.os.run, Now: func() time.Time { return t0 }}.Run(args)
 	fx.noLeak(t, o.String()+e.String())
 	return o.String(), e.String(), code
+}
+
+type confirmInput func()
+
+func (f confirmInput) Read(p []byte) (int, error) {
+	f()
+	return copy(p, "y\n"), io.EOF
+}
+
+func TestACLReportAllowsDenyEntriesOnly(t *testing.T) {
+	const report = "drwx------@ 9 501 20 288 Nov 26 12:00 /Users/example\n 0: group:everyone deny delete\n"
+	if !safeACLReport([]byte(report), 1) {
+		t.Fatal("a deny-only ACL should keep the directory private")
+	}
+	granted := strings.Replace(report, "deny delete", "allow search", 1)
+	if safeACLReport([]byte(granted), 1) || safeACLReport([]byte(report), 2) {
+		t.Fatal("a granting ACL or incomplete listing was accepted")
+	}
+}
+
+func TestReplaceChecksGitBeforeChangingTheKeychain(t *testing.T) {
+	fixture := newReplaceFixture(t)
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is unavailable")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(git, args...)
+		cmd.Dir = filepath.Dir(fixture.env)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	service := "ANTHROPIC_API_KEY"
+	fixture.os.items[service] = fixture.old
+	_, stderr, code := fixture.runInput(t, confirmInput(func() {
+		run("add", "--", ".env")
+		t.Setenv("GIT_INDEX_FILE", filepath.Join(fixture.home, "empty-alternate-index"))
+	}), true, "replace", fixture.id(), "--apply", "--to-keychain", service)
+	if code != 1 || !strings.Contains(stderr, "tracked by Git") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if fixture.os.items[service] != fixture.old ||
+		!strings.Contains(read(t, fixture.env), fixture.old) || !strings.Contains(read(t, fixture.zshrc), fixture.old) {
+		t.Fatal("an unsafe plan changed a destination")
+	}
+}
+
+func TestReplaceKeepsAFileModeChangedDuringConfirmation(t *testing.T) {
+	fixture := newReplaceFixture(t)
+	_, stderr, code := fixture.runInput(t, confirmInput(func() {
+		if err := os.Chmod(fixture.zshrc, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}), true, "replace", fixture.id(), "--apply")
+	if code != 1 || !strings.Contains(stderr, "changed since the plan") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	st, err := os.Stat(fixture.zshrc)
+	if err != nil || st.Mode().Perm() != 0o600 || !strings.Contains(read(t, fixture.zshrc), fixture.old) {
+		t.Fatal("the confirmed plan overwrote a newer mode or credential")
+	}
 }
 
 // noLeak checks that neither value reached the output nor any runner argument. Only the stdin of
@@ -218,7 +291,7 @@ func TestReplaceDryRunChangesNothing(t *testing.T) {
 		t.Fatalf("dry run: %d %s", code, e)
 	}
 	after := secretrisk.Redact("anthropic", "sk-ant-", fx.new)
-	for _, want := range []string{fx.item(t).Secret.Redacted + " → " + after, "~/.zshrc  mode 640", "line 2:", "~/src/app/.env  mode 600", "line 1:", "line 3:", "No backup", "Dry run"} {
+	for _, want := range []string{fx.item(t).Secret.Redacted + " → " + after, "~/.zshrc", "mode 640", "line 2:", "~/src/app/.env", "mode 600", "line 1:", "line 3:", "No backup", "Dry run"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("plan lacks %q:\n%s", want, o)
 		}
@@ -550,7 +623,7 @@ func TestReplaceWriteRefusesAFileChangedAfterThePlan(t *testing.T) {
 	}
 	write(t, fx.env, read(t, fx.env)+"LATER=1\n", 0o600)
 	rc := read(t, fx.zshrc)
-	written, err := r.write(false, t0)
+	written, err := r.write(context.Background(), false, t0)
 	if err == nil || !strings.Contains(err.Error(), "changed since the plan") || len(written) != 0 {
 		t.Errorf("written %v err %v", written, err)
 	}

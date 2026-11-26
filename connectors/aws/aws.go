@@ -9,9 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -82,22 +80,6 @@ func (c *Connector) Describe() connector.Description {
 // Track makes one item of each finding: each key, user or budget is its own fix.
 func (c *Connector) Track(finding.Finding) *finding.Track {
 	return &finding.Track{Group: finding.GroupFinding}
-}
-
-func defaultCredentialsFile() string { return sharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials") }
-
-func defaultConfigFile() string { return sharedFile("AWS_CONFIG_FILE", "config") }
-
-// sharedFile is the path the AWS CLI reads: the environment override, else ~/.aws/<name>.
-func sharedFile(env, name string) string {
-	if p := os.Getenv(env); p != "" {
-		return p
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".aws", name)
 }
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {

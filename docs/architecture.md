@@ -788,7 +788,7 @@ Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 
 A config key `name` is the connector's unnamed instance; `name:label` adds a labelled one, with
 its own config and secrets. A label is letters, digits, `_`, `.` and `-` only. Each instance runs
-separately, writes `out/<date>/<name>-<label>.jsonl`, and stamps `"instance": "<label>"` on its
+separately, writes its own JSONL under `out/<date>/`, and stamps `"instance": "<label>"` on its
 records (part of the finding id). On the command line, `name` selects every instance and
 `name:label` just one; an instance named twice runs once.
 
@@ -1084,9 +1084,6 @@ every run without a new scan.
   reads like test data (`sample`: "test", "fake", "demo", "1234", "abcd", a run of four equal
   characters). The sample flag needs the value, so git history cached before it existed is judged
   by path alone until its repository is scanned in full again.
-- segurata's own repositories (a `go.mod` declaring `github.com/segurata/segurata`, worktrees
-  included) are not scanned for secrets: their test corpus is synthetic. The status line counts
-  what was skipped.
 - AWS temporary credentials (`ASIA…`) live 36 hours at most: one whose commit date (end of that
   day) or file modification time is older is expired (`public`, note "expired"). Pre-signed URLs
   (`X-Amz-Credential=` or `AWSAccessKeyId=` before the key id) are their own type, low impact, and
@@ -1559,7 +1556,7 @@ redaction removes the copy that stays on disk, in backups and in sync tools.
 
 ## Why Go, and why so few dependencies
 
-- One static binary for macOS, Linux and Windows, no runtime to install.
+- One standalone binary for macOS or Linux, with preview Windows builds.
 - A security tool with a hundred dependencies is a supply-chain risk in itself. The core uses only
   the standard library (including a minimal WebSocket client for CDP). Cloud connectors call the
   official CLIs (`gcloud`, `aws`, `az`), already authenticated on the machine, instead of

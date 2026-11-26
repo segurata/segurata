@@ -220,7 +220,7 @@ func newOwnersFixture(t *testing.T) (*ownersFixture, *Connector) {
 	}
 	mine, theirs := repo("app", "git@github.com:My-Org/app.git"), repo("canvas-lms", "https://github.com/instructure/canvas-lms.git")
 	self := repo("segurata", "git@github.com:segurata/segurata.git")
-	fx.write(t, "src/segurata/go.mod", "module "+selfModule+"\n\ngo 1.25\n", 0o600)
+	fx.write(t, "src/segurata/go.mod", "module github.com/segurata/segurata\n\ngo 1.26\n", 0o600)
 	fx.write(t, "src/segurata/.env", "STRIPE_KEY="+fake("sk_live_", 40)+"\n", 0o600)
 	fx.write(t, ".zshrc", "export STRIPE_KEY="+o.reusedKey+"\n", 0o600)
 	leak := func(file, secret string) map[string]any {
@@ -294,13 +294,10 @@ func TestThirdPartyRepositoriesAreNotTheOwners(t *testing.T) {
 	check("~/src/canvas-lms/config/a.env", finding.SevCritical, secretrisk.OriginThirdParty, "true")
 	check("~/src/canvas-lms/config/b.env", finding.SevInfo, secretrisk.OriginThirdParty, "<nil>")
 	check("~/src/canvas-lms/config/c.env", finding.SevCritical, secretrisk.OriginThirdParty, "true")
-	for p := range byPath {
-		if strings.HasPrefix(p, "~/src/segurata/") {
-			t.Errorf("segurata's own repository scanned: %s", p)
+	for _, path := range []string{"~/src/segurata/.env", "~/src/segurata/internal/testcorpus/corpus.go"} {
+		if _, ok := byPath[path]; !ok {
+			t.Errorf("module declaration prevented scanning %s", path)
 		}
-	}
-	if !strings.Contains(rec.statuses[0].Detail, "1 in segurata's own repositories skipped") {
-		t.Errorf("status: %s", rec.statuses[0].Detail)
 	}
 
 	// The owner's names are cached: a second run asks gh nothing.

@@ -237,9 +237,6 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 		go func() {
 			defer wg.Done()
 			for repo := range jobs {
-				if s.isSelf(repo) {
-					continue
-				}
 				if err := s.gitleaks(repo); err != nil {
 					mu.Lock()
 					failed++

@@ -5,12 +5,65 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runtest"
 )
+
+func TestHistoryKeepsLegacyAndNewInstancesSeparate(t *testing.T) {
+	out := t.TempDir()
+	path := func(date, name string) string { return filepath.Join(out, date, name) }
+	finished := path("2026-11-20", "github-work.jsonl")
+	unfinished := path("2026-11-21", "github-work.jsonl")
+	earlierThatDay := path("2026-11-22", "github-work.jsonl")
+	current := path("2026-11-22", FileName("github:work"))
+	plugin := path("2026-11-22", FileName("github-work"))
+	otherCase := path("2026-11-22", FileName("github:Work"))
+	status := finding.Status{Type: "status", Connector: "github", Instance: "work", State: finding.StateOK}
+	runtest.Write(t, finished, status)
+	runtest.WriteUnfinished(t, unfinished, status)
+	observation := finding.Finding{Type: "finding", Connector: "github", Instance: "work", ObservedAt: time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)}
+	runtest.Write(t, earlierThatDay, observation)
+	observation.ObservedAt = observation.ObservedAt.Add(time.Hour)
+	runtest.Write(t, current, observation)
+	laterMtime := observation.ObservedAt.Add(time.Hour)
+	if err := os.Chtimes(earlierThatDay, laterMtime, laterMtime); err != nil {
+		t.Fatal(err)
+	}
+	runtest.Write(t, plugin, finding.Status{Type: "status", Connector: "github-work", State: finding.StateOK})
+	status.Instance = "Work"
+	runtest.Write(t, otherCase, status)
+
+	h, err := History(out, time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(h["github:work"], []string{finished, unfinished, earlierThatDay, current}) ||
+		!slices.Equal(h["github-work"], []string{plugin}) || !slices.Equal(h["github:Work"], []string{otherCase}) {
+		t.Fatalf("unexpected histories: %v", h)
+	}
+	latest, err := pick(h["github:work"])
+	if err != nil || latest.File != current || latest.Prev != earlierThatDay {
+		t.Fatalf("latest: %+v, %v", latest, err)
+	}
+	if strings.EqualFold(current, otherCase) {
+		t.Fatal("case-insensitive filesystems would merge two instances")
+	}
+}
+
+func TestHistoryFindsAnInstanceWithALongLabel(t *testing.T) {
+	out := t.TempDir()
+	label := strings.Repeat("Aa", 100)
+	path := filepath.Join(out, "2026-11-22", FileName("github:"+label))
+	runtest.Write(t, path, finding.Status{Type: "status", Connector: "github", Instance: label, State: finding.StateOK})
+	h, err := History(out, time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC))
+	if err != nil || !slices.Equal(h["github:"+label], []string{path}) {
+		t.Fatalf("long instance history: %v, %v", h, err)
+	}
+}
 
 func TestLatestRunsPreferFinishedRuns(t *testing.T) {
 	out := t.TempDir()
@@ -69,7 +122,7 @@ func TestHistorySkipsDaysAfterToday(t *testing.T) {
 	runtest.Write(t, today, finding.Finding{Type: "finding", Connector: "github", ID: "a"})
 	runtest.Write(t, filepath.Join(out, "2026-11-25", "github.jsonl"), finding.Finding{Type: "finding", Connector: "github", ID: "b"})
 	h, err := History(out, now)
-	if err != nil || len(h["github.jsonl"]) != 1 || h["github.jsonl"][0] != today {
+	if err != nil || len(h["github"]) != 1 || h["github"][0] != today {
 		t.Fatalf("history %v, %v", h, err)
 	}
 }

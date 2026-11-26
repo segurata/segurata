@@ -202,6 +202,7 @@ func (e Env) target(ctx context.Context, cfg config.Config, t run.Target) []conn
 	if len(checks) == 0 {
 		checks = append(checks, connector.Check{Level: connector.OK, What: "prerequisites", Detail: "nothing to check"})
 	}
+	connector.ScrubChecks(checks, req.Secrets)
 	return checks
 }
 
@@ -218,7 +219,7 @@ func secretChecks(t run.Target, req connector.Request, errs []error) []connector
 		ref := t.Instance.Secrets[k]
 		if why, bad := failed[k]; bad {
 			checks = append(checks, connector.Check{Level: connector.Fail, What: "secret " + k, Detail: why,
-				Fix: "make " + ref + " resolve, or change connectors." + t.Label() + ".secrets." + k})
+				Fix: "check connectors." + t.Label() + ".secrets." + k + " and use a working env:, keychain: or op:// reference"})
 			continue
 		}
 		if _, ok := req.Secrets[k]; ok {

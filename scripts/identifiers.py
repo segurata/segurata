@@ -25,14 +25,17 @@ Commands:
     identifiers.py scan-history REPO FILE     every object reachable from any ref, and ref names
     identifiers.py scan-push REPO FILE [--skip-authors]
                                               what a git push sends: the pre-push hook's stdin
-                                              names the refs; objects already on the remote and
-                                              in any remote-tracking ref are left out. With
+                                              names the refs; only objects reachable from the
+                                              destination tips named by Git are left out. With
                                               --skip-authors, commits' author and committer lines
                                               are not scanned (their messages are), for a private
                                               remote: prepare-public-history.sh decides authors
     identifiers.py push-revs REPO             the pre-push stdin as git log arguments, one line
     identifiers.py mask FILE                  copy stdin to stdout, masked
     identifiers.py run-masked FILE CMD...     run CMD with its stdout and stderr masked
+
+Both history scans take repeatable --allow-author "Name <email>". This exempts that exact Git
+author, committer or tagger identity from the identifier scan of its header only.
 
 scan-* exit 1 when an identifier is found, 2 on a usage or input error. run-masked exits with
 CMD's status.
@@ -225,14 +228,22 @@ def scan_tree(repo, entries):
     return hits
 
 
-def without_authors(commit):
-    """A raw commit object without its author and committer header lines."""
-    header, sep, message = commit.partition(b"\n\n")
-    kept = [line for line in header.split(b"\n") if not line.startswith((b"author ", b"committer "))]
+identity_header = re.compile(rb"(author|committer|tagger) (.+ <[^<>]*>) -?\d+ [+-]\d{4}")
+
+
+def without_authors(data, approved=(), skip_authors=False):
+    """Drop approved identity headers. The body and any other headers remain scannable."""
+    header, sep, message = data.partition(b"\n\n")
+    kept = []
+    for line in header.split(b"\n"):
+        m = identity_header.fullmatch(line)
+        if m and (m[2] in approved or skip_authors and m[1] != b"tagger"):
+            line = line[:m.start(2)] + line[m.end(2):]
+        kept.append(line)
     return b"\n".join(kept) + sep + message
 
 
-def scan_objects(repo, entries, refs, objects, skip_authors=False):
+def scan_objects(repo, entries, refs, objects, skip_authors=False, approved=()):
     """Ref names and objects: {object id: the path rev-list found it at}."""
     hits = []
     for ref in refs:
@@ -248,12 +259,14 @@ def scan_objects(repo, entries, refs, objects, skip_authors=False):
         data = batch[start : start + int(size)]
         pos = start + int(size) + 1
         where = objects.get(oid, b"")
+        if kind in (b"commit", b"tag") and (approved or skip_authors):
+            data = without_authors(data, approved, skip_authors)
         if kind == b"blob":
             hits += hits_in(entries, data, lambda line: b"blob %s %s:%d" % (oid, where, line))
         elif kind == b"tree":
             hits += hits_in(entries, data, lambda _: b"a file or folder name in /" + where)
         elif kind == b"commit" and skip_authors:
-            hits += hits_in(entries, without_authors(data), lambda _: b"commit %s (message)" % oid)
+            hits += hits_in(entries, data, lambda _: b"commit %s (message)" % oid)
         elif kind == b"commit":
             hits += hits_in(entries, data, lambda _: b"commit %s (message, author or committer)" % oid)
         else:
@@ -270,21 +283,21 @@ def rev_list_objects(repo, *revs):
     return objects
 
 
-def scan_history(repo, entries):
+def scan_history(repo, entries, approved=()):
     refs = git(repo, "for-each-ref", "--format=%(refname)").splitlines()
     objects = rev_list_objects(repo, "--all")
     for row in git(repo, "for-each-ref", "--format=%(objectname) %(objecttype)", "refs/tags").splitlines():
         oid, kind = row.split(b" ")
         if kind == b"tag":
             objects.setdefault(oid, b"")
-    return scan_objects(repo, entries, refs, objects)
+    return scan_objects(repo, entries, refs, objects, approved=approved)
 
 
 def push_revs(repo, lines):
     """The pre-push hook's stdin ("<local ref> <local sha> <remote ref> <remote sha>" per ref) ->
     (git log arguments for what the push sends, the remote ref names it creates or updates).
-    A deletion sends nothing. An update sends what the remote ref lacks; a new ref, and an update
-    whose remote commit is not here, what no remote-tracking ref already has."""
+    A deletion sends nothing. Known destination tips bound the scan of an update. A new ref or
+    an unknown destination tip requires a full scan unless another tip in this push bounds it."""
     positive, negative, refs = [], [], []
     for line in lines:
         fields = line.split()
@@ -301,8 +314,7 @@ def push_revs(repo, lines):
         refs.append(remote_ref)
         if remote_sha.strip(b"0") and has_commit(repo, remote_sha.decode()):
             negative.append("^" + remote_sha.decode())
-    revs = positive + negative + ["--not", "--remotes"] if positive else []
-    return revs, refs
+    return positive + negative, refs
 
 
 def has_commit(repo, oid):
@@ -310,9 +322,9 @@ def has_commit(repo, oid):
     return subprocess.run(probe, stderr=subprocess.DEVNULL).returncode == 0
 
 
-def scan_push(repo, entries, lines, skip_authors=False):
+def scan_push(repo, entries, lines, skip_authors=False, approved=()):
     revs, refs = push_revs(repo, lines)
-    return scan_objects(repo, entries, refs, rev_list_objects(repo, *revs) if revs else {}, skip_authors)
+    return scan_objects(repo, entries, refs, rev_list_objects(repo, *revs) if revs else {}, skip_authors, approved)
 
 
 def run_masked(entries, cmd):
@@ -333,11 +345,18 @@ def run_masked(entries, cmd):
     return 128 - code if code < 0 else code
 
 
-SCANS = {
-    "scan-tree": scan_tree,
-    "scan-history": scan_history,
-    "scan-push": lambda repo, entries: scan_push(repo, entries, sys.stdin.buffer.read().splitlines()),
-}
+def author_options(command, args):
+    if command == "scan-push" and args == ["--skip-authors"]:
+        return True, ()
+    approved = set()
+    for i in range(0, len(args), 2):
+        if args[i] != "--allow-author" or i + 1 == len(args):
+            raise InputError("expected --allow-author followed by a Git identity")
+        value = args[i + 1].encode("utf-8")
+        if not re.fullmatch(rb"[^<>\r\n]+ <[^<>\r\n]+>", value):
+            raise InputError("expected an approved author in Name <email> format")
+        approved.add(value)
+    return False, approved
 
 
 def report(hits):
@@ -370,10 +389,14 @@ def main(argv):
             return 0
         if command == "run-masked" and len(argv) >= 4:
             return run_masked(load(argv[2]), argv[3:])
-        if command == "scan-push" and argv[4:] == ["--skip-authors"]:
-            return report(scan_push(argv[2], load(argv[3]), sys.stdin.buffer.read().splitlines(), skip_authors=True))
-        if command in SCANS and len(argv) == 4:
-            return report(SCANS[command](argv[2], load(argv[3])))
+        if command == "scan-tree" and len(argv) == 4:
+            return report(scan_tree(argv[2], load(argv[3])))
+        if command in ("scan-history", "scan-push") and len(argv) >= 4:
+            skip, approved = author_options(command, argv[4:])
+            entries = load(argv[3])
+            if command == "scan-history":
+                return report(scan_history(argv[2], entries, approved))
+            return report(scan_push(argv[2], entries, sys.stdin.buffer.read().splitlines(), skip, approved))
     except InputError as e:
         print(f"identifiers.py: {e}", file=sys.stderr)
         return 2

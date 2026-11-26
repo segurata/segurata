@@ -284,7 +284,7 @@ func guard(abs string, minAge time.Duration, now time.Time, open map[string]bool
 	if !st.Mode().IsRegular() {
 		return nil, skipIrreg
 	}
-	if !ownedByMe(st) {
+	if uid, ok := statefile.OwnerID(st); ok && uid != os.Getuid() {
 		return nil, skipOwner
 	}
 	if now.Sub(st.ModTime()) < minAge {

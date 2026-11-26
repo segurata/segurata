@@ -1,8 +1,8 @@
 # Releasing
 
-Releases are cut only from `github.com/segurata/segurata`, where the cosign identity, the cask and
-`go install` below expect them. A `v*` tag pushed there runs [`.github/workflows/release.yml`](../.github/workflows/release.yml),
-which runs the tests and then [GoReleaser](../.goreleaser.yaml):
+Releases are cut from the public `github.com/segurata/segurata`. On a `v*` tag,
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) requires the history leak
+scan and the Go tests before [GoReleaser](../.goreleaser.yaml) can upload assets.
 
 | Output | Detail |
 |---|---|
@@ -131,11 +131,9 @@ access to it, for example `gh release download v0.1.0 --repo segurata/segurata`.
 
 ## Going public
 
-The code goes public as a new history in `github.com/segurata/segurata`, a repository that exists
-today, private and empty. The private repository the code comes from is only read from: its history
-is never rewritten in place and never force-pushed. Its clones cannot pull from the public
-repository afterwards (every commit id changes), so open branches move over by `git format-patch`
-and `git am` or by cherry-pick.
+Publish a sanitized copy into an empty private destination at `github.com/segurata/segurata`.
+The rewrite changes commit IDs in the copy. Move any remaining private branches to the new
+history by cherry-pick or with `git format-patch` and `git am`.
 
 ### 1. Clean the tip
 
@@ -145,47 +143,54 @@ names and emails, private repository names. Format: [`scripts/identifiers.py`](.
 Then, on `main`:
 
 ```bash
-scripts/check-public.sh --require-identifiers --history
-grep -rn 'TODO (owner)[:]' --exclude-dir=.git .   # the contacts still to fill in
+scripts/check-public.sh --require-identifiers
+grep -n 'TODO (owner)[:]' CODE_OF_CONDUCT.md
 ```
 
-Every hit in the tracked files is fixed on `main` by an ordinary commit, and so is every
-`TODO (owner)` (the security and conduct contacts). Hits in the history are what the next step
-rewrites.
+Fix hits in tracked files and set the conduct contact in the tree that will be published.
+The next step rewrites identifiers in the history.
 
 ### 2. Build the public history
 
 ```bash
-scripts/prepare-public-history.sh --workdir ~/segurata-public --drop-path-glob '*.pyc' --keep-authors
+scripts/prepare-public-history.sh --source "$PWD" --workdir ~/segurata-public \
+  --drop-path-glob '*.pyc' --mailmap /path/to/public-author-mailmap
 ```
 
-It clones `main` and its tags from `origin` into `~/segurata-public/public.git`, replaces every
-identifier in file contents and commit and tag messages, and writes `~/segurata-public/report.txt`.
-Its gates: no identifier left anywhere in the new history (paths, binary files and authors
-included, which the replacement does not touch: `--drop-path-glob` removes such files, `--mailmap`
-rewrites authors), gitleaks clean, the tip's files identical to `main`'s, no ref but `main` and
-tags, and a decision on authors. The report lists every author, committer and tagger name and
-email in the new history; the gate fails unless `--mailmap FILE` rewrites them or `--keep-authors`
-publishes them as listed. The command above keeps them: drop `--keep-authors` and pass `--mailmap`
-to publish under other names. Nothing the script prints, the report included, shows an
-identifier: each one reads `<identifier N>`, N being its line in the identifiers file. `--drop-path-glob '*.pyc'` drops the Python bytecode an early commit added, which holds local
-paths. Run it again with a new `--workdir` until the report ends in `ALL GATES PASSED`, then read
-the result once by eye: `git -C ~/segurata-public/public.git log --stat`.
+The command copies the committed local `main` and its reachable tags. Run it from the same commit
+that passed tests. It rewrites file contents and Git messages, then checks that `main` still has
+the same tree and the clone has only `main` and tags. `--drop-path-glob '*.pyc'` removes old Python
+bytecode containing local paths.
+
+To omit private documents, remove them in the tested source commit first and pass a
+`--drop-path-glob` for their history. If the public identity overlaps the private identifiers list,
+pass `--allow-author 'Name <email>'` for that exact identity. The exception applies to Git identity
+headers. File content, paths, ref names and messages still get checked.
+
+The gate scans for the configured identifiers in reachable objects and ref names. Gitleaks scans
+Git patches, including merges, and commit and annotated tag metadata. Review historical binary
+files and archives separately. A clean scan still depends on which identifier variants you list
+and which credential formats Gitleaks recognizes.
+
+Review `~/segurata-public/report.txt` privately. It masks listed identifiers and includes the
+post-rewrite author, committer and tagger names and emails. Use `--keep-authors` in place of
+`--mailmap` only after approving those identities for public release. Read the candidate history
+before pushing and rerun in a fresh work directory after any change.
 
 ### 3. Publish
 
 ```bash
 cd ~/segurata-public/public.git
-git push git@github.com:segurata/segurata.git 'refs/heads/main:refs/heads/main' 'refs/tags/*:refs/tags/*'
+git push --no-follow-tags git@github.com:segurata/segurata.git 'refs/heads/main:refs/heads/main'
 ```
 
 An ordinary push into an empty repository: nothing is overwritten. Then, with the repository still
 private:
 
-1. Wait for CI on `main` to pass. GitHub-hosted runners are free for public repositories; while
-   private, the `segurata` organization's plan pays for them.
-2. Contacts: the address that replaced `TODO (owner)` in `SECURITY.md` and `CODE_OF_CONDUCT.md`
-   must receive mail.
+1. Wait for CI on `main` to pass. Before changing visibility, review existing Actions logs and
+   artifacts in the destination repository. Its Actions history and logs become public too.
+2. Confirm that the conduct address in `CODE_OF_CONDUCT.md` is monitored. Enable GitHub's
+   private reporting as soon as the repository is public.
 3. Tap: `gh repo create segurata/homebrew-tap --public --add-readme`, then a fine-grained token as
    in [Repository settings](#repository-settings), stored with
    `gh secret set HOMEBREW_TAP_GITHUB_TOKEN --repo segurata/segurata`.
@@ -200,6 +205,6 @@ private:
    clone, then cut `v0.1.0` as in [Cutting a release](#cutting-a-release).
 6. In the clone you work in from now on, install the push gate without `--skip-authors`
    (`scripts/install-hooks.sh`): the private remote's pushes skip the author lines, the public
-   one's must not.
+   one's must check them. Pass `--allow-author` if the approved identity needs the same exception.
 7. Archive the private repository (`gh repo archive <owner>/<repository>`) once nothing is left to
    move over.

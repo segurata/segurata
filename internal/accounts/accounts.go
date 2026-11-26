@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -20,7 +19,6 @@ import (
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/finding"
-	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -94,7 +92,7 @@ func SeenAccounts(out, lbl string) ([]Seen, error) {
 		return nil, err
 	}
 	by := map[string]*Seen{}
-	for _, file := range history[run.FileName(lbl)] {
+	for _, file := range history[lbl] {
 		rf, err := runfile.Read(file)
 		if err != nil {
 			return nil, err
@@ -385,7 +383,8 @@ func latestOwned(out string) (attribution.Owned, error) {
 	var fs []finding.Finding
 	var sts []finding.Status
 	for _, f := range files {
-		if strings.HasPrefix(filepath.Base(f), tracker.SecretsConnector) {
+		name, _, _ := strings.Cut(runfile.FileLabel(f), ":")
+		if name == tracker.SecretsConnector {
 			continue
 		}
 		rf, err := runfile.Read(f)

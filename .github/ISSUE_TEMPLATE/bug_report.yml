@@ -38,6 +38,6 @@ body:
   - type: textarea
     id: doctor
     attributes:
-      label: segurata doctor
-      description: Output of `segurata doctor --connector <name>`, with account names replaced.
+      label: Relevant diagnostic lines (optional)
+      description: Use synthetic data if possible. Remove credentials, secret references, account names, emails, paths, hosts and project IDs before posting. Leave this blank if unsure. Do not attach an inventory or tracker.
       render: text

@@ -257,6 +257,19 @@ func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
 	}
 }
 
+func TestPrintEscapesControlCharactersInPlan(t *testing.T) {
+	path := "/tmp/line\nwith\x1b-control\u202e"
+	plan := connector.Plan{Summary: "Restrict " + path, Files: []connector.FileChange{{Path: path, Mode: 0o600, Was: 0o644}}}
+	var out bytes.Buffer
+	Print(&out, finding.Finding{Title: path}, plan)
+	if strings.ContainsAny(out.String(), "\x1b\u202e") || !strings.Contains(out.String(), `line\nwith\x1b-control\u202e`) {
+		t.Fatalf("unsafe plan rendering: %q", out.String())
+	}
+	if plan.Files[0].Path != path {
+		t.Fatal("rendering changed the path that would be applied")
+	}
+}
+
 func TestListHidesFindingsBelowTheMinimumSeverity(t *testing.T) {
 	all := []finding.Finding{
 		{Type: "finding", ID: "noise0001", Severity: finding.SevInfo, Remediation: finding.Remediation{Action: "file.chmod600"}},

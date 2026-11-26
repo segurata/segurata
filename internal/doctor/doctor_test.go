@@ -140,7 +140,7 @@ func TestDoctorReportsEveryArea(t *testing.T) {
 		"fix: start the browser with --remote-debugging-port=9222",
 		"OK    api         secret API_KEY: env:DOCTOR_TEST_KEY resolves",
 		"FAIL  api:broken  secret API_KEY: environment variable DOCTOR_TEST_MISSING is not set",
-		"fix: make env:DOCTOR_TEST_MISSING resolve, or change connectors.api:broken.secrets.API_KEY",
+		"fix: check connectors.api:broken.secrets.API_KEY and use a working env:, keychain: or op:// reference",
 		"WARN  browser     platform: runs on linux only; it reports unsupported on darwin",
 		"OK    plugin      jq: /usr/bin/jq",
 		"WARN  plugin      yq: not found in PATH",
@@ -158,6 +158,27 @@ func TestDoctorReportsEveryArea(t *testing.T) {
 	if fx.got.Secrets["CLOUD_TOKEN"] != secretValue {
 		t.Error("the connector's Doctor did not get the resolved secret")
 	}
+}
+
+func TestDoctorRejectsLiteralSecretsWithoutPrintingThem(t *testing.T) {
+	fx := newFixture(t, `{"connectors":{"api":{"secrets":{"API_KEY":"`+secretValue+`"}}}}`)
+	out, code := fx.run(t, "api")
+	if code != 1 {
+		t.Fatalf("got exit code %d, want 1", code)
+	}
+	wantLines(t, out, "secret API_KEY: unsupported secret reference", "check connectors.api.secrets.API_KEY")
+}
+
+func TestDoctorScrubsConnectorChecks(t *testing.T) {
+	fx := newFixture(t, testConfig)
+	cloud := fx.env.Connectors[3].(selfChecking)
+	cloud.checks = []connector.Check{{Level: connector.Fail, What: "provider", Detail: "rejected " + secretValue}}
+	fx.env.Connectors[3] = cloud
+	out, code := fx.run(t, "cloud")
+	if code != 1 {
+		t.Fatalf("got exit code %d, want 1", code)
+	}
+	wantLines(t, out, "provider: rejected")
 }
 
 func TestDoctorUnconfiguredSecretAndOneConnector(t *testing.T) {

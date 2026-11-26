@@ -10,13 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/gitlocal"
 	"github.com/segurata/segurata/internal/keychain"
+	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
@@ -37,6 +40,7 @@ is still on the line where the scan found it in every used_in file, then plans t
 with redacted values. With --apply it asks for confirmation (stdin must be a terminal, or pass
 --yes), writes each file atomically keeping its mode, re-reads it to check that the old value is
 gone and the new one is in place, marks the item rotated and clears the clipboard.
+Plaintext replacements require an untracked file whose POSIX permissions keep it private.
 
   --to-keychain <service>  for shell rc files (~/.zshrc, ~/.zprofile, ~/.bashrc…), store the new
                            value in the login Keychain under <service> (fed to security -i on
@@ -52,6 +56,7 @@ var (
 	safeValue   = regexp.MustCompile(`^[A-Za-z0-9._~+/=:@%-]+$`)
 	safeService = regexp.MustCompile(`^[A-Za-z0-9._/@:-]+$`)
 	safeAccount = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	aclDeny     = regexp.MustCompile(`^\s+[0-9]+: \S+( inherited)? deny [a-z_,]+$`)
 	// assignLine is `[export ]NAME=value`, the only shape --to-keychain rewrites.
 	assignLine = regexp.MustCompile(`^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$`)
 )
@@ -67,14 +72,17 @@ type lineEdit struct {
 
 // fileEdit is one file to change, which may stand under several used_in names.
 type fileEdit struct {
-	path  string   // as the ledger records it (~/…)
-	also  []string // other used_in names of the same file (a symlink and its target)
-	abs   string   // the file written: path with ~ expanded and symlinks resolved
-	link  bool     // path itself is a symlink to abs
-	mode  fs.FileMode
-	orig  []byte
-	lines []lineEdit
-	next  []byte // the content to write
+	path    string   // as the ledger records it (~/…)
+	also    []string // other used_in names of the same file (a symlink and its target)
+	abs     string   // the file written: path with ~ expanded and symlinks resolved
+	paths   []string // absolute paths before resolving symlinks
+	link    bool     // the path or one of its ancestors resolves through a symlink
+	info    fs.FileInfo
+	tracked bool // tracked when the ledger last saw any of its names
+	mode    fs.FileMode
+	orig    []byte
+	lines   []lineEdit
+	next    []byte // the content to write
 }
 
 // replacement is a whole replace run: the item, the old value located in its files, and the edits.
@@ -113,6 +121,9 @@ func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, e
 		}
 		if same := byAbs[f.abs]; same != nil {
 			same.also = append(same.also, p)
+			same.paths = append(same.paths, f.paths...)
+			same.tracked = same.tracked || f.tracked
+			same.link = same.link || f.link
 			continue
 		}
 		byAbs[f.abs] = f
@@ -126,9 +137,11 @@ func (f *fileEdit) names() []string { return append([]string{f.path}, f.also...)
 
 func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	var recorded []int
+	var tracked bool
 	for _, loc := range r.item.Secret.Locations {
 		if loc.Path == p && loc.Line > 0 && loc.Source != "gitleaks" && !loc.Gone {
 			recorded = append(recorded, loc.Line)
+			tracked = tracked || loc.Tracked
 		}
 	}
 	if len(recorded) == 0 {
@@ -138,11 +151,11 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
 		abs = filepath.Join(home, rest)
 	}
-	fi, err := os.Lstat(abs)
-	if err != nil {
-		return nil, err
+	if !filepath.IsAbs(abs) {
+		return nil, fmt.Errorf("%q is not an absolute file path", p)
 	}
-	link := fi.Mode()&fs.ModeSymlink != 0
+	original := abs
+	var err error
 	if abs, err = filepath.EvalSymlinks(abs); err != nil {
 		return nil, err
 	}
@@ -157,7 +170,8 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &fileEdit{path: p, abs: abs, link: link, mode: st.Mode().Perm(), orig: raw}
+	f := &fileEdit{path: p, abs: abs, paths: []string{original}, link: original != abs, info: st, tracked: tracked,
+		mode: st.Mode().Perm(), orig: raw}
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
 		if v := r.find(line); v != "" {
@@ -278,7 +292,7 @@ func (r *replacement) rewrite(f *fileEdit, v string) string {
 func (r *replacement) print(w io.Writer, v string, backup bool) {
 	it := r.item
 	before, after := it.Secret.Redacted, secretrisk.Redact(it.Secret.Type, r.hint.Prefix, v)
-	fmt.Fprintf(w, "Replace %s  %s/%s  %s → %s\n", it.Secret.ID, it.Secret.Service, it.Secret.Type, before, after)
+	fmt.Fprintln(w, textfmt.Terminal(fmt.Sprintf("Replace %s  %s/%s  %s → %s", it.Secret.ID, it.Secret.Service, it.Secret.Type, before, after)))
 	for _, f := range r.files {
 		where := f.path
 		if f.link {
@@ -287,12 +301,12 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 		if len(f.also) > 0 {
 			where += ", also " + strings.Join(f.also, ", ")
 		}
-		fmt.Fprintf(w, "\n%s  mode %o\n", where, f.mode)
+		fmt.Fprintf(w, "\n%s  mode %o\n", textfmt.Terminal(where), f.mode)
 		for _, le := range f.lines {
 			if le.keychain {
-				fmt.Fprintf(w, "  line %d: %s%s → %s%s\n", le.n, le.head, before, le.head, lookupLine(r.service))
+				fmt.Fprintf(w, "  line %d: %s%s → %s%s\n", le.n, textfmt.Terminal(le.head), textfmt.Terminal(before), textfmt.Terminal(le.head), lookupLine(r.service))
 			} else {
-				fmt.Fprintf(w, "  line %d: %s → %s\n", le.n, before, after)
+				fmt.Fprintf(w, "  line %d: %s → %s\n", le.n, textfmt.Terminal(before), textfmt.Terminal(after))
 			}
 		}
 	}
@@ -306,25 +320,129 @@ func (r *replacement) print(w io.Writer, v string, backup bool) {
 		fmt.Fprintln(w, "No backup (a backup would be one more plaintext copy of the old value); --backup keeps one.")
 	}
 	for _, x := range r.warn {
-		fmt.Fprintln(w, "Warning: "+x)
+		fmt.Fprintln(w, "Warning: "+textfmt.Terminal(x))
+	}
+}
+
+func (r *replacement) preflight(ctx context.Context) error {
+	for _, f := range r.files {
+		if err := f.validate(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *fileEdit) validate(ctx context.Context) error {
+	changed := fmt.Errorf("%q changed since the plan; run the preview again", f.path)
+	for _, path := range f.paths {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil || resolved != f.abs {
+			return changed
+		}
+	}
+	st, err := os.Lstat(f.abs)
+	if err != nil || !os.SameFile(f.info, st) || st.Mode() != f.info.Mode() {
+		return changed
+	}
+	if uid, ok := statefile.OwnerID(st); !ok || uid != os.Getuid() {
+		return fmt.Errorf("%q: file ownership could not be verified; edit it by hand", f.path)
+	}
+	dirs, private, err := parentPrivacy(f.abs)
+	if err != nil {
+		return fmt.Errorf("%q: %w", f.path, err)
+	}
+	raw, err := os.ReadFile(f.abs)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(raw, f.orig) {
+		return changed
+	}
+	if !slices.ContainsFunc(f.lines, func(line lineEdit) bool { return !line.keychain }) {
+		return nil
+	}
+	if f.tracked {
+		return fmt.Errorf("%q was tracked by Git at the last scan; replace the secret by hand outside the index", f.path)
+	}
+	paths := f.paths
+	if !slices.Contains(paths, f.abs) {
+		paths = append(slices.Clone(paths), f.abs)
+	}
+	for _, path := range paths {
+		tracked, err := gitlocal.Tracked(ctx, path)
+		if err != nil {
+			return fmt.Errorf("%q: could not check the Git index: %w", f.path, err)
+		}
+		if tracked {
+			return fmt.Errorf("%q is tracked by Git; replace the secret by hand outside the index", f.path)
+		}
+	}
+	if st.Mode().Perm()&0o077 != 0 && !private {
+		return fmt.Errorf("%q can be accessed by other users; restrict its permissions before replacing the secret", f.path)
+	}
+	if runtime.GOOS == "darwin" {
+		paths := append(dirs, f.abs)
+		// macOS ACLs can grant access beyond the mode bits or propagate to the temporary file.
+		// ls -e emits an extra line per entry. -bn keeps filenames on one line and IDs numeric.
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		cmd := proc.Command(ctx, "/bin/ls", append([]string{"-ldenb", "--"}, paths...)...)
+		cmd.Env = append(os.Environ(), "LC_ALL=C")
+		out, err := cmd.Output()
+		if err != nil || !safeACLReport(out, len(paths)) {
+			return fmt.Errorf("%q: unexpected access control entries or unreadable ACLs; edit it by hand", f.path)
+		}
+	}
+	return nil
+}
+
+func safeACLReport(report []byte, paths int) bool {
+	listed := 0
+	for line := range bytes.SplitSeq(bytes.TrimSuffix(report, []byte{'\n'}), []byte{'\n'}) {
+		if len(line) > 0 && (line[0] == '-' || line[0] == 'd') {
+			listed++
+		} else if !aclDeny.Match(line) {
+			return false
+		}
+	}
+	return listed == paths
+}
+
+// Untrusted accounts must not be able to change the path between validation and the rename.
+// A sticky directory owned by root or by the caller protects entries with trusted owners.
+// A private parent owned by the caller also keeps group and other users from reading the file.
+func parentPrivacy(path string) (dirs []string, private bool, err error) {
+	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+		st, err := os.Stat(dir)
+		if err != nil {
+			return nil, false, err
+		}
+		uid, ok := statefile.OwnerID(st)
+		if !ok || uid != 0 && uid != os.Getuid() ||
+			st.Mode().Perm()&0o022 != 0 && st.Mode()&fs.ModeSticky == 0 {
+			return nil, false, fmt.Errorf("directory %q can be changed by another account; edit it by hand", dir)
+		}
+		dirs = append(dirs, dir)
+		private = private || uid == os.Getuid() && st.Mode().Perm()&0o011 == 0
+		if filepath.Dir(dir) == dir {
+			return dirs, private, nil
+		}
 	}
 }
 
 // write applies the edits: every file must still be as planned, checked before any is written,
 // then each is replaced atomically with its mode kept, after an optional backup. It returns the
 // names of the files written so far.
-func (r *replacement) write(backup bool, now time.Time) ([]string, error) {
-	for _, f := range r.files {
-		cur, err := os.ReadFile(f.abs)
-		if err != nil {
-			return nil, err
-		}
-		if !bytes.Equal(cur, f.orig) {
-			return nil, fmt.Errorf("%s changed since the plan; nothing written", f.path)
-		}
+func (r *replacement) write(ctx context.Context, backup bool, now time.Time) ([]string, error) {
+	if err := r.preflight(ctx); err != nil {
+		return nil, err
 	}
 	var done []string
 	for _, f := range r.files {
+		if err := f.validate(ctx); err != nil {
+			return done, err
+		}
 		if backup {
 			if _, err := statefile.Backup(f.abs, f.orig, now); err != nil {
 				return done, err
@@ -441,6 +559,9 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	if err != nil {
 		return c.fail(err)
 	}
+	if err := r.preflight(ctx); err != nil {
+		return c.fail(err)
+	}
 	r.print(c.Out, v, *backup)
 
 	// The copy loaded at the start is stale by now (the clipboard, the confirmation, the writes):
@@ -459,7 +580,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		if err := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplacePlan, plan) }); err != nil {
 			return c.fail(err)
 		}
-		fmt.Fprintf(c.Out, "\nDry run: nothing was changed. Run again with --apply to apply this plan (the new value is read again).\n")
+		fmt.Fprintln(c.Out, "\nDry run recorded in the tracker. Run again with --apply to read the new value and replace the credential.")
 		return 0
 	}
 	// Confirmation needs a terminal on stdin; a value piped in with --stdin leaves --yes as the only way.
@@ -476,12 +597,15 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		if len(written) > 0 {
 			note += "; already written: " + strings.Join(written, ", ")
 		}
-		if rerr := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, note) }); rerr != nil {
+		if rerr := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplaceFailed, textfmt.Terminal(note)) }); rerr != nil {
 			fmt.Fprintln(c.Err, "rotations:", rerr)
 		}
 		return c.fail(errors.New(note))
 	}
 	if r.service != "" {
+		if err := r.preflight(ctx); err != nil {
+			return failed(err, nil)
+		}
 		kc := keychain.Keychain{Run: c.Exec, Account: r.account}
 		if err := kc.Store(ctx, r.service, v); err != nil {
 			return failed(err, nil)
@@ -494,14 +618,17 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 			return failed(fmt.Errorf("the Keychain item %s does not hold the new value after storing it; no file was changed", r.service), nil)
 		}
 	}
-	written, err := r.write(*backup, now)
+	written, err := r.write(ctx, *backup, now)
 	if err != nil {
+		if r.service != "" {
+			err = fmt.Errorf("the Keychain item was updated: %w", err)
+		}
 		return failed(err, written)
 	}
 	if err := r.verify(v); err != nil {
 		return failed(fmt.Errorf("written, but the check failed: %w", err), written)
 	}
-	if err := record(func(it *tracker.Item) { it.Done(now, r.note(written)) }); err != nil {
+	if err := record(func(it *tracker.Item) { it.Done(now, textfmt.Terminal(r.note(written))) }); err != nil {
 		return c.fail(err)
 	}
 	fmt.Fprintf(c.Out, "\nReplaced in %s and checked. %s is now rotated.\n", textfmt.Count(len(r.files), "file", "files"), it.Secret.ID)

@@ -4,10 +4,20 @@ package textfmt
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
+
+// Terminal makes control characters visible in a value shown to a terminal user.
+func Terminal(s string) string {
+	if utf8.ValidString(s) && strings.IndexFunc(s, func(r rune) bool { return !unicode.IsGraphic(r) }) == -1 {
+		return s
+	}
+	quoted := strconv.QuoteToGraphic(s)
+	return quoted[1 : len(quoted)-1]
+}
 
 // OrDash is s, or "-" when s is empty, for table cells.
 func OrDash(s string) string {

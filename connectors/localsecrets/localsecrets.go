@@ -265,9 +265,6 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if s.omitted > 0 {
 		detail += fmt.Sprintf("; %d omitted because the value appeared in the path or note", s.omitted)
 	}
-	if s.selfSkipped > 0 {
-		detail += fmt.Sprintf("; %d in segurata's own repositories skipped (test corpus)", s.selfSkipped)
-	}
 	detail += noise.String() + live
 	if cfg.dumps == dumpsOff {
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
@@ -290,10 +287,9 @@ type scan struct {
 	now  time.Time
 	emit connector.Emitter
 
-	mu          sync.Mutex
-	rows        map[string]*row
-	omitted     int
-	selfSkipped int
+	mu      sync.Mutex
+	rows    map[string]*row
+	omitted int
 
 	held heldValues // values the liveness check may try (liveness.go)
 
@@ -447,12 +443,6 @@ func fixFor(ev secretrisk.Evidence) string {
 // add records one secret at one location. value is what gets fingerprinted (the raw secret, or the
 // body of a PEM key); it never leaves this function.
 func (s *scan) add(abs string, ev secretrisk.Evidence, value string) {
-	if root := s.repoRoot(abs); root != "" && s.isSelf(root) {
-		s.mu.Lock()
-		s.selfSkipped++
-		s.mu.Unlock()
-		return
-	}
 	ev, ok := s.prepare(abs, ev, value)
 	if !ok {
 		s.omit(1)

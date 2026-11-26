@@ -28,7 +28,7 @@ func loadBody(t *testing.T, body string) (Config, error) {
 	return Load(p)
 }
 
-// An instance label names the run file, out/<date>/<name>-<label>.jsonl: one that could leave
+// An instance label becomes part of the run file name: one that could leave
 // that directory or clash with the separator is refused.
 func TestLoadRejectsInstanceLabelsThatAreNotFileNameSafe(t *testing.T) {
 	for _, key := range []string{"aws:", "aws:../x", "aws:a/b", "aws:a b", "aws:a:b"} {

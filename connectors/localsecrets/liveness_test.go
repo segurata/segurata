@@ -77,6 +77,12 @@ func (f *fakeProviders) askedAbout(s string) bool {
 	return false
 }
 
+func (f *fakeProviders) askedCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.asked)
+}
+
 func (fx *fixture) livenessConnector(t *testing.T, f *fakeProviders) *Connector {
 	c := fx.connector(t, fx.gitleaksReport())
 	c.NewChecker = func(home string, cfg liveness.Config) *liveness.Checker {
@@ -162,13 +168,13 @@ func TestLivenessAtScanTime(t *testing.T) {
 
 	// A second run finds every provider's answer in the cache and asks no provider; the unknown
 	// lookups, never cached, run again.
-	before := len(f.asked)
+	before := f.askedCount()
 	rec2 := &recorder{}
 	if err := c.Inventory(context.Background(), req, rec2); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.asked) != before || !strings.Contains(rec2.statuses[0].Detail, "3 asked, 3 from cache,") {
-		t.Errorf("second run asked %d more; %s", len(f.asked)-before, rec2.statuses[0].Detail)
+	if f.askedCount() != before || !strings.Contains(rec2.statuses[0].Detail, "3 asked, 3 from cache,") {
+		t.Errorf("second run asked %d more; %s", f.askedCount()-before, rec2.statuses[0].Detail)
 	}
 }
 
@@ -198,8 +204,8 @@ func TestLivenessGates(t *testing.T) {
 		if err := c.Inventory(context.Background(), req, rec); err != nil {
 			t.Fatal(err)
 		}
-		if len(f.asked) != 0 {
-			t.Errorf("%s: asked %d times", tc.name, len(f.asked))
+		if f.askedCount() != 0 {
+			t.Errorf("%s: asked %d times", tc.name, f.askedCount())
 		}
 		detail := rec.statuses[0].Detail
 		if tc.detail == "" && strings.Contains(detail, "liveness") || tc.detail != "" && !strings.Contains(detail, tc.detail) {
@@ -274,10 +280,10 @@ func TestLivenessRecoversCachedHistoryValues(t *testing.T) {
 	if err := os.WriteFile(cache, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before := len(f.asked)
+	before := f.askedCount()
 	line, got = check()
-	if l := got["~/src/repo/a.env"]; l != nil || len(f.asked) != before || !strings.Contains(line, "1 without a value") {
-		t.Errorf("unrecoverable: %+v, %d asked; %s", l, len(f.asked)-before, line)
+	if l := got["~/src/repo/a.env"]; l != nil || f.askedCount() != before || !strings.Contains(line, "1 without a value") {
+		t.Errorf("unrecoverable: %+v, %d asked; %s", l, f.askedCount()-before, line)
 	}
 }
 
@@ -485,8 +491,8 @@ func TestLivenessNeverSendsAForeignKeyID(t *testing.T) {
 	theirAccount := &attribution.Known{Owned: attribution.Owned{AWSAccounts: []string{"012345678901"}}}
 	for _, wantReplay := range []bool{false, true} {
 		line, replayed, _ := h.check(t, f, theirAccount, theirs, secret)
-		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "0 asked") || strings.Contains(line, " 0 not allowed") {
-			t.Fatalf("replay %v: someone else's key id was sent (%v): %s", replayed, f.asked, line)
+		if replayed != wantReplay || f.askedCount() != 0 || !strings.Contains(line, "0 asked") || strings.Contains(line, " 0 not allowed") {
+			t.Fatalf("replay %v: someone else's key id was sent (%d calls): %s", replayed, f.askedCount(), line)
 		}
 	}
 	// The control: the same pair, the owner's, is recovered and tried.
@@ -505,8 +511,8 @@ func TestLivenessNeverPairsATemporaryKeyID(t *testing.T) {
 	f := newFakeProviders(t, temp)
 	for _, wantReplay := range []bool{false, true} {
 		line, replayed, _ := h.check(t, f, &attribution.Known{}, temp, secret)
-		if replayed != wantReplay || len(f.asked) != 0 || !strings.Contains(line, "1 asked,") || !strings.Contains(line, "1 unsupported") && !strings.Contains(line, "1 without a value") {
-			t.Errorf("replay %v: an ASIA id was paired (%v): %s", replayed, f.asked, line)
+		if replayed != wantReplay || f.askedCount() != 0 || !strings.Contains(line, "1 asked,") || !strings.Contains(line, "1 unsupported") && !strings.Contains(line, "1 without a value") {
+			t.Errorf("replay %v: an ASIA id was paired (%d calls): %s", replayed, f.askedCount(), line)
 		}
 	}
 }
@@ -610,8 +616,8 @@ func TestLivenessNeverDiscardsTheScan(t *testing.T) {
 	if err := fx.livenessConnector(t, f).Inventory(ctx, req, rec); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(start); d > 20*time.Second || reported(rec) == 0 || len(f.asked) != 0 || !strings.Contains(rec.statuses[0].Detail, "interrupted") {
-		t.Errorf("deadline in 30s: took %s, %d findings, %d asked; %v", d, reported(rec), len(f.asked), rec.statuses)
+	if d := time.Since(start); d > 20*time.Second || reported(rec) == 0 || f.askedCount() != 0 || !strings.Contains(rec.statuses[0].Detail, "interrupted") {
+		t.Errorf("deadline in 30s: took %s, %d findings, %d asked; %v", d, reported(rec), f.askedCount(), rec.statuses)
 	}
 
 	fx = newFixture(t)
@@ -622,8 +628,8 @@ func TestLivenessNeverDiscardsTheScan(t *testing.T) {
 	if err := fx.livenessConnector(t, f).Inventory(ctx, req, rec); err == nil {
 		t.Error("a cancelled run reported success")
 	}
-	if reported(rec) == 0 || len(f.asked) == 0 {
-		t.Errorf("cancelled while probing: %d findings, %d asked", reported(rec), len(f.asked))
+	if reported(rec) == 0 || f.askedCount() == 0 {
+		t.Errorf("cancelled while probing: %d findings, %d asked", reported(rec), f.askedCount())
 	}
 	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
 	for _, s := range fx.secrets {

@@ -1,4 +1,4 @@
-// Package run executes connectors and writes their records to out/<date>/<connector>.jsonl.
+// Package run executes connectors and writes their records under out/<date>/.
 package run
 
 import (
@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secrets"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -48,10 +48,6 @@ func (t Target) Timeout() time.Duration {
 
 // Label is "name" or "name:label", the same spelling as the config key.
 func (t Target) Label() string { return finding.Label(t.Connector.Describe().Name, t.Instance.Label) }
-
-// FileName is the name of the run file of the connector instance label (see Target.Label) in its
-// day's directory: "name.jsonl" or "name-label.jsonl".
-func FileName(label string) string { return strings.ReplaceAll(label, ":", "-") + ".jsonl" }
 
 // Targets expands connectors into their configured instances. A selector "name" picks every
 // instance of that connector, "name:label" just one; no selectors means everything. Each instance
@@ -266,7 +262,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("timed out after %s (raise connectors.%s.timeout)", timeout, label))
 	defer cancel()
 	started := time.Now()
-	res := &Result{Name: label, File: filepath.Join(dir, FileName(label))}
+	res := &Result{Name: label, File: filepath.Join(dir, runfile.FileName(label))}
 	// The run writes to a partial file of its own and renames it over <file> only once run_end is
 	// written, so a killed run never truncates an earlier finished run of the same day, and two runs
 	// of the same instance at once never write into one file. The partial file does not match

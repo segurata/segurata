@@ -51,6 +51,17 @@ class CheckPublicTest(GateBase):
         self.assertEqual(code, 0, output)
         self.assertIn("check-public: clean", output)
 
+    def test_public_author_in_message_is_still_flagged(self):
+        author = f"{self.IDENT} <public@example.com>"
+        self.repo_.commit("first")
+        self.repo_.git("commit", "-q", "--allow-empty", "--author", author, "-m", "clean")
+        code, output = self.gate("--history", "--allow-author", author)
+        self.assertEqual(code, 0, output)
+        self.repo_.git("commit", "-q", "--allow-empty", "--author", author, "-m", f"message for {author}")
+        code, output = self.gate("--history", "--allow-author", author)
+        self.assertEqual(code, 1, output)
+        self.assertIn("identifier on line 2: commit", output)
+
 
 @unittest.skipUnless(shutil.which("gitleaks"), "needs gitleaks")
 class PrePushTest(GateBase):
@@ -110,10 +121,37 @@ class PrePushTest(GateBase):
 
     def test_new_branch(self):
         self.add_then_delete()
+        self.repo_.git("update-ref", "refs/remotes/private/main", "HEAD")
         code, output = self.push("main:refs/heads/feature")
         self.assertNotEqual(code, 0, output)
         self.assertIn("leaks found: 1", output)
         self.assertIn("identifier on line 2: blob", output)
+
+    def test_merge_resolution_is_scanned_after_removal(self):
+        self.repo_.git("checkout", "-q", "-b", "side")
+        self.repo_.write("side.txt", "independent change\n")
+        self.repo_.commit("side")
+        self.repo_.git("checkout", "-q", "main")
+        self.repo_.git("merge", "-q", "--no-ff", "--no-commit", "side")
+        self.repo_.write("merge.txt", f"token = {self.token}\n")
+        self.repo_.commit("merge")
+        self.repo_.git("rm", "-q", "merge.txt")
+        self.repo_.commit("remove it")
+
+        code, output = self.gate("--history")
+        self.assertEqual(code, 1, output)
+        self.assertRegex(output, r"leaks found: [1-9]")
+        self.assertNotIn(self.token, output)
+
+    def test_git_metadata_is_scanned(self):
+        self.repo_.git("commit", "-q", "--allow-empty", "-m", f"token = {self.token}")
+        self.repo_.git("tag", "-a", "v0.1.0", "-m", f"token = {self.token}")
+
+        code, output = self.gate("--history")
+        self.assertEqual(code, 1, output)
+        self.assertIn("== gitleaks: Git metadata", output)
+        self.assertIn("leaks found: 2", output)
+        self.assertNotIn(self.token, output)
 
     def test_new_branch_name(self):
         code, output = self.push("main:refs/heads/ñandú-ácme-fix")
@@ -151,8 +189,8 @@ class PrePushTest(GateBase):
         self.assertIn("identifier on line 2: blob", output)
         self.repo_.git("checkout", "-q", "-b", "fresh")
         code, output = self.gate("--require-identifiers", "--unpushed")
-        self.assertEqual(code, 1, output)  # a branch not on the remote: what no remote branch has
-        self.assertIn("pushed commits (2)", output)
+        self.assertEqual(code, 1, output)
+        self.assertIn("pushed commits (3)", output)  # a new destination ref scans the full history
 
     def test_skip_authors(self):
         self.repo_.write("b.txt", "clean\n")
@@ -195,6 +233,7 @@ class PreparePublicHistoryTest(GateBase):
         repo.git("rm", "-q", "notes.txt")
         repo.commit("tidy")
         repo.git("tag", "-a", "v1", "-m", "release")
+        repo.git("gc", "--quiet")
         self.runs = 0
 
     def prepare(self, *args):
@@ -224,7 +263,7 @@ class PreparePublicHistoryTest(GateBase):
         code, output, report = self.prepare("--keep-authors")
         self.assertEqual(code, 0, output)
         self.assertIn("== authors\nTest Author <author@example.com>\nok: published as listed (--keep-authors)", report)
-        self.assertIn("== private identifiers\nok: none", report)  # every variant was rewritten
+        self.assertIn("check-public: clean", report)
         self.assertIn("ALL GATES PASSED", report)
 
     def test_mailmap(self):
@@ -239,6 +278,16 @@ class PreparePublicHistoryTest(GateBase):
     def test_mailmap_and_keep_authors_exclude_each_other(self):
         code, output, _ = self.prepare("--keep-authors", "--mailmap", self.ids_file)
         self.assertEqual(code, 2, output)
+
+    def test_only_exact_public_author_headers_are_accepted(self):
+        author = f"{self.IDENT} <public@example.com>"
+        mailmap = os.path.join(self.tmp.name, "mailmap")
+        with open(mailmap, "w", encoding="utf-8") as f:
+            f.write(author + " <author@example.com>\n")
+        code, output, _ = self.prepare("--mailmap", mailmap, "--allow-author", author)
+        self.assertEqual(code, 0, output)
+        code, output, _ = self.prepare("--mailmap", mailmap, "--allow-author", author.replace("public@", "other@"))
+        self.assertEqual(code, 1, output)
 
     def test_branch_name_is_masked_everywhere(self):
         self.repo_.git("branch", "ñandú-ácme-main")

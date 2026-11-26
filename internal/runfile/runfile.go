@@ -5,6 +5,8 @@ package runfile
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,18 @@ type Latest struct {
 	Evidence string
 }
 
+// FileName keeps run files in a distinct namespace from the old dash-joined names. Encoding
+// the instance in lowercase hex preserves its case even on case-insensitive filesystems.
+func FileName(label string) string {
+	name, instance, _ := strings.Cut(label, ":")
+	file := name + "@" + hex.EncodeToString([]byte(instance)) + ".jsonl"
+	if len(file) <= 230 { // leave space for CreateTemp's suffix on 255-byte filesystems
+		return file
+	}
+	digest := sha256.Sum256([]byte(label))
+	return "@" + hex.EncodeToString(digest[:]) + ".jsonl"
+}
+
 // LatestRuns picks, for every connector instance, the newest out/<YYYY-MM-DD> run that finished
 // (ends with a run_end record), so a run that was killed or is still running never stands in for
 // the last good one. An instance with no finished run at all (only files from before run_end
@@ -57,7 +71,7 @@ func LatestRuns(outDir string, now time.Time) ([]Latest, error) {
 	return out, nil
 }
 
-// History lists every run file under out/<YYYY-MM-DD>/, by file name (one connector instance),
+// History lists every run file under out/<YYYY-MM-DD>/, by connector instance label,
 // oldest first, leaving out days after now's: one written while the clock was wrong would stand
 // in for every real run after it.
 func History(outDir string, now time.Time) (map[string][]string, error) {
@@ -82,14 +96,88 @@ func History(outDir string, now time.Time) (map[string][]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		day := make(map[string][]string, len(files))
 		for _, f := range files {
-			history[filepath.Base(f)] = append(history[filepath.Base(f)], f)
+			label := FileLabel(f)
+			day[label] = append(day[label], f)
+		}
+		for label, paths := range day {
+			// Old and new binaries can write the same instance on the same day. A tie
+			// keeps the filename order from Glob, which puts the new name last.
+			if len(paths) > 1 {
+				times := make(map[string]time.Time, len(paths))
+				for _, path := range paths {
+					stat, err := os.Stat(path)
+					if err != nil {
+						return nil, err
+					}
+					times[path] = stat.ModTime()
+					if end, err := endOf(path); err == nil && end != nil && !end.EndedAt.IsZero() {
+						times[path] = end.EndedAt
+					}
+				}
+				sort.SliceStable(paths, func(i, j int) bool { return times[paths[i]].Before(times[paths[j]]) })
+			}
+			history[label] = append(history[label], paths...)
 		}
 	}
 	if len(history) == 0 {
 		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
 	}
 	return history, nil
+}
+
+func filenameLabel(file string) string {
+	stem := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+	if name, encoded, ok := strings.Cut(stem, "@"); ok && name != "" {
+		if instance, err := hex.DecodeString(encoded); err == nil {
+			return finding.Label(name, string(instance))
+		}
+	}
+	return stem
+}
+
+// FileLabel returns the connector instance for a run file. Legacy filenames that merged the
+// connector and instance with a dash can recover the identity from their records.
+func FileLabel(file string) string {
+	stem := filenameLabel(file)
+	base := strings.TrimSuffix(filepath.Base(file), ".jsonl")
+	hashed := strings.HasPrefix(base, "@")
+	if !hashed && (strings.Contains(base, "@") || !strings.Contains(base, "-")) {
+		return stem
+	}
+	name, instance := firstIdentity(file)
+	if name == "" {
+		if end, err := endOf(file); err == nil && end != nil {
+			name, instance = end.Connector, end.Instance
+		}
+	}
+	label := finding.Label(name, instance)
+	if name != "" && (hashed && FileName(label) == filepath.Base(file) ||
+		instance != "" && name+"-"+instance == stem) {
+		return label
+	}
+	return stem
+}
+
+func firstIdentity(file string) (string, string) {
+	f, err := os.Open(file)
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 4*1024), 16*1024*1024)
+	if sc.Scan() {
+		var first struct {
+			Connector string `json:"connector"`
+			Instance  string `json:"instance"`
+		}
+		if json.Unmarshal(sc.Bytes(), &first) == nil {
+			return first.Connector, first.Instance
+		}
+	}
+	return "", ""
 }
 
 // Prune removes the run files of days before cutoff that no LatestRuns entry as of now needs (its
@@ -260,8 +348,7 @@ func (r Output) Label(file string) string {
 	case len(r.Statuses) > 0:
 		return finding.Label(r.Statuses[0].Connector, r.Statuses[0].Instance)
 	}
-	base := filepath.Base(file)
-	return base[:len(base)-len(filepath.Ext(base))]
+	return filenameLabel(file)
 }
 
 // Read reads one connector instance's output, skipping log records. A file without run_end
