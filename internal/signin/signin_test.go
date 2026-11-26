@@ -94,7 +94,7 @@ func TestCollectPicksPagesAndCommandsOfWatchedAccounts(t *testing.T) {
 	}
 	targets := targetsOf(webConn{"web"}, cliConn{})
 
-	got := Collect(items, targets, accounts, false, t0)
+	got := collect(items, targets, accounts, false, t0)
 	var ids []string
 	for _, it := range got {
 		ids = append(ids, it.TrackerID)
@@ -118,13 +118,13 @@ func TestCollectPicksPagesAndCommandsOfWatchedAccounts(t *testing.T) {
 		t.Fatalf("manual page item %+v", got[4])
 	}
 
-	withAll := Collect(items, targets, accounts, true, t0)
+	withAll := collect(items, targets, accounts, true, t0)
 	if len(withAll) != len(got)+1 || withAll[3].TrackerID != "T-7" || withAll[3].Command != "security add-generic-password -s x -w" {
 		t.Fatalf("--all adds the credential command: %+v", withAll)
 	}
 }
 
-// --- Wait ---
+// --- wait ---
 
 type fakeTab struct {
 	mu     sync.Mutex
@@ -164,24 +164,24 @@ func (b *fakeBrowser) OpenTab(_ context.Context, url string) (Tab, error) {
 	return t, nil
 }
 
-func pageItem(target, account string, done bool) Item {
+func pageItem(target, account string, done bool) item {
 	p, _ := webConn{}.SignInPage(finding.Status{Account: account})
 	if !done {
 		p.Done = nil
 	}
-	return Item{TrackerID: "T-" + account, Title: account, Target: target, Page: &p}
+	return item{TrackerID: "T-" + account, Title: account, Target: target, Page: &p}
 }
 
 func TestWaitNeedsTwoReadsInARowAndStopsWhenAllAreDone(t *testing.T) {
 	a := &fakeTab{values: []string{"false", "true", "throw", "true", "true"}}
 	b := &fakeTab{values: []string{"true"}}
 	br := &fakeBrowser{tabs: map[string]*fakeTab{"https://web.test/a": a, "https://web.test/sudo": b}}
-	items := []Item{pageItem("web", "a", true), {TrackerID: "T-cmd", Command: "gcloud auth login"}, pageItem("web", "sudo", true)}
+	items := []item{pageItem("web", "a", true), {TrackerID: "T-cmd", Command: "gcloud auth login"}, pageItem("web", "sudo", true)}
 	var done []int
 	var progress bytes.Buffer
-	out := Wait(context.Background(), br, items, WaitOptions{Interval: time.Millisecond, Progress: &progress, Now: func() time.Time { return t0 },
+	out := wait(context.Background(), br, items, waitOptions{Interval: time.Millisecond, Progress: &progress, Now: func() time.Time { return t0 },
 		OnDone: func(i int) { done = append(done, i) }})
-	if !out[0].Done || out[1] != (Outcome{}) || !out[2].Done || !out[0].At.Equal(t0) {
+	if !out[0].Done || out[1] != (outcome{}) || !out[2].Done || !out[0].At.Equal(t0) {
 		t.Fatalf("outcomes %+v", out)
 	}
 	if !reflect.DeepEqual(done, []int{2, 0}) {
@@ -203,19 +203,24 @@ func TestWaitEndsOnClosedTabsEnterAndTimeout(t *testing.T) {
 	t.Run("closed tab and refused open", func(t *testing.T) {
 		closed := &fakeTab{values: []string{"false"}, err: errors.New("No session with given id")}
 		br := &fakeBrowser{tabs: map[string]*fakeTab{"https://web.test/a": closed}}
-		out := Wait(context.Background(), br, []Item{pageItem("web", "a", true), pageItem("web", "b", true)}, WaitOptions{Interval: time.Millisecond})
+		out := wait(context.Background(), br, []item{pageItem("web", "a", true), pageItem("web", "b", true)}, waitOptions{Interval: time.Millisecond})
 		if !out[0].Closed || out[0].Done || out[1].Err == nil {
 			t.Fatalf("outcomes %+v", out)
 		}
 	})
-	t.Run("manual page waits for Enter", func(t *testing.T) {
+	t.Run("manual page waits for Enter or the timeout", func(t *testing.T) {
 		br := &fakeBrowser{tabs: map[string]*fakeTab{"https://web.test/m": {values: []string{"true"}}}}
+		var progress bytes.Buffer
+		out := wait(context.Background(), br, []item{pageItem("web", "m", false)}, waitOptions{Interval: time.Millisecond, Timeout: 5 * time.Millisecond, Progress: &progress})
+		if out[0].Done || !strings.Contains(progress.String(), "Stopped waiting (timeout)") {
+			t.Fatalf("returned before the timeout: %+v %q", out, progress.String())
+		}
 		enter := make(chan struct{})
-		go func() { time.Sleep(20 * time.Millisecond); close(enter) }()
-		start := time.Now()
-		out := Wait(context.Background(), br, []Item{pageItem("web", "m", false)}, WaitOptions{Interval: time.Millisecond, Enter: enter})
-		if out[0].Done || time.Since(start) < 20*time.Millisecond {
-			t.Fatalf("returned early: %+v", out)
+		close(enter)
+		progress.Reset()
+		out = wait(context.Background(), br, []item{pageItem("web", "m", false)}, waitOptions{Interval: time.Millisecond, Enter: enter, Progress: &progress})
+		if out[0].Done || progress.Len() != 0 {
+			t.Fatalf("Enter did not end the wait: %+v %q", out, progress.String())
 		}
 		if tab := br.tabs["https://web.test/m"]; tab.evals != 0 {
 			t.Fatalf("a page without Done was read %d times", tab.evals)
@@ -224,7 +229,7 @@ func TestWaitEndsOnClosedTabsEnterAndTimeout(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		br := &fakeBrowser{tabs: map[string]*fakeTab{"https://web.test/a": {values: []string{"false"}}}}
 		var progress bytes.Buffer
-		out := Wait(context.Background(), br, []Item{pageItem("web", "a", true)}, WaitOptions{Interval: time.Millisecond, Timeout: 20 * time.Millisecond, Progress: &progress})
+		out := wait(context.Background(), br, []item{pageItem("web", "a", true)}, waitOptions{Interval: time.Millisecond, Timeout: 20 * time.Millisecond, Progress: &progress})
 		if out[0].Done || !strings.Contains(progress.String(), "Stopped waiting (timeout)") {
 			t.Fatalf("outcome %+v, progress %q", out, progress.String())
 		}
@@ -233,30 +238,30 @@ func TestWaitEndsOnClosedTabsEnterAndTimeout(t *testing.T) {
 
 func TestReruns(t *testing.T) {
 	early := t0.Add(time.Minute)
-	items := []Item{
+	items := []item{
 		pageItem("connected-apps", "sudo", true),
 		pageItem("google-personal", "a", true),
 		{Target: "gcp", Command: "gcloud auth login"},
 		pageItem("connected-apps", "microsoft", true),
 		pageItem("broken", "x", true),
 	}
-	out := []Outcome{{Done: true, At: t0}, {}, {}, {Done: true, At: t0.Add(30 * time.Second)}, {Err: errors.New("refused")}}
+	out := []outcome{{Done: true, At: t0}, {}, {}, {Done: true, At: t0.Add(30 * time.Second)}, {Err: errors.New("refused")}}
 	// Everything of connected-apps was through before its early run: no second run. Undone pages
 	// still rerun their target (the owner may have finished one segurata could not tell).
-	if got := Reruns(items, out, map[string]time.Time{"connected-apps": early}); !reflect.DeepEqual(got, []string{"google-personal"}) {
+	if got := reruns(items, out, map[string]time.Time{"connected-apps": early}); !reflect.DeepEqual(got, []string{"google-personal"}) {
 		t.Fatalf("reruns %v", got)
 	}
 	// Microsoft was done after the early run: connected-apps runs again.
 	out[3].At = early.Add(time.Second)
-	if got := Reruns(items, out, map[string]time.Time{"connected-apps": early}); !reflect.DeepEqual(got, []string{"connected-apps", "google-personal"}) {
+	if got := reruns(items, out, map[string]time.Time{"connected-apps": early}); !reflect.DeepEqual(got, []string{"connected-apps", "google-personal"}) {
 		t.Fatalf("reruns %v", got)
 	}
 	// Left undone after the early run: not run again.
-	out[3] = Outcome{}
-	if got := Reruns(items, out, map[string]time.Time{"connected-apps": early}); !reflect.DeepEqual(got, []string{"google-personal"}) {
+	out[3] = outcome{}
+	if got := reruns(items, out, map[string]time.Time{"connected-apps": early}); !reflect.DeepEqual(got, []string{"google-personal"}) {
 		t.Fatalf("reruns %v", got)
 	}
-	if got := Reruns(items, out, nil); !reflect.DeepEqual(got, []string{"connected-apps", "google-personal"}) {
+	if got := reruns(items, out, nil); !reflect.DeepEqual(got, []string{"connected-apps", "google-personal"}) {
 		t.Fatalf("reruns without early runs %v", got)
 	}
 }
@@ -427,5 +432,12 @@ func TestSigninSelectorsAndHelp(t *testing.T) {
 	out.Reset()
 	if code := x.cli(t, &out).Run(context.Background(), []string{"--help"}); code != 0 || !strings.Contains(out.String(), "usage: segurata signin") {
 		t.Fatalf("help: exit %d\n%s", code, out.String())
+	}
+	out.Reset()
+	if err := os.WriteFile(x.cfg, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := x.cli(t, &out).Run(context.Background(), nil); code != 1 || !strings.HasPrefix(out.String(), "signin: ") {
+		t.Fatalf("broken config: exit %d\n%s", code, out.String())
 	}
 }

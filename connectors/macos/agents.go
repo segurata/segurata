@@ -11,13 +11,13 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// agentVendor is how an endpoint security or management agent shows on disk and in the process list.
+// agentVendor is how an endpoint security or management agent shows on disk and in ps.
 type agentVendor struct {
 	name    string
-	labels  []string // launchd plist name prefixes, in /Library/LaunchDaemons and /Library/LaunchAgents
+	labels  []string // launchd plist name prefixes
 	apps    []string // bundle name prefixes in /Applications
-	dirs    []string // folders it installs
-	account string   // the service account it creates
+	dirs    []string
+	account string // the service account it creates
 }
 
 var agentVendors = []agentVendor{
@@ -38,7 +38,6 @@ var agentVendors = []agentVendor{
 	{name: "Jamf", labels: []string{"com.jamf.", "com.jamfsoftware."}, apps: []string{"Jamf"}, dirs: []string{"/Library/Application Support/JAMF"}},
 }
 
-// agentTrace is what was found of one vendor.
 type agentTrace struct {
 	launchd, apps, dirs, procs []string
 	account                    string
@@ -48,12 +47,10 @@ func (t agentTrace) found() bool {
 	return len(t.launchd)+len(t.apps)+len(t.dirs)+len(t.procs) > 0 || t.account != ""
 }
 
-// active means the agent can still do its job: its app is installed or it is running.
 func (t agentTrace) active() bool { return len(t.apps) > 0 || len(t.procs) > 0 }
 
-// endpointAgents lists the security and management agents present, from launchd plists, apps,
-// their folders, running processes and service accounts. Present ones are context (info); one
-// with no app and nothing running is a leftover of an uninstall (low).
+// endpointAgents reports present agents as info, and one with no app and nothing running as the
+// leftover of an uninstall (low).
 func (c *Connector) endpointAgents(ctx context.Context, users []localUser) []check {
 	var plistNames []string
 	for _, d := range []string{"/Library/LaunchDaemons", "/Library/LaunchAgents"} {
@@ -110,7 +107,6 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 	return false
 }
 
-// agentProcess reports whether a `ps -axo command=` line runs from the vendor's app or folders.
 func agentProcess(cmd string, v agentVendor) bool {
 	for _, a := range v.apps {
 		if strings.HasPrefix(cmd, "/Applications/"+a) {

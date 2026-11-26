@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -26,7 +27,7 @@ const msStepUpURL = "https://login.microsoftonline.com/tenant/oauth2/v2.0/author
 func msFake(apps map[string]any, tiles string, security map[string]any) *fakeBrowser {
 	b := &fakeBrowser{pages: map[string]any{msWorkAppsURL: apps}}
 	if tiles != "" {
-		b.responses = map[string]*response{msWorkAppsURL: {status: 200, body: []byte(tiles)}}
+		b.responses = map[string]*cdp.Response{msWorkAppsURL: {Status: 200, Body: []byte(tiles)}}
 	}
 	if security != nil {
 		b.pages[msWorkSecurityURL] = security
@@ -43,12 +44,12 @@ func TestMicrosoftWorkListsEnterpriseAppsAndChecksSecurityInfo(t *testing.T) {
 		map[string]any{"url": msStepUpURL, "text": "someone@example.com\nEnter code\nEnter the code displayed in the Authenticator app on your mobile device"})
 	rec := run(t, b, nil, "microsoft-work")
 
-	all, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	all, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	if strings.Contains(string(all), "someone") {
 		t.Fatal("the sign-in name in a launch URL reached the output")
 	}
-	if len(rec.findings) != 2 {
-		t.Fatalf("%d findings, want the two enterprise apps", len(rec.findings))
+	if len(rec.Findings) != 2 {
+		t.Fatalf("%d findings, want the two enterprise apps", len(rec.Findings))
 	}
 	tracker := rec.byName(t, "Error Tracker")
 	if tracker.Severity != finding.SevLow || tracker.Title != "Error Tracker can sign you in with your work account" ||
@@ -58,9 +59,9 @@ func TestMicrosoftWorkListsEnterpriseAppsAndChecksSecurityInfo(t *testing.T) {
 		t.Errorf("tracker: %+v", tracker)
 	}
 	if got := rec.state("microsoft-work"); !reflect.DeepEqual(got, []finding.State{finding.StateOK, finding.StateReauth}) {
-		t.Fatalf("statuses %+v", rec.statuses)
+		t.Fatalf("statuses %+v", rec.Statuses)
 	}
-	ok, reauth := rec.statuses[0], rec.statuses[1]
+	ok, reauth := rec.Statuses[0], rec.Statuses[1]
 	if ok.Scope != "" || !strings.Contains(ok.Detail, "2 enterprise apps") || !strings.Contains(ok.Detail, "not listed: 1 Bookmark, 2 OfficeFirstParty") {
 		t.Errorf("ok status %+v", ok)
 	}
@@ -90,16 +91,16 @@ func TestMicrosoftWorkStates(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			rec := run(t, c.b, nil, "microsoft-work")
-			if got := rec.state("microsoft-work"); !reflect.DeepEqual(got, c.want) || len(rec.findings) != 0 {
-				t.Fatalf("statuses %+v findings %d", rec.statuses, len(rec.findings))
+			if got := rec.state("microsoft-work"); !reflect.DeepEqual(got, c.want) || len(rec.Findings) != 0 {
+				t.Fatalf("statuses %+v findings %d", rec.Statuses, len(rec.Findings))
 			}
-			for i, s := range rec.statuses {
+			for i, s := range rec.Statuses {
 				if s.Scope != c.scopes[i] {
 					t.Errorf("status %d scope %q, want %q", i, s.Scope, c.scopes[i])
 				}
 			}
-			if !strings.Contains(rec.statuses[0].Detail, c.detail) {
-				t.Errorf("detail %q", rec.statuses[0].Detail)
+			if !strings.Contains(rec.Statuses[0].Detail, c.detail) {
+				t.Errorf("detail %q", rec.Statuses[0].Detail)
 			}
 			if loaded := len(c.b.opened) == 2; loaded != c.security {
 				t.Errorf("opened %v", c.b.opened)
@@ -137,7 +138,7 @@ func TestMSLoginState(t *testing.T) {
 }
 
 func TestMSReadyWaitsOutTheSignInHop(t *testing.T) {
-	ready := msReady()
+	ready := readyWhen(msReady())
 	hop, _ := json.Marshal(fetchPage{URL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"})
 	form, _ := json.Marshal(fetchPage{URL: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize", Text: "Pick an account"})
 	loading, _ := json.Marshal(fetchPage{URL: msWorkAppsURL, Text: "Apps"})
@@ -152,7 +153,7 @@ func TestMSReadyWaitsOutTheSignInHop(t *testing.T) {
 	}
 	prompt, _ := json.Marshal(fetchPage{URL: msStepUpURL, Text: "someone@example.com"})
 	filled, _ := json.Marshal(fetchPage{URL: msStepUpURL, Text: "someone@example.com\nEnter code"})
-	ready = msReady()
+	ready = readyWhen(msReady())
 	for i, c := range []struct {
 		raw  []byte
 		want bool

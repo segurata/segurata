@@ -1,7 +1,5 @@
-// Package browserext triages the extensions installed in every Brave and Chrome profile: what each
-// one can do, where it came from, how fresh it is, and a verdict (remove, review, keep) with the
-// reasons. It reads the browsers' profile files and never changes them: editing them while the
-// browser runs is unsafe, so every fix is a link to the extension's page in the browser.
+// Package browserext triages the extensions of every Brave and Chrome profile into remove, review
+// or keep. It never edits the profile files, unsafe while the browser runs: every fix is a link.
 package browserext
 
 import (
@@ -24,7 +22,7 @@ import (
 type browser struct {
 	name   string
 	dirs   map[string]string // GOOS -> data directory under the home folder
-	scheme string            // for the extensions page URL
+	scheme string
 }
 
 var browsers = []browser{
@@ -53,13 +51,11 @@ func (c *Connector) Describe() connector.Description {
 	}
 }
 
-// Track makes one review item of each extension: keep it or remove it.
 func (c *Connector) Track(finding.Finding) *finding.Track {
 	return &finding.Track{Group: finding.GroupFinding, Kind: finding.TrackReview}
 }
 
-// primaries reads config "primary": extension ids that win a duplicate check in their category
-// (for example the password manager you use, when another one is still installed).
+// primaries reads config "primary": extension ids that win a duplicate check in their category.
 func primaries(cfg map[string]any) []string {
 	var ids []string
 	list, _ := cfg["primary"].([]any)
@@ -92,8 +88,7 @@ func (c *Connector) Inventory(_ context.Context, req connector.Request, emit con
 		}
 		found = true
 		if err != nil {
-			// A finding is aggregated across profiles. Partial data could lower an existing
-			// finding's severity even when missing findings are kept by the tracker.
+			// Findings aggregate profiles: partial data could lower a finding's severity.
 			emit.Status(finding.Status{Account: b.name, State: finding.StateError, Detail: err.Error()})
 			continue
 		}
@@ -108,8 +103,7 @@ func (c *Connector) Inventory(_ context.Context, req connector.Request, emit con
 	return nil
 }
 
-// findings groups assessments by extension: one finding per extension and browser, with every
-// profile it is installed in. The verdict and severity are the worst across profiles.
+// findings makes one finding per extension and browser, as bad as its worst profile.
 func findings(b browser, as []assessment) []finding.Finding {
 	byID := map[string][]assessment{}
 	for _, a := range as {
@@ -158,10 +152,11 @@ func extensionFinding(b browser, as []assessment) finding.Finding {
 	default:
 		summary = fmt.Sprintf("Nothing to do. It is at %s (%s).", url, in)
 	}
-	title := fmt.Sprintf("%s extension %s: %s (%s)", b.name, worst.name, worst.verdict, strings.TrimPrefix(reasons[0], "["+worst.profile+"] "))
-	if len(profiles) > 1 {
-		title = fmt.Sprintf("%s extension %s: %s (%s)", b.name, worst.name, worst.verdict, reasons[0])
+	why := reasons[0]
+	if len(profiles) == 1 {
+		why = strings.TrimPrefix(why, "["+worst.profile+"] ")
 	}
+	title := fmt.Sprintf("%s extension %s: %s (%s)", b.name, worst.name, worst.verdict, why)
 	return finding.Finding{
 		Account:  b.name,
 		Resource: finding.Resource{Type: "browser_extension", ID: worst.id, Name: worst.name},

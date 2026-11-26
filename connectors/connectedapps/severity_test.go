@@ -148,8 +148,8 @@ func TestReportMarksStaleDates(t *testing.T) {
 	recent, old := now.AddDate(0, -6, 0), now.AddDate(-2, 0, 0)
 	e.report(grant{resType: "github_ssh_key", name: "recent", lastUsed: &recent})
 	e.report(grant{resType: "github_ssh_key", name: "old", lastUsed: &old})
-	if rec.findings[0].Severity != finding.SevLow || rec.findings[1].Severity != finding.SevMedium {
-		t.Fatalf("severities %s %s", rec.findings[0].Severity, rec.findings[1].Severity)
+	if rec.Findings[0].Severity != finding.SevLow || rec.Findings[1].Severity != finding.SevMedium {
+		t.Fatalf("severities %s %s", rec.Findings[0].Severity, rec.Findings[1].Severity)
 	}
 }
 
@@ -158,14 +158,14 @@ func TestStableIDsIgnoreURLsAndAccounts(t *testing.T) {
 		rec := &recorder{}
 		e := &env{service: "slack", emit: rec, now: now, seen: map[string]int{}}
 		e.report(grant{who: who, scope: "w.slack.com", resType: "slack_app", name: "Bot", url: url})
-		return rec.findings[0].ID
+		return rec.Findings[0].ID
 	}
 	if emit("w.slack.com", "https://a/1") != emit("w.slack.com", "https://b/2") {
 		t.Error("a different link changed the id")
 	}
 	other := &env{service: "slack", emit: &recorder{}, now: now, seen: map[string]int{}}
 	other.report(grant{scope: "v.slack.com", resType: "slack_app", name: "Bot"})
-	if other.emit.(*recorder).findings[0].ID == emit("w.slack.com", "") {
+	if other.emit.(*recorder).Findings[0].ID == emit("w.slack.com", "") {
 		t.Error("the same app in two workspaces needs two ids")
 	}
 }

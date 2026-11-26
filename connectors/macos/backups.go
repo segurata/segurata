@@ -20,28 +20,24 @@ const (
 var (
 	tmDestinations = []string{tmutilBin, "destinationinfo", "-X"}
 	tmLatest       = []string{tmutilBin, "latestbackup"}
-	// Time Machine's preferences hold, per destination, LastKnownEncryptionState and the snapshot
-	// dates; tmutil prints neither. As XML because the file holds dates and data.
+	// Only the preferences hold encryption state and snapshot dates; tmutil prints neither.
 	tmPrefs = []string{"/usr/bin/plutil", "-convert", "xml1", "-o", "-", timeMachinePref}
 )
 
-// maxBackupAge is how old the latest backup may be before it is a finding.
 const maxBackupAge = 7 * 24 * time.Hour
 
 const backupSettings = "System Settings > General > Time Machine"
 
-// tmDestination is one Time Machine destination, joined from destinationinfo and the preferences.
 type tmDestination struct {
 	id, name, kind string
 	encrypted      *bool     // nil when the preferences do not say
-	last           time.Time // latest snapshot the preferences record; zero when none
+	last           time.Time // latest recorded snapshot; zero when none
 }
 
 const fullDiskAccessFix = "grant Full Disk Access to your terminal in System Settings > Privacy & Security > Full Disk Access"
 
-// destinationInfo reads `tmutil destinationinfo -X`; no destinations is an empty dict.
 func (c *Connector) destinationInfo(ctx context.Context) (map[string]any, error) {
-	raw, err := guard(c.Run).Run(ctx, tmDestinations...)
+	raw, err := c.read(ctx, tmDestinations...)
 	out := strings.TrimSpace(string(raw))
 	switch {
 	case strings.Contains(out, "No destinations configured"):
@@ -56,9 +52,7 @@ func (c *Connector) destinationInfo(ctx context.Context) (map[string]any, error)
 	return plistDict(raw)
 }
 
-// backupChecks reports a Mac with no Time Machine destination, an unencrypted destination and a
-// latest backup older than a week. Encryption comes from the preferences file; without it, the
-// destination's encryption is unknown and not reported.
+// backupChecks: without the preferences file a destination's encryption is unknown, not reported.
 func (c *Connector) backupChecks(ctx context.Context) []check {
 	none := check{id: "backup-none", sev: finding.SevHigh, blast: finding.BlastDevice,
 		title: "No Time Machine backup is configured",
@@ -82,9 +76,9 @@ func (c *Connector) backupChecks(ctx context.Context) []check {
 	return append(checks, c.backupAgeCheck(ctx, dests))
 }
 
-// timeMachinePrefs reads the Time Machine preferences file, which may need Full Disk Access.
+// timeMachinePrefs may need Full Disk Access.
 func (c *Connector) timeMachinePrefs(ctx context.Context) (map[string]any, error) {
-	raw, err := guard(c.Run).Run(ctx, tmPrefs...)
+	raw, err := c.read(ctx, tmPrefs...)
 	if err != nil {
 		return nil, err
 	}
@@ -104,9 +98,8 @@ func dicts(v any) []map[string]any {
 
 func str(m map[string]any, k string) string { s, _ := m[k].(string); return s }
 
-// joinDestinations matches destinationinfo's destinations (ID) with the preferences' (DestinationID).
-// A destination is encrypted when the preferences say LastKnownEncryptionState = Encrypted, or
-// when it has a DiskImageKeychainUUID (an encrypted network backup).
+// joinDestinations matches ID to DestinationID. A DiskImageKeychainUUID is an encrypted network
+// backup.
 func joinDestinations(info, prefs map[string]any) []tmDestination {
 	byID := map[string]map[string]any{}
 	for _, p := range dicts(prefs["Destinations"]) {
@@ -165,8 +158,8 @@ func encryptionCheck(d tmDestination, prefsErr error) check {
 
 var backupStamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}-\d{6})`)
 
-// backupAgeCheck dates the latest backup from `tmutil latestbackup` (a path ending in its local
-// timestamp) or, when the destination is not mounted, from the preferences' snapshot dates.
+// backupAgeCheck dates the latest backup from the path `tmutil latestbackup` prints or, with the
+// destination unmounted, from the preferences.
 func (c *Connector) backupAgeCheck(ctx context.Context, dests []tmDestination) check {
 	now := c.Now()
 	ch := check{id: "backup-age", sev: finding.SevMedium,

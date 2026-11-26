@@ -2,7 +2,6 @@ package connectedapps
 
 import (
 	"context"
-	"encoding/json"
 	"net/url"
 	"regexp"
 
@@ -10,11 +9,9 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Facebook still lists connected apps under Settings › Apps and websites (checked 2026-11-24).
+// Settings › Apps and websites (checked 2026-11-24) shows the first apps and a "See more" button
+// that fetches the rest: segurata does not click it, and the status says the list was cut.
 // Accounts Center's "App connections" is a different list (Meta AI links to other services).
-// The page shows the first active apps and a "See more" button, which fetches the next page:
-// clicking it would be a second listing request, so it is not clicked and the status says the
-// list was cut. Each app's page gives the information it receives.
 const (
 	fbURL    = "https://www.facebook.com/settings/?tab=applications"
 	fbRevoke = `Open the page and choose "Remove". Facebook offers to delete the posts the app made; the app keeps data it already received.`
@@ -49,7 +46,6 @@ type fbApp struct {
 	id, name, added, state, href string
 }
 
-// parseFacebookRow reads one app's block on the list: name, "Added on <date>", state.
 func parseFacebookRow(r row) fbApp {
 	a := fbApp{href: r.Href}
 	if u, err := url.Parse(r.Href); err == nil {
@@ -71,12 +67,10 @@ func parseFacebookRow(r row) fbApp {
 
 type fbDetail struct {
 	scopes   []string // never nil
-	login    bool     // "Logged in with Facebook"
-	audience string   // who sees what the app posts for you
+	login    bool     // also a Facebook login
+	audience string   // of what the app posts for you
 }
 
-// parseFacebookDetail reads an app's page: the information it receives, whether it is also a
-// Facebook login, and the audience of its posts.
 func parseFacebookDetail(text string) fbDetail {
 	d := fbDetail{scopes: []string{}}
 	in := false
@@ -98,19 +92,17 @@ func parseFacebookDetail(text string) fbDetail {
 	return d
 }
 
-// fbListed reports whether the page shows the app list: apps, or the section every list has.
+// fbListed: apps, or the removed-apps section every list has.
 func fbListed(p fbListPage) bool { return len(p.Rows) > 0 || fbLoadedRE.MatchString(p.Text) }
 
 func facebook(ctx context.Context, e *env) {
-	raw, err := e.b.load(ctx, fbURL, fbListJS, func(raw json.RawMessage) bool {
-		p, ok := decode[fbListPage](raw)
-		return ok && (fbSignedOutRE.MatchString(p.URL) || fbReauthRE.MatchString(p.URL) || fbListed(p))
+	p, err := load(ctx, e, fbURL, fbListJS, func(p fbListPage) bool {
+		return fbSignedOutRE.MatchString(p.URL) || fbReauthRE.MatchString(p.URL) || fbListed(p)
 	}, 40)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[fbListPage](raw)
 	switch {
 	case p.URL == "" || fbSignedOutRE.MatchString(p.URL):
 		e.status("", finding.StateSignedOut, "not signed in to Facebook in the browser: %s", fbURL)
@@ -128,16 +120,12 @@ func facebook(ctx context.Context, e *env) {
 			return
 		}
 		a := parseFacebookRow(r)
-		raw, err := e.b.load(ctx, a.href, pageTextJS, func(raw json.RawMessage) bool {
-			d, _ := decode[listPage](raw)
-			return fbSharingRE.MatchString(d.Text)
-		}, 30)
+		dp, err := load(ctx, e, a.href, pageTextJS, func(p listPage) bool { return fbSharingRE.MatchString(p.Text) }, 30)
 		var d fbDetail
 		if err != nil {
 			failed++
 			e.status("", finding.StateError, "%s: %v", a.name, err)
 		} else {
-			dp, _ := decode[listPage](raw)
 			d = parseFacebookDetail(dp.Text)
 		}
 		e.report(grant{resType: "facebook_app", name: a.name, scopes: d.scopes, created: pagetext.Date(a.added, e.now),

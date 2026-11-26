@@ -71,7 +71,7 @@ func TestAccountGuardOnlyAllowsListedAccounts(t *testing.T) {
 	if _, err := guard(c.Run).Run(context.Background(), adminArgv("repairtech")...); !errors.Is(err, cli.ErrRefused) {
 		t.Fatalf("fixed guard allowed a per-account command: %v", err)
 	}
-	if _, err := guardWith(c.Run, lastArgv("temp")).Run(context.Background(), lastArgv("root")...); !errors.Is(err, cli.ErrRefused) {
+	if _, err := guard(c.Run, lastArgv("temp")).Run(context.Background(), lastArgv("root")...); !errors.Is(err, cli.ErrRefused) {
 		t.Fatalf("guard allowed an account it was not given: %v", err)
 	}
 }

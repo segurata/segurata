@@ -7,9 +7,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 )
 
-// Doctor checks what the inventory reads without sudo but may be refused: the local user records
-// and Time Machine's destinations and preferences, which can need Full Disk Access. It runs the
-// same guarded commands as the inventory. Off macOS the core reports the os:darwin need.
+// Doctor runs the guarded reads that may be refused without Full Disk Access.
 func (c *Connector) Doctor(ctx context.Context, _ connector.Request) []connector.Check {
 	if c.OS != "darwin" {
 		return nil

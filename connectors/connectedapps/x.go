@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -18,10 +19,9 @@ const (
 	xRevoke = `Open the page and choose "Revoke app permissions".`
 )
 
-// X loads every grant from one call, oauth/list.json, and rate-limits it hard: opening each
-// app's page burns through the limit within a few dozen apps. So the list page is loaded once
-// and that response, which the page fetched itself, is read. It carries each grant's token:
-// xGrant decodes only the fields below, so the tokens are dropped on decode and never stored.
+// X loads every grant from one call, oauth/list.json, and rate-limits it hard enough that opening
+// each app's page fails within a few dozen apps, so that response is read. It carries each
+// grant's token, which xGrant does not decode.
 var xListRE = regexp.MustCompile(`/oauth/list\.json`)
 
 var xJS = inPage(`
@@ -38,12 +38,11 @@ func xReady(p listPage) bool {
 }
 
 func xService(ctx context.Context, e *env) {
-	raw, resp, err := e.b.capture(ctx, xURL, xJS, readyWhen(xReady), 50, xListRE)
+	p, resp, err := capture(ctx, e, xURL, xJS, xReady, 50, xListRE)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	if p.URL == "" || xSignedOutRE.MatchString(p.URL) {
 		e.status("", finding.StateSignedOut, "not signed in to X in the browser: %s", xURL)
 		return
@@ -70,12 +69,9 @@ func xService(ctx context.Context, e *env) {
 	e.status(who, finding.StateOK, "%d connected apps", len(apps))
 }
 
-// xOld words the batch of X apps approved more than oldAfter ago.
 var xOld = oldBatch{title: "X", verb: "Revoke", approved: "authorized", note: " (services mostly defunct)", url: xURL,
 	each: `"Revoke app permissions" on its page`, again: "Services you still use ask you to connect again."}
 
-// xGrant is one grant in oauth/list.json. Fields not named here, the tokens among them, are
-// discarded by the decoder.
 type xGrant struct {
 	AppID        flexString      `json:"app_id"`
 	Name         string          `json:"name"`
@@ -94,16 +90,15 @@ type xGrant struct {
 	ExpiresAt    flexTime `json:"expires_at"`
 }
 
-// xApp merges every grant of one app: X keeps one grant per token.
+// xApp merges the grants of one app: X keeps one per token.
 type xApp struct {
 	id, name, org, tokenType string
 	scopes                   []string
 	grants                   int
-	approved, expires        *time.Time // latest approval, latest expiry
+	approved, expires        *time.Time // the latest of each
 }
 
-// parseXApps reads the captured oauth/list.json response.
-func parseXApps(resp *response) ([]xApp, error) {
+func parseXApps(resp *cdp.Response) ([]xApp, error) {
 	if resp == nil {
 		return nil, errors.New("X did not fetch the app list")
 	}
@@ -114,8 +109,8 @@ func parseXApps(resp *response) ([]xApp, error) {
 		} `json:"errors"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(resp.body, &body); err != nil || body.Applications == nil {
-		why := fmt.Sprintf("HTTP %d", resp.status)
+	if err := json.Unmarshal(resp.Body, &body); err != nil || body.Applications == nil {
+		why := fmt.Sprintf("HTTP %d", resp.Status)
 		switch {
 		case len(body.Errors) > 0:
 			why = body.Errors[0].Message
@@ -146,7 +141,7 @@ func parseXApps(resp *response) ([]xApp, error) {
 	return out, nil
 }
 
-// xScopes lists OAuth 2 scopes as X names them, or the OAuth 1 flags under the same vocabulary.
+// xScopes lists OAuth 2 scopes, or the OAuth 1 flags under the same names.
 func xScopes(g xGrant) []string {
 	var s []string
 	if g.Scopes != nil {
@@ -169,7 +164,7 @@ func xScopes(g xGrant) []string {
 	return s
 }
 
-// xOrg is the publisher: a string, or an object with a name.
+// xOrg reads a string, or an object with a name.
 func xOrg(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
@@ -182,7 +177,6 @@ func xOrg(raw json.RawMessage) string {
 	return o.Name
 }
 
-// flexString accepts a JSON string or number.
 type flexString string
 
 func (f *flexString) UnmarshalJSON(b []byte) error {
@@ -190,9 +184,8 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// flexTime accepts milliseconds since the epoch, as a number or a string, an RFC 3339 string, or
-// the classic Twitter format ("Wed Jul 08 21:55:29 +0000 2015"). Anything else is left unset
-// rather than guessed.
+// flexTime accepts epoch milliseconds (number or string), RFC 3339 or the classic Twitter format;
+// anything else is left unset rather than guessed.
 type flexTime struct{ t *time.Time }
 
 func (f *flexTime) UnmarshalJSON(b []byte) error {
@@ -215,7 +208,7 @@ func (f *flexTime) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// union appends to a the entries of b it does not already hold. Never returns nil.
+// union never returns nil.
 func union(a, b []string) []string {
 	out := append([]string{}, a...)
 	have := map[string]bool{}

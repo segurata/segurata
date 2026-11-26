@@ -9,23 +9,15 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Microsoft work and school accounts (Microsoft Entra ID). Checked 2026-11-24 with a Microsoft
-// 365 work account:
-//
-//   - My Apps (myapplications.microsoft.com; myapps.microsoft.com redirects there) is a single-page
-//     app that fills its tiles from one call, api/v2/me/tiles. Tiles of provider AzureADThirdParty
-//     are the tenant's enterprise apps the user can sign in to; OfficeFirstParty tiles are
-//     Microsoft 365's own (Admin, Purview, Security…). The tile carries no permissions.
-//   - No user page lists the delegated permissions the user consented to: My Apps' app panel
-//     shows add-in descriptions, and My Account links to My Apps. Those grants are read by an
-//     admin in the Entra admin center.
-//   - Security info (mysignins.microsoft.com/security-info) asks for a fresh MFA sign-in before
-//     it shows the methods (tenant policy): the page redirects to login.microsoftonline.com with
-//     an "amr: mfa" claim. That is `reauth`, scoped to the security info so the apps stay
-//     inspected; the page past the prompt has not been seen, so it is reported `unverified`.
+// Microsoft work and school accounts, checked 2026-11-24. My Apps fills its tiles from one call,
+// api/v2/me/tiles; AzureADThirdParty tiles are the tenant's enterprise apps, without permissions.
+// No user page lists delegated consents: only an admin reads them, in the Entra admin center.
+// Security info asks for a fresh MFA sign-in first, so its reauth carries its own scope and leaves
+// the apps inspected; the page past the prompt has not been seen, so it is reported unverified.
 const (
 	msWorkAppsURL       = "https://myapplications.microsoft.com/"
 	msWorkSecurityURL   = "https://mysignins.microsoft.com/security-info"
@@ -43,9 +35,8 @@ var (
 	msWorkSecurityJS = fetchedJS("/api/authenticationmethods/")
 )
 
-// msLoginState is what a page on Microsoft's sign-in host means: reauth when it asks for a second
-// factor (the URL carries an MFA claim or the page asks for a code or an approval), signedout
-// otherwise, and "" when the page is not on the sign-in host.
+// msLoginState is "" off Microsoft's sign-in host, reauth when it asks for a second factor, and
+// signedout otherwise.
 func msLoginState(p fetchPage) finding.State {
 	switch {
 	case !msLoginRE.MatchString(p.URL):
@@ -56,7 +47,6 @@ func msLoginState(p fetchPage) finding.State {
 	return finding.StateSignedOut
 }
 
-// msStepUpMethods names the second factor a step-up prompt asks for, in the owner's words.
 var msStepUpMethods = []struct {
 	re   *regexp.Regexp
 	what string
@@ -76,16 +66,14 @@ func msStepUpMethod(text string) string {
 	return ""
 }
 
-// msReady passes once the page has fetched what fetchedJS looks for, or shows the same text on the
-// sign-in host, two reads in a row: My Apps passes through the sign-in host on every load, and a
-// prompt fills in after its URL is set.
-func msReady() func(json.RawMessage) bool {
+// msReady passes on two reads in a row that have fetched the list or show the same sign-in page:
+// My Apps passes through the sign-in host on every load, and a prompt fills in after its URL.
+func msReady() func(fetchPage) bool {
 	var prev *fetchPage
-	return func(raw json.RawMessage) bool {
-		p, ok := decode[fetchPage](raw)
+	return func(p fetchPage) bool {
 		was := prev
 		prev = nil
-		if !ok || p.URL == "" {
+		if p.URL == "" {
 			return false
 		}
 		login := !p.Fetched && msLoginState(p) != "" && strings.TrimSpace(p.Text) != ""
@@ -98,12 +86,11 @@ func msReady() func(json.RawMessage) bool {
 }
 
 func microsoftWork(ctx context.Context, e *env) {
-	raw, resp, err := e.b.capture(ctx, msWorkAppsURL, msWorkAppsJS, msReady(), 60, msWorkTilesRE)
+	p, resp, err := capture(ctx, e, msWorkAppsURL, msWorkAppsJS, msReady(), 60, msWorkTilesRE)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[fetchPage](raw)
 	switch st := msLoginState(p); {
 	case p.URL == "" || st == finding.StateSignedOut:
 		e.status("", finding.StateSignedOut, "not signed in to a Microsoft work or school account in the browser: %s", msWorkAppsURL)
@@ -120,7 +107,6 @@ func microsoftWork(ctx context.Context, e *env) {
 	msWorkSecurityInfo(ctx, e)
 }
 
-// msWorkApps reports the enterprise apps among the tiles and counts the rest.
 func msWorkApps(e *env, tiles []msTile) {
 	others := map[string]int{}
 	listed := 0
@@ -150,7 +136,7 @@ func msOthers(others map[string]int) string {
 	return "; not listed: " + strings.Join(parts, ", ")
 }
 
-// msTile is one tile of api/v2/me/tiles. Launch URLs, which carry the sign-in name, are dropped.
+// msTile drops the launch URLs, which carry the sign-in name.
 type msTile struct {
 	Provider       string `json:"provider"`
 	ProviderID     string `json:"providerId"`
@@ -158,31 +144,28 @@ type msTile struct {
 	AssignmentType string `json:"assignmentType"`
 }
 
-func parseMSTiles(resp *response) ([]msTile, error) {
+func parseMSTiles(resp *cdp.Response) ([]msTile, error) {
 	if resp == nil {
 		return nil, errors.New("My Apps did not fetch its app tiles")
 	}
 	var body struct {
 		Value *[]msTile `json:"value"`
 	}
-	if err := json.Unmarshal(resp.body, &body); err != nil || body.Value == nil {
-		return nil, fmt.Errorf("My Apps' tiles did not have the expected shape (HTTP %d)", resp.status)
+	if err := json.Unmarshal(resp.Body, &body); err != nil || body.Value == nil {
+		return nil, fmt.Errorf("My Apps' tiles did not have the expected shape (HTTP %d)", resp.Status)
 	}
 	return *body.Value, nil
 }
 
-// msWorkSecurityInfo checks the sign-in methods page. Its statuses carry the security info scope,
-// so a step-up prompt there leaves the apps inspected.
 func msWorkSecurityInfo(ctx context.Context, e *env) {
 	status := func(st finding.State, format string, args ...any) {
 		e.emit.Status(finding.Status{Account: e.account(""), Scope: msWorkSecurityScope, State: st, Detail: fmt.Sprintf(format, args...)})
 	}
-	raw, err := e.b.load(ctx, msWorkSecurityURL, msWorkSecurityJS, msReady(), 60)
+	p, err := load(ctx, e, msWorkSecurityURL, msWorkSecurityJS, msReady(), 60)
 	if err != nil {
 		status(finding.StateError, "%v", err)
 		return
 	}
-	p, _ := decode[fetchPage](raw)
 	switch msLoginState(p) {
 	case finding.StateReauth:
 		why := "tenant policy"

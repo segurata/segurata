@@ -3,6 +3,7 @@ package connectedapps
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -32,14 +33,14 @@ func ghStatus(scopes, source string) cli.Runner {
 }
 
 var ghCLI = finding.Finding{ID: "gh1", Connector: name, Title: "GitHub CLI can delete your repositories (segurata depends on it)",
-	Remediation: finding.Remediation{Action: ActionGHDropScopes}}
+	Remediation: finding.Remediation{Action: actionGHDropScopes}}
 
 func TestGitHubCLIDependencyOffersTheScopeDrop(t *testing.T) {
 	e := &env{service: "github", emit: &recorder{}, now: now, seen: map[string]int{}}
 	e.report(grant{who: "octo", resType: "github_oauth_app", name: "GitHub CLI", scopes: []string{"Delete repositories", "Full control of private repositories"}})
 	e.report(grant{who: "octo", resType: "github_oauth_app", name: "GitHub CLI", scopes: []string{"Full control of private repositories"}})
-	fs := e.emit.(*recorder).findings
-	if fs[0].Remediation.Action != ActionGHDropScopes || fs[1].Remediation.Action != "" {
+	fs := e.emit.(*recorder).Findings
+	if fs[0].Remediation.Action != actionGHDropScopes || fs[1].Remediation.Action != "" {
 		t.Fatalf("actions %q %q: only a token holding a removable scope gets one", fs[0].Remediation.Action, fs[1].Remediation.Action)
 	}
 }
@@ -62,12 +63,21 @@ func TestDropScopesPlansFromTheLiveTokenInTheTerminal(t *testing.T) {
 }
 
 func TestDropScopesRefusesWhatItCannotChange(t *testing.T) {
-	for name, gh := range map[string]cli.Runner{
-		"token from the environment": ghStatus("admin:org, delete_repo, repo", "GH_TOKEN"),
-		"nothing to drop":            ghStatus("gist, read:org, repo", "keyring"),
+	reply := func(out string, err error) cli.Runner {
+		return cli.RunnerFunc(func(context.Context, ...string) ([]byte, error) { return []byte(out), err })
+	}
+	for name, c := range map[string]struct {
+		gh   cli.Runner
+		want string
+	}{
+		"token from the environment": {ghStatus("admin:org, delete_repo, repo", "GH_TOKEN"), "token in GH_TOKEN"},
+		"nothing to drop":            {ghStatus("gist, read:org, repo", "keyring"), "already lacks delete_repo, admin:org, admin:enterprise"},
+		"gh fails":                   {reply("", errors.New("exit status 1")), "gh auth status: exit status 1"},
+		"unreadable status":          {reply("not json", nil), "unexpected output"},
+		"no active account":          {reply(`{"hosts":{"github.com":[{"login":"octo","active":false}]}}`, nil), "no active github.com account"},
 	} {
-		if _, err := (&Connector{gh: gh}).Plan(context.Background(), ghCLI); err == nil {
-			t.Errorf("%s: planned", name)
+		if _, err := (&Connector{gh: c.gh}).Plan(context.Background(), ghCLI); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err %v, want %q", name, err, c.want)
 		}
 	}
 }

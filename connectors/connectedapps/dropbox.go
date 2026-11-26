@@ -9,15 +9,14 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Dropbox lists the apps that can reach a Dropbox under Settings › Apps › "View Dropbox content",
-// one collapsed row per app. The page fills those rows from one call, account/get_linked_apps,
-// which carries each app's access type, permissions, publisher and link date (checked
-// 2026-11-24). As with X, that response, fetched by the page itself, is what gets read: the rows'
-// details sit in collapsed panels, and expanding them would mean clicking. "Launch from Dropbox"
-// (apps Dropbox opens files in) is a different list, not read.
+// The connected apps page fills its collapsed rows from one call, account/get_linked_apps, which
+// carries each app's access, permissions, publisher and link date (checked 2026-11-24). That
+// response is read, since expanding the rows would mean clicking. "Launch from Dropbox" (apps
+// Dropbox opens files in) is a different list, not read.
 const (
 	dropboxURL    = "https://www.dropbox.com/account/connected_apps"
 	dropboxRevoke = `Open the page, expand the app under "View Dropbox content" and choose "Disconnect".`
@@ -32,26 +31,22 @@ var dropboxJS = fetchedJS("/account/get_linked_apps")
 
 func dropboxOut(p fetchPage) bool { return p.URL == "" || dropboxSignedOutRE.MatchString(p.URL) }
 
-// dropboxReady passes once the page is the sign-in page, or has held the fetched app list for two
-// reads in a row: the response can finish a moment after the resource timing entry appears.
-func dropboxReady() func(json.RawMessage) bool {
-	return twice(func(raw json.RawMessage) bool {
-		p, ok := decode[fetchPage](raw)
-		return ok && p.URL != "" && (dropboxSignedOutRE.MatchString(p.URL) || p.Fetched)
+// dropboxReady: the response can finish a moment after its resource timing entry appears.
+func dropboxReady() func(fetchPage) bool {
+	return twice(func(p fetchPage) bool {
+		return p.URL != "" && (dropboxSignedOutRE.MatchString(p.URL) || p.Fetched)
 	})
 }
 
-// dropboxOld words the batch of Dropbox apps linked more than oldAfter ago.
 var dropboxOld = oldBatch{title: "Dropbox", verb: "Disconnect", approved: "linked", url: dropboxURL,
 	each: `expand it under "View Dropbox content" and choose "Disconnect"`, again: "Apps you still use ask you to connect again."}
 
 func dropbox(ctx context.Context, e *env) {
-	raw, resp, err := e.b.capture(ctx, dropboxURL, dropboxJS, dropboxReady(), 50, dropboxListRE)
+	p, resp, err := capture(ctx, e, dropboxURL, dropboxJS, dropboxReady(), 50, dropboxListRE)
 	if err != nil {
 		e.fail("", err)
 		return
 	}
-	p, _ := decode[fetchPage](raw)
 	if dropboxOut(p) {
 		e.status("", finding.StateSignedOut, "not signed in to Dropbox in the browser: %s", dropboxURL)
 		return
@@ -69,7 +64,7 @@ func dropbox(ctx context.Context, e *env) {
 	e.status("", finding.StateOK, "%d connected apps", len(apps))
 }
 
-// dropboxApp is one app in get_linked_apps. Fields not named here are discarded by the decoder.
+// dropboxApp is one app in get_linked_apps; fields not named here are dropped on decode.
 type dropboxApp struct {
 	Name         string          `json:"name"`
 	Publisher    string          `json:"publisher_company"`
@@ -84,9 +79,9 @@ type dropboxApp struct {
 	team         bool
 }
 
-// parseDropboxApps reads the captured get_linked_apps response: the user's apps, then any the
-// team linked. A response missing user_apps is a page segurata does not know.
-func parseDropboxApps(resp *response) ([]dropboxApp, error) {
+// parseDropboxApps returns the user's apps, then the team's. A response without user_apps is a
+// page segurata does not know.
+func parseDropboxApps(resp *cdp.Response) ([]dropboxApp, error) {
 	if resp == nil {
 		return nil, errors.New("Dropbox did not fetch the app list")
 	}
@@ -94,8 +89,8 @@ func parseDropboxApps(resp *response) ([]dropboxApp, error) {
 		User *[]dropboxApp `json:"user_apps"`
 		Team []dropboxApp  `json:"team_apps"`
 	}
-	if err := json.Unmarshal(resp.body, &body); err != nil || body.User == nil {
-		return nil, fmt.Errorf("Dropbox's app list did not have the expected shape (HTTP %d)", resp.status)
+	if err := json.Unmarshal(resp.Body, &body); err != nil || body.User == nil {
+		return nil, fmt.Errorf("Dropbox's app list did not have the expected shape (HTTP %d)", resp.Status)
 	}
 	for i := range body.Team {
 		body.Team[i].team = true
@@ -103,7 +98,6 @@ func parseDropboxApps(resp *response) ([]dropboxApp, error) {
 	return append(*body.User, body.Team...), nil
 }
 
-// Access kinds, normalized from access_type.
 const (
 	dropboxFull      = "full_dropbox"
 	dropboxAppFolder = "app_folder"
@@ -115,8 +109,7 @@ var (
 	dropboxTagRE      = regexp.MustCompile(`<[^>]*>`)
 )
 
-// access normalizes the access type. An app confined to its own folder is app_folder whatever
-// else it says; a scoped app lists its scopes in access_type_desc.
+// access: an app confined to its own folder is app_folder whatever else it says.
 func (a dropboxApp) access() string {
 	folder := strings.TrimSpace(string(a.AppFolder))
 	switch t := strings.ToLower(a.AccessType); {
@@ -175,8 +168,7 @@ func dropboxSite(raw string) string {
 	return raw
 }
 
-// dropboxSeverity: every file with write access is high, read-only medium, an app folder low; a
-// scoped app is judged by its scopes and an unknown access type is medium.
+// dropboxSeverity: every file writable is high, read-only medium, an app folder low.
 func dropboxSeverity(service string, g grant) (finding.Severity, string) {
 	switch g.extra["access"] {
 	case dropboxAppFolder:

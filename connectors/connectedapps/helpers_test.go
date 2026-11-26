@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -23,12 +26,20 @@ var now = time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
 type fakeBrowser struct {
 	mu        sync.Mutex
 	pages     map[string]any
-	responses map[string]*response
+	responses map[string]*cdp.Response
 	fail      map[string]error
 	opened    []string
+	// neverReady are given pages the readiness check must reject, so the real browser polls
+	// them until its tries run out (a sign-in page with nothing on it, a list never fetched).
+	neverReady map[string]bool
+	unready    map[string]bool
+	// other, when set, is the value of every page not in pages; accepted records those of them
+	// a readiness check accepted.
+	other    any
+	accepted []string
 }
 
-func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool) (json.RawMessage, error) {
+func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.opened = append(b.opened, url)
@@ -37,19 +48,35 @@ func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool) (json.
 	}
 	v, ok := b.pages[url]
 	if !ok {
-		v = map[string]any{}
+		v = b.other
+		if v == nil {
+			v = map[string]any{}
+		}
 	}
 	raw, _ := json.Marshal(v)
-	ready(raw) // exercised so the readiness predicates are covered
+	// Polled like the real browser: the same value until ready accepts it or tries run out.
+	accepted := false
+	for i := 0; i < tries && !accepted; i++ {
+		accepted = ready(raw)
+	}
+	if !ok && accepted && b.other != nil {
+		b.accepted = append(b.accepted, url)
+	}
+	if ok && !accepted {
+		if b.unready == nil {
+			b.unready = map[string]bool{}
+		}
+		b.unready[url] = true
+	}
 	return raw, nil
 }
 
-func (b *fakeBrowser) load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
-	return b.value(url, ready)
+func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
+	return b.value(url, ready, tries)
 }
 
-func (b *fakeBrowser) capture(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int, re *regexp.Regexp) (json.RawMessage, *response, error) {
-	raw, err := b.value(url, ready)
+func (b *fakeBrowser) Capture(_ context.Context, url, _ string, ready func(json.RawMessage) bool, tries int, _ *regexp.Regexp) (json.RawMessage, *cdp.Response, error) {
+	raw, err := b.value(url, ready, tries)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -69,35 +96,43 @@ func (b *fakeBrowser) openedOnce(t *testing.T) {
 	}
 }
 
-type recorder struct {
-	findings []finding.Finding
-	statuses []finding.Status
-	skipped  []finding.Skipped
-}
-
-func (r *recorder) Finding(f finding.Finding) { r.findings = append(r.findings, f) }
-func (r *recorder) Status(s finding.Status)   { r.statuses = append(r.statuses, s) }
-func (r *recorder) Scope(id string, inspected bool, reason string) {
-	if !inspected {
-		r.skipped = append(r.skipped, finding.Skipped{Scope: id, Reason: reason})
+// readiness fails the test when a given page's readiness check did not do what the test says:
+// accept the page, or reject one in neverReady.
+func (b *fakeBrowser) readiness(t *testing.T) {
+	t.Helper()
+	for u := range b.pages {
+		if b.unready[u] != b.neverReady[u] && slices.Contains(b.opened, u) {
+			t.Errorf("%s: ready = %t, want %t", u, !b.unready[u], !b.neverReady[u])
+		}
 	}
 }
-func (r *recorder) Log(string) {}
+
+type recorder struct{ httpxtest.Recorder }
+
+func (r *recorder) skipped() []finding.Skipped {
+	var out []finding.Skipped
+	for _, s := range r.Scopes {
+		if !s.Inspected {
+			out = append(out, finding.Skipped{Scope: s.ID, Reason: s.Reason})
+		}
+	}
+	return out
+}
 
 func (r *recorder) byName(t *testing.T, name string) finding.Finding {
 	t.Helper()
-	for _, f := range r.findings {
+	for _, f := range r.Findings {
 		if f.Resource.Name == name {
 			return f
 		}
 	}
-	t.Fatalf("no finding named %q in %d findings", name, len(r.findings))
+	t.Fatalf("no finding named %q in %d findings", name, len(r.Findings))
 	return finding.Finding{}
 }
 
 func (r *recorder) state(account string) []finding.State {
 	var out []finding.State
-	for _, s := range r.statuses {
+	for _, s := range r.Statuses {
 		if s.Account == account {
 			out = append(out, s.State)
 		}
@@ -106,7 +141,7 @@ func (r *recorder) state(account string) []finding.State {
 }
 
 func (r *recorder) detail(account string, st finding.State) string {
-	for _, s := range r.statuses {
+	for _, s := range r.Statuses {
 		if s.Account == account && s.State == st {
 			return s.Detail
 		}
@@ -151,6 +186,7 @@ func run(t *testing.T, b *fakeBrowser, gh cli.Runner, svc ...string) *recorder {
 		t.Fatal(err)
 	}
 	b.openedOnce(t)
+	b.readiness(t)
 	return rec
 }
 

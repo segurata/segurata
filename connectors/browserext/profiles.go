@@ -14,10 +14,10 @@ import (
 	"time"
 )
 
-// install is one extension in one browser profile, as read from the profile's files.
+// install is one extension in one browser profile.
 type install struct {
 	profile   string // display name
-	daily     bool   // the profile was used in the last dailyWindow
+	daily     bool   // the profile was used within dailyWindow
 	id        string
 	name      string
 	version   string
@@ -27,8 +27,8 @@ type install struct {
 	installed time.Time // zero when the profile does not say
 	updated   time.Time
 	hosts     []string
-	allSites  bool // access to every site, granted without a click
-	onClick   bool // access to every site, withheld until clicked
+	allSites  bool // every site, without a click
+	onClick   bool // every site, withheld until clicked
 	apis      []string
 }
 
@@ -40,7 +40,6 @@ const (
 	locCmdLine  = 8
 )
 
-// dailyWindow: a profile active this recently counts as one used for daily browsing.
 const dailyWindow = 30 * 24 * time.Hour
 
 var profileDir = regexp.MustCompile(`^(Default|Profile \d+)$`)
@@ -58,7 +57,7 @@ type extSettings struct {
 	FromWebstore       bool            `json:"from_webstore"`
 	Withholding        bool            `json:"withholding_permissions"`
 	FirstInstallTime   string          `json:"first_install_time"`
-	InstallTime        string          `json:"install_time"` // older Chromium versions
+	InstallTime        string          `json:"install_time"` // older Chromium
 	LastUpdateTime     string          `json:"last_update_time"`
 }
 
@@ -100,8 +99,8 @@ func readJSON(path string, v any) error {
 	return json.Unmarshal(raw, v)
 }
 
-// readBrowser returns every user-installed extension in every profile of one browser's data
-// directory. Settings from Secure Preferences override those in Preferences.
+// readBrowser returns the user-installed extensions of every profile. Secure Preferences override
+// Preferences.
 func readBrowser(dir string, now time.Time) ([]install, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -218,7 +217,7 @@ func newInstall(profDir, id string, e extSettings) install {
 	return in
 }
 
-// chromeTime parses Chromium's timestamps: microseconds since 1601-01-01 UTC, as a string.
+// chromeTime parses Chromium's microseconds since 1601-01-01 UTC, as a string.
 func chromeTime(s string) time.Time {
 	const epochDelta = 11644473600 * 1_000_000 // 1601-01-01 to 1970-01-01, in microseconds
 	v, err := strconv.ParseInt(s, 10, 64)
@@ -228,8 +227,8 @@ func chromeTime(s string) time.Time {
 	return time.UnixMicro(v - epochDelta).UTC()
 }
 
-// disabled follows Chromium: a non-empty disable_reasons list or state 0. Newer versions store
-// disable_reasons as a number; zero means none.
+// disabled follows Chromium: non-empty disable_reasons (a list, or a number in newer versions) or
+// state 0.
 func disabled(e extSettings) bool {
 	var reasons []any
 	if json.Unmarshal(e.DisableReasons, &reasons) == nil && len(reasons) > 0 {
@@ -244,7 +243,6 @@ func disabled(e extSettings) bool {
 
 var msgName = regexp.MustCompile(`^__MSG_(.+)__$`)
 
-// localize resolves a "__MSG_name__" extension name from its _locales messages.
 func localize(man manifest, extDir string) string {
 	m := msgName.FindStringSubmatch(man.Name)
 	if m == nil || extDir == "" {

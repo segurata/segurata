@@ -17,8 +17,7 @@ const (
 	chmodBin = "/bin/chmod"
 )
 
-// homeDir is the user's home folder as the OS reports it. The home check, its plan and its
-// allowlist all take the path from here, never from a finding.
+// homeDir is the only source of the home path for the check, its plan and its allowlist.
 func (c *Connector) homeDir() (string, error) {
 	home, err := c.Home()
 	if err != nil {
@@ -30,8 +29,6 @@ func (c *Connector) homeDir() (string, error) {
 	return home, nil
 }
 
-// homeACL lists the ACL entries on the home folder (`ls -led`), or nil when it has none. The
-// command line is allowed only for the home folder the OS reports.
 func (c *Connector) homeACL(ctx context.Context, home string) []string {
 	out, err := c.homeGuard(c.Run).Run(ctx, lsBin, "-led", home)
 	if err != nil {
@@ -46,16 +43,14 @@ func (c *Connector) homeACL(ctx context.Context, home string) []string {
 	return acl
 }
 
-// homeReadable reports whether group or others can read or write the folder. Execute alone (711)
-// lets others reach a path they already know but not list it, which CIS accepts.
+// homeReadable ignores execute: 711 lets others reach known paths but not list, as CIS accepts.
 func homeReadable(mode fs.FileMode) bool { return mode.Perm()&0o066 != 0 }
 
-// homeCheck flags a home folder other accounts on this Mac can list or read. Every user is in the
-// staff group on macOS, so group read is as open as world read.
+// homeCheck: every macOS user is in staff, so group read is as open as world read.
 func (c *Connector) homeCheck(ctx context.Context) check {
 	ch := check{id: "home-private", sev: finding.SevMedium,
 		title: "Your home folder can be read by other accounts on this Mac",
-		rem: finding.Remediation{Action: ActionHomePrivate,
+		rem: finding.Remediation{Action: actionHomePrivate,
 			Summary: "Make it private with `segurata remediate <id> --apply` (chmod 700, no sudo), or in Finder > Get Info > Sharing & Permissions."}}
 	home, err := c.homeDir()
 	if err != nil {
@@ -81,8 +76,7 @@ func (c *Connector) homeCheck(ctx context.Context) check {
 	return ch
 }
 
-// homePlan makes the home folder 700. chmod with an octal mode leaves ACL entries (such as
-// macOS's "group:everyone deny delete") untouched.
+// homePlan: chmod with an octal mode leaves the ACL entries untouched.
 func (c *Connector) homePlan() (connector.Plan, error) {
 	home, err := c.homeDir()
 	if err != nil {
@@ -97,7 +91,7 @@ func (c *Connector) homePlan() (connector.Plan, error) {
 		return connector.Plan{}, fmt.Errorf("%s is already mode %o: other accounts cannot read it", home, was)
 	}
 	return connector.Plan{
-		Action:   ActionHomePrivate,
+		Action:   actionHomePrivate,
 		Summary:  fmt.Sprintf("Make your home folder %s private (mode %o to 700). Its ACL entries are left as they are.", home, was),
 		Commands: []connector.Step{{Argv: []string{chmodBin, "700", home}}},
 		Undo:     []connector.Step{{Argv: []string{chmodBin, fmt.Sprintf("%o", was), home}}},
@@ -108,22 +102,18 @@ func (c *Connector) homePlan() (connector.Plan, error) {
 	}, nil
 }
 
-// homeAllowlist is the one command line ActionHomePrivate may run, for the home folder the OS
-// reports now.
 func (c *Connector) homeAllowlist() (connector.Allowlist, error) {
 	home, err := c.homeDir()
 	if err != nil {
 		return nil, err
 	}
-	return connector.Allowlist{ActionHomePrivate: {{Argv: []string{chmodBin, "700", home}}}}, nil
+	return connector.Allowlist{actionHomePrivate: {{Argv: []string{chmodBin, "700", home}}}}, nil
 }
 
-// homeGuard lets inventory run `ls -led` on the home folder the OS reports and nothing else beyond
-// the fixed read-only commands.
 func (c *Connector) homeGuard(r cli.Runner) cli.Runner {
 	home, err := c.homeDir()
 	if err != nil {
 		return guard(r)
 	}
-	return guardWith(r, []string{lsBin, "-led", home})
+	return guard(r, []string{lsBin, "-led", home})
 }

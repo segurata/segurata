@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -17,7 +16,6 @@ import (
 
 func manual(summary string) finding.Remediation { return finding.Remediation{Summary: summary} }
 
-// systemChecks covers disk and boot, firewall, update settings, screen and session, and Remote Login.
 func (c *Connector) systemChecks(ctx context.Context) []check {
 	var out []check
 
@@ -40,13 +38,13 @@ func (c *Connector) systemChecks(ctx context.Context) []check {
 	s, _ = c.text(ctx, socketfilterfw, "--getglobalstate")
 	out = append(out, check{id: "firewall", ok: strings.Contains(s, "enabled"), detail: s, sev: finding.SevMedium,
 		title: "The macOS application firewall is off",
-		rem: finding.Remediation{Action: ActionFirewallEnable,
+		rem: finding.Remediation{Action: actionFirewallEnable,
 			Summary: "Turn on the firewall (System Settings > Network > Firewall), or run `segurata remediate <id> --apply`."}})
 
 	s, _ = c.text(ctx, socketfilterfw, "--getstealthmode")
 	out = append(out, check{id: "firewall-stealth", ok: strings.Contains(s, " on") || strings.Contains(s, "enabled"), detail: s, sev: finding.SevLow,
 		title: "Firewall stealth mode is off: the Mac answers probes and pings",
-		rem: finding.Remediation{Action: ActionFirewallStealth,
+		rem: finding.Remediation{Action: actionFirewallStealth,
 			Summary: "Turn on stealth mode (System Settings > Network > Firewall > Options), or run `segurata remediate <id> --apply`."}})
 
 	updates := manual("Turn on every automatic update option in System Settings > General > Software Update > Automatic Updates.")
@@ -122,15 +120,13 @@ func orQ(v string) string {
 	return v
 }
 
-// setting is one value read from a tool: set when it has one, err when the read failed (an
-// unset defaults key is neither).
+// setting tells an unset defaults key (neither set nor err) from a failed read.
 type setting struct {
 	value string
 	set   bool
 	err   string
 }
 
-// readSetting reads one defaults key, telling an unset key from a failed read.
 func (c *Connector) readSetting(ctx context.Context, args ...string) setting {
 	s, ok := c.text(ctx, args...)
 	switch {
@@ -142,12 +138,10 @@ func (c *Connector) readSetting(ctx context.Context, args ...string) setting {
 	return setting{err: s}
 }
 
-// maxIdleLock is the longest an idle Mac should stay unlocked. The screen locks when the screen
-// saver starts or the display sleeps, whichever comes first.
+// maxIdleLock is in seconds. The screen locks when the saver starts or the display sleeps.
 const maxIdleLock = 10 * 60
 
-// screenIdleCheck passes when the screen saver (idleTime, seconds) or display sleep (minutes)
-// starts within maxIdleLock. 0 means never for both.
+// screenIdleCheck: saver idleTime is in seconds, displaysleep in minutes; 0 is never for both.
 func screenIdleCheck(saver, display setting) check {
 	ch := check{id: "screensaver", sev: finding.SevLow,
 		rem: manual("In System Settings > Lock Screen, set \"Start Screen Saver when inactive\" or \"Turn display off when inactive\" to 10 minutes or less.")}
@@ -179,7 +173,6 @@ func screenIdleCheck(saver, display setting) check {
 	return ch
 }
 
-// seconds converts a read setting to seconds; ok is false when it was not read or not a number.
 func seconds(s setting, unit int) (int, bool) {
 	if !s.set {
 		return 0, false
@@ -240,7 +233,7 @@ var updateLabel = regexp.MustCompile(`(?m)^\s*\* Label: (.+)$`)
 
 func (c *Connector) pendingUpdates(ctx context.Context) check {
 	ver, _ := c.text(ctx, "/usr/bin/sw_vers", "-productVersion")
-	out, err := guard(c.Run).Run(ctx, softwareUpdate, "-l")
+	out, err := c.read(ctx, softwareUpdate, "-l")
 	ch := check{id: "updates-pending", sev: finding.SevMedium, title: "macOS has updates waiting to be installed",
 		rem: manual("Install them in System Settings > General > Software Update.")}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -260,7 +253,6 @@ func (c *Connector) pendingUpdates(ctx context.Context) check {
 	return ch
 }
 
-// Ports of sharing services and what turns each off.
 var knownPorts = map[string]struct{ label, fix string }{
 	"22":   {"SSH (Remote Login)", "Turn off System Settings > General > Sharing > Remote Login."},
 	"445":  {"SMB (File Sharing)", "Turn off System Settings > General > Sharing > File Sharing if you do not share folders with other devices. Each shared folder is its own finding."},
@@ -275,13 +267,12 @@ var knownPorts = map[string]struct{ label, fix string }{
 type listener struct {
 	port  string
 	addrs []string
-	proc  string // executable name
-	path  string // executable path, "" when ps did not list the pid
+	proc  string
+	path  string // "" when ps did not list the pid
 }
 
-// listeningPorts reports every TCP port listening outside loopback, one finding per port. A port
-// that judges nothing on its own (an app's network feature) is folded into the background item
-// that runs the process, when there is one.
+// listeningPorts reports every TCP port listening outside loopback. An app's info-level port is
+// folded into the background item that runs its process, when there is one.
 func (c *Connector) listeningPorts(ctx context.Context, r *reporter, items *bgItems) {
 	ns, _ := c.text(ctx, netstatBin, "-anv", "-p", "tcp")
 	ps, _ := c.text(ctx, psBin, "-axo", "pid=,comm=")
@@ -302,8 +293,7 @@ func (c *Connector) listeningPorts(ctx context.Context, r *reporter, items *bgIt
 	}
 }
 
-// smbChecks reports one finding per share point behind port 445 and names them on the port's
-// finding. With no share points left, File Sharing still listens until it is turned off.
+// smbChecks reports each share point behind port 445. With none left, File Sharing still listens.
 func (c *Connector) smbChecks(ctx context.Context, r *reporter, port *check) {
 	shares, err := c.sharePoints(ctx)
 	if err != nil {
@@ -360,8 +350,7 @@ func parseProcs(ps string) map[string]string {
 	return m
 }
 
-// parseListeners reads `netstat -anv -p tcp`, locating the pid column from the header because
-// its position changes between macOS versions.
+// parseListeners reads `netstat -anv -p tcp`; the pid column moves between macOS versions.
 func parseListeners(ns string, procs map[string]string) []listener {
 	pidCol := 10
 	byPort := map[string]*listener{}
@@ -414,8 +403,7 @@ func parseListeners(ns string, procs map[string]string) []listener {
 
 type btmItem struct{ name, typ, ident, exe, team, url string }
 
-// label is the launchd label of a legacy agent or daemon: BTM prefixes it with the item type
-// ("16.com.example.helper").
+// label strips the item type BTM prefixes to a launchd label ("16.com.example.helper").
 func (it btmItem) label() string {
 	if n, rest, ok := strings.Cut(it.ident, "."); ok && strings.Trim(n, "0123456789") == "" {
 		return rest
@@ -423,8 +411,7 @@ func (it btmItem) label() string {
 	return it.ident
 }
 
-// paths are the places the item's process runs from: its executable, made absolute against the
-// bundle its URL names when BTM gives it relative to that bundle.
+// paths are where the item's process runs from; BTM can give the executable relative to its bundle.
 func (it btmItem) paths() []string {
 	u := strings.TrimSuffix(strings.TrimPrefix(it.url, "file://"), "/")
 	exe := it.exe
@@ -437,9 +424,8 @@ func (it btmItem) paths() []string {
 	return []string{exe}
 }
 
-// backgroundItems collects launch items whose program or app is gone, then enabled login items,
-// agents and daemons from `sfltool dumpbtm`, which needs no sudo on macOS 13 and later. Without
-// it, it lists the launchd plists and non-Apple launchctl jobs.
+// backgroundItems collects leftover launch items, then the enabled items of `sfltool dumpbtm` (no
+// sudo on macOS 13 and later), or else the launchd plists and non-Apple launchctl jobs.
 func (c *Connector) backgroundItems(ctx context.Context, r *reporter) *bgItems {
 	items := &bgItems{}
 	jobs := c.launchJobs(ctx)
@@ -458,7 +444,7 @@ func (c *Connector) backgroundItems(ctx context.Context, r *reporter) *bgItems {
 		}
 	}
 
-	out, err := guard(c.Run).Run(ctx, sfltoolBin, "dumpbtm")
+	out, err := c.read(ctx, sfltoolBin, "dumpbtm")
 	btm := parseBTM(string(out))
 	if err != nil || len(btm) == 0 {
 		skip := check{id: "btm", area: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); listed launchd plists and launchctl jobs instead"}
@@ -539,9 +525,8 @@ func parseBTM(out string) []btmItem {
 	return items
 }
 
-// launchItems is the fallback when sfltool gives nothing: one item per launchd label, from the
-// plists first and then the launchctl jobs no plist names. Apple's jobs and the application.*
-// jobs launchd creates for each running app are left out, as are the leftovers already reported.
+// launchItems is the fallback without sfltool: one item per launchd label, plists first. Apple's
+// jobs and the application.* jobs launchd makes per running app are left out.
 func (c *Connector) launchItems(ctx context.Context, items *bgItems, jobs []launchJob, leftover map[string]bool) {
 	seen := maps.Clone(leftover)
 	for _, j := range jobs {
@@ -571,9 +556,4 @@ func (c *Connector) launchItems(ctx context.Context, items *bgItems, jobs []laun
 		items.add(check{id: "launchctl:" + label, area: "btm", resource: "background_item", name: label, sev: finding.SevInfo, detail: label,
 			title: "launchd job " + label, rem: manual("Check you recognise it.")})
 	}
-}
-
-func plists(dir string) []string {
-	m, _ := filepath.Glob(filepath.Join(dir, "*.plist"))
-	return m
 }

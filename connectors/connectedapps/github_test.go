@@ -95,7 +95,7 @@ func TestGitHubInventory(t *testing.T) {
 	}
 
 	var peeks []finding.Finding
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if f.Resource.Name == "Profile Peek" {
 			peeks = append(peeks, f)
 		}
@@ -127,13 +127,13 @@ func TestGitHubInventory(t *testing.T) {
 	if ci := rec.byName(t, `SSH key "ci"`); ci.Severity != finding.SevLow || ci.LastUsedAt != nil {
 		t.Errorf("ci key: %+v", ci)
 	}
-	all, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	all, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	if strings.Contains(string(all), "SYNTHETIC") {
 		t.Error("public key material leaked into the output")
 	}
 
-	if len(rec.findings) != 9 {
-		t.Errorf("%d findings, want 9", len(rec.findings))
+	if len(rec.Findings) != 9 {
+		t.Errorf("%d findings, want 9", len(rec.Findings))
 	}
 	want := []finding.State{finding.StateError, finding.StateOK, finding.StateReauth, finding.StateNoScope, finding.StateNoScope}
 	if got := rec.state("github:octo-tester"); !reflect.DeepEqual(got, want) {
@@ -152,8 +152,8 @@ func TestGitHubSignedOutStopsEarly(t *testing.T) {
 		ghSettings + "/applications": page("https://github.com/login?return_to=%2Fsettings%2Fapplications", "Sign in to GitHub", nil),
 	}}
 	rec := run(t, b, ghFake{}, "github")
-	if len(rec.findings) != 0 || !reflect.DeepEqual(rec.state("github"), []finding.State{finding.StateSignedOut}) {
-		t.Fatalf("findings %v statuses %v", rec.findings, rec.statuses)
+	if len(rec.Findings) != 0 || !reflect.DeepEqual(rec.state("github"), []finding.State{finding.StateSignedOut}) {
+		t.Fatalf("findings %v statuses %v", rec.Findings, rec.Statuses)
 	}
 	if len(b.opened) != 1 {
 		t.Errorf("opened %v after a sign-in wall", b.opened)
@@ -173,8 +173,8 @@ func TestGitHubKeysWithoutGh(t *testing.T) {
 			rec := &recorder{}
 			e := &env{service: "github", gh: ghFake{"/user/keys": c.err, "/user/ssh_signing_keys": "[]", "/user/gpg_keys": "[]"}, emit: rec, now: now, seen: map[string]int{}}
 			githubKeys(t.Context(), e, "octo-tester")
-			if len(rec.statuses) == 0 || rec.statuses[0].State != c.state {
-				t.Fatalf("statuses %+v, want %s first", rec.statuses, c.state)
+			if len(rec.Statuses) == 0 || rec.Statuses[0].State != c.state {
+				t.Fatalf("statuses %+v, want %s first", rec.Statuses, c.state)
 			}
 		})
 	}
@@ -205,10 +205,12 @@ func TestGhStale(t *testing.T) {
 	}
 }
 
-func TestGhAllowlistOnlyReadsKeys(t *testing.T) {
+func TestGhAllowlistOnlyReadsKeysAndTheJSONStatus(t *testing.T) {
 	for _, args := range [][]string{
 		{"api", "--paginate", "/user/keys"},
+		{"api", "--paginate", "/user/ssh_signing_keys"},
 		{"api", "--paginate", "/user/gpg_keys"},
+		{"auth", "status", "--json", "hosts"},
 	} {
 		if err := ghAllowlist.Check(args); err != nil {
 			t.Errorf("%v refused: %v", args, err)
@@ -219,6 +221,10 @@ func TestGhAllowlistOnlyReadsKeys(t *testing.T) {
 		{"api", "--paginate", "/user/keys", "-X", "DELETE"},
 		{"auth", "refresh", "-s", "admin:gpg_key"},
 		{"api", "--paginate", "/user/emails"},
+		{"auth", "status", "--show-token"},
+		{"auth", "status"},
+		{"auth", "token"},
+		{"auth", "refresh"},
 	} {
 		if err := ghAllowlist.Check(args); !errors.Is(err, cli.ErrRefused) {
 			t.Errorf("%v allowed", args)

@@ -2,7 +2,6 @@ package signin
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -32,24 +31,20 @@ gh auth refresh) are listed, never run. Accounts taken out with segurata account
   --timeout   stop waiting after this long (Enter stops earlier)
   --out       inventory output directory`
 
-// CLI is `segurata signin`. Its function fields are seams for tests.
+// CLI is `segurata signin`.
 type CLI struct {
-	Out, Err io.Writer
-	In       io.Reader     // Enter here stops waiting; read only when TTY is true
-	TTY      bool          // In is a terminal
-	Config   string        // config file
-	Paths    tracker.Paths // zero means tracker.DefaultPaths
-	Now      func() time.Time
-	// Connectors are the connectors run.Targets picks instances from.
+	Out, Err   io.Writer
+	In         io.Reader // Enter stops waiting; read only when TTY
+	TTY        bool
+	Config     string
+	Paths      tracker.Paths // zero means tracker.DefaultPaths
+	Now        func() time.Time
 	Connectors []connector.Connector
-	// Connect opens the browser at cdp_url over CDP; it never starts a browser.
-	Connect func(ctx context.Context, cdpURL string) (Browser, func(), error)
-	// Inventory runs connector instances (run.Inventory with the accepted risks) into out.
+	// Connect opens the browser at cdp_url; it never starts one.
+	Connect   func(ctx context.Context, cdpURL string) (Browser, func(), error)
 	Inventory func(ctx context.Context, cfg config.Config, targets []run.Target, out string) ([]*run.Result, error)
-	// Sync folds the latest runs in out into the tracker (segurata track sync) and returns its
-	// exit code.
-	Sync     func(out string) int
-	Interval time.Duration // between two reads of the pages; zero is the default
+	Sync      func(out string) int // segurata track sync, its exit code
+	Interval  time.Duration        // zero is the default
 }
 
 func (c CLI) fail(err error) int {
@@ -57,7 +52,6 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// Run executes `segurata signin` and returns the exit code.
 func (c CLI) Run(ctx context.Context, args []string) int {
 	fs := cliflag.New("signin", c.Err)
 	fs.Usage = func() { fmt.Fprintln(c.Err, usage) }
@@ -90,16 +84,16 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	// Pages first, then commands, so the numbers read in order.
-	items := Collect(tr.Items, targets, cfg.Accounts, *all, now)
-	slices.SortStableFunc(items, func(a, b Item) int { return cmp.Compare(boolRank(a.Page == nil), boolRank(b.Page == nil)) })
+	items := collect(tr.Items, targets, cfg.Accounts, *all, now)
+	// Pages first, so the numbers read in order.
+	withPage := slices.DeleteFunc(slices.Clone(items), func(it item) bool { return it.Page == nil })
+	items = append(withPage, slices.DeleteFunc(items, func(it item) bool { return it.Page != nil })...)
 	if len(items) == 0 {
 		fmt.Fprintln(c.Out, "Nothing to sign in to: no open setup item needs you in the browser or the terminal.")
 		return 0
 	}
 	pages := c.printList(items)
-	// Every page item's target: what a full wait would run again.
-	pageTargets := Reruns(items, make([]Outcome, len(items)), nil)
+	pageTargets := reruns(items, make([]outcome, len(items)), nil)
 	if *list {
 		if pages > 0 {
 			fmt.Fprintf(c.Out, "\nsegurata signin would open %d %s in the browser at %s, wait up to %s, then run %s again.\n",
@@ -157,10 +151,10 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 		enter = readLine(c.In)
 	}
 	fmt.Fprintln(c.Out, ").")
-	outcomes := Wait(ctx, b, items, WaitOptions{Interval: c.Interval, Timeout: *timeout, Enter: enter, Progress: c.Out, OnDone: onDone, Now: c.Now})
+	outcomes := wait(ctx, b, items, waitOptions{Interval: c.Interval, Timeout: *timeout, Enter: enter, Progress: c.Out, OnDone: onDone, Now: c.Now})
 	wg.Wait()
 
-	if labels := Reruns(items, outcomes, early); len(labels) > 0 && ctx.Err() == nil {
+	if labels := reruns(items, outcomes, early); len(labels) > 0 && ctx.Err() == nil {
 		fmt.Fprintf(c.Out, "Running %s again.\n", strings.Join(labels, ", "))
 		rerun(labels)
 	}
@@ -174,8 +168,8 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	return c.report(paths.Tracker, items)
 }
 
-// printList prints the numbered list of items and returns how many are pages.
-func (c CLI) printList(items []Item) int {
+// printList returns how many items are pages.
+func (c CLI) printList(items []item) int {
 	pages := 0
 	for _, it := range items {
 		if it.Page != nil {
@@ -201,8 +195,7 @@ func (c CLI) printList(items []Item) int {
 	return pages
 }
 
-// report says, for every item, whether its setup item closed with the sync.
-func (c CLI) report(trackerFile string, items []Item) int {
+func (c CLI) report(trackerFile string, items []item) int {
 	tr, err := tracker.Load(trackerFile)
 	if err != nil {
 		return c.fail(err)
@@ -226,7 +219,6 @@ func (c CLI) report(trackerFile string, items []Item) int {
 	return 0
 }
 
-// pick returns the targets with the given labels, in labels' order.
 func pick(targets []run.Target, labels []string) []run.Target {
 	var out []run.Target
 	for _, l := range labels {
@@ -239,22 +231,19 @@ func pick(targets []run.Target, labels []string) []run.Target {
 	return out
 }
 
-// readLine closes the returned channel once a full line (Enter) is read from r. If r ends or
-// fails first (stdin closed, as under a non-interactive runner that still reports a terminal), the
-// channel stays open: the wait then ends only when every page is done or the timeout passes.
+// readLine closes the channel on Enter. Closed stdin is not Enter (a non-interactive runner can
+// still report a terminal), so the wait then goes on.
 func readLine(r io.Reader) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
-		if _, err := bufio.NewReader(r).ReadString('\n'); err == nil {
+		if enterPressed(r) {
 			close(ch)
 		}
 	}()
 	return ch
 }
 
-func boolRank(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
+func enterPressed(r io.Reader) bool {
+	_, err := bufio.NewReader(r).ReadString('\n')
+	return err == nil
 }

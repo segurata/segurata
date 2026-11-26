@@ -7,8 +7,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// rule classifies one permission line. label completes "<App> can …"; blast is what the
-// permission puts at stake beyond its severity (finding.Blast).
+// rule classifies one permission line; label completes "<App> can …".
 type rule struct {
 	re    *regexp.Regexp
 	sev   finding.Severity
@@ -18,10 +17,8 @@ type rule struct {
 
 func rx(s string) *regexp.Regexp { return regexp.MustCompile(`(?i)` + s) }
 
-// scopeRules per service, worst first. The worst match over all of an app's scopes wins, and
-// between scopes of the same severity the earlier rule names the risk. The policy: write access, reading direct messages, deleting repositories,
-// administering organizations and billing are high; broad read-only access is medium; profile
-// and email are low or info.
+// scopeRules per service, worst first: the worst match over an app's scopes wins, and between
+// equal severities the earlier rule names the risk.
 var scopeRules = map[string][]rule{
 	"github": {
 		{rx(`^Delete repositories`), finding.SevHigh, "delete your repositories", finding.BlastAllRepos},
@@ -62,7 +59,7 @@ var scopeRules = map[string][]rule{
 		{rx(`comments`), finding.SevLow, "read comments on the pages shared with it", ""},
 		{rx(`user information`), finding.SevLow, "see the workspace's members", ""},
 	},
-	// Dropbox scopes as scoped apps list them; private: ones are Dropbox's own and match too.
+	// private: scopes are Dropbox's own and match too
 	"dropbox": {
 		{rx(`files\.permanent_delete`), finding.SevHigh, "permanently delete your files", ""},
 		{rx(`files\.content\.write`), finding.SevHigh, "read and change the files in your Dropbox", ""},
@@ -82,10 +79,8 @@ var scopeRules = map[string][]rule{
 	},
 }
 
-// assess returns a grant's severity, the label that completes "<name> can …" and its blast. A
-// grant last used more than a year ago goes up one level. A Notion integration the owner created
-// is low: it is their own API token, whose leaks local-secrets reports. At worst an X app posts as
-// you, whatever it can do.
+// assess raises a grant unused for a year by one level. A Notion integration the owner created is
+// low at most: it is their own API token, whose leaks local-secrets reports.
 func assess(service string, g grant) rule {
 	r := base(service, g)
 	if g.stale {
@@ -100,10 +95,9 @@ func assess(service string, g grant) rule {
 	return r
 }
 
-// graded is a rule of a severity and label with no blast.
 func graded(sev finding.Severity, label string) rule { return rule{sev: sev, label: label} }
 
-// youRE is how Notion marks the signed-in user in an owner column.
+// youRE marks the signed-in user in Notion's owner column.
 var youRE = regexp.MustCompile(`\((You|Tú|Tu)\)`)
 
 func ownIntegration(owner string) bool { return youRE.MatchString(owner) }
@@ -144,13 +138,12 @@ func base(service string, g grant) rule {
 	return worstRule(service, g.scopes)
 }
 
-// worstScope is the severity and label of the worst of a non-empty list of scopes.
 func worstScope(service string, scopes []string) (finding.Severity, string) {
 	r := worstRule(service, scopes)
 	return r.sev, r.label
 }
 
-// worstRule is the rule of the worst of a non-empty list of scopes.
+// worstRule takes a non-empty list.
 func worstRule(service string, scopes []string) rule {
 	worst, wi := classify(service, scopes[0])
 	for _, s := range scopes[1:] {
@@ -162,8 +155,8 @@ func worstRule(service string, scopes []string) rule {
 	return worst
 }
 
-// classify finds the first rule of the service matching a scope, and its position. A scope no
-// rule knows is data access of unknown reach: medium, after every rule.
+// classify returns the first matching rule and its position. An unknown scope is data access of
+// unknown reach: medium, ranked after every rule.
 func classify(service, scope string) (rule, int) {
 	rules := scopeRules[service]
 	for i, r := range rules {
@@ -174,7 +167,6 @@ func classify(service, scope string) (rule, int) {
 	return rule{sev: finding.SevMedium, label: "access some of your " + service + " data"}, len(rules)
 }
 
-// raise moves a severity up one level, stopping at critical.
 func raise(s finding.Severity) finding.Severity {
 	switch s {
 	case finding.SevInfo:

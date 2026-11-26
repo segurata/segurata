@@ -1,10 +1,5 @@
-// Package macos checks the security posture of this Mac and of the Brave browser on it: disk
-// encryption, SIP, Gatekeeper, firewall, updates, screen lock, login options, local accounts and
-// what deleted ones left behind, Time Machine backups, endpoint agents, ports reachable from the
-// network, SMB share points, the home folder mode, login and background items and Brave's remote
-// debugging port. Browser extensions are the browser-extensions connector.
-// Inventory is read-only and never uses sudo. A few findings can be fixed with
-// `segurata remediate` (remediate.go).
+// Package macos checks the security posture of this Mac. Inventory is read-only and never uses
+// sudo; a few findings can be fixed with `segurata remediate`.
 package macos
 
 import (
@@ -36,7 +31,6 @@ const (
 	plutilBin      = "/usr/bin/plutil"
 )
 
-// Preference files read by the checks.
 const (
 	softwareUpdatePrefs = "/Library/Preferences/com.apple.SoftwareUpdate"
 	commercePrefs       = "/Library/Preferences/com.apple.commerce"
@@ -45,8 +39,7 @@ const (
 
 var updateKeys = []string{"AutomaticCheckEnabled", "AutomaticDownload", "CriticalUpdateInstall", "ConfigDataInstall", "AutomaticallyInstallMacOSUpdates"}
 
-// readOnly is every command line inventory may run, exactly. None of them changes anything; a
-// command not listed here is refused before it starts.
+// readOnly is every fixed command line inventory may run, exactly.
 var readOnly = func() map[string]bool {
 	cmds := [][]string{
 		{"/usr/sbin/scutil", "--get", "ComputerName"},
@@ -91,13 +84,9 @@ var readOnly = func() map[string]bool {
 // share a key.
 func argvKey(argv []string) string { return strings.Join(argv, "\x00") }
 
-// guard refuses any command line that is not exactly one of readOnly.
-func guard(r cli.Runner) cli.Runner { return guardWith(r) }
-
-// guardWith also lets through the exact command lines in extra, which name live objects (the home
-// folder, an account) that a fixed list cannot. Callers build extra from a fresh read, never from
-// a finding.
-func guardWith(r cli.Runner, extra ...[]string) cli.Runner {
+// guard refuses any command line that is not exactly one of readOnly or extra. extra names live
+// objects (the home folder, an account) and is built from a fresh read, never from a finding.
+func guard(r cli.Runner, extra ...[]string) cli.Runner {
 	allowed := map[string]bool{}
 	for _, e := range extra {
 		allowed[argvKey(e)] = true
@@ -111,26 +100,21 @@ func guardWith(r cli.Runner, extra ...[]string) cli.Runner {
 }
 
 type Connector struct {
-	// Run executes read-only commands after the guard. Tests replace it with canned output.
-	Run cli.Runner
-	// Exec runs remediation commands after the per-action allowlist. Tests replace it.
-	Exec connector.Executor
-	// Home is the user's home directory, where Brave keeps its profiles.
+	Run  cli.Runner         // behind guard
+	Exec connector.Executor // behind the per-action allowlist
 	Home func() (string, error)
 	OS   string
-	// Root prefixes the system folders the file checks read (accounts' homes, /Library, /Users/Shared,
-	// /Applications); "" is the real root. Tests point it at a temporary tree.
+	// Root prefixes the system folders the file checks read; "" is the real root.
 	Root string
-	// UID is the user running segurata, whose account is not reported as an extra one.
-	UID func() int
-	Now func() time.Time
+	UID  func() int // the user running segurata, not reported as an extra account
+	Now  func() time.Time
 }
 
 func New() *Connector {
 	return &Connector{Run: system{}, Exec: connector.System{}, Home: os.UserHomeDir, OS: runtime.GOOS, UID: os.Getuid, Now: time.Now}
 }
 
-// path is a system path under Root; shown is its inverse, for evidence and titles.
+// path is a system path under Root; shown is its inverse.
 func (c *Connector) path(p string) string { return filepath.Join(c.Root, p) }
 func (c *Connector) shown(p string) string {
 	if c.Root == "" {
@@ -152,19 +136,16 @@ func (c *Connector) Describe() connector.Description {
 	}
 }
 
-// Track makes one item of each finding: each is its own setting to fix.
 func (c *Connector) Track(finding.Finding) *finding.Track {
 	return &finding.Track{Group: finding.GroupFinding}
 }
 
-// slowTimeout is how long the tools that can take minutes get: softwareupdate asks Apple's
-// servers, and sfltool dumpbtm walks every background item record and slows down a lot when the
+// slowTimeout: softwareupdate asks Apple's servers, and sfltool dumpbtm slows down a lot when the
 // Mac is busy.
 const slowTimeout = 2 * time.Minute
 
-// system runs the macOS tools. It returns stdout, or stderr when stdout is empty, because several
-// of them (sysadminctl, defaults on a missing key) answer only on stderr. softwareupdate and
-// sfltool get slowTimeout; everything else thirty seconds.
+// system returns stdout, or stderr when stdout is empty: sysadminctl, and defaults on a missing
+// key, answer only on stderr.
 type system struct{}
 
 func (system) Run(ctx context.Context, args ...string) ([]byte, error) {
@@ -191,10 +172,13 @@ func (system) Run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// text runs a read-only command and returns its trimmed output, and whether it exited cleanly.
-// A failed command still returns what it printed, like `cmd 2>&1` would.
+func (c *Connector) read(ctx context.Context, args ...string) ([]byte, error) {
+	return guard(c.Run).Run(ctx, args...)
+}
+
+// text returns a read-only command's trimmed output, even when it fails, and whether it did not.
 func (c *Connector) text(ctx context.Context, args ...string) (string, bool) {
-	out, err := guard(c.Run).Run(ctx, args...)
+	out, err := c.read(ctx, args...)
 	s := strings.TrimSpace(string(out))
 	if err != nil && s == "" {
 		s = err.Error()
@@ -202,12 +186,9 @@ func (c *Connector) text(ctx context.Context, args ...string) (string, bool) {
 	return s, err == nil
 }
 
-// pref reads one defaults key, or "" when it is not set.
+// pref is "" for an unset defaults key.
 func (c *Connector) pref(ctx context.Context, args ...string) string {
-	if s, ok := c.text(ctx, args...); ok {
-		return s
-	}
-	return ""
+	return c.readSetting(ctx, args...).value
 }
 
 func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit connector.Emitter) error {
@@ -221,7 +202,7 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	}
 	r := &reporter{host: host, emit: emit}
 
-	// softwareupdate -l can take a minute or two: start it first and report it last.
+	// softwareupdate -l can take minutes: start it first and report it last.
 	pending := make(chan check, 1)
 	go func() { pending <- c.pendingUpdates(ctx) }()
 
@@ -241,7 +222,7 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	r.report(c.braveDebugging(ctx))
 	r.report(<-pending)
 
-	// A check that could not run leaves only its own area uninspected: the machine was.
+	// A check that could not run leaves only its own area uninspected.
 	emit.Status(finding.Status{Account: host, State: finding.StateOK})
 	for _, ch := range r.skipped {
 		state := ch.skipState
@@ -253,20 +234,18 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	return nil
 }
 
-// check is one posture check's outcome. A passing check is logged, not emitted: a finding is
-// something to act on, and its disappearance is how remediate confirms a fix.
+// check is one posture check's outcome. A passing check is logged, not emitted: a finding's
+// disappearance is how remediate confirms a fix.
 type check struct {
-	id       string
-	area     string // the checks a skip of this id stands for, when several; defaults to id
-	resource string // resource type; "macos_setting" when empty
-	name     string
-	ok       bool
-	skip     string // why the check could not run
-	// skipState is the status a skipped check reports: unsupported (the default) when this Mac
-	// cannot answer it, error when the tool failed or timed out.
-	skipState finding.State
+	id        string
+	area      string // shared scope of checks one failure skips together; defaults to id
+	resource  string // "macos_setting" when empty
+	name      string
+	ok        bool
+	skip      string        // why the check could not run
+	skipState finding.State // "" is unsupported; error when the tool failed
 	sev       finding.Severity
-	blast     finding.Blast // what it puts at stake beyond its severity
+	blast     finding.Blast
 	title     string
 	detail    string
 	evidence  map[string]any
@@ -279,9 +258,6 @@ type reporter struct {
 	skipped []check
 }
 
-// scope is a check's coverage scope: findings carry it, and a check that cannot run leaves it
-// uninspected. Checks that one failure skips together (every share point, every background item,
-// everything read from the local users) share an area.
 func (ch check) scope() string {
 	if ch.area != "" {
 		return "check:" + ch.area

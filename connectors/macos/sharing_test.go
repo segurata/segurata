@@ -71,10 +71,10 @@ func TestShareChecksGradeEachSharePoint(t *testing.T) {
 		action string
 		title  string
 	}{
-		{sharePoint{Name: "Gone", Path: "/nonexistent/gone", Shared: 1}, "smb-share:Gone", finding.SevHigh, ActionShareRemove, "Orphaned"},
-		{sharePoint{Name: "Open", Path: dir, Shared: 1, Guest: 1}, "smb-share-guest:Open", finding.SevHigh, ActionShareGuestOff, "allows guests"},
-		{sharePoint{Name: "Team", Path: dir, Shared: 1}, "smb-share:Team", finding.SevMedium, ActionShareRemove, "is shared over SMB"},
-		{sharePoint{Name: "Idle", Path: dir}, "smb-share:Idle", finding.SevInfo, ActionShareRemove, "not shared"},
+		{sharePoint{Name: "Gone", Path: "/nonexistent/gone", Shared: 1}, "smb-share:Gone", finding.SevHigh, actionShareRemove, "Orphaned"},
+		{sharePoint{Name: "Open", Path: dir, Shared: 1, Guest: 1}, "smb-share-guest:Open", finding.SevHigh, actionShareGuestOff, "allows guests"},
+		{sharePoint{Name: "Team", Path: dir, Shared: 1}, "smb-share:Team", finding.SevMedium, actionShareRemove, "is shared over SMB"},
+		{sharePoint{Name: "Idle", Path: dir}, "smb-share:Idle", finding.SevInfo, actionShareRemove, "not shared"},
 	}
 	for _, c := range cases {
 		ch := shareCheck(c.sp)
@@ -109,7 +109,7 @@ func TestShareRemovePlanComesFromAFreshRead(t *testing.T) {
 	r := healthy()
 	r[sharingKey] = sharesJSON(sharePoint{Name: quotedName, Path: "/nonexistent/repairtech/Public", SMBName: quotedName, Shared: 1, Guest: 1})
 	c, _, ex := newTest(t, r)
-	f := shareFinding(ActionShareRemove, quotedName)
+	f := shareFinding(actionShareRemove, quotedName)
 	p, err := c.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestShareRemoveUndoRecreatesALiveShare(t *testing.T) {
 	r := healthy()
 	r[sharingKey] = sharesJSON(sharePoint{Name: "Team files", Path: dir, SMBName: "Team", Shared: 1, ReadOnly: 1})
 	c, _, _ := newTest(t, r)
-	p, err := c.Plan(context.Background(), shareFinding(ActionShareRemove, "Team files"))
+	p, err := c.Plan(context.Background(), shareFinding(actionShareRemove, "Team files"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestGuestOffPlanAndUndo(t *testing.T) {
 	r := healthy()
 	r[sharingKey] = sharesJSON(sharePoint{Name: quotedName, Path: t.TempDir(), SMBName: quotedName, Shared: 1, Guest: 1})
 	c, _, ex := newTest(t, r)
-	f := shareFinding(ActionShareGuestOff, quotedName)
+	f := shareFinding(actionShareGuestOff, quotedName)
 	p, err := c.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +177,7 @@ func TestShareActionsRefuseANameThatNoLongerExists(t *testing.T) {
 	r := healthy()
 	r[sharingKey] = sharesJSON(sharePoint{Name: "Other", Path: "/nonexistent", Shared: 1})
 	c, _, ex := newTest(t, r)
-	for _, action := range []string{ActionShareRemove, ActionShareGuestOff} {
+	for _, action := range []string{actionShareRemove, actionShareGuestOff} {
 		for _, name := range []string{quotedName, "", "other", "Other "} {
 			if _, err := c.Plan(context.Background(), shareFinding(action, name)); err == nil || !strings.Contains(err.Error(), "refusing") {
 				t.Errorf("%s %q: planned (%v)", action, name, err)
@@ -185,8 +185,8 @@ func TestShareActionsRefuseANameThatNoLongerExists(t *testing.T) {
 		}
 	}
 	// A plan built for a share that was there when shown, but is gone at apply time, is refused.
-	stale := connector.Plan{Action: ActionShareRemove, Commands: []connector.Step{{Argv: []string{sharingBin, "-r", quotedName}, Sudo: true}}}
-	if err := c.Apply(context.Background(), shareFinding(ActionShareRemove, quotedName), stale, termIO()); err == nil || len(ex.ran) != 0 {
+	stale := connector.Plan{Action: actionShareRemove, Commands: []connector.Step{{Argv: []string{sharingBin, "-r", quotedName}, Sudo: true}}}
+	if err := c.Apply(context.Background(), shareFinding(actionShareRemove, quotedName), stale, termIO()); err == nil || len(ex.ran) != 0 {
 		t.Fatalf("applied a stale plan: %v %v", err, ex.ran)
 	}
 	// The apply-time allowlist only knows the share points that exist now, whatever the plan says.
@@ -197,10 +197,10 @@ func TestShareActionsRefuseANameThatNoLongerExists(t *testing.T) {
 	if err := allow.Run(context.Background(), stale, ex, termIO()); !errors.Is(err, connector.ErrRefused) || len(ex.ran) != 0 {
 		t.Fatalf("allowlist let a missing share through: %v", err)
 	}
-	if err := allow.Check(ActionShareRemove, connector.Step{Argv: []string{sharingBin, "-r", "Other"}, Sudo: true}); err != nil {
+	if err := allow.Check(actionShareRemove, connector.Step{Argv: []string{sharingBin, "-r", "Other"}, Sudo: true}); err != nil {
 		t.Fatalf("existing share refused: %v", err)
 	}
-	if err := allow.Check(ActionShareGuestOff, connector.Step{Argv: []string{sharingBin, "-r", "Other"}, Sudo: true}); err == nil {
+	if err := allow.Check(actionShareGuestOff, connector.Step{Argv: []string{sharingBin, "-r", "Other"}, Sudo: true}); err == nil {
 		t.Fatal("share-remove command allowed under guest-off")
 	}
 }

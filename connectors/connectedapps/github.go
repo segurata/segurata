@@ -31,7 +31,7 @@ const (
 	ghRevokeSession = `If you do not recognise it, open the page and revoke the session.`
 )
 
-// The account login comes from a meta tag GitHub puts on every signed-in page.
+// GitHub puts the login in a meta tag on every signed-in page.
 const ghLogin = `login: (document.querySelector('meta[name="user-login"]') || {}).content || ""`
 
 var ghOAuthJS = inPage(`
@@ -41,15 +41,12 @@ var ghOAuthJS = inPage(`
 var ghAuthorizedJS = inPage(`
   return {...page, ` + ghLogin + `, rows: rows('a[href*="/settings/connections/applications/"], a[href*="/settings/apps/authorizations/"]')};`)
 
-// Installed apps link their name row to "Configure"; a pending permission update adds a second
-// link under /permissions/, which is not an app.
+// A pending permission update adds a second link under /permissions/, which is not an app.
 var ghInstalledJS = inPage(`
-  const sel = 'a[href*="/settings/installations/"]:not([href*="/permissions/"])';
-  return {...page, ` + ghLogin + `, rows: [...document.querySelectorAll(sel)].map((a) => ({name: a.innerText.trim(), href: a.href, lines: lines(rowOf(a, sel))}))};`)
+  return {...page, ` + ghLogin + `, rows: everyRow('a[href*="/settings/installations/"]:not([href*="/permissions/"])')};`)
 
 var ghSessionsJS = inPage(`
-  const sel = 'a[href*="/settings/sessions/"]';
-  return {...page, ` + ghLogin + `, rows: [...document.querySelectorAll(sel)].map((a) => ({name: a.innerText.trim(), href: a.href, lines: lines(rowOf(a, sel))}))};`)
+  return {...page, ` + ghLogin + `, rows: everyRow('a[href*="/settings/sessions/"]')};`)
 
 const ghDetailJS = `({text: document.body ? document.body.innerText : ""})`
 
@@ -85,13 +82,12 @@ func github(ctx context.Context, e *env) {
 	githubKeys(ctx, e, login)
 }
 
-// ghApp is one row of an app list: name, link, and the "Last used · Owned by" line.
 type ghApp struct {
 	name, href, used, owner string
 	stale                   bool
 }
 
-// parseGitHubApp reads a row of the OAuth or authorized-apps list.
+// parseGitHubApp reads a row of the OAuth or authorized-apps list and its "Last used · Owned by" line.
 func parseGitHubApp(r row) ghApp {
 	a := ghApp{name: r.Name, href: r.Href}
 	for _, l := range r.Lines {
@@ -121,20 +117,18 @@ func ghStale(used string) bool {
 	return n >= 2
 }
 
-// githubOAuth lists authorized OAuth apps, following "Next" while there is one, and reads each
-// app's page for its permissions and organization access. It returns the login and false when
-// GitHub is signed out.
+// githubOAuth lists authorized OAuth apps across pages and reads each app's page for its
+// permissions and organization access. It returns false when GitHub is signed out.
 func githubOAuth(ctx context.Context, e *env) (string, bool) {
 	var apps []ghApp
 	login := ""
 	for next, seen := ghSettings+"/applications", map[string]bool{}; next != "" && !seen[next]; {
 		seen[next] = true
-		raw, err := e.b.load(ctx, next, ghOAuthJS, readyWhen(ghListReady), 40)
+		p, err := load(ctx, e, next, ghOAuthJS, ghListReady, 40)
 		if err != nil {
 			e.fail(login, err)
 			return login, false
 		}
-		p, _ := decode[listPage](raw)
 		if p.URL == "" || ghSignedOut(p) {
 			e.status("", finding.StateSignedOut, "not signed in to GitHub in the browser: %s/applications", ghSettings)
 			return "", false
@@ -157,15 +151,13 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 		sem <- struct{}{}
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			raw, err := e.b.load(ctx, a.href, ghDetailJS, func(raw json.RawMessage) bool {
-				p, _ := decode[listPage](raw)
+			p, err := load(ctx, e, a.href, ghDetailJS, func(p listPage) bool {
 				return strings.Contains(p.Text, "Permissions") || strings.Contains(p.Text, "Organization access")
 			}, 30)
 			if err != nil {
 				errs[i] = err
 				return
 			}
-			p, _ := decode[listPage](raw)
 			details[i] = parseGitHubDetail(p.Text)
 		}()
 	}
@@ -186,7 +178,7 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 
 type ghDetail struct {
 	scopes []string // never nil
-	orgs   []string // organizations the app can reach; never nil
+	orgs   []string // never nil
 }
 
 var (
@@ -199,8 +191,7 @@ var (
 )
 
 // parseGitHubDetail reads an OAuth app's page. Under "Organization access" an organization the
-// app cannot reach is followed by a button ("Loading", then "Request" or "Grant"); one it can
-// reach has no button.
+// app cannot reach is followed by a button ("Request", "Grant"); one it can reach has none.
 func parseGitHubDetail(text string) ghDetail {
 	lines := pagetext.Lines(text)
 	d := ghDetail{scopes: between(lines, ghPermsStartRE, ghPermsEndRE, ghPermsSkipRE), orgs: []string{}}
@@ -214,8 +205,7 @@ func parseGitHubDetail(text string) ghDetail {
 	return d
 }
 
-// between returns the lines after the first one matching start and before the next one matching
-// end, leaving out those matching skip. Never nil.
+// between returns the lines after start and before end, except skip ones. Never nil.
 func between(lines []string, start, end, skip *regexp.Regexp) []string {
 	out := []string{}
 	in := false
@@ -232,16 +222,15 @@ func between(lines []string, start, end, skip *regexp.Regexp) []string {
 	return out
 }
 
-// githubAuthorized lists authorized GitHub Apps. GitHub shows them only in sudo mode; when it
-// asks for the password, that is reported as reauth and nothing is typed.
+// githubAuthorized lists authorized GitHub Apps, shown only in sudo mode: the password prompt is
+// reported as reauth.
 func githubAuthorized(ctx context.Context, e *env, login string) {
 	u := ghSettings + "/apps/authorizations"
-	raw, err := e.b.load(ctx, u, ghAuthorizedJS, readyWhen(ghListReady), 30)
+	p, err := load(ctx, e, u, ghAuthorizedJS, ghListReady, 30)
 	if err != nil {
 		e.fail(login, err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	if ghSudo(p) {
 		e.status(login, finding.StateReauth, "authorized GitHub Apps need sudo mode: open %s, confirm your identity, and run again within a few minutes", u)
 		return
@@ -253,15 +242,14 @@ func githubAuthorized(ctx context.Context, e *env, login string) {
 	}
 }
 
-// githubInstalled lists GitHub Apps installed on the personal account. Their permissions are on
-// the installation page, which needs sudo mode, so they are not read.
+// githubInstalled lists GitHub Apps installed on the personal account; their permissions need
+// sudo mode and are not read.
 func githubInstalled(ctx context.Context, e *env, login string) {
-	raw, err := e.b.load(ctx, ghSettings+"/installations", ghInstalledJS, readyWhen(ghListReady), 30)
+	p, err := load(ctx, e, ghSettings+"/installations", ghInstalledJS, ghListReady, 30)
 	if err != nil {
 		e.fail(login, err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	if ghSudo(p) {
 		e.status(login, finding.StateReauth, "installed GitHub Apps need sudo mode: open %s/installations, confirm your identity, and run again", ghSettings)
 		return
@@ -272,7 +260,7 @@ func githubInstalled(ctx context.Context, e *env, login string) {
 	}
 }
 
-// parseGitHubInstalled reads an installed app's row: its name, then notes such as "Suspended".
+// parseGitHubInstalled reads an installed app's name, then notes such as "Suspended".
 func parseGitHubInstalled(r row) (name, note string) {
 	var rest []string
 	for _, l := range r.Lines {
@@ -288,14 +276,12 @@ func parseGitHubInstalled(r row) (name, note string) {
 	return name, strings.Join(rest, " ")
 }
 
-// githubSessions lists open web sessions.
 func githubSessions(ctx context.Context, e *env, login string) {
-	raw, err := e.b.load(ctx, ghSettings+"/sessions", ghSessionsJS, readyWhen(func(p listPage) bool { return len(p.Rows) > 0 || ghSudo(p) }), 30)
+	p, err := load(ctx, e, ghSettings+"/sessions", ghSessionsJS, func(p listPage) bool { return len(p.Rows) > 0 || ghSudo(p) }, 30)
 	if err != nil {
 		e.fail(login, err)
 		return
 	}
-	p, _ := decode[listPage](raw)
 	for _, r := range p.Rows {
 		s := parseGitHubSession(r)
 		e.report(grant{who: login, resType: "github_session", kind: finding.KindCredential, name: s.name, key: lastSegment(r.Href),
@@ -303,8 +289,7 @@ func githubSessions(ctx context.Context, e *env, login string) {
 	}
 }
 
-// lastSegment is the last path element of a URL: the session number of /settings/sessions/<n>,
-// which stays the same for the session's life while its location and IP change.
+// lastSegment is the session number of /settings/sessions/<n>, which outlives its IP.
 func lastSegment(href string) string {
 	u, err := url.Parse(href)
 	if err != nil {
@@ -348,8 +333,42 @@ func parseGitHubSession(r row) ghSession {
 // ghAuthStatus prints the signed-in accounts and their scopes as JSON, never the token.
 var ghAuthStatus = []string{"auth", "status", "--json", "hosts"}
 
-// ghAllowlist is every gh command this connector may run: read-only API calls, and the sign-in
-// status for doctor.
+type ghAccount struct {
+	Login       string `json:"login"`
+	Active      bool   `json:"active"`
+	State       string `json:"state"`
+	Scopes      string `json:"scopes"` // comma-separated
+	TokenSource string `json:"tokenSource"`
+}
+
+func parseGhStatus(out []byte) (acct ghAccount, found bool, err error) {
+	var st struct {
+		Hosts map[string][]ghAccount `json:"hosts"`
+	}
+	if err := json.Unmarshal(out, &st); err != nil {
+		return ghAccount{}, false, err
+	}
+	for _, a := range st.Hosts["github.com"] {
+		if a.Active {
+			return a, true, nil
+		}
+	}
+	return ghAccount{}, false, nil
+}
+
+func (a ghAccount) has(scope string) bool {
+	return slices.Contains(strings.Split(strings.ReplaceAll(a.Scopes, " ", ""), ","), scope)
+}
+
+// ghStderr is what gh printed on failure, or the error itself.
+func ghStderr(err error) string {
+	if ce, ok := errors.AsType[*cli.Error](err); ok {
+		return ce.Stderr
+	}
+	return err.Error()
+}
+
+// ghAllowlist is every gh command inventory and doctor may run.
 var ghAllowlist = cli.CheckFunc(func(args []string) error {
 	if slices.Equal(args, ghAuthStatus) {
 		return nil
@@ -364,7 +383,6 @@ var ghAllowlist = cli.CheckFunc(func(args []string) error {
 	return fmt.Errorf("%w: gh %s", cli.ErrRefused, strings.Join(args, " "))
 })
 
-// ghKeyEndpoints are the key lists read through `gh api`, with the scope each one needs.
 var ghKeyEndpoints = []struct {
 	resType, path, scope, label string
 }{
@@ -373,7 +391,7 @@ var ghKeyEndpoints = []struct {
 	{"github_gpg_key", "/user/gpg_keys", "admin:gpg_key", "GPG key"},
 }
 
-// ghKey keeps only what a finding needs. The public key itself is never kept: only its type.
+// ghKey never keeps the public key itself, only its type.
 type ghKey struct {
 	ID       json.Number `json:"id"`
 	Title    string      `json:"title"`
@@ -409,17 +427,13 @@ var (
 	ghSignedOffRE = regexp.MustCompile(`(?i)not logged in|auth login`)
 )
 
-// githubKeys lists SSH, signing and GPG keys with `gh api`. A missing scope is reported as
-// noscope with the exact command that adds it; gh never asks for anything here.
+// githubKeys lists SSH, signing and GPG keys. A missing scope is noscope, with the command that
+// adds it.
 func githubKeys(ctx context.Context, e *env, login string) {
 	for _, ep := range ghKeyEndpoints {
 		out, err := e.gh.Run(ctx, "api", "--paginate", ep.path)
 		if err != nil {
-			var ce *cli.Error
-			msg := err.Error()
-			if errors.As(err, &ce) {
-				msg = ce.Stderr
-			}
+			msg := ghStderr(err)
 			switch {
 			case errors.Is(err, exec.ErrNotFound):
 				e.status(login, finding.StateUnsupported, "the gh CLI is not installed: GitHub keys not listed (%s)", ghKeysURL)
@@ -450,7 +464,7 @@ func githubKeys(ctx context.Context, e *env, login string) {
 	}
 }
 
-// parseGitHubKeys reads `gh api --paginate` output, which concatenates one JSON array per page.
+// parseGitHubKeys reads `gh api --paginate`, which concatenates one JSON array per page.
 func parseGitHubKeys(out []byte) ([]ghKey, error) {
 	var all []ghKey
 	dec := json.NewDecoder(bytes.NewReader(out))

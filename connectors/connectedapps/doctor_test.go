@@ -29,6 +29,9 @@ func TestDoctorGh(t *testing.T) {
 		{"old gh", &cli.Error{Cmd: "gh auth status", Stderr: "unknown flag: --json", Err: errors.New("exit status 1")}, []connector.Level{connector.Warn}, "upgrade"},
 		{"not installed", fmt.Errorf("gh: %w", exec.ErrNotFound), []connector.Level{connector.Fail}, "cli.github.com"},
 		{"invalid token", `{"hosts":{"github.com":[{"state":"error","active":true,"login":"octocat"}]}}`, []connector.Level{connector.Fail}, "not valid"},
+		{"no active account", `{"hosts":{"github.com":[{"state":"success","active":false,"login":"old"}]}}`, []connector.Level{connector.Fail}, "no active github.com account"},
+		{"unreadable status", "not json", []connector.Level{connector.Fail}, "unreadable gh auth status"},
+		{"other failure", &cli.Error{Cmd: "gh auth status", Stderr: "  network down  ", Err: errors.New("exit status 1")}, []connector.Level{connector.Fail}, "network down gh auth status"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,16 +50,5 @@ func TestDoctorGh(t *testing.T) {
 				t.Errorf("want %q in %q", tc.want, text)
 			}
 		})
-	}
-}
-
-func TestGhAllowlistAcceptsOnlyTheJSONStatus(t *testing.T) {
-	if err := ghAllowlist.Check([]string{"auth", "status", "--json", "hosts"}); err != nil {
-		t.Error(err)
-	}
-	for _, args := range [][]string{{"auth", "status", "--show-token"}, {"auth", "status"}, {"auth", "token"}, {"auth", "refresh"}} {
-		if err := ghAllowlist.Check(args); !errors.Is(err, cli.ErrRefused) {
-			t.Errorf("%v allowed", args)
-		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -29,7 +30,7 @@ func dropboxFake(body string) *fakeBrowser {
 	p := map[string]any{"url": dropboxURL, "text": "View Dropbox content", "fetched": true}
 	b := &fakeBrowser{pages: map[string]any{dropboxURL: p}}
 	if body != "" {
-		b.responses = map[string]*response{dropboxURL: {status: 200, body: []byte(body)}}
+		b.responses = map[string]*cdp.Response{dropboxURL: {Status: 200, Body: []byte(body)}}
 	}
 	return b
 }
@@ -41,12 +42,12 @@ func TestDropboxReadsTheAppListResponse(t *testing.T) {
 	if len(b.opened) != 1 {
 		t.Fatalf("opened %v: Dropbox must be read from the list page alone", b.opened)
 	}
-	all, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	all, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	if strings.Contains(string(all), "SECRET-TOKEN") {
 		t.Fatal("a token reached the output")
 	}
-	if len(rec.findings) != 8 {
-		t.Fatalf("%d findings, want seven recent apps and one batch", len(rec.findings))
+	if len(rec.Findings) != 8 {
+		t.Fatalf("%d findings, want seven recent apps and one batch", len(rec.Findings))
 	}
 	for _, c := range []struct {
 		name  string
@@ -83,10 +84,10 @@ func TestDropboxReadsTheAppListResponse(t *testing.T) {
 	if team := rec.byName(t, "Team Archiver"); team.Evidence["team_app"] != true {
 		t.Errorf("team evidence %+v", team.Evidence)
 	}
-	if peek := rec.byName(t, "Peek"); peek.CreatedAt != nil || rec.findings[6].Resource.Name != "Peek" {
-		t.Errorf("an undated app is listed last, after the dated ones: %v", rec.findings[6].Resource.Name)
+	if peek := rec.byName(t, "Peek"); peek.CreatedAt != nil || rec.Findings[6].Resource.Name != "Peek" {
+		t.Errorf("an undated app is listed last, after the dated ones: %v", rec.Findings[6].Resource.Name)
 	}
-	batch := rec.findings[7]
+	batch := rec.Findings[7]
 	if batch.Resource.Type != "dropbox_old_apps" || batch.Severity != finding.SevHigh ||
 		batch.Title != "Disconnect 1 Dropbox app linked before November 2016" || !strings.Contains(batch.Remediation.Summary, "Old Uploader") {
 		t.Errorf("batch: %s %s %q %q", batch.Resource.Type, batch.Severity, batch.Title, batch.Remediation.Summary)
@@ -111,15 +112,15 @@ func TestDropboxStates(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			rec := run(t, c.b, nil, "dropbox")
-			if d := rec.detail("dropbox", c.state); !strings.Contains(d, c.detail) || len(rec.findings) != 0 || len(rec.statuses) != 1 {
-				t.Errorf("statuses %+v findings %d", rec.statuses, len(rec.findings))
+			if d := rec.detail("dropbox", c.state); !strings.Contains(d, c.detail) || len(rec.Findings) != 0 || len(rec.Statuses) != 1 {
+				t.Errorf("statuses %+v findings %d", rec.Statuses, len(rec.Findings))
 			}
 		})
 	}
 }
 
 func TestDropboxReadyWaitsForTwoReadsOfTheFetchedList(t *testing.T) {
-	ready := dropboxReady()
+	ready := readyWhen(dropboxReady())
 	fetched, _ := json.Marshal(fetchPage{URL: dropboxURL, Fetched: true})
 	loading, _ := json.Marshal(fetchPage{URL: dropboxURL})
 	for i, c := range []struct {
