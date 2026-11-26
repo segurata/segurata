@@ -55,6 +55,25 @@ func TestKeyIsCreatedPrivateAndStable(t *testing.T) {
 	}
 }
 
+// A run that starts while another is creating the key must read the whole key, never a file that
+// exists but is still empty.
+func TestCreateNeverExposesAHalfWrittenKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fingerprint.key")
+	first, err := create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := create(path) // lost the race: the key is already there
+	if err != nil || second.Of("x") != first.Of("x") {
+		t.Fatalf("second create: %v, same key %v", err, second.Of("x") == first.Of("x"))
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("left %d files behind, want only the key", len(entries))
+	}
+}
+
 func TestOpenNeverCreates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fingerprint.key")
 	if _, err := Open(path); !errors.Is(err, fs.ErrNotExist) {
