@@ -161,6 +161,32 @@ class MappingTest(unittest.TestCase):
         self.assertEqual(prowler.classify("google.auth.exceptions.RefreshError: invalid_grant"), "reauth")
         self.assertEqual(prowler.classify("<HttpError 401 when requesting https://x returned UNAUTHENTICATED>"), "reauth")
         self.assertEqual(prowler.classify("ValueError: snapshot 140137 not found in 2026-11-24T14:03"), "error")
+        self.assertEqual(prowler.classify("<HttpError 403 when requesting https://x returned \"Permission denied on resource\">"), "denied")
+        self.assertEqual(prowler.classify("PermissionError: [Errno 13] Permission denied: '/tmp/out/prowler.log'"), "error",
+                         "a local file error is no cloud refusal")
+
+    def test_log_problems(self):
+        def call(host, path, body):
+            return "<HttpError 403 when requesting https://%s.googleapis.com/%s?alt=json returned \"%s\">" % (host, path, body)
+        disabled_api = call("dataproc", "v1/projects/%s/regions/-/clusters" % ALPHA,
+                            "Cloud Dataproc API has not been used in project 123456789012 before or it is disabled. "
+                            "Details: [{'reason': 'SERVICE_DISABLED'}]")
+        cases = {
+            "disabled API, Prowler's own line": (
+                "dataproc API has not been used in project %s before or it is disabled." % ALPHA, ({"dataproc"}, set(), set())),
+            "disabled API, other project": (
+                "dataproc API has not been used in project %s before or it is disabled." % BETA, (set(), set(), set())),
+            "403 for a disabled API": (disabled_api, ({"dataproc"}, set(), set())),
+            "403 without billing": (call("container", "v1/projects/%s/locations/-/clusters" % ALPHA,
+                                         "This API method requires billing to be enabled."), (set(), {"container"}, set())),
+            "403 reading an API state": (call("serviceusage", "v1/projects/%s/services/compute.googleapis.com" % ALPHA,
+                                              "Permission denied"), (set(), set(), {"compute"})),
+            "403 on a call": (call("storage", "storage/v1/b", "denied"), (set(), set(), {"storage"})),
+            "403 at organization level": (call("essentialcontacts", "v1/organizations/123/contacts", "denied"), (set(), set(), set())),
+        }
+        for name, (text, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(prowler.log_problems(text, ALPHA), want)
 
     def test_severity_min_filters_and_narrows_the_run(self):
         config = prowler.Config({"severity_min": "high"})

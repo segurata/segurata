@@ -121,11 +121,14 @@ READ_COMMANDS = (
 
 DISABLED_API = re.compile(r"([\w.-]+) API has not been used in project ([^\s\"]+) before or it is disabled")
 DENIED_CALL = re.compile(r"HttpError 403 when requesting https://([a-z0-9-]+)\.googleapis\.com/(\S*)")
-# Google answers 403 to calls on a project with billing disabled, where nothing can run.
+# Google answers 403 to calls on a project with billing disabled, or to an API that is disabled,
+# where there is nothing to check.
 BILLING_OFF = re.compile(r"check billing account associated|requires billing to be enabled")
+API_OFF = re.compile(r"SERVICE_DISABLED|API has not been used in project")
 SERVICEUSAGE_TARGET = re.compile(r"services/([a-z0-9-]+)\.googleapis\.com")
 TOKEN_LIKE = re.compile(r"ya29\.[A-Za-z0-9_\-.]+")
-DENIED = re.compile(r"HttpError 403|\b403 Forbidden|PERMISSION_DENIED|[Pp]ermission denied|does not have permission|"
+# "(?<!\] )" leaves out Python's local "PermissionError: [Errno 13] Permission denied".
+DENIED = re.compile(r"HttpError 403|\b403 Forbidden|PERMISSION_DENIED|(?<!\] )[Pp]ermission denied|does not have permission|"
                     r"GCPNoAccesibleProjectsError|No (Input )?Project IDs (are active or )?can be accessed")
 REAUTH = re.compile(r"HttpError 401|\b401 Unauthorized|invalid_grant|UNAUTHENTICATED|Reauthentication|"
                     r"does not have any valid credentials|invalid authentication credentials")
@@ -580,6 +583,9 @@ def log_problems(text, project):
     for line in text.splitlines():
         for host, path in DENIED_CALL.findall(line):
             if "organizations/" in path:
+                continue
+            if host != "serviceusage" and API_OFF.search(line):
+                disabled.add(host)
                 continue
             target = SERVICEUSAGE_TARGET.search(path) if host == "serviceusage" else None
             (unbilled if BILLING_OFF.search(line) else refused).add(target.group(1) if target else host)
