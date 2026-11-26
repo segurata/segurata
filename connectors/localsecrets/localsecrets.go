@@ -22,6 +22,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/homepath"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -102,7 +103,7 @@ type settings struct {
 func parseSettings(cfg map[string]any, home string) (settings, error) {
 	s := settings{reposRoot: filepath.Join(home, "src"), workers: defaultWorkers, timeout: defaultTimeout, gitCache: true}
 	if v, ok := cfg["repos_root"].(string); ok && v != "" {
-		s.reposRoot = expandHome(v, home)
+		s.reposRoot = homepath.Expand(v, home)
 	}
 	if v, ok := cfg["skip_git_history"].(bool); ok {
 		s.skipHistory = v
@@ -145,16 +146,6 @@ func parseSettings(cfg map[string]any, home string) (settings, error) {
 		s.timeout = d
 	}
 	return s, nil
-}
-
-func expandHome(p, home string) string {
-	if p == "~" {
-		return home
-	}
-	if strings.HasPrefix(p, "~/") {
-		return filepath.Join(home, p[2:])
-	}
-	return p
 }
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
@@ -286,12 +277,7 @@ func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fi
 
 func (s *scan) h(p string) string { return filepath.Join(s.home, p) }
 
-func (s *scan) tilde(p string) string {
-	if p == s.home || strings.HasPrefix(p, s.home+string(filepath.Separator)) {
-		return "~" + p[len(s.home):]
-	}
-	return p
-}
+func (s *scan) tilde(p string) string { return homepath.Shorten(p, s.home) }
 
 var transcriptDirs = []string{".claude/projects", ".claude/history.jsonl", ".codex/sessions", ".codex/history.jsonl", ".cursor/projects", ".gemini/tmp"}
 var historyFiles = []string{".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".node_repl_history", ".psql_history", ".mysql_history", ".irb_history", ".sqlite_history", ".lesshst"}

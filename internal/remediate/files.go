@@ -10,6 +10,7 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/homepath"
 )
 
 // files applies the generic file actions, which belong to the core rather than to a connector.
@@ -99,7 +100,7 @@ func (files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan
 
 func (fs files) path(f finding.Finding) (string, error) {
 	p, _ := f.Evidence["path"].(string)
-	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+	if strings.HasPrefix(p, "~/") {
 		home := fs.home
 		if home == nil {
 			home = os.UserHomeDir
@@ -108,7 +109,7 @@ func (fs files) path(f finding.Finding) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		p = filepath.Join(h, rest)
+		p = homepath.Expand(p, h)
 	}
 	if !filepath.IsAbs(p) {
 		return "", errors.New("the finding has no absolute evidence.path to change")

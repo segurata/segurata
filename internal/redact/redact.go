@@ -24,6 +24,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/homepath"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
@@ -102,7 +103,10 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 		s.only = it
 	}
 	if o.path != "" {
-		s.prefix = filepath.Clean(expandHome(o.path, t.Home()))
+		s.prefix = homepath.Expand(o.path, t.Home())
+		if abs, err := filepath.Abs(s.prefix); err == nil {
+			s.prefix = abs
+		}
 	}
 
 	lines, err := t.Lines(nil)
@@ -178,19 +182,6 @@ func (c CLI) parse(args []string) (options, bool) {
 		}
 	}
 	return o, true
-}
-
-func expandHome(p, home string) string {
-	if p == "~" {
-		return home
-	}
-	if strings.HasPrefix(p, "~/") {
-		return filepath.Join(home, p[2:])
-	}
-	if abs, err := filepath.Abs(p); err == nil {
-		return abs
-	}
-	return p
 }
 
 type selection struct {

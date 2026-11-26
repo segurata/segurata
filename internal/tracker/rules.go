@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/homepath"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -117,10 +118,8 @@ func ownersSuffix(owners []attribution.Owner) string {
 
 // homePath writes a path inside the home directory as ~/…, as findings and locations keep paths.
 func homePath(p string) string {
-	if home, err := os.UserHomeDir(); err == nil && (p == home || strings.HasPrefix(p, home+"/")) {
-		return "~" + p[len(home):]
-	}
-	return p
+	home, _ := os.UserHomeDir()
+	return homepath.Shorten(p, home)
 }
 
 func under(p, prefix string) bool {

@@ -14,6 +14,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/liveness"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/homepath"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -357,7 +358,7 @@ func (s *scan) recoverValue(ctx context.Context, ev secretrisk.Evidence) (string
 	if !ok || h.Len == 0 || ev.Repo == "" {
 		return "", false
 	}
-	repo := expandHome(ev.Repo, s.home)
+	repo := homepath.Expand(ev.Repo, s.home)
 	object := ev.Commit + ":" + filepath.ToSlash(strings.TrimPrefix(ev.Path, ev.Repo+"/"))
 	git := guardGit(s.c.Git)
 	size, err := git.Run(ctx, gitDirArg(repo), "cat-file", "-s", object)

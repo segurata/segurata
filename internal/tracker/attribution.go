@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/homepath"
 )
 
 // ownerEmail is a variable so tests stay hermetic. See docs/architecture.md, "Attribution".
@@ -112,22 +112,14 @@ func (t *Tracker) attribute(owned attribution.Owned) {
 type repoOwners map[string]string
 
 func (r repoOwners) of(p string) string {
-	dir := filepath.Dir(expandHome(p))
+	home, _ := os.UserHomeDir()
+	dir := filepath.Dir(homepath.Expand(p, home))
 	if o, ok := r[dir]; ok {
 		return o
 	}
 	o, _ := attribution.RepoOwner(dir)
 	r[dir] = o
 	return o
-}
-
-func expandHome(p string) string {
-	if rest, ok := strings.CutPrefix(p, "~/"); ok {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, rest)
-		}
-	}
-	return p
 }
 
 func (t *Tracker) ownerCounts(keep func(*Item) bool) map[attribution.Owner]int {
