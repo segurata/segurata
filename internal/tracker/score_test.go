@@ -47,17 +47,17 @@ func TestDoNextRanksByBlastRadius(t *testing.T) {
 	now := t0.Add(time.Hour)
 	for _, h := range high {
 		for _, l := range low {
-			if hs, ls := tr.Score(h, now), tr.Score(l, now); hs.Total <= ls.Total {
-				t.Errorf("%q (%s) should outrank %q (%s)", h.Title, hs.Explain(), l.Title, ls.Explain())
+			if hs, ls := tr.score(h, now), tr.score(l, now); hs.Total <= ls.Total {
+				t.Errorf("%q (%s) should outrank %q (%s)", h.Title, hs.explain(), l.Title, ls.explain())
 			}
 		}
 	}
-	if s := tr.Score(high[0], now).Explain(); s != "27.0 = impact 6 (P1) × blast 3 (one stolen password opens every repository of those orgs) ÷ effort 1 (one change) × quick win 1.5 (one fix closes 5 findings)" {
+	if s := tr.score(high[0], now).explain(); s != "27.0 = impact 6 (P1) × blast 3 (one stolen password opens every repository of those orgs) ÷ effort 1 (one change) × quick win 1.5 (one fix closes 5 findings)" {
 		t.Errorf("2FA explained as %q", s)
 	}
 
 	var b bytes.Buffer
-	if err := doc.Render(&b, tr.Status("tracker.json", now, View{Explain: true}), doc.Text); err != nil {
+	if err := doc.Render(&b, tr.status("tracker.json", now, View{Explain: true}), doc.Text); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -85,16 +85,16 @@ func TestBlastAndConfidenceComeFromTheFindingsNotTheTitle(t *testing.T) {
 	now := t0.Add(time.Hour)
 	worded := scoredItem(tr, KindFix, "finding:w", "google", "Account x is the login for 7 services; no Time Machine backup; can delete your repositories", finding.SevHigh, "x", "", "", 1)
 	declared := scoredItem(tr, KindReview, "finding:d", "connected-apps", "gh can do things", finding.SevHigh, "github_oauth_app", "", finding.BlastAllRepos, 1)
-	if f := tr.Score(worded, now).factor("blast"); f.Value != 1 {
+	if f := tr.score(worded, now).factor("blast"); f.Value != 1 {
 		t.Errorf("a title moved the blast: %+v", f)
 	}
-	if f := tr.Score(declared, now).factor("blast"); f.Value != 1.5 || f.Why != "write access to every repository you own" {
+	if f := tr.score(declared, now).factor("blast"); f.Value != 1.5 || f.Why != "write access to every repository you own" {
 		t.Errorf("declared blast: %+v", f)
 	}
 	// The worst blast of an item's findings counts.
 	mixed := scoredItem(tr, KindReview, "finding:m", "connected-apps", "apps", finding.SevHigh, "x_app", "", finding.BlastPosts, 2)
 	mixed.Findings[1].Blast = finding.BlastAllRepos
-	if f := tr.Score(mixed, now).factor("blast"); f.Value != 1.5 {
+	if f := tr.score(mixed, now).factor("blast"); f.Value != 1.5 {
 		t.Errorf("mixed blast: %+v", f)
 	}
 
@@ -102,14 +102,14 @@ func TestBlastAndConfidenceComeFromTheFindingsNotTheTitle(t *testing.T) {
 	for i := range possible.Findings {
 		possible.Findings[i].Unconfirmed = true
 	}
-	if f := tr.Score(possible, now).factor("confidence"); f.Value != 0.7 || f.Why != "possibly not a real problem" {
+	if f := tr.score(possible, now).factor("confidence"); f.Value != 0.7 || f.Why != "possibly not a real problem" {
 		t.Errorf("unconfirmed dumps: %+v", f)
 	}
 	possible.Findings[0].Unconfirmed = false
-	if f := tr.Score(possible, now).factor("confidence"); f.Value != 1 {
+	if f := tr.score(possible, now).factor("confidence"); f.Value != 1 {
 		t.Errorf("one confirmed dump: %+v", f)
 	}
-	if f := tr.Score(scoredItem(tr, KindFix, "finding:p", "x", "Possible thing", finding.SevHigh, "x", "", "", 1), now).factor("confidence"); f.Value != 1 {
+	if f := tr.score(scoredItem(tr, KindFix, "finding:p", "x", "Possible thing", finding.SevHigh, "x", "", "", 1), now).factor("confidence"); f.Value != 1 {
 		t.Errorf("a title moved the confidence: %+v", f)
 	}
 
@@ -131,18 +131,18 @@ func TestDecisionThatUnblocksItemsIsADoNextEntry(t *testing.T) {
 	for _, r := range []string{"a", "b", "c"} {
 		scoredItem(tr, KindFix, "group:local-secrets|data_dump|repo:~/src/"+r, "data-dumps", "2 database dumps in the git history of ~/src/"+r, finding.SevHigh, "data_dump", "", finding.BlastPersonalData, 2)
 	}
-	d := tr.AddDecision("decide:purge-data-dumps", "Purge the data dumps from git history?", []string{"yes", "no"}, t0)
+	d := tr.addDecision("decide:purge-data-dumps", "Purge the data dumps from git history?", []string{"yes", "no"}, t0)
 	now := t0.Add(time.Hour)
-	s := tr.Score(d, now)
-	if f := s.factor("quick win"); f.Why != "answering unblocks 3 items" || s.Total <= tr.Score(tr.Items[1], now).Total {
-		t.Errorf("decision score %s", s.Explain())
+	s := tr.score(d, now)
+	if f := s.factor("quick win"); f.Why != "answering unblocks 3 items" || s.Total <= tr.score(tr.Items[1], now).Total {
+		t.Errorf("decision score %s", s.explain())
 	}
-	dump := tr.Score(tr.Items[1], now)
+	dump := tr.score(tr.Items[1], now)
 	if f := dump.factor("effort"); f.Value != 6 || !strings.Contains(f.Why, "waits on decision "+d.ID) {
 		t.Errorf("blocked dump effort %+v", f)
 	}
 	var b bytes.Buffer
-	_ = doc.Render(&b, tr.Status("tracker.json", now, View{}), doc.Text)
+	_ = doc.Render(&b, tr.status("tracker.json", now, View{}), doc.Text)
 	if out := b.String(); !strings.Contains(out, "Decide: Purge the data dumps from git history?") || !strings.Contains(out, "Unblocks: 3 items (P1 3)") {
 		t.Errorf("status:\n%s", out)
 	}
@@ -160,7 +160,7 @@ func TestSecretsEntryNamesTheNextSecret(t *testing.T) {
 	key.Findings = []FindingRef{{ID: "aws1", Connector: "aws", Title: "Long-lived AWS access key; aws sts says it works for account 1"}}
 	key.derive()
 	var b bytes.Buffer
-	_ = doc.Render(&b, tr.Status("tracker.json", t0.Add(time.Hour), View{}), doc.Text)
+	_ = doc.Render(&b, tr.status("tracker.json", t0.Add(time.Hour), View{}), doc.Text)
 	out := b.String()
 	for _, want := range []string{"Rotate 2 P0 secrets", "Next secret: AWS access key id (signs nothing without its secret key) AKIA…(20) in r:k.py (" + key.ID + ")",
 		"Why: live key, leaked in r:k.py; live: aws: Long-lived AWS access key", "Then: segurata rotations next --priority P0"} {

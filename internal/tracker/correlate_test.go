@@ -68,7 +68,7 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	if !strings.Contains(strings.Join(rot.Secret.Reasons, "; "), "live: aws: Long-lived AWS access key for profile \"default\" stored in plain text; aws sts says it works for account 012345678901") {
 		t.Errorf("live evidence missing from the reasons: %q", rot.Secret.Reasons)
 	}
-	if len(rot.Findings) != 1 || rot.Findings[0].Match != byFingerprint || !rot.LiveAndLeaked() {
+	if len(rot.Findings) != 1 || rot.Findings[0].Match != byFingerprint || !rot.liveAndLeaked() {
 		t.Errorf("rotate item refs: %+v", rot.Findings)
 	}
 	if awsItem.Status != Merged || awsItem.MergedInto != rot.ID || len(awsItem.Findings) != 0 || rep.Merged != 1 {
@@ -95,7 +95,7 @@ func TestConnectorCredentialMergesIntoTheRotateItem(t *testing.T) {
 	if awsItem.Status != Open || awsItem.MergedInto != "" || len(awsItem.Findings) != 1 {
 		t.Errorf("aws item after the key changed: %s %q %d refs", awsItem.Status, awsItem.MergedInto, len(awsItem.Findings))
 	}
-	if len(rot.live()) != 0 || rot.LiveAndLeaked() {
+	if len(rot.live()) != 0 || rot.liveAndLeaked() {
 		t.Errorf("the rotated key is still live: %+v", rot.Findings)
 	}
 }
@@ -112,9 +112,9 @@ func TestProofOfALiveKeyReopensAnIgnoredSecret(t *testing.T) {
 	writeRun(t, out, t0, "local-secrets.jsonl", leak(cred, t0), okStatus(SecretsConnector, "local"))
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
 	rot := mustRotate(t, tr, awsFP[:8])
-	d := tr.AddDecision("manual:legacy", "Is legacyco dead?", []string{"yes"}, t0)
-	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: EffectIgnore, Scope: "path:~/src/legacyco"}}
-	if _, closed, err := tr.DecideWithEffects(d, t0.Add(2*time.Minute), "yes", nil, nil, nil); err != nil || closed != 1 || rot.Status != Ignored {
+	d := tr.addDecision("manual:legacy", "Is legacyco dead?", []string{"yes"}, t0)
+	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: effectIgnore, Scope: "path:~/src/legacyco"}}
+	if _, closed, err := tr.decideWithEffects(d, t0.Add(2*time.Minute), "yes", nil, nil, nil); err != nil || closed != 1 || rot.Status != Ignored {
 		t.Fatalf("decide: %d %v %s", closed, err, rot.Status)
 	}
 
@@ -140,7 +140,7 @@ func TestProofOfALiveKeyReopensAnIgnoredSecret(t *testing.T) {
 	}
 
 	// Ignored by hand after the proof: it stays ignored.
-	if err := rot.Ignore(day2.Add(time.Hour), "a canary key, live on purpose"); err != nil {
+	if err := rot.ignore(day2.Add(time.Hour), "a canary key, live on purpose"); err != nil {
 		t.Fatal(err)
 	}
 	syncOrDie(t, tr, out, day2.Add(2*time.Hour))
@@ -149,7 +149,7 @@ func TestProofOfALiveKeyReopensAnIgnoredSecret(t *testing.T) {
 	}
 
 	// Accepted: stays accepted.
-	if err := rot.Accept(day2.Add(3*time.Hour), "kept until the migration", ""); err != nil {
+	if err := rot.accept(day2.Add(3*time.Hour), "kept until the migration", ""); err != nil {
 		t.Fatal(err)
 	}
 	day3 := day2.Add(24 * time.Hour)
@@ -270,7 +270,7 @@ func TestAcceptedConnectorFindingIsNotClaimed(t *testing.T) {
 	tr := New(t0)
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
 	it := byTitle(t, tr, "Long-lived AWS access key")
-	if err := it.Accept(t0.Add(2*time.Minute), "kept on purpose", ""); err != nil {
+	if err := it.accept(t0.Add(2*time.Minute), "kept on purpose", ""); err != nil {
 		t.Fatal(err)
 	}
 	day2 := t0.Add(24 * time.Hour)

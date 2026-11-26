@@ -2,7 +2,7 @@ package tracker
 
 import (
 	"fmt"
-	"os"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -12,17 +12,9 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// Correlation: a connector that reports a credential (the aws key in ~/.aws/credentials, a GCP
-// service-account key file, an OpenAI or OpenRouter key) and local-secrets, which found the same
-// secret (in that file, in git history, in a transcript), describe one problem. The rotate item owns
-// it: the connector's finding is attached to it as evidence that the secret is live, raises its
-// priority to the worse of the two, and the connector's own item closes as merged into it. A live
-// key that also leaked out of the machine ranks first. See docs/architecture.md, "Correlation".
-
-// credential says which connector findings stand for a secret, which rotate items they may match
-// (by the secrets' service; empty matches any), the evidence keys holding the redacted hint and
-// the file, and, for a provider's key, whether the finding names the key (facts) and the evidence
-// key of its spend this month.
+// credential says which connector findings stand for a secret that local-secrets also found: the
+// rotate item owns it, and the finding is proof the secret is live. See docs/architecture.md,
+// "Correlation".
 type credential struct {
 	connector string
 	resources []string
@@ -51,8 +43,7 @@ func credentialFor(f finding.Finding) *credential {
 	return nil
 }
 
-// Ways a credential matched a secret, strongest first. byPossible is a hint that fits more than
-// one secret: recorded on each of them, merged into none.
+// Ways a credential matched a secret, strongest first. byPossible fits several: merged into none.
 const (
 	byFingerprint = "fingerprint"
 	byHint        = "hint"
@@ -60,19 +51,16 @@ const (
 	byPossible    = "possible"
 )
 
-// How sure a match is: certain by fingerprint; high by a hint that shows four or more characters of
-// the value's end and the same known length on both sides; medium by a shorter tail, a length one
-// side does not give, or the file.
+// How sure a match is: certain by fingerprint, high by a hint with four or more tail characters
+// and the same length on both sides, medium otherwise.
 const (
 	confCertain = "certain"
 	confHigh    = "high"
 	confMedium  = "medium"
 )
 
-// confRank orders match confidences.
 var confRank = map[string]int{confMedium: 1, confHigh: 2, confCertain: 3}
 
-// hintConfidence is how sure a fit between two hints is.
 func hintConfidence(a, b secretrisk.Hint) string {
 	if a.Len > 0 && b.Len > 0 && min(len(a.Tail), len(b.Tail)) >= 4 {
 		return confHigh
@@ -80,14 +68,12 @@ func hintConfidence(a, b secretrisk.Hint) string {
 	return confMedium
 }
 
-// claim is a connector finding (or a secret a connector signs in with) that stands for the secret
-// of a rotate item.
+// claim is a connector finding, or a secret a connector signs in with, that is a rotate item's.
 type claim struct {
 	item *Item
 	ref  FindingRef
 }
 
-// secretIndex finds rotate items by fingerprint, location path and service.
 type secretIndex struct {
 	byFP      map[string]*Item
 	byPath    map[string][]*Item
@@ -113,20 +99,15 @@ func (t *Tracker) secretIndex() secretIndex {
 	return x
 }
 
-// candidate is a rotate item a credential finding may stand for, and how sure that is.
 type candidate struct {
 	item       *Item
 	confidence string
 }
 
-// match finds the rotate items a credential finding may stand for: the one with its fingerprint (a
-// finding that carries one matches nothing else: the key in the file may have been rotated since
-// the leak); else, among items of its services, those whose redacted hint fits the finding's and
-// shows at least three characters of the value's end (enough to tell keys apart); else the most
-// urgent of those in the file the finding names whose hint, when both have one, fits. Only a hint
-// can give more than one candidate: two secrets whose hints both fit are told apart by nothing the
-// provider shows, so the caller merges into neither. A file can hold several parts of one
-// credential (ADC's client secret and refresh token), so there the most urgent stands for it.
+// match finds the rotate items a credential finding may stand for: by fingerprint only, when it
+// has one (the key in the file may have been rotated since the leak); else by a hint showing three
+// or more tail characters; else the most urgent secret in its file, since a file can hold several
+// parts of one credential. Only a hint gives several candidates.
 func (x secretIndex) match(f finding.Finding, c *credential) ([]candidate, string) {
 	str := func(k string) string { s, _ := f.Evidence[k].(string); return s }
 	if fp := str("fingerprint"); fp != "" {
@@ -181,22 +162,8 @@ func mostUrgent(items []*Item) *Item {
 	return items[0]
 }
 
-// homePath writes an absolute path under the home directory as ~/…, the way locations are kept.
-func homePath(p string) string {
-	if p == "" || strings.HasPrefix(p, "~/") {
-		return p
-	}
-	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(p, home+"/") {
-		return "~/" + strings.TrimPrefix(p, home+"/")
-	}
-	return p
-}
-
-// correlate finds, in the folded runs, every credential finding that stands for a rotate item's
-// secret, and every secret a connector signed in with (run_end's secret fingerprints) that is one.
-// A finding whose hint fits several secrets is merged into none: it comes back in possible, once
-// per secret it may be. A finding whose item the owner accepted stays there: that risk was kept on
-// purpose.
+// correlate finds the credential findings and connector sign-ins that are a rotate item's secret.
+// A finding whose item the owner accepted stays there.
 func (t *Tracker) correlate(folded map[string]*run) (claims map[string]claim, possible []claim) {
 	x := t.secretIndex()
 	accepted := map[string]bool{}
@@ -226,7 +193,7 @@ func (t *Tracker) correlate(folded map[string]*run) (claims map[string]claim, po
 				}
 			}
 		}
-		for _, name := range sortedKeys(r.fingerprints) {
+		for _, name := range slices.Sorted(maps.Keys(r.fingerprints)) {
 			it := x.byFP[r.fingerprints[name]]
 			if it == nil {
 				continue
@@ -244,8 +211,6 @@ func (t *Tracker) correlate(folded map[string]*run) (claims map[string]claim, po
 	return claims, possible
 }
 
-// keyFactsOf is what a provider's key finding says about the key: its name, last use and spend
-// this month. Nil for credentials that are not a provider's keys.
 func keyFactsOf(f finding.Finding, c *credential) *KeyFacts {
 	if !c.facts {
 		return nil
@@ -257,17 +222,7 @@ func keyFactsOf(f finding.Finding, c *credential) *KeyFacts {
 	return k
 }
 
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// attachLive puts on each rotate item the claims and possible matches of this sync, replacing the
-// ones the same connector instances made before; those of instances not folded now stay.
+// attachLive puts this sync's claims on the rotate items, replacing those of the folded instances.
 func (t *Tracker) attachLive(claims map[string]claim, possible []claim, folded map[string]*run) {
 	live, maybe := map[*Item][]FindingRef{}, map[*Item][]FindingRef{}
 	for _, c := range claims {
@@ -286,8 +241,6 @@ func (t *Tracker) attachLive(claims map[string]claim, possible []claim, folded m
 	}
 }
 
-// replaceRefs keeps the refs of instances not folded now, adds this sync's, sorted by id; nil when
-// none are left.
 func replaceRefs(old, now []FindingRef, folded map[string]*run) []FindingRef {
 	kept := old[:0]
 	for _, r := range old {
@@ -303,7 +256,6 @@ func replaceRefs(old, now []FindingRef, folded map[string]*run) []FindingRef {
 	return refs
 }
 
-// claimedBy maps each claimed finding to the rotate item that took it.
 func claimedBy(claims map[string]claim) map[string]string {
 	out := make(map[string]string, len(claims))
 	for id, c := range claims {
@@ -312,10 +264,8 @@ func claimedBy(claims map[string]claim) map[string]string {
 	return out
 }
 
-// moveRefs takes the findings that now belong to another item (moved: finding id to item id) out
-// of this one: a rotate item that owns the same secret, or the group a finding's rule now puts it
-// in. An item left with nothing reported closes as merged into the item that took its finding,
-// unless the owner closed it already.
+// moveRefs takes out the findings another item now owns (moved: finding id to item id); an item
+// left with nothing reported merges into the one that took them.
 func (it *Item) moveRefs(moved map[string]string, now time.Time) bool {
 	into := ""
 	kept := it.Findings[:0]
@@ -335,9 +285,8 @@ func (it *Item) moveRefs(moved map[string]string, now time.Time) bool {
 	return it.mergeInto(into, now, "merged into "+into+", which owns it now")
 }
 
-// mergeInto closes the item as merged into the item with id into, unless it is closed already:
-// settled by the owner (ignored, accepted), no problem (reclassified, expected) or merged. It
-// reports whether it merged.
+// mergeInto closes the item as merged into into, unless it is closed already, and reports whether
+// it merged.
 func (it *Item) mergeInto(into string, now time.Time, detail string) bool {
 	switch it.Status {
 	case Open, InProgress, Snoozed, Done:
@@ -350,24 +299,15 @@ func (it *Item) mergeInto(into string, now time.Time, detail string) bool {
 	return true
 }
 
-// reopenMerged opens a merged item whose finding no rotate item claims any more: the credential is
-// not that secret now (the key in the file was rotated, the leaked copy is a different key).
 func (it *Item) reopenMerged(now time.Time) {
 	from := it.MergedInto
 	it.setStatus(now, Open, EvReopened, actAutoReopen, "no longer part of "+from)
 }
 
-// reopenProvenLive opens a rotate item that a connector claims (see correlate) when the proof
-// contradicts how it was closed, since the connector's own item has merged into it and leaving it
-// closed would leave a live key with no open item:
-//   - ignored: the key works, which contradicts "not a real problem". The owner ignoring it again
-//     after the proof sticks.
-//   - done: a connector signs in with the old value itself (a fingerprint match, not a hint or a
-//     path, which the new key in the same file would also fit) in a run after the rotation, so it
-//     was not rotated. Marking it rotated again holds until a later run proves it live again.
-//
-// An accepted one stays: that risk was kept on purpose (the proof still raises its priority). A
-// reclassified one is never claimed.
+// reopenProvenLive opens a rotate item whose proof of life contradicts how it was closed, since
+// the connector's own item merged into it: ignored (ignoring it again after the proof sticks), or
+// done while a later run signs in with the old value itself. Only a fingerprint proves a done item
+// live: the new key in the same file fits a hint or a path too.
 func (it *Item) reopenProvenLive(now time.Time) {
 	var proof []FindingRef
 	var was string
@@ -410,22 +350,11 @@ func (it *Item) reopenProvenLive(now time.Time) {
 	it.setStatus(now, Open, EvReopened, actProvenLive, "proven live by "+strings.Join(labels, ", ")+"; "+was)
 }
 
-// ignoredAfterProof reports whether the item's latest ignore came after a proof that it is live.
 func (it *Item) ignoredAfterProof() bool {
-	ignored := false
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Action {
-		case actIgnore:
-			ignored = true
-		case actProvenLive:
-			return ignored
-		}
-	}
-	return false
+	return it.latestOf(actProvenLive) != "" && it.latestOf(actIgnore, actProvenLive) == actIgnore
 }
 
-// live are the connector findings attached to a rotate item that are still reported: evidence the
-// secret works.
+// live are the connector findings still reported on a rotate item: proof the secret works.
 func (it *Item) live() []FindingRef {
 	var out []FindingRef
 	if it.Kind != KindRotate {
@@ -439,9 +368,7 @@ func (it *Item) live() []FindingRef {
 	return out
 }
 
-// LiveAndLeaked reports whether a connector or the liveness check shows the secret is live and a
-// copy of it left the machine (pushed git history, an agent transcript): the most urgent kind of
-// secret.
-func (it *Item) LiveAndLeaked() bool {
+// liveAndLeaked reports whether the secret is proven live and a copy left the machine.
+func (it *Item) liveAndLeaked() bool {
 	return it.provenLive() && it.worst().Level == secretrisk.Remote
 }

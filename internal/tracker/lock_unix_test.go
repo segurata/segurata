@@ -15,12 +15,12 @@ func TestChangingCommandsTakeTheTrackerLock(t *testing.T) {
 	if _, e, code := x.run(t, "sync", "--out", x.out); code != 0 {
 		t.Fatal(e)
 	}
-	unlock, err := Lock(x.path)
+	unlock, err := lock(x.path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func(w time.Duration) { lockWait = w }(lockWait)
-	lockWait = 100 * time.Millisecond
+	lockWait = 0
 	for _, args := range [][]string{{"note", "T-1", "x"}, {"sync", "--out", x.out}} {
 		if _, e, code := x.run(t, args...); code != 1 || !strings.Contains(e, "in use by another segurata command") {
 			t.Errorf("%v while locked: %d %q", args, code, e)

@@ -22,15 +22,12 @@ import (
 
 // Paths says where the tracker lives.
 type Paths struct {
-	Tracker string // tracker.json
+	Tracker string
 }
 
-// Dir is $SEGURATA_HOME, or ~/.segurata: the tracker and its generated views.
-func Dir() (string, error) { return config.StateDir() }
-
-// DefaultPaths is the tracker in Dir.
+// DefaultPaths is tracker.json in $SEGURATA_HOME or ~/.segurata.
 func DefaultPaths() (Paths, error) {
-	dir, err := Dir()
+	dir, err := config.StateDir()
 	if err != nil {
 		return Paths{}, err
 	}
@@ -47,13 +44,12 @@ func (p Paths) Resolve() (Paths, error) {
 
 // New is an empty tracker with the seeded themes and decisions.
 func New(now time.Time) *Tracker {
-	t := &Tracker{SchemaVersion: SchemaVersion, NextID: 1}
+	t := &Tracker{SchemaVersion: schemaVersion, NextID: 1}
 	t.seed(now)
 	return t
 }
 
-// LoadOrNew loads the tracker, or returns a new one when tracker.json does not exist yet (saved by
-// the first command that changes it).
+// LoadOrNew loads the tracker, or returns a new unsaved one when tracker.json does not exist.
 func LoadOrNew(p Paths, now time.Time) (*Tracker, error) {
 	p, err := p.Resolve()
 	if err != nil {
@@ -66,15 +62,15 @@ func LoadOrNew(p Paths, now time.Time) (*Tracker, error) {
 	return t, err
 }
 
-// LoadFor resolves p and loads the tracker (LoadOrNew). With lock it first takes the tracker lock,
-// held until unlock, for a command that saves what it loaded. unlock is never nil.
-func LoadFor(p Paths, now time.Time, lock bool) (t *Tracker, path string, unlock func(), err error) {
+// LoadFor resolves p and loads the tracker (LoadOrNew), first taking the lock when exclusive.
+// unlock is never nil.
+func LoadFor(p Paths, now time.Time, exclusive bool) (t *Tracker, path string, unlock func(), err error) {
 	unlock = func() {}
 	if p, err = p.Resolve(); err != nil {
 		return nil, "", unlock, err
 	}
-	if lock {
-		if unlock, err = Lock(p.Tracker); err != nil {
+	if exclusive {
+		if unlock, err = lock(p.Tracker); err != nil {
 			return nil, "", func() {}, err
 		}
 	}
@@ -82,9 +78,8 @@ func LoadFor(p Paths, now time.Time, lock bool) (t *Tracker, path string, unlock
 	return t, p.Tracker, unlock, err
 }
 
-// Load reads and validates tracker.json. A missing file is fs.ErrNotExist; a file that does not
-// parse or validate is an error, never an empty tracker, so nothing is lost by a later save. The
-// tracker remembers the bytes it was read from, so Save can tell when another command saved since.
+// Load reads and validates tracker.json. A file that does not parse is an error, never an empty
+// tracker, so a later save cannot lose it.
 func Load(path string) (*Tracker, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -103,16 +98,12 @@ func digest(raw []byte) *[sha256.Size]byte {
 	return &d
 }
 
-// ErrChanged is Save refusing a tracker.json that changed after this tracker was loaded: writing
-// it would drop the other command's change.
-var ErrChanged = errors.New("changed since this command loaded it")
+var errChanged = errors.New("changed since this command loaded it")
 
-// Update loads the tracker at path (a new one when there is none yet), applies fn and saves it,
-// holding the tracker lock throughout, so commands that change the tracker one after another never
-// lose each other's change. fn's error leaves the file alone. Commands that hold the tracker for
-// long (a confirmation, file rewrites) do that work first and record its outcome with Update.
+// Update loads the tracker, applies fn and saves it under the lock; fn's error leaves the file
+// alone. Commands that wait for long (a confirmation, file rewrites) do that first, then Update.
 func Update(path string, now time.Time, fn func(*Tracker) error) error {
-	unlock, err := Lock(path)
+	unlock, err := lock(path)
 	if err != nil {
 		return err
 	}
@@ -127,26 +118,6 @@ func Update(path string, now time.Time, fn func(*Tracker) error) error {
 	return t.Save(path)
 }
 
-// upgrades turns a tracker of schema version n into n+1, on the raw JSON. Each future format
-// change adds one entry; Load applies them in order before decoding.
-var upgrades = map[int]func(map[string]any) error{
-	// 2 adds the statuses reclassified and expected, the top-level rules and decision effects. A
-	// version 1 file holds none of them, so its data carries over as it is; the bump keeps an older
-	// binary from loading a file with values it does not know.
-	1: func(map[string]any) error { return nil },
-	// 3 adds the top-level owned, a rotate item's secret.attribution and a rule's owners; a version 2
-	// file has none, so it carries over as it is.
-	2: func(map[string]any) error { return nil },
-	// 4 adds the status merged with an item's merged_into, a finding ref's type, resource and match,
-	// and the top-level runs; a version 3 file has none, so it carries over as it is.
-	3: func(map[string]any) error { return nil },
-	// 5 adds a location's gone; a version 4 file has none, so it carries over as it is.
-	4: func(map[string]any) error { return nil },
-	// 6 adds a secret's liveness, the history action dead, and attribution facts'
-	// github_logins; a version 5 file has none, so it carries over as it is.
-	5: func(map[string]any) error { return nil },
-}
-
 func parse(raw []byte) (*Tracker, error) {
 	var head struct {
 		SchemaVersion int `json:"schema_version"`
@@ -155,25 +126,10 @@ func parse(raw []byte) (*Tracker, error) {
 		return nil, err
 	}
 	switch v := head.SchemaVersion; {
-	case v > SchemaVersion:
-		return nil, fmt.Errorf("schema_version %d is newer than this binary (%d)", v, SchemaVersion)
+	case v > schemaVersion:
+		return nil, fmt.Errorf("schema_version %d is newer than this binary (%d)", v, schemaVersion)
 	case v < 1:
 		return nil, fmt.Errorf("schema_version %d is not a tracker", v)
-	case v < SchemaVersion:
-		var m map[string]any
-		if err := json.Unmarshal(raw, &m); err != nil {
-			return nil, err
-		}
-		for ; v < SchemaVersion; v++ {
-			if err := upgrades[v](m); err != nil {
-				return nil, fmt.Errorf("upgrading from schema_version %d: %w", v, err)
-			}
-			m["schema_version"] = v + 1
-		}
-		var err error
-		if raw, err = json.Marshal(m); err != nil {
-			return nil, err
-		}
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -181,6 +137,8 @@ func parse(raw []byte) (*Tracker, error) {
 	if err := dec.Decode(&t); err != nil {
 		return nil, err
 	}
+	// Every older schema only lacks fields added since, so it decodes as it is.
+	t.SchemaVersion = schemaVersion
 	return &t, t.validate()
 }
 
@@ -233,11 +191,9 @@ func (t *Tracker) validate() error {
 	return nil
 }
 
-// Save writes the tracker atomically with mode 0600 in a 0700 directory, after copying the file it
-// replaces to tracker.json.bak. It refuses to replace a file that no longer parses (edited by hand,
-// or by another program): that file may hold the only copy of something. It refuses with
-// ErrChanged a file other than the one this tracker was loaded from or last saved (another command
-// saved since, or the file appeared after a new tracker was made): saving would lose that change.
+// Save writes the tracker atomically (0600 in a 0700 directory), keeping the replaced file as
+// tracker.json.bak. It refuses a file that no longer parses, which may hold the only copy of
+// something, and with errChanged one saved since this tracker was loaded.
 func (t *Tracker) Save(path string) error {
 	if err := t.validate(); err != nil {
 		return fmt.Errorf("not saving an invalid tracker: %w", err)
@@ -252,14 +208,14 @@ func (t *Tracker) Save(path string) error {
 			return fmt.Errorf("refusing to overwrite %s: it does not parse (%v); fix it or restore %s.bak", path, perr, path)
 		}
 		if t.read == nil || *digest(old) != *t.read {
-			return fmt.Errorf("%s %w (another segurata command, or an edit, saved it); nothing was written, run it again", path, ErrChanged)
+			return fmt.Errorf("%s %w (another segurata command, or an edit, saved it); nothing was written, run it again", path, errChanged)
 		}
 		if err := statefile.Write(path+".bak", old); err != nil {
 			return fmt.Errorf("backing up %s: %w", path, err)
 		}
 	}
 	sort.SliceStable(t.Items, func(i, j int) bool { return idNumber(t.Items[i].ID) < idNumber(t.Items[j].ID) })
-	t.SchemaVersion = SchemaVersion
+	t.SchemaVersion = schemaVersion
 	raw, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
 		return err

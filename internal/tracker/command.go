@@ -51,36 +51,30 @@ const statusUsage = "usage: segurata status [--theme t] [--kind k] [--priority P
 type CLI struct {
 	Out, Err io.Writer
 	Paths    Paths  // zero means DefaultPaths
-	Config   string // config file with the expected rules; "" means none (and no track expect)
+	Config   string // config file with the expected rules; "" for none
 	Now      func() time.Time
-	// Instances lists the configured connector instances, for status's coverage line; nil lists
-	// only the ones that ran.
+	// Instances lists the configured connector instances for status's coverage line.
 	Instances func() []string
-	// Browser names the connectors that drive the browser (status's segurata signin line); nil
-	// for none.
+	// Browser names the connectors that drive the browser.
 	Browser func(connector string) bool
 
-	// rotations is the usage of `segurata rotations` when Rotations runs a verb; "" for track.
-	rotations string
+	rotations string // `segurata rotations` usage when it runs the verb; "" for track
 }
 
 var (
 	trackVerbs = []string{"list", "show", "add", "sync", "start", "done", "note", "decide", "snooze", "ignore", "reopen", "prioritize", "expect"}
-	// RotationVerbs are the verbs of track that `segurata rotations` runs as its own (see Rotations).
+	// RotationVerbs are the track verbs `segurata rotations` runs as its own.
 	RotationVerbs = []string{"sync", "done", "snooze", "ignore", "reopen"}
-	// pathVerbs take --path instead of an id.
-	pathVerbs = []string{"done", "snooze", "ignore", "reopen"}
+	pathVerbs     = []string{"done", "snooze", "ignore", "reopen"}
 )
 
-// Rotations runs one of RotationVerbs as `segurata rotations`: track's own code, with ids and
-// --path naming secrets only, a sync that refuses to save without a local-secrets run, and usage
-// (the rotations family's) and "rotations" in the messages.
+// Rotations runs one of RotationVerbs as `segurata rotations`: ids and --path name secrets only,
+// and sync refuses to save without a local-secrets run.
 func (c CLI) Rotations(args []string, usage string) int {
 	c.rotations = usage
 	return c.Track(args)
 }
 
-// name is the command family the user typed.
 func (c CLI) name() string {
 	if c.rotations != "" {
 		return "rotations"
@@ -95,12 +89,11 @@ func (c CLI) usage() string {
 	return trackUsage
 }
 
-// find is the item an id names: any item for track, a secret for rotations.
 func (c CLI) find(t *Tracker, ref string) (*Item, error) {
 	if c.rotations != "" {
 		return t.FindRotate(ref)
 	}
-	return t.Find(ref)
+	return t.find(ref)
 }
 
 func (c CLI) fail(err error) int {
@@ -108,13 +101,11 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// multi is a flag given several times.
 type multi []string
 
 func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 
-// set reads a comma-separated flag value.
 func set(s string, upper bool) map[string]bool {
 	m := map[string]bool{}
 	for _, p := range strings.Split(s, ",") {
@@ -176,7 +167,7 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	var require func(SyncReport) error
 	if c.rotations != "" {
 		require = func(rep SyncReport) error {
-			if !rep.FoldedSecrets() {
+			if !rep.foldedSecrets() {
 				return fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", SecretsConnector, *out, SecretsConnector)
 			}
 			return nil
@@ -186,21 +177,20 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	if rep.FoldedSecrets() {
+	if rep.foldedSecrets() {
 		t.secretsSynced(c.Out, rep, path, now)
 	}
-	fmt.Fprint(c.Out, SyncLine(rep))
+	fmt.Fprint(c.Out, syncLine(rep))
 	return 0
 }
 
-// secretsSynced prints what a sync did to the secrets and what is open.
 func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now time.Time) {
 	r := rep.Secrets
 	fmt.Fprintf(w, "Synced: %d secrets (%d new, %d updated, %d reopened because a working file still holds the old value, %d snoozes expired); %d reclassified as noise, %d noise-only skipped, %d AWS key ids folded into their secret key.\n",
 		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Reclassified, r.Skipped, r.Paired)
 	if r.HistoryOnly > 0 {
 		fmt.Fprintf(w, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
-			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), HistoryOnly)
+			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), historyOnly)
 	}
 	counts := map[secretrisk.Priority]int{}
 	for _, it := range t.Items {
@@ -209,15 +199,14 @@ func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now ti
 		}
 	}
 	fmt.Fprintf(w, "Open: P0 %d, P1 %d, P2 %d, P3 %d. Tracker: %s\n", counts[secretrisk.P0], counts[secretrisk.P1], counts[secretrisk.P2], counts[secretrisk.P3], path)
-	owners := t.OwnerCounts(func(it *Item) bool { return it.Active(now) })
+	owners := t.ownerCounts(func(it *Item) bool { return it.Active(now) })
 	fmt.Fprintf(w, "Open by owner: mine %d, not-mine %d, unknown %d (segurata rotations list --owner not-mine).\n",
 		owners[attribution.Mine], owners[attribution.NotMine], owners[attribution.Unknown])
 }
 
-// syncAndSave folds the runs into t and saves it, unless require (nil for none) rejects the sync's
-// report; it returns the tracker it saved. When tracker.json changed after t was loaded (saved by
-// something that does not take the lock: an edit, an older binary), it folds the same runs once
-// more into that version instead of failing a scheduled sync or dropping the change.
+// syncAndSave folds the runs into t and saves it, unless require rejects the report. When
+// tracker.json changed without the lock (an edit, an older binary), it folds the same runs once
+// more into that version rather than fail a scheduled sync or drop the change.
 func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, require func(SyncReport) error) (*Tracker, SyncReport, error) {
 	for again := false; ; again = true {
 		rep, err := t.Sync(opt, now)
@@ -227,7 +216,7 @@ func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, requir
 		if err != nil {
 			return t, rep, err
 		}
-		if err = t.Save(path); again || !errors.Is(err, ErrChanged) {
+		if err = t.Save(path); again || !errors.Is(err, errChanged) {
 			return t, rep, err
 		}
 		if t, err = Load(path); err != nil {
@@ -236,8 +225,7 @@ func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, requir
 	}
 }
 
-// expect writes the config rule that expects a setup item's status and closes the item as
-// expected; --dry-run prints the rule and changes nothing.
+// expect writes the config rule that expects a setup item's status and closes the item.
 func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
 	fs := cliflag.New("track expect", c.Err)
 	reason := fs.String("reason", "", "why this status is expected")
@@ -248,11 +236,11 @@ func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, "usage: segurata track expect <setup-item-id> --reason text [--detail text] [--dry-run]")
 		return 2
 	}
-	it, err := t.Find(pos[0])
+	it, err := t.find(pos[0])
 	if err != nil {
 		return c.fail(err)
 	}
-	key, rule, err := it.ExpectRule(*reason, *detail)
+	key, rule, err := it.expectRule(*reason, *detail)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -277,7 +265,7 @@ func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
 	} else {
 		fmt.Fprintf(c.Out, "connectors.%q.expected in %s already has this rule.\n", key, c.Config)
 	}
-	it.Expect(now, rule, c.Config)
+	it.expect(now, rule, c.Config)
 	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
@@ -331,7 +319,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, "usage: segurata track show <id>")
 		return 2
 	}
-	it, err := t.Find(args[0])
+	it, err := t.find(args[0])
 	if err != nil {
 		return c.fail(err)
 	}
@@ -347,7 +335,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 	if it.MergedInto != "" {
 		fmt.Fprintf(w, " into %s", it.MergedInto)
 	}
-	fmt.Fprintf(w, "\nkind:      %s\ntheme:     %s\nseverity:  %s\nkey:       %s\ncreated:   %s\n", it.Kind, t.ThemeTitle(it.Theme),
+	fmt.Fprintf(w, "\nkind:      %s\ntheme:     %s\nseverity:  %s\nkey:       %s\ncreated:   %s\n", it.Kind, t.themeTitle(it.Theme),
 		textfmt.OrDash(string(it.Severity)), it.Key, it.CreatedAt.Format(time.DateOnly))
 	if o := it.PriorityOverride; o != nil {
 		fmt.Fprintf(w, "priority:  %s set by hand (%s), computed %s\n", o.Priority, o.Reason, textfmt.OrDash(string(it.Priority)))
@@ -364,13 +352,13 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 			fmt.Fprintf(w, "answer:    %s\n", d.Answer)
 		}
 		if it.Active(now) {
-			for _, l := range t.Leverage(it, now) {
+			for _, l := range t.optionLeverage(it, now) {
 				fmt.Fprintf(w, "  if:      %s\n", l)
 			}
 		}
 		for _, r := range t.Rules {
 			if r.Decision == it.ID {
-				fmt.Fprintf(w, "rule:      %s at every sync (since %s)\n", r.Spec(), r.At.Format(time.DateOnly))
+				fmt.Fprintf(w, "rule:      %s at every sync (since %s)\n", r.spec(), r.At.Format(time.DateOnly))
 			}
 		}
 	}
@@ -453,7 +441,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	for _, it := range items {
 		switch cmd {
 		case "start":
-			err = it.Start(now, *note)
+			err = it.start(now, *note)
 		case "done":
 			it.Done(now, *note)
 		case "note":
@@ -464,22 +452,22 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 			}
 			err = c.decide(t, it, now, *answer, ignoreScopes, acceptScopes, *owner)
 		case "snooze":
-			err = it.Snooze(now, *until, *note)
+			err = it.snooze(now, *until, *note)
 		case "ignore":
 			r := strings.TrimSpace(*reason)
 			if r != "" && *note != "" {
 				r += "; " + *note
 			}
-			err = it.Ignore(now, r)
+			err = it.ignore(now, r)
 		case "reopen":
-			it.Reopen(now, *note)
-			if n := t.DropRules(it.ID); n > 0 {
+			it.reopen(now, *note)
+			if n := t.dropRules(it.ID); n > 0 {
 				fmt.Fprintf(c.Out, "%s of this decision removed; the items they closed stay as they are.\n", textfmt.Count(n, "rule", "rules"))
 			}
 		case "prioritize":
 			var p secretrisk.Priority
-			if p, err = ParsePriority(pos[1]); err == nil {
-				err = it.Prioritize(now, p, *reason)
+			if p, err = parsePriority(pos[1]); err == nil {
+				err = it.prioritize(now, p, *reason)
 			}
 		}
 		if err != nil {
@@ -502,13 +490,12 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	return 0
 }
 
-// itemsUnder returns the items whose every location lies under prefix (a ~/ path, as findings
-// report them; an absolute path inside the home directory is accepted too), secrets only for
-// rotations: active ones, or closed ones when closed is true.
+// itemsUnder returns the active (or, with closed, the closed) items that lie entirely under prefix;
+// secrets only for rotations.
 func (c CLI) itemsUnder(t *Tracker, prefix string, closed bool, now time.Time) []*Item {
 	var out []*Item
 	for _, it := range t.Items {
-		if (c.rotations == "" || it.Kind == KindRotate) && it.Active(now) != closed && it.Under(prefix) {
+		if (c.rotations == "" || it.Kind == KindRotate) && it.Active(now) != closed && it.liesUnder(prefix) {
 			out = append(out, it)
 		}
 	}
@@ -523,13 +510,12 @@ func parseOwners(s string) ([]attribution.Owner, error) {
 	return attribution.ParseOwners(s)
 }
 
-// previewDecision prints what answering would close and keep open, and changes nothing.
 func (c CLI) previewDecision(t *Tracker, it *Item, now time.Time, answer string, ignore, accept []string, owner string) int {
 	owners, err := parseOwners(owner)
 	if err != nil {
 		return c.fail(err)
 	}
-	lines, err := t.PreviewDecision(it, now, answer, ignore, accept, owners)
+	lines, err := t.previewDecision(it, now, answer, ignore, accept, owners)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -543,14 +529,13 @@ func (c CLI) previewDecision(t *Tracker, it *Item, now time.Time, answer string,
 	return 0
 }
 
-// decide answers a decision with its effects and says what the answer replaced and closed.
 func (c CLI) decide(t *Tracker, it *Item, now time.Time, answer string, ignore, accept []string, owner string) error {
 	owners, err := parseOwners(owner)
 	if err != nil {
 		return err
 	}
 	again := it.Decision != nil && it.Decision.Answer != ""
-	added, closed, err := t.DecideWithEffects(it, now, answer, ignore, accept, owners)
+	added, closed, err := t.decideWithEffects(it, now, answer, ignore, accept, owners)
 	if err != nil {
 		return err
 	}
@@ -559,7 +544,7 @@ func (c CLI) decide(t *Tracker, it *Item, now time.Time, answer string, ignore, 
 	}
 	if len(added) > 0 {
 		for _, r := range added {
-			fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
+			fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.spec())
 		}
 		fmt.Fprintf(c.Out, "%s closed now by this decision.\n", textfmt.Count(closed, "item", "items"))
 	}
@@ -580,7 +565,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, trackUsage)
 		return 2
 	}
-	p, err := ParsePriority(*prio)
+	p, err := parsePriority(*prio)
 	if err != nil || p == "" {
 		return c.fail(fmt.Errorf("--priority %q: use P0, P1, P2 or P3", *prio))
 	}
@@ -594,7 +579,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 		var labels []string
 		var effects []OptionEffect
 		for _, o := range options {
-			label, eff, err := ParseOption(o)
+			label, eff, err := parseOption(o)
 			if err != nil {
 				return c.fail(err)
 			}
@@ -603,7 +588,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 				effects = append(effects, *eff)
 			}
 		}
-		it = t.AddDecision(fmt.Sprintf("manual:%d", t.NextID), *question, labels, now)
+		it = t.addDecision(fmt.Sprintf("manual:%d", t.NextID), *question, labels, now)
 		it.Decision.Effects = effects
 	case k == KindRotate || !slices.Contains(kinds, k):
 		return c.fail(fmt.Errorf("--kind %q: use fix, decide, setup or review (secrets come from local-secrets)", *kind))
@@ -628,9 +613,8 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 	return 0
 }
 
-// Status prints the briefing, and with --write also writes status.md and status.html next to the
-// tracker (mode 0600). It is read-only unless asked: an unfiltered status with --mark-seen (or
-// --write, which implies it) remembers when it ran, for "Since the last status".
+// Status prints the briefing, with --write also as status.md and status.html next to the tracker.
+// It is read-only except that an unfiltered --mark-seen or --write records when it ran.
 func (c CLI) Status(args []string) int {
 	fs := cliflag.New("status", c.Err)
 	theme := fs.String("theme", "", "comma-separated themes")
@@ -655,7 +639,7 @@ func (c CLI) Status(args []string) int {
 	if c.Instances != nil {
 		v.Instances = c.Instances()
 	}
-	d := t.Status(path, now, v)
+	d := t.status(path, now, v)
 	if err := doc.Render(c.Out, d, doc.Format(*format)); err != nil {
 		return c.fail(err)
 	}

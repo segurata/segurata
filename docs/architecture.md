@@ -249,8 +249,9 @@ groups it (data dumps were one item per file): the finding moves to the group an
 left with nothing reported, closes as `merged` into the group's item.
 
 An item can be blocked by a pending decision: the decision's option effects would close it, or it
-is a data-dump item and the decision is about dumps (its key or question names them, as
-"Purge the data dumps from git history?" does). Its next step then starts "Blocked by decision
+is a data-dump item and the decision is about dumps (its key or question has a word starting
+with "dump", as "Purge the data dumps from git history?" does; a tool name such as mysqldump or
+pg_dump does not count). Its next step then starts "Blocked by decision
 T-0001 (…): answer it first." until the decision is answered, and status counts what each
 decision unblocks (see "segurata status"). The title and next step come
 from the rule and the worst finding's remediation (`segurata remediate <id>` and `who:

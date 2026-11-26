@@ -80,7 +80,7 @@ func TestSyncAttributesSecrets(t *testing.T) {
 	if r := mustRotate(t, tr, "1111").Secret.Attribution.Reasons; !slices.Contains(r, "hint: committed by you (me@x.com)") {
 		t.Errorf("authorship hint missing: %q", r)
 	}
-	counts := tr.OwnerCounts(func(*Item) bool { return true })
+	counts := tr.ownerCounts(func(*Item) bool { return true })
 	if counts[attribution.Mine] != 1 || counts[attribution.NotMine] != 1 || counts[attribution.Unknown] != 1 {
 		t.Errorf("counts %v", counts)
 	}
@@ -91,9 +91,9 @@ func TestSyncAttributesSecrets(t *testing.T) {
 // changes to mine.
 func TestRuleNarrowedToNotMine(t *testing.T) {
 	tr, out := attributionFixture(t)
-	d := tr.AddDecision("manual:legacyco", "Is legacyco dead?", []string{"yes", "no"}, t0)
+	d := tr.addDecision("manual:legacyco", "Is legacyco dead?", []string{"yes", "no"}, t0)
 	now := t0.Add(2 * time.Hour)
-	preview, err := tr.PreviewDecision(d, now, "rotate mine, ignore the rest", []string{"path:" + legacy}, nil, []attribution.Owner{attribution.NotMine})
+	preview, err := tr.previewDecision(d, now, "rotate mine, ignore the rest", []string{"path:" + legacy}, nil, []attribution.Owner{attribution.NotMine})
 	want := "closes 1 open item (P2 1) attributed not-mine, keeps 2 open (mine 1, unknown 1) by ignore@not-mine path:" + legacy
 	if err != nil || len(preview) != 1 || preview[0] != want {
 		t.Fatalf("preview %q %v, want %q", preview, err, want)
@@ -101,7 +101,7 @@ func TestRuleNarrowedToNotMine(t *testing.T) {
 	if d.Status != Open || len(tr.Rules) != 0 {
 		t.Fatal("a preview changed the tracker")
 	}
-	rules, closed, err := tr.DecideWithEffects(d, now, "rotate mine, ignore the rest", []string{"path:" + legacy}, nil, []attribution.Owner{attribution.NotMine})
+	rules, closed, err := tr.decideWithEffects(d, now, "rotate mine, ignore the rest", []string{"path:" + legacy}, nil, []attribution.Owner{attribution.NotMine})
 	if err != nil || len(rules) != 1 || closed != 1 {
 		t.Fatalf("%+v %d %v", rules, closed, err)
 	}
@@ -131,7 +131,7 @@ func TestRuleNarrowedToNotMine(t *testing.T) {
 		t.Errorf("closed again: %s", theirs.Status)
 	}
 	// Ignored by hand, it stays ignored whatever the attribution says.
-	if err := theirs.Ignore(later, "a fixture after all"); err != nil {
+	if err := theirs.ignore(later, "a fixture after all"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tr.Sync(SyncOptions{OutDir: out}, later.Add(2*time.Hour)); err != nil {
@@ -144,29 +144,29 @@ func TestRuleNarrowedToNotMine(t *testing.T) {
 
 func TestNarrowedRulesNeverCloseItemsWithoutAttribution(t *testing.T) {
 	tr, _ := rulesFixture(t)
-	r := Rule{Effect: EffectIgnore, Scope: "path:~/src/old", Owners: []attribution.Owner{attribution.NotMine}}
+	r := Rule{Effect: effectIgnore, Scope: "path:~/src/old", Owners: []attribution.Owner{attribution.NotMine}}
 	for _, it := range tr.Items {
-		if it.Kind != KindRotate && r.Matches(it) {
+		if it.Kind != KindRotate && r.matches(it) {
 			t.Errorf("%s (%s) matched a rule narrowed to owners", it.ID, it.Kind)
 		}
 	}
 }
 
 func TestParseEffectWithOwners(t *testing.T) {
-	label, eff, err := ParseOption("yes=ignore@not-mine,unknown:path:~/src/legacyco")
+	label, eff, err := parseOption("yes=ignore@not-mine,unknown:path:~/src/legacyco")
 	if err != nil || label != "yes" || eff.Scope != "path:~/src/legacyco" || !slices.Equal(eff.Owners, []attribution.Owner{attribution.NotMine, attribution.Unknown}) {
 		t.Errorf("%q %+v %v", label, eff, err)
 	}
-	if r := (Rule{Effect: eff.Effect, Scope: eff.Scope, Owners: eff.Owners}); r.Spec() != "ignore@not-mine,unknown path:~/src/legacyco" {
-		t.Errorf("spec %q", r.Spec())
+	if r := (Rule{Effect: eff.Effect, Scope: eff.Scope, Owners: eff.Owners}); r.spec() != "ignore@not-mine,unknown path:~/src/legacyco" {
+		t.Errorf("spec %q", r.spec())
 	}
 	for _, bad := range []string{"yes=ignore@:path:~/x", "yes=ignore@theirs:path:~/x", "yes=delete@mine:path:~/x"} {
-		if _, _, err := ParseOption(bad); err == nil {
+		if _, _, err := parseOption(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
 	}
 	tr := New(t0)
-	tr.Rules = []Rule{{Effect: EffectIgnore, Scope: "path:~/x", Owners: []attribution.Owner{"theirs"}, Reason: "r", At: t0}}
+	tr.Rules = []Rule{{Effect: effectIgnore, Scope: "path:~/x", Owners: []attribution.Owner{"theirs"}, Reason: "r", At: t0}}
 	if err := tr.validate(); err == nil {
 		t.Error("a rule with an unknown owner validated")
 	}
@@ -251,7 +251,7 @@ func TestAttributionMineRestoresFullImpactInThirdPartyRepositories(t *testing.T)
 			t.Errorf("%s: a third-party copy not attributed mine got an item", fp)
 		}
 	}
-	if rep := tr.SyncNoise(map[string]string{"1111aaaa1111aaaa": "aws-access-key-id"}, t0.Add(2*time.Hour)); rep.Reclassified != 0 || mustRotate(t, tr, "1111").Status != Open {
+	if rep := tr.syncNoise(map[string]string{"1111aaaa1111aaaa": "aws-access-key-id"}, t0.Add(2*time.Hour)); rep.Reclassified != 0 || mustRotate(t, tr, "1111").Status != Open {
 		t.Error("a noise summary reclassified a key attributed mine")
 	}
 }

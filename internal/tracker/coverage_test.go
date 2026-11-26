@@ -60,16 +60,16 @@ func TestCoverageItems(t *testing.T) {
 		finding.Status{Type: "status", Connector: "github", Account: "github:me", Scope: "user:me", State: finding.StateNoScope, Detail: "gh lacks read:user"})
 	tr := New(t0)
 	rep := syncOrDie(t, tr, out, t0.Add(time.Minute))
-	gh := tr.ByKey("coverage:github-owner-2fa")
+	gh := tr.itemByKey("coverage:github-owner-2fa")
 	if gh == nil || gh.Kind != KindReview || gh.Theme != coverageTheme || gh.Priority != "" || gh.Next.Command != "gh auth refresh -h github.com -s read:user && segurata inventory github" {
 		t.Fatalf("github 2FA coverage item %+v", gh)
 	}
 	for _, slug := range []string{"google-recovery", "apple-account", "stripe-keys", "hibp", "password-manager"} {
-		if it := tr.ByKey("coverage:" + slug); it == nil || it.Status != Open || it.Next == nil || it.Next.Action == "" {
+		if it := tr.itemByKey("coverage:" + slug); it == nil || it.Status != Open || it.Next == nil || it.Next.Action == "" {
 			t.Errorf("%s: %+v", slug, it)
 		}
 	}
-	if tr.ByKey("coverage:workspace") != nil {
+	if tr.itemByKey("coverage:workspace") != nil {
 		t.Error("no workspace tenant is configured: no workspace coverage item")
 	}
 	if rep.Coverage.Opened != 6 {
@@ -77,7 +77,7 @@ func TestCoverageItems(t *testing.T) {
 	}
 
 	var b strings.Builder
-	_ = doc.Render(&b, tr.Status("tracker.json", t0.Add(time.Hour), View{}), doc.Text)
+	_ = doc.Render(&b, tr.status("tracker.json", t0.Add(time.Hour), View{}), doc.Text)
 	s := b.String()
 	doNext := s[strings.Index(s, "Do next"):strings.Index(s, "Pending decisions")]
 	if !strings.Contains(s, "Not audited on this machine") || !strings.Contains(s, "[not audited] Two-factor authentication of your own GitHub account is not audited") ||
@@ -86,35 +86,35 @@ func TestCoverageItems(t *testing.T) {
 	}
 
 	// read:user granted, hibp set up, the Apple review done by hand.
-	if err := tr.ByKey("coverage:apple-account").Start(t0, ""); err != nil {
+	if err := tr.itemByKey("coverage:apple-account").start(t0, ""); err != nil {
 		t.Fatal(err)
 	}
-	tr.ByKey("coverage:apple-account").Done(t0.Add(2*time.Minute), "checked")
+	tr.itemByKey("coverage:apple-account").Done(t0.Add(2*time.Minute), "checked")
 	day2 := t0.Add(24 * time.Hour)
 	writeRun(t, out, day2, "github.jsonl", okStatus("github", "github:me"), finding.Status{Type: "status", Connector: "github", Account: "github:me", Scope: "user:me", State: finding.StateOK})
 	writeRun(t, out, day2, "hibp.jsonl", okStatus("hibp", "me@x.com"))
 	rep = syncOrDie(t, tr, out, day2.Add(time.Minute))
 	for _, slug := range []string{"github-owner-2fa", "hibp"} {
-		if it := tr.ByKey("coverage:" + slug); it.Status != Done || it.VerifiedAt == nil || !strings.HasPrefix(it.lastDetail(actAutoDone), "covered: ") {
+		if it := tr.itemByKey("coverage:" + slug); it.Status != Done || it.VerifiedAt == nil || !strings.HasPrefix(it.lastDetail(actAutoDone), "covered: ") {
 			t.Errorf("%s: %s %q", slug, it.Status, it.lastDetail(actAutoDone))
 		}
 	}
-	if rep.Coverage.Covered != 2 || tr.ByKey("coverage:apple-account").Status != Done {
-		t.Errorf("covered %d; apple %s", rep.Coverage.Covered, tr.ByKey("coverage:apple-account").Status)
+	if rep.Coverage.Covered != 2 || tr.itemByKey("coverage:apple-account").Status != Done {
+		t.Errorf("covered %d; apple %s", rep.Coverage.Covered, tr.itemByKey("coverage:apple-account").Status)
 	}
 	// gh lost the scope again: the item segurata closed opens again.
 	day3 := day2.Add(24 * time.Hour)
 	writeRun(t, out, day3, "github.jsonl", okStatus("github", "github:me"),
 		finding.Status{Type: "status", Connector: "github", Account: "github:me", Scope: "user:me", State: finding.StateNoScope, Detail: "gh lacks read:user"})
 	syncOrDie(t, tr, out, day3.Add(time.Minute))
-	if it := tr.ByKey("coverage:github-owner-2fa"); it.Status != Open {
+	if it := tr.itemByKey("coverage:github-owner-2fa"); it.Status != Open {
 		t.Errorf("github 2FA after the scope was lost: %s", it.Status)
 	}
 
 	// A workspace tenant configured but unreadable is a gap too.
 	writeRun(t, out, day3, "workspace-x.com.jsonl", finding.Status{Type: "status", Connector: "workspace", Instance: "x.com", Account: "x.com", State: finding.StateMissingCredentials, Detail: "no admin credentials"})
 	syncOrDie(t, tr, out, day3.Add(2*time.Minute))
-	if it := tr.ByKey("coverage:workspace"); it == nil || it.Status != Open {
+	if it := tr.itemByKey("coverage:workspace"); it == nil || it.Status != Open {
 		t.Errorf("workspace coverage item %+v", it)
 	}
 }
@@ -128,18 +128,18 @@ func TestGithubOwner2FAFromDeclaredRuns(t *testing.T) {
 	runtest.Write(t, filepath.Join(out, t0.Format(time.DateOnly), "github.jsonl"), okStatus("github", "github:org"), noScope, runtest.Legacy{})
 	tr := New(t0)
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
-	if it := tr.ByKey("coverage:github-owner-2fa"); it != nil {
+	if it := tr.itemByKey("coverage:github-owner-2fa"); it != nil {
 		t.Fatalf("from a run before declarations: %+v", it)
 	}
 	writeRun(t, out, t0.Add(time.Hour), "github.jsonl", okStatus("github", "github:org"), noScope)
 	syncOrDie(t, tr, out, t0.Add(time.Hour+time.Minute))
-	if it := tr.ByKey("coverage:github-owner-2fa"); it == nil || it.Status != Open {
+	if it := tr.itemByKey("coverage:github-owner-2fa"); it == nil || it.Status != Open {
 		t.Fatalf("from a declared run: %+v", it)
 	}
 	other := filepath.Join(t.TempDir(), "other")
 	writeRun(t, other, t0.Add(2*time.Hour), "macos.jsonl", okStatus("macos", "Mac"))
 	syncOrDie(t, tr, other, t0.Add(2*time.Hour))
-	if it := tr.ByKey("coverage:github-owner-2fa"); it.Status != Open {
+	if it := tr.itemByKey("coverage:github-owner-2fa"); it.Status != Open {
 		t.Errorf("with no github run folded: %s", it.Status)
 	}
 	if line := tr.coverageLine(nil, t0.Add(3*time.Hour)); !strings.Contains(line, "github: ") {

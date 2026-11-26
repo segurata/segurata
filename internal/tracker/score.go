@@ -14,33 +14,26 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Ranking for "Do next": how much doing an item now is worth.
+// Factor is one term of a "Do next" score:
 //
 //	score = impact × blast × exposure × liveness × confidence ÷ effort × quick win
 //
-// Every factor comes from a table below and is shown by `status --explain`, so the order can be
-// argued with. Impact is the priority; blast radius says what is at stake beyond the severity a
-// connector gave one finding, as the connector declares it (finding.Blast); exposure, liveness and attribution weigh secrets; confidence
-// discounts what needs judgment; effort divides; a quick win (segurata does it, one change closes
-// many findings, an answer unblocks many items) multiplies. A pending decision is worth part of
-// what it unblocks. See docs/architecture.md, "Do next".
-
-// Factor is one term of a score, with why it has that value.
+// Every factor comes from a table below and `status --explain` shows it, so the order can be argued
+// with. See docs/architecture.md, "Do next".
 type Factor struct {
 	Name  string
 	Value float64
 	Why   string
 }
 
-// Score is an item's worth for "Do next" and the factors it is the product of.
+// Score is an item's worth for "Do next".
 type Score struct {
 	Total   float64
 	Factors []Factor
 }
 
-// Explain is the score as a formula: "27.0 = impact 6 (P1) × blast 3 (…) ÷ effort 1 (…)".
-// Factors of 1 other than impact and effort are left out.
-func (s Score) Explain() string {
+// explain is "27.0 = impact 6 (P1) × blast 3 (…) ÷ effort 1 (…)", without neutral factors.
+func (s Score) explain() string {
 	parts := []string{strconv.FormatFloat(s.Total, 'f', 1, 64) + " ="}
 	for i, f := range s.Factors {
 		if f.Value == 1 && f.Name != "impact" && f.Name != "effort" {
@@ -62,6 +55,15 @@ func (s Score) Explain() string {
 	return strings.Join(parts, " ")
 }
 
+func (s Score) factor(name string) Factor {
+	for _, f := range s.Factors {
+		if f.Name == name {
+			return f
+		}
+	}
+	return Factor{Name: name, Value: 1}
+}
+
 func newScore(factors ...Factor) Score {
 	total := 1.0
 	for _, f := range factors {
@@ -74,13 +76,10 @@ func newScore(factors ...Factor) Score {
 	return Score{Total: math.Round(total*10) / 10, Factors: factors}
 }
 
-// impacts weighs priorities: a P0 is worth a little under twice a P1.
 var impacts = map[secretrisk.Priority]float64{secretrisk.P0: 10, secretrisk.P1: 6, secretrisk.P2: 3, secretrisk.P3: 1}
 
-// blasts weigh what a connector says a finding puts at stake beyond its severity (finding.Blast):
-// every repository of five orgs, a Mac with no backup, a Google account that opens bank accounts.
-// An item takes the first of them, in this order, that one of its findings declares; anything
-// else is 1.
+// blasts weigh what a finding puts at stake beyond its severity; an item takes the first one its
+// findings declare.
 var blasts = []struct {
 	blast  finding.Blast
 	factor float64
@@ -99,14 +98,13 @@ var blasts = []struct {
 	{finding.BlastLeftovers, 0.5, "leftovers, nothing running"},
 }
 
-// refHas reports whether one of the item's findings has that resource type.
 func refHas(typ string) func(*Item) bool {
 	return func(it *Item) bool {
 		return slices.ContainsFunc(it.Findings, func(r FindingRef) bool { return r.Type == typ })
 	}
 }
 
-// efforts is the effort table, first match wins; anything else is one change.
+// efforts: first match wins; anything else is one change.
 var efforts = []struct {
 	match func(it *Item) bool
 	value func(it *Item) float64
@@ -118,7 +116,6 @@ var efforts = []struct {
 		fixed(1), says("rotate at the provider; segurata puts the new value in place")},
 	{func(it *Item) bool { return it.Kind == KindRotate }, fixed(1.5), says("rotate at the provider and update its users by hand")},
 	{refHas("data_dump"), fixed(3), says("a history rewrite and a force-push")},
-	// A review list takes longer the more entries it has: 1 for a few, 3 at most.
 	{func(it *Item) bool { return it.Kind == KindReview },
 		func(it *Item) float64 { return math.Min(3, 1+float64(len(it.Findings))/20) },
 		func(it *Item) string { return textfmt.Count(len(it.Findings), "entry", "entries") + " to go through" }},
@@ -127,12 +124,9 @@ var efforts = []struct {
 func fixed(v float64) func(*Item) float64 { return func(*Item) float64 { return v } }
 func says(s string) func(*Item) string    { return func(*Item) string { return s } }
 
-// quickWinMin is how many findings one fix must close to count as a quick win.
 const quickWinMin = 3
 
-// Score rates an item for "Do next" (see the tables above). A decision is rated by what it
-// unblocks: half the worth of those items, as a quick win.
-func (t *Tracker) Score(it *Item, now time.Time) Score {
+func (t *Tracker) score(it *Item, now time.Time) Score {
 	if it.Kind == KindDecide {
 		return t.decisionScore(it, now)
 	}
@@ -181,7 +175,7 @@ func exposureFactor(it *Item) Factor {
 
 func livenessFactor(it *Item) Factor {
 	switch {
-	case it.LiveAndLeaked():
+	case it.liveAndLeaked():
 		return Factor{"liveness", 2, "a connector or the provider shows it works, and it left the machine"}
 	case it.provenLive():
 		return Factor{"liveness", 1.5, "a connector or the provider shows it works"}
@@ -213,7 +207,7 @@ func (t *Tracker) effortFactor(it *Item, now time.Time) Factor {
 			break
 		}
 	}
-	if d := t.BlockedBy(it, now); d != nil {
+	if d := t.blockedBy(it, now); d != nil {
 		f.Value *= 2
 		f.Why += "; waits on decision " + d.ID
 	}
@@ -230,12 +224,12 @@ func quickWin(it *Item) Factor {
 	return Factor{"quick win", 1, ""}
 }
 
-// decisionScore is worth half of what answering unblocks, as a quick win.
+// decisionScore is half the worth of what answering unblocks, as a quick win.
 func (t *Tracker) decisionScore(d *Item, now time.Time) Score {
 	sum := 0.0
-	blocked := t.Unblocks(d, now)
+	blocked := t.unblocks(d, now)
 	for _, it := range blocked {
-		sum += t.Score(it, now).Total
+		sum += t.score(it, now).Total
 	}
 	if len(blocked) == 0 {
 		return newScore(Factor{"impact", impactOf(d.EffectivePriority()), prioLabel(d.EffectivePriority())}, Factor{"effort", 1, "one answer"})

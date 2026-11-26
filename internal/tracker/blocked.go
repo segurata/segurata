@@ -1,18 +1,13 @@
 package tracker
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
 
-// Blocked items wait on a pending decision: what to do with them depends on the answer. A
-// decision blocks the items one of its options' effects would close, and a question about data
-// dumps (its key or question names them, like "Purge the data dumps from git history?") blocks
-// the data-dump items. Status shows the decision first, with how many items it unblocks, and the
-// blocked item's next step names it.
-
-// BlockedBy is the first pending decision that blocks the item, or nil.
-func (t *Tracker) BlockedBy(it *Item, now time.Time) *Item {
+// blockedBy is the first pending decision that blocks the item, or nil.
+func (t *Tracker) blockedBy(it *Item, now time.Time) *Item {
 	if it.Kind == KindDecide || it.Kind == KindSetup {
 		return nil
 	}
@@ -24,8 +19,7 @@ func (t *Tracker) BlockedBy(it *Item, now time.Time) *Item {
 	return nil
 }
 
-// Unblocks are the active items a pending decision blocks.
-func (t *Tracker) Unblocks(d *Item, now time.Time) []*Item {
+func (t *Tracker) unblocks(d *Item, now time.Time) []*Item {
 	if d.Kind != KindDecide || d.Decision == nil || !d.Active(now) {
 		return nil
 	}
@@ -38,20 +32,24 @@ func (t *Tracker) Unblocks(d *Item, now time.Time) []*Item {
 	return out
 }
 
+// blocks reports whether one of the decision's option effects would close the item, or the
+// decision is about data dumps and the item is one.
 func blocks(d, it *Item) bool {
 	for _, e := range d.Decision.Effects {
-		if (Rule{Effect: e.Effect, Scope: e.Scope}).InScope(it) {
+		if (Rule{Effect: e.Effect, Scope: e.Scope}).inScope(it) {
 			return true
 		}
 	}
-	return it.Theme == "data-dumps" && strings.Contains(strings.ToLower(d.Key+" "+d.Decision.Question), "dump")
+	return it.Theme == "data-dumps" && aboutDumps.MatchString(d.Key+" "+d.Decision.Question)
 }
 
-// blockedPrefix starts the next step of a blocked item.
+// aboutDumps matches a word starting with "dump" (dumps, dumping), not a tool such as mysqldump.
+var aboutDumps = regexp.MustCompile(`(?i)\bdump`)
+
 const blockedPrefix = "Blocked by decision "
 
-// noteBlocked starts the next step of every blocked item other than a secret with the decision it
-// waits on, and takes that note off items no longer blocked.
+// noteBlocked prefixes the next step of each blocked item other than a secret with its decision,
+// and drops the prefix from items no longer blocked.
 func (t *Tracker) noteBlocked(now time.Time) {
 	for _, it := range t.Items {
 		if it.Next == nil || it.Kind == KindRotate {
@@ -63,7 +61,7 @@ func (t *Tracker) noteBlocked(now time.Time) {
 				action = rest
 			}
 		}
-		if d := t.BlockedBy(it, now); d != nil && it.Active(now) {
+		if d := t.blockedBy(it, now); d != nil && it.Active(now) {
 			action = blockedPrefix + d.ID + " (" + d.Decision.Question + "): answer it first. " + action
 		}
 		it.Next.Action = action

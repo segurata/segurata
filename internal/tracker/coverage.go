@@ -14,24 +14,17 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Coverage: what segurata looked at, and what it cannot look at on this machine. Each sync keeps,
-// per connector instance, its newest run and how complete it was (Tracker.Runs), for the coverage
-// line of status: "cloudflare: never run; github: 3 h ago, partial: user:me not checked". And the
-// plan's areas that no connector audits here become review items of theme coverage, each with the
-// step that would cover it, listed apart from what is failing. See docs/architecture.md, "Coverage".
-
-// maxSkippedKept is how many skipped scopes a RunInfo keeps.
 const maxSkippedKept = 5
 
-// recordRuns keeps what status needs of each folded run.
+// recordRuns keeps what the coverage line needs of each folded run. See docs/architecture.md,
+// "Coverage".
 func (t *Tracker) recordRuns(folded map[string]*run) {
 	if t.Runs == nil {
 		t.Runs = map[string]RunInfo{}
 	}
 	for l, r := range folded {
 		info := RunInfo{At: r.at, Finished: r.cov.Known, Error: r.failed, Theme: r.theme.ID}
-		// A scope left out by a status the config expects (when the run was written, or by a rule
-		// added since) is left out on purpose: counted, not listed, and not a partial run.
+		// A scope an expected status left out is left out on purpose: counted, not a partial run.
 		expected := map[string]bool{}
 		allExpected := len(r.statuses) > 0
 		for _, st := range r.statuses {
@@ -41,7 +34,7 @@ func (t *Tracker) recordRuns(folded map[string]*run) {
 				allExpected = false
 			}
 		}
-		// Every status expected: what the run left out (everything, when nothing said ok) is too.
+		// Every status expected: whatever the run left out is too.
 		expected[finding.ScopeAll] = expected[finding.ScopeAll] || allExpected
 		var sk []finding.Skipped
 		for _, s := range r.cov.Skipped() {
@@ -66,8 +59,7 @@ func (t *Tracker) recordRuns(folded map[string]*run) {
 	}
 }
 
-// coverageLine says, for each connector instance (configured ones and any that ran), when its
-// newest run finished and whether it saw everything.
+// coverageLine is "cloudflare: never run; github: 3 h ago, partial: user:me not checked".
 func (t *Tracker) coverageLine(instances []string, now time.Time) string {
 	all := slices.Clone(instances)
 	for l := range t.Runs {
@@ -95,7 +87,8 @@ func (t *Tracker) coverageLine(instances []string, now time.Time) string {
 		case !info.Finished:
 			s += ", unfinished (no run_end)"
 		case info.Error != "":
-			s += ", failed: " + firstSentence(info.Error)
+			head, _ := textfmt.Clip(info.Error, 120)
+			s += ", failed: " + head
 		case !info.Complete && len(info.Skipped) > 0:
 			scope, _, _ := strings.Cut(info.Skipped[0], ": ")
 			what := scope + " not checked"
@@ -117,7 +110,6 @@ func (t *Tracker) coverageLine(instances []string, now time.Time) string {
 	return "Coverage: " + strings.Join(parts, "; ") + "."
 }
 
-// age is a duration as status shows it: 25 min ago, 3 h ago, 2 d ago.
 func age(d time.Duration) string {
 	switch {
 	case d < time.Minute:
@@ -130,21 +122,14 @@ func age(d time.Duration) string {
 	return fmt.Sprintf("%d d ago", int(d.Hours()/24))
 }
 
-func firstSentence(s string) string {
-	head, _ := textfmt.Clip(s, 120)
-	return head
-}
-
-// gap is one area of the plan (docs/plan.md) that may go unaudited on this machine, and the step
-// that would cover it. Whether it is covered comes from the runs of the connectors that declare
-// they cover it (finding.Area), by its slug.
+// gap is an area of docs/plan.md that may go unaudited on this machine, and the step that would
+// cover it.
 type gap struct {
 	slug, title string
-	// audited says connectors audit the area: they declare it among the areas they cover. A gap
-	// no connector audits is open until the owner marks it done.
+	// audited: connectors declare the area (finding.Area). Otherwise the gap stays open until the
+	// owner marks it done.
 	audited bool
-	// unreported, for an audited area, is whether the gap is open while no run reports it (the
-	// connector that would cover it is not set up), rather than unknown.
+	// unreported: the gap is open, not unknown, while no run reports the area.
 	unreported    bool
 	step, command string
 	url           string
@@ -176,9 +161,8 @@ var gaps = []gap{
 		command: "segurata inventory workspace"},
 }
 
-// audited is what the runs of the connectors that cover the gap's area say of it: covered when one
-// audited it, open when one could not, and otherwise unknown, or open for an unreported gap. While
-// a run from before connectors declared their areas is kept, it may cover the area: unknown.
+// audited is what the runs say of the gap's area: covered when one audited it, open when one could
+// not, else unknown (or open, for an unreported gap with no legacy run that might cover it).
 func (t *Tracker) audited(g gap) (covered bool, how string, known bool) {
 	reported, legacy := false, false
 	for _, l := range slices.Sorted(maps.Keys(t.Runs)) {
@@ -193,12 +177,11 @@ func (t *Tracker) audited(g gap) (covered bool, how string, known bool) {
 	return false, "", reported || g.unreported && !legacy
 }
 
-// CoverageReport counts what a sync did to coverage items.
+// CoverageReport counts coverage items opened and closed as covered.
 type CoverageReport struct{ Opened, Covered int }
 
-// syncCoverage opens a coverage item for each gap not covered and closes, as done and verified,
-// the ones a run now covers. An item the owner closed by hand stays closed; one segurata closed
-// opens again when the gap comes back.
+// syncCoverage opens an item for each uncovered gap and verifies the ones a run now covers. One
+// the owner closed stays closed; one segurata closed reopens when the gap comes back.
 func (t *Tracker) syncCoverage(now time.Time) CoverageReport {
 	var rep CoverageReport
 	for _, g := range gaps {
@@ -206,13 +189,11 @@ func (t *Tracker) syncCoverage(now time.Time) CoverageReport {
 		if g.audited {
 			covered, how, known = t.audited(g)
 		}
-		it := t.ByKey("coverage:" + g.slug)
+		it := t.itemByKey("coverage:" + g.slug)
 		switch {
 		case !known:
 		case covered && it != nil && it.Active(now):
-			it.setStatus(now, Done, EvVerified, actAutoDone, "covered: "+how)
-			at := now.UTC()
-			it.VerifiedAt = &at
+			it.verifyDone(now, "covered: "+how)
 			rep.Covered++
 		case covered:
 		case it == nil:
@@ -233,29 +214,22 @@ func (t *Tracker) syncCoverage(now time.Time) CoverageReport {
 
 // lastAction is the action of the latest status-changing history event.
 func (it *Item) lastAction() string {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Event {
+	for _, e := range slices.Backward(it.History) {
+		switch e.Event {
 		case EvStatus, EvVerified, EvReopened, EvReclassified, EvMerged:
-			return it.History[i].Action
+			return e.Action
 		}
 	}
 	return ""
 }
 
-// notAudited lists the open coverage items: what segurata does not look at here, with the step
-// that would cover each. They are not failures, so they stay out of the headline and "Do next".
+// notAudited lists the open coverage items apart: they are not failures.
 func notAudited(d *doc.Doc, items []*Item, now time.Time) {
 	var list []doc.Item
 	for _, it := range sorted(items, func(it *Item) bool { return it.Theme == coverageTheme && it.Active(now) }) {
 		out := doc.Item{Badge: "not audited", Text: it.Title, Meta: it.ID}
-		if n := it.Next; n != nil {
-			out.Details = append(out.Details, doc.Fold("Cover it", n.Action, actionLen))
-			if n.Command != "" {
-				out.Details = append(out.Details, doc.Detail{Label: "Command", Text: n.Command, Kind: doc.DCode})
-			}
-			if n.URL != "" {
-				out.Details = append(out.Details, doc.Detail{Label: "Where", Text: n.URL, Kind: doc.DLink})
-			}
+		if it.Next != nil {
+			out.Details = nextDetails("Cover it", it.Next)
 		}
 		list = append(list, out)
 	}

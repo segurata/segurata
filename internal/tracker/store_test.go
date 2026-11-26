@@ -33,7 +33,7 @@ func TestSaveLoadRoundTripModesAndBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	it, err := got.Find("T-1")
+	it, err := got.find("T-1")
 	if err != nil || it.Kind != KindDecide {
 		t.Fatalf("T-1: %v %v", it, err)
 	}
@@ -72,7 +72,7 @@ func TestSaveRefusesAFileChangedSinceItWasLoaded(t *testing.T) {
 	saved, _ := os.ReadFile(path)
 	bak, _ := os.ReadFile(path + ".bak")
 	_ = b.Items[0].Note(t0, "from b")
-	if err := b.Save(path); !errors.Is(err, ErrChanged) || !strings.Contains(err.Error(), "run it again") {
+	if err := b.Save(path); !errors.Is(err, errChanged) || !strings.Contains(err.Error(), "run it again") {
 		t.Fatalf("stale save: %v", err)
 	}
 	if raw, _ := os.ReadFile(path); !bytes.Equal(raw, saved) {
@@ -87,7 +87,7 @@ func TestSaveRefusesAFileChangedSinceItWasLoaded(t *testing.T) {
 		t.Errorf("second save of the same tracker: %v", err)
 	}
 	// A tracker made new because the file did not exist yet does not replace one created since.
-	if err := New(t0).Save(path); !errors.Is(err, ErrChanged) {
+	if err := New(t0).Save(path); !errors.Is(err, errChanged) {
 		t.Errorf("new tracker over a file created since: %v", err)
 	}
 }
@@ -154,7 +154,7 @@ func TestSaveRefusesToOverwriteAFileThatDoesNotParse(t *testing.T) {
 
 func TestLoadValidates(t *testing.T) {
 	good := New(t0)
-	good.AddDecision("decide:second", "A second question?", []string{"yes", "no"}, t0) // the cases need two items
+	good.addDecision("decide:second", "A second question?", []string{"yes", "no"}, t0) // the cases need two items
 	raw, _ := json.Marshal(good)
 	cases := map[string]func(m map[string]any){
 		"newer schema":  func(m map[string]any) { m["schema_version"] = 99 },
@@ -210,13 +210,13 @@ func TestLoadOrNewWithNothingIsANewTrackerNotYetWritten(t *testing.T) {
 // is saved as the current schema; an older binary then refuses the file instead of misreading new
 // fields.
 func TestOlderSchemasUpgradeLosslessly(t *testing.T) {
-	for v := 1; v < SchemaVersion; v++ {
+	for v := 1; v < schemaVersion; v++ {
 		t.Run(fmt.Sprintf("schema %d", v), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tracker.json")
 			tr := New(t0)
 			tr.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false))}, t0, false)
 			it, _ := tr.FindRotate("aaaa")
-			if err := it.Ignore(t0, "a fixture"); err != nil {
+			if err := it.ignore(t0, "a fixture"); err != nil {
 				t.Fatal(err)
 			}
 			tr.SchemaVersion = v
@@ -231,7 +231,7 @@ func TestOlderSchemasUpgradeLosslessly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.SchemaVersion != SchemaVersion {
+			if got.SchemaVersion != schemaVersion {
 				t.Errorf("schema %d after load", got.SchemaVersion)
 			}
 			got.SchemaVersion = v
@@ -246,7 +246,7 @@ func TestOlderSchemasUpgradeLosslessly(t *testing.T) {
 				SchemaVersion int `json:"schema_version"`
 			}
 			raw, _ := os.ReadFile(path)
-			if _ = json.Unmarshal(raw, &head); head.SchemaVersion != SchemaVersion {
+			if _ = json.Unmarshal(raw, &head); head.SchemaVersion != schemaVersion {
 				t.Errorf("saved as schema %d", head.SchemaVersion)
 			}
 			if bak, _ := os.ReadFile(path + ".bak"); !bytes.Equal(bak, old) {

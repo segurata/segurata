@@ -14,15 +14,15 @@ import (
 )
 
 func TestParseOptionAndEffect(t *testing.T) {
-	label, eff, err := ParseOption("yes=ignore:path:~/src/legacyco")
-	if err != nil || label != "yes" || eff == nil || eff.Effect != EffectIgnore || eff.Scope != "path:~/src/legacyco" {
+	label, eff, err := parseOption("yes=ignore:path:~/src/legacyco")
+	if err != nil || label != "yes" || eff == nil || eff.Effect != effectIgnore || eff.Scope != "path:~/src/legacyco" {
 		t.Errorf("%q %+v %v", label, eff, err)
 	}
-	if label, eff, err := ParseOption("no"); err != nil || label != "no" || eff != nil {
+	if label, eff, err := parseOption("no"); err != nil || label != "no" || eff != nil {
 		t.Errorf("%q %+v %v", label, eff, err)
 	}
 	for _, bad := range []string{"yes=delete:path:~/x", "yes=ignore:host:x", "yes=ignore:path:", "=ignore:path:~/x", "yes=accept:account:["} {
-		if _, _, err := ParseOption(bad); err == nil {
+		if _, _, err := parseOption(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
 	}
@@ -55,19 +55,19 @@ func rulesFixture(t *testing.T) (*Tracker, string) {
 
 func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 	tr, out := rulesFixture(t)
-	d := tr.AddDecision("manual:old", "Are the old repos dead?", []string{"yes", "no"}, t0)
-	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: EffectIgnore, Scope: "path:~/src/old"}}
+	d := tr.addDecision("manual:old", "Are the old repos dead?", []string{"yes", "no"}, t0)
+	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: effectIgnore, Scope: "path:~/src/old"}}
 	now := t0.Add(2 * time.Hour)
-	lev := tr.Leverage(d, now)
+	lev := tr.optionLeverage(d, now)
 	if len(lev) != 1 || !strings.Contains(lev[0], `answering "yes" closes 3 open items (P1 3) by ignore path:~/src/old`) {
 		t.Fatalf("leverage %q", lev)
 	}
 	var b strings.Builder
-	_ = doc.Render(&b, tr.Status("tracker.json", now, View{}), doc.Text)
+	_ = doc.Render(&b, tr.status("tracker.json", now, View{}), doc.Text)
 	if !strings.Contains(b.String(), `answering "yes" closes 3 open items`) {
 		t.Errorf("status lacks the leverage:\n%s", b.String())
 	}
-	rules, closed, err := tr.DecideWithEffects(d, now, "yes: archive them", nil, []string{"gcp-project:old-proj"}, nil)
+	rules, closed, err := tr.decideWithEffects(d, now, "yes: archive them", nil, []string{"gcp-project:old-proj"}, nil)
 	if err != nil || len(rules) != 2 || closed != 4 {
 		t.Fatalf("decide: %+v %d %v", rules, closed, err)
 	}
@@ -90,7 +90,7 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 
 	// A new secret found later under ~/src/old never opens an item; one reopened by hand stays open.
 	b2, _ := tr.FindRotate("2222bbbb")
-	b2.Reopen(now.Add(time.Minute), "still used, actually")
+	b2.reopen(now.Add(time.Minute), "still used, actually")
 	f := fnd(SecretsConnector, "", "local", "secret", "scan:x#4444", "AWS key", finding.SevCritical, "AWS key", t0)
 	raw, _ := json.Marshal(secretrisk.Evidence{Fingerprint: "4444dddd4444dddd", Type: "aws", Redacted: "AKIA…4444(20)", Path: "~/src/old/d/z.py",
 		Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Bucket: "b"})
@@ -103,7 +103,7 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 	if b2.Status != Open {
 		t.Errorf("reopened by hand: %s", b2.Status)
 	}
-	if n := tr.DropRules(d.ID); n != 2 || len(tr.Rules) != 0 {
+	if n := tr.dropRules(d.ID); n != 2 || len(tr.Rules) != 0 {
 		t.Errorf("dropped %d, left %v", n, tr.Rules)
 	}
 }
@@ -112,14 +112,14 @@ func TestDecisionEffectsCloseItemsInScopeNowAndLater(t *testing.T) {
 // "yes" then "no" must not leave "yes"'s ignore rule closing items at every sync.
 func TestAnsweringADecisionAgainReplacesThePreviousRules(t *testing.T) {
 	tr, out := rulesFixture(t)
-	d := tr.AddDecision("manual:old", "Are the old repos dead?", []string{"yes", "no"}, t0)
-	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: EffectIgnore, Scope: "path:~/src/old"}}
+	d := tr.addDecision("manual:old", "Are the old repos dead?", []string{"yes", "no"}, t0)
+	d.Decision.Effects = []OptionEffect{{Option: "yes", Effect: effectIgnore, Scope: "path:~/src/old"}}
 	now := t0.Add(2 * time.Hour)
-	if _, _, err := tr.DecideWithEffects(d, now, "yes", nil, []string{"gcp-project:old-proj"}, nil); err != nil {
+	if _, _, err := tr.decideWithEffects(d, now, "yes", nil, []string{"gcp-project:old-proj"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	later := now.Add(time.Hour)
-	rules, _, err := tr.DecideWithEffects(d, later, "no", nil, nil, nil)
+	rules, _, err := tr.decideWithEffects(d, later, "no", nil, nil, nil)
 	if err != nil || len(rules) != 0 {
 		t.Fatalf("second answer: %+v %v", rules, err)
 	}
@@ -164,12 +164,12 @@ func TestRuleScopesOnFindings(t *testing.T) {
 		{"gcp-project:old-proj", repo, false},
 		{"path:~/src", key, false},
 	} {
-		if got := (Rule{Effect: EffectIgnore, Scope: c.scope}).Matches(c.it); got != c.want {
+		if got := (Rule{Effect: effectIgnore, Scope: c.scope}).matches(c.it); got != c.want {
 			t.Errorf("%s on %s: %v", c.scope, c.it.Title, got)
 		}
 	}
 	for _, it := range tr.Items {
-		if it.Kind == KindDecide && (Rule{Effect: EffectIgnore, Scope: "account:*"}).Matches(it) {
+		if it.Kind == KindDecide && (Rule{Effect: effectIgnore, Scope: "account:*"}).matches(it) {
 			t.Error("a rule matched a decision")
 		}
 	}

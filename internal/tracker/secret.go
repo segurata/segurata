@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -15,20 +16,14 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Rotate items: one per secret fingerprint, fed by local-secrets findings. This is the former
-// rotation ledger; `segurata rotations` is its command family. The risk model it shares with
-// the connector lives in internal/secretrisk, so a finding's severity and an item's priority never
-// disagree. See docs/architecture.md, "Rotation ledger".
-
-// SecretsConnector is the connector whose findings feed rotate items.
+// SecretsConnector is the connector whose findings feed rotate items, one per fingerprint. See
+// docs/architecture.md, "Rotation ledger".
 const SecretsConnector = "local-secrets"
 
-// StillPresent is the reason given when a rotated secret shows up again, with the same value, in a
-// working file: somewhere a consumer still reads it.
+// StillPresent is why a rotated secret seen again in a working file reopens.
 const StillPresent = "still present after rotation (old value still in a working file)"
 
-// HistoryOnly is noted once when a rotated secret is seen again only where nothing reads it.
-const HistoryOnly = "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
+const historyOnly = "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
 
 // Location is one place the secret was found.
 type Location struct {
@@ -41,30 +36,28 @@ type Location struct {
 	Kind     string    `json:"kind"`   // config | repo | transcript | history | log
 	Remote   bool      `json:"remote,omitempty"`
 	Repo     string    `json:"repo,omitempty"`   // git history: the repository
-	Date     string    `json:"date,omitempty"`   // git history: date of the first commit seen, YYYY-MM-DD
-	Origin   string    `json:"origin,omitempty"` // whose repository: secretrisk.OriginOwned, OriginThirdParty, OriginForkUpstream
+	Date     string    `json:"date,omitempty"`   // git history: first commit seen, YYYY-MM-DD
+	Origin   string    `json:"origin,omitempty"` // whose repository (secretrisk.Origin*)
 	Reused   bool      `json:"reused,omitempty"` // a third-party copy of a value the owner also holds
 	LastSeen time.Time `json:"last_seen"`
-	// Gone marks a working location the latest finished local-secrets run read without finding the
-	// secret there: kept for the record, left out of used_in, the exposure and path rules (see
-	// current). Records of the past (history, transcripts, logs) are never gone.
+	// Gone marks a working file a finished run read without the secret: kept for the record, left
+	// out of current. Records of the past are never gone.
 	Gone bool `json:"gone,omitempty"`
 }
 
 func (l Location) key() string { return l.Source + "\x00" + l.Path }
 
-// ref names the location in rotated_locations: source and path, as key does.
+// ref names the location in rotated_locations.
 func (l Location) ref() string { return l.Source + ":" + l.Path }
 
-// Working reports whether a consumer reads the secret from here: a config, .env, rc or repo
-// working-tree file. Git history (gitleaks), transcripts, logs and shell history are records of
-// the past; once the value is revoked their copies are dead.
-func (l Location) Working() bool {
+// working reports whether a consumer reads the secret from here. Git history, transcripts, logs
+// and shell history are records of the past, dead once the value is revoked.
+func (l Location) working() bool {
 	return l.Source != "gitleaks" && (l.Kind == "config" || l.Kind == "repo")
 }
 
-// Spot is how exposed this location left the secret: a copy in someone else's repository exposes
-// the upstream's secret, not the owner's.
+// Spot is how exposed this location left the secret; a copy in someone else's repository exposes
+// the upstream's secret.
 func (l Location) Spot() secretrisk.Spot {
 	if s, ok := secretrisk.UpstreamSpot(l.Origin, l.Reused); ok {
 		return s
@@ -72,7 +65,7 @@ func (l Location) Spot() secretrisk.Spot {
 	return secretrisk.Where(l.Source, l.Kind, l.Mode, l.Tracked, l.Remote)
 }
 
-// Where is path:line, or the path when the line is unknown.
+// Where is path:line, or the path.
 func (l Location) Where() string {
 	if l.Line > 0 {
 		return fmt.Sprintf("%s:%d", l.Path, l.Line)
@@ -80,42 +73,35 @@ func (l Location) Where() string {
 	return l.Path
 }
 
-// Secret is what a rotate item knows about its secret. Never the value: a redacted hint and, on the
-// item, the HMAC fingerprint.
+// Secret is what a rotate item knows about its secret: never the value, only a redacted hint.
 type Secret struct {
-	ID        string     `json:"id"` // shortest unique fingerprint prefix, from 8 characters
-	Service   string     `json:"service"`
-	Type      string     `json:"type"`
-	Redacted  string     `json:"redacted"`
-	Impact    string     `json:"impact"`
-	Reasons   []string   `json:"reasons"`
-	FirstSeen time.Time  `json:"first_seen"`
-	LastSeen  time.Time  `json:"last_seen"`
-	Locations []Location `json:"locations"`
-	UsedIn    []string   `json:"used_in"`
-	RotateURL string     `json:"rotate_url,omitempty"`
-	// RotatedLocations are the locations (source:path) known when the item was marked done.
-	RotatedLocations []string `json:"rotated_locations,omitempty"`
-	// Attribution says whose the secret is, from the claims its sightings made (see attribution.go).
-	Attribution *attribution.Result `json:"attribution,omitempty"`
-	// Liveness is the newest answer of the provider when the secret was tried (see liveness.go).
-	Liveness *secretrisk.Liveness `json:"liveness,omitempty"`
-	// Pair is the fingerprint of the other half of an AWS key pair, from the newest sighting that
-	// names one (secretrisk.Evidence.Pair); KeyID, on a secret access key, the redacted hint of the
-	// key id folded into its item (see foldPairs).
+	ID               string               `json:"id"` // shortest unique fingerprint prefix, from 8 characters
+	Service          string               `json:"service"`
+	Type             string               `json:"type"`
+	Redacted         string               `json:"redacted"`
+	Impact           string               `json:"impact"`
+	Reasons          []string             `json:"reasons"`
+	FirstSeen        time.Time            `json:"first_seen"`
+	LastSeen         time.Time            `json:"last_seen"`
+	Locations        []Location           `json:"locations"`
+	UsedIn           []string             `json:"used_in"`
+	RotateURL        string               `json:"rotate_url,omitempty"`
+	RotatedLocations []string             `json:"rotated_locations,omitempty"` // known when marked done
+	Attribution      *attribution.Result  `json:"attribution,omitempty"`
+	Liveness         *secretrisk.Liveness `json:"liveness,omitempty"` // the provider's newest answer
+	// Pair is the fingerprint of the other half of an AWS key pair; KeyID, on a secret access key,
+	// the hint of the key id folded into its item.
 	Pair  string `json:"pair,omitempty"`
 	KeyID string `json:"key_id,omitempty"`
 }
 
-// Sighting is one finding of a secret, reduced to what a rotate item needs.
+// Sighting is one finding of a secret.
 type Sighting struct {
 	Evidence secretrisk.Evidence
 	Seen     time.Time
 }
 
-// Sightings returns the secret findings of a local-secrets run: those whose evidence carries a
-// fingerprint.
-func Sightings(fs []finding.Finding) []Sighting {
+func sightingsOf(fs []finding.Finding) []Sighting {
 	var out []Sighting
 	for _, f := range fs {
 		if ev, ok := secretEvidence(f); ok {
@@ -125,7 +111,6 @@ func Sightings(fs []finding.Finding) []Sighting {
 	return out
 }
 
-// secretEvidence is the evidence of a local-secrets finding.
 func secretEvidence(f finding.Finding) (secretrisk.Evidence, bool) {
 	if f.Connector != SecretsConnector {
 		return secretrisk.Evidence{}, false
@@ -136,28 +121,16 @@ func secretEvidence(f finding.Finding) (secretrisk.Evidence, bool) {
 // SecretReport counts what folding secret sightings changed.
 type SecretReport struct {
 	Secrets, Created, Updated, Reopened, Skipped int
-	// Reclassified counts items closed because every current sighting is now noise.
-	Reclassified int
-	// HistoryOnly counts rotated items seen again only in history, transcripts or logs, noted for
-	// the first time in this sync.
-	HistoryOnly int
-	// Paired counts AWS key ids folded into their secret access key's item in this sync.
-	Paired int
+	Reclassified                                 int // every current sighting is now noise
+	HistoryOnly                                  int // rotated, seen again only in records of the past
+	Paired                                       int // AWS key ids folded into their secret key's item
 }
 
-// SyncSecrets folds sightings into rotate items. Secrets whose every sighting is noise (generic
-// matches, public or encrypted values) are skipped unless includeNoise; when such a secret already
-// has an item (a rule was corrected since), the item is updated to noise and closed as
-// reclassified (see reclassify). A done item found again
-// with the same fingerprint is reopened only when a sighting is in a working file (see
-// rotatedSeen). Items not seen keep their history and last_seen: git history and transcripts do
-// not forget, and a redacted copy still reached the model provider.
-//
-// A secret attributed mine (a claim names one of the owner's accounts, known to the tracker) counts
-// in full wherever it sits: copies in third-party repositories and in history a fork inherited are
-// the owner's leaked secret, not the upstream's (see mineAfterAll).
+// SyncSecrets folds sightings into rotate items. A noise-only secret is skipped unless
+// includeNoise, and its existing item reclassified. Items not seen keep their locations: git
+// history does not forget, and a transcript copy already reached the model provider.
 func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise bool) SecretReport {
-	return t.syncSecrets(sightings, now, includeNoise, t.OwnedAll(attribution.Owned{}))
+	return t.syncSecrets(sightings, now, includeNoise, t.ownedAll(attribution.Owned{}))
 }
 
 func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise bool, owned attribution.Owned) SecretReport {
@@ -198,8 +171,7 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 			rep.Updated++
 		}
 		s := it.Secret
-		// Impact comes from the best current sighting, so a corrected rule (or a sighting that turns
-		// out to be a temporary credential) can lower it as well as raise it.
+		// From the best current sighting, so a corrected rule can lower it as well as raise it.
 		s.Type, s.Redacted, s.Impact = best.Evidence.Type, best.Evidence.Redacted, impact.String()
 		s.LastSeen = seen.UTC()
 		s.updateLiveness(g, now)
@@ -227,7 +199,6 @@ func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise 
 	return rep
 }
 
-// newestPair is the pair the newest sighting that names one gives, "" when none does.
 func newestPair(g []Sighting) string {
 	pair, at := "", time.Time{}
 	for _, x := range g {
@@ -238,13 +209,12 @@ func newestPair(g []Sighting) string {
 	return pair
 }
 
-// foldPairs merges each AWS key id's item into its secret access key's (byFP maps fingerprints to
-// rotate items): one key to deactivate, so one item, which names the key id in its title. A key id
-// whose secret key has no item, or one that is noise, stays on its own, and a merged one reopens.
-// It returns how many key ids it merged.
+// foldPairs merges each AWS key id's item into its secret access key's, since deactivating the key
+// closes both, and returns how many it merged. A key id whose secret key has no item or is noise
+// stays on its own.
 func foldPairs(byFP map[string]*Item, now time.Time) int {
 	merged := 0
-	keyIDs := map[*Item]string{} // secret key item -> the redacted key id folded into it
+	keyIDs := map[*Item]string{}
 	for _, fp := range slices.Sorted(maps.Keys(byFP)) {
 		it := byFP[fp]
 		s := it.Secret
@@ -254,14 +224,12 @@ func foldPairs(byFP map[string]*Item, now time.Time) int {
 		into, ok := byFP[s.Pair]
 		standing := ok && into.Secret != nil && into.Status != Reclassified
 		if it.Status == Merged && (!standing || it.MergedInto != into.ID) {
-			// Its secret key has no item or is noise, or it pairs with another secret key now.
 			it.reopenMerged(now)
 		}
 		if !standing {
 			continue
 		}
 		keyIDs[into] = s.Redacted
-		// One still merged here is merged into this secret key already, which mergeInto leaves.
 		if it.mergeInto(into.ID, now, "merged into "+into.ID+", its secret access key: deactivating the key closes both") {
 			merged++
 		}
@@ -275,11 +243,8 @@ func foldPairs(byFP map[string]*Item, now time.Time) int {
 	return merged
 }
 
-// mineAfterAll counts in full the copies of a secret attributed mine that sit in someone else's
-// repository: the claims of the sightings (and the facts the item already holds) name one of the
-// owner's accounts, so it is the owner's secret leaked there. Such a copy is marked Reused, as a
-// third-party copy of a value the owner holds elsewhere is, and so is never noise or local for
-// being there.
+// mineAfterAll marks Reused the copies in someone else's repository of a secret attributed mine:
+// it is the owner's secret leaked there, never noise for where it sits.
 func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 	var facts attribution.Facts
 	if it != nil && it.Secret != nil && it.Secret.Attribution != nil {
@@ -303,10 +268,9 @@ func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 	}
 }
 
-// NoiseOnly reads the noise summary of a local-secrets run: every fingerprint whose copies are all
-// noise, with its type. The connector emits it instead of the noise findings themselves (unless
-// emit_noise), so a secret a corrected rule made noise still reaches its item.
-func NoiseOnly(fs []finding.Finding) map[string]string {
+// noiseOnly reads a local-secrets run's noise summary: the type of each noise-only fingerprint,
+// which the connector emits instead of the noise findings.
+func noiseOnly(fs []finding.Finding) map[string]string {
 	for _, f := range fs {
 		if f.Connector != SecretsConnector || f.Resource.Type != noiseSummaryType {
 			continue
@@ -320,15 +284,12 @@ func NoiseOnly(fs []finding.Finding) map[string]string {
 	return nil
 }
 
-// noiseSummaryType is localsecrets.NoiseSummaryType (the tracker does not import connectors).
+// noiseSummaryType is localsecrets.NoiseSummaryType; the tracker does not import connectors.
 const noiseSummaryType = "noise_summary"
 
-// SyncNoise applies a noise summary to the items it names, as SyncSecrets does for a secret whose
-// every sighting is noise: impact noise, and open, in-progress, snoozed or ignored items closed as
-// reclassified. Fingerprints without an item are left alone: noise never creates one. An item
-// attributed mine with a copy in someone else's repository is left alone too: that copy is noise
-// for the connector only because of where it sits, and attribution makes it the owner's.
-func (t *Tracker) SyncNoise(noise map[string]string, now time.Time) SecretReport {
+// syncNoise reclassifies the items a noise summary names; it never creates one. An item attributed
+// mine with an upstream copy stays: that copy is noise only for where it sits.
+func (t *Tracker) syncNoise(noise map[string]string, now time.Time) SecretReport {
 	var rep SecretReport
 	if len(noise) == 0 {
 		return rep
@@ -347,10 +308,9 @@ func (t *Tracker) SyncNoise(noise map[string]string, now time.Time) SecretReport
 	return rep
 }
 
-// reclassify closes an item whose every current sighting is noise, and reports whether it did.
-// Done and accepted items keep their status: the owner settled them. An ignored item becomes
-// reclassified too, its ignore reason kept in the event, so the "ignored" count holds only what
-// the owner ignored about real secrets.
+// reclassify closes an item whose every sighting is noise, and reports whether it did. Done and
+// accepted items stay settled; an ignored one keeps its reason in the event, so "ignored" counts
+// only real secrets.
 func (it *Item) reclassify(now time.Time, typ string) bool {
 	switch it.Status {
 	case Open, InProgress, Snoozed, Ignored:
@@ -365,11 +325,10 @@ func (it *Item) reclassify(now time.Time, typ string) bool {
 	return true
 }
 
-// wasIgnored starts a reclassified event's detail when the item had been ignored by the owner.
 const wasIgnored = "was ignored: "
 
-// unreclassify puts back a reclassified item whose secret is no longer noise: ignored again with
-// the owner's reason when it was ignored before, open otherwise; it reports whether it reopened.
+// unreclassify puts back an item no longer noise: ignored again if it was, else open; it reports
+// whether it reopened.
 func (it *Item) unreclassify(now time.Time) bool {
 	if prev, ok := strings.CutPrefix(it.lastDetail(actReclassify), wasIgnored); ok {
 		reason, _, _ := strings.Cut(prev, "; every current sighting is noise")
@@ -380,23 +339,31 @@ func (it *Item) unreclassify(now time.Time) bool {
 	return true
 }
 
-// lastDetail is the detail of the latest history event with that action, or "".
 func (it *Item) lastDetail(action string) string {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		if it.History[i].Action == action {
-			return it.History[i].Detail
-		}
+	if i := it.latestIndex(action); i >= 0 {
+		return it.History[i].Detail
 	}
 	return ""
 }
 
-// rotatedSeen handles a done item seen again. After a real rotation the old value is revoked, so
-// only a working file that still holds it matters: one known at rotation time (the new value never
-// reached it) or one that appeared since. Copies only in git history, transcripts, logs or shell
-// history leave the item done, with a note logged once per rotation.
-//
-// An item a dead check closed has no rotated locations, so any working file reopens it: the owner
-// still has a copy to clean (closeDead leaves such an item open in the first place).
+func (it *Item) latestOf(actions ...string) string {
+	if i := it.latestIndex(actions...); i >= 0 {
+		return it.History[i].Action
+	}
+	return ""
+}
+
+func (it *Item) latestIndex(actions ...string) int {
+	for i, e := range slices.Backward(it.History) {
+		if slices.Contains(actions, e.Action) {
+			return i
+		}
+	}
+	return -1
+}
+
+// rotatedSeen reopens a done item seen again in a working file, which the new value never reached.
+// Once revoked, copies in records of the past are harmless: noted once per rotation.
 func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	known := map[string]bool{}
 	for _, r := range it.Secret.RotatedLocations {
@@ -406,7 +373,7 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	for _, s := range g {
 		loc := locationOf(s.Evidence, now)
 		switch {
-		case !loc.Working():
+		case !loc.working():
 		case known[loc.ref()]:
 			still = append(still, loc.Path)
 		default:
@@ -415,7 +382,7 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	}
 	if len(still)+len(fresh) == 0 {
 		if !it.notedHistoryOnly() {
-			it.Log(now, EvNote, actHistory, HistoryOnly)
+			it.Log(now, EvNote, actHistory, historyOnly)
 			rep.HistoryOnly++
 		}
 		return
@@ -432,38 +399,35 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	rep.Reopened++
 }
 
-// secretsFilesScope is the scope of local-secrets findings outside git history
-// (localsecrets.filesScope; the tracker does not import connectors).
+// secretsFilesScope is localsecrets.filesScope: findings outside git history.
 const secretsFilesScope = "files"
 
-// markGoneLocations flags, on every rotate item, the working locations a local-secrets run did not
-// report although it read them: the secret is no longer there. A file the run skipped (the whole
-// files scope, or that path) proves nothing, and noise-only secrets are not reported one by one,
-// so neither marks anything. A location reported again is no longer gone (merge replaces it).
+// markGoneLocations flags the working locations a local-secrets run read without reporting the
+// secret. A skipped file or a noise-only secret proves nothing.
 func (t *Tracker) markGoneLocations(r *run) {
 	if _, unchecked := r.cov.Unchecked("", secretsFilesScope); unchecked {
 		return
 	}
 	seen := map[string]bool{}
-	for _, s := range Sightings(r.findings) {
+	for _, s := range sightingsOf(r.findings) {
 		seen[s.Evidence.Fingerprint+"\x00"+locationOf(s.Evidence, time.Time{}).key()] = true
 	}
-	noise := NoiseOnly(r.findings)
+	noise := noiseOnly(r.findings)
 	for fp, it := range t.byFingerprint() {
 		if _, isNoise := noise[fp]; isNoise {
 			continue
 		}
 		for i := range it.Secret.Locations {
 			l := &it.Secret.Locations[i]
-			if _, unchecked := r.cov.UncheckedPath("", secretsFilesScope, l.Path); l.Working() && !unchecked && !seen[fp+"\x00"+l.key()] {
+			if _, unchecked := r.cov.UncheckedPath("", secretsFilesScope, l.Path); l.working() && !unchecked && !seen[fp+"\x00"+l.key()] {
 				l.Gone = true
 			}
 		}
 	}
 }
 
-// current are the locations that still hold the secret as far as segurata knows: every one not
-// gone, or all of them when every one is gone (the item keeps its exposure until it is settled).
+// current are the locations not gone, or all of them when every one is: the item keeps its
+// exposure until it is settled.
 func (it *Item) current() []Location {
 	var out []Location
 	for _, l := range it.Secret.Locations {
@@ -477,13 +441,11 @@ func (it *Item) current() []Location {
 	return out
 }
 
-// NoteRedaction records that `segurata redact` replaced the value in some trail files. The
-// locations stay: the copies reached wherever they went before the local file was cleaned.
+// NoteRedaction records a `segurata redact`. The locations stay: the copies already left.
 func (it *Item) NoteRedaction(at time.Time, files int) {
 	it.Log(at, EvNote, actRedacted, fmt.Sprintf("redacted from %d trail %s", files, textfmt.Plural(files, "file", "files")))
 }
 
-// latest is when the group was last observed, or now when the findings carry no time.
 func latest(g []Sighting, now time.Time) time.Time {
 	var t time.Time
 	for _, s := range g {
@@ -497,12 +459,11 @@ func latest(g []Sighting, now time.Time) time.Time {
 	return t
 }
 
-// vague services say what a secret looks like rather than whose it is.
+// vague services say what a secret looks like, not whose it is.
 var vague = map[string]bool{"private-key": true, "unknown": true, "oauth": true, "url": true, "generic": true}
 
-// bestSighting picks the sighting that names the secret best: highest impact, then a catalog type
-// over a gitleaks rule id, a provider over a shape ("GCP service account key" over "Private key"),
-// then a working-tree file over git history.
+// bestSighting picks the sighting that names the secret best: impact, then a catalog type, a
+// provider over a shape, a working file over git history.
 func bestSighting(g []Sighting) Sighting {
 	best := g[0]
 	score := func(s Sighting) int {
@@ -533,7 +494,6 @@ func locationOf(ev secretrisk.Evidence, seen time.Time) Location {
 		Reused: ev.Reused, LastSeen: seen.UTC()}
 }
 
-// merge adds or updates one location.
 func (it *Item) merge(ev secretrisk.Evidence, seen time.Time) {
 	s := it.Secret
 	loc := locationOf(ev, seen)
@@ -557,7 +517,7 @@ func (t *Tracker) byFingerprint() map[string]*Item {
 	return m
 }
 
-// newSecretID is the shortest prefix of the fingerprint, from 8 characters, no other item uses.
+// newSecretID is the shortest unused prefix of the fingerprint, from 8 characters.
 func (t *Tracker) newSecretID(fp string) string {
 	used := map[string]bool{}
 	for _, it := range t.Items {
@@ -573,7 +533,6 @@ func (t *Tracker) newSecretID(fp string) string {
 	return fp
 }
 
-// worst is the location that exposed the secret the most.
 func (it *Item) worst() secretrisk.Spot {
 	s, _ := it.worstSpot()
 	return s
@@ -594,17 +553,16 @@ func (it *Item) worstSpot() (secretrisk.Spot, bool) {
 	return best, found
 }
 
-// spotOrder breaks ties between spots of the same exposure level. Copies in other people's
-// repositories rank last.
+// spotOrder breaks ties within an exposure level; copies in other people's repositories rank last.
 var spotOrder = map[string]int{"git+remote": 7, "transcript": 6, "git": 5, "readable": 4, "history": 3, "log": 2, "local": 1,
 	secretrisk.OriginThirdParty: 0, secretrisk.OriginForkUpstream: 0}
 
 func spotRank(s secretrisk.Spot) int { return int(s.Level)*10 + spotOrder[s.Label] }
 
-// SpotRank orders locations, worst exposure first, for listings.
+// SpotRank orders locations for listings: higher is worse.
 func SpotRank(l Location) int { return spotRank(l.Spot()) }
 
-// WorstLabel is the short label of the worst exposure, for tables.
+// WorstLabel is the short label of the worst exposure.
 func (it *Item) WorstLabel() string { return it.worst().Label }
 
 func impactByName(name string) secretrisk.Impact {
@@ -616,36 +574,52 @@ func impactByName(name string) secretrisk.Impact {
 	return secretrisk.Medium
 }
 
-// refreshSecret recomputes everything derived from a rotate item's locations: priority, severity,
-// reasons, used_in, rotate_url, title and next step.
-func (it *Item) refreshSecret() {
+// derive recomputes what a rotate item's locations decide: priority, severity, reasons, used_in,
+// rotate_url, title and next step. Other items get those from sync.
+func (it *Item) derive() {
 	s := it.Secret
+	if s == nil {
+		return
+	}
 	t := secretrisk.TypeFor(s.Type, s.Redacted)
 	s.Service, s.RotateURL = t.Service, t.RotateURL
-	worst, ok := it.worstSpot()
-	it.Priority = ""
-	if ok {
-		it.Priority = secretrisk.PriorityOf(impactByName(s.Impact), worst.Level)
-	}
-	// A connector that reports the same credential proves it live: the worse of the two priorities
-	// holds, and a live key that left the machine is P0 (see correlate.go).
+	worst, located := it.worstSpot()
 	live := it.live()
+	it.Priority = it.secretPriority(worst, located, live)
+	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
+	s.Reasons = it.secretReasons(t, worst, located, live)
+	s.UsedIn = it.usedIn()
+	it.secretTitleAndNext()
+}
+
+// secretPriority is the worst location's priority, raised by connectors that report the secret
+// live, P0 for a live key that left the machine.
+func (it *Item) secretPriority(worst secretrisk.Spot, located bool, live []FindingRef) secretrisk.Priority {
+	if it.liveAndLeaked() {
+		return secretrisk.P0
+	}
+	var p secretrisk.Priority
+	if located {
+		p = secretrisk.PriorityOf(impactByName(it.Secret.Impact), worst.Level)
+	}
 	for _, r := range live {
-		if p := priorityOf(r.Severity); p != "" && p.Rank() < it.Priority.Rank() {
-			it.Priority = p
+		if lp := priorityOf(r.Severity); lp != "" && lp.Rank() < p.Rank() {
+			p = lp
 		}
 	}
 	if it.livenessIs(secretrisk.Unregistered) && len(live) == 0 {
-		it.Priority = it.Priority.Lower()
+		p = p.Lower()
 	}
+	return p
+}
+
+func (it *Item) secretReasons(t secretrisk.Type, worst secretrisk.Spot, located bool, live []FindingRef) []string {
 	var reasons []string
-	if it.LiveAndLeaked() {
-		it.Priority = secretrisk.P0
+	if it.liveAndLeaked() {
 		if primary, ok := it.primaryLocation(); ok {
-			reasons = append(reasons, "live key, leaked in "+primary.Name())
+			reasons = append(reasons, "live key, leaked in "+primary.name())
 		}
 	}
-	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
 	if it.reopenedStillPresent() {
 		reasons = append(reasons, StillPresent)
 	}
@@ -658,47 +632,48 @@ func (it *Item) refreshSecret() {
 	for _, r := range it.Possible {
 		reasons = append(reasons, "possibly: "+r.Label()+": "+r.Title)
 	}
-	if ok {
+	if located {
 		reasons = append(reasons, secretrisk.Reason(t, worst))
-		counts := map[string]int{}
-		phrase := map[string]string{}
-		for _, l := range it.current() {
-			sp := l.Spot()
-			counts[sp.Label]++
-			phrase[sp.Label] = sp.Phrase
-		}
-		labels := make([]string, 0, len(counts))
-		for lb := range counts {
-			labels = append(labels, lb)
-		}
-		sort.Slice(labels, func(i, j int) bool { return spotOrder[labels[i]] > spotOrder[labels[j]] })
-		for _, lb := range labels {
-			n := counts[lb]
-			if lb == worst.Label {
-				n--
-			}
-			if n > 0 {
-				reasons = append(reasons, fmt.Sprintf("also %s (%d %s)", phrase[lb], n, textfmt.Plural(n, "place", "places")))
-			}
-		}
+		reasons = append(reasons, it.alsoReasons(worst)...)
 	}
 	if it.Owner() == attribution.Mine && it.upstreamCopy() {
 		reasons = append(reasons, "yours by attribution ("+it.Secret.Attribution.Reasons[0]+"), so its copies in other people's repositories count in full")
 	}
-	s.Reasons = reasons
-	seen := map[string]bool{}
-	s.UsedIn = []string{}
-	for _, l := range s.Locations {
-		if l.Working() && !l.Gone && !seen[l.Path] {
-			seen[l.Path] = true
-			s.UsedIn = append(s.UsedIn, l.Path)
-		}
-	}
-	sort.Strings(s.UsedIn)
-	it.secretTitleAndNext()
+	return reasons
 }
 
-// secretTitleAndNext names a rotate item and says how to rotate it.
+// alsoReasons count the other current locations by spot: "also in shell history (2 places)".
+func (it *Item) alsoReasons(worst secretrisk.Spot) []string {
+	counts := map[string]int{}
+	phrase := map[string]string{}
+	for _, l := range it.current() {
+		sp := l.Spot()
+		counts[sp.Label]++
+		phrase[sp.Label] = sp.Phrase
+	}
+	counts[worst.Label]--
+	labels := slices.Collect(maps.Keys(counts))
+	slices.SortFunc(labels, func(a, b string) int { return cmp.Or(spotOrder[b]-spotOrder[a], strings.Compare(a, b)) })
+	var out []string
+	for _, lb := range labels {
+		if n := counts[lb]; n > 0 {
+			out = append(out, fmt.Sprintf("also %s (%d %s)", phrase[lb], n, textfmt.Plural(n, "place", "places")))
+		}
+	}
+	return out
+}
+
+func (it *Item) usedIn() []string {
+	out := []string{}
+	for _, l := range it.Secret.Locations {
+		if l.working() && !l.Gone && !slices.Contains(out, l.Path) {
+			out = append(out, l.Path)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (it *Item) secretTitleAndNext() {
 	s := it.Secret
 	it.Title = it.secretTitle()
@@ -720,10 +695,8 @@ func (it *Item) secretTitleAndNext() {
 	it.Next = n
 }
 
-// secretTitle names a rotate item by what it is, the provider's name for the key when a live
-// provider key matched it, and where it was found worst: "<label> <hint> = "<key name>" (in use,
-// $42.00 this month) in <repo>:<file> (+N places), committed YYYY-MM". The hint is left out when
-// it is not one value ("PEM"); the date is the earliest commit among the locations.
+// secretTitle is `<label> <hint> = "<key name>" (in use, $42.00 this month) in <repo>:<file>
+// (+N places), committed YYYY-MM`.
 func (it *Item) secretTitle() string {
 	s := it.Secret
 	title := secretrisk.TypeFor(s.Type, s.Redacted).Label
@@ -738,7 +711,7 @@ func (it *Item) secretTitle() string {
 	if !ok {
 		return title
 	}
-	title += " in " + primary.Name()
+	title += " in " + primary.name()
 	if n := len(it.current()) - 1; n > 0 {
 		title += fmt.Sprintf(" (+%d %s)", n, textfmt.Plural(n, "place", "places"))
 	}
@@ -748,9 +721,8 @@ func (it *Item) secretTitle() string {
 	return title
 }
 
-// keyFacts names the provider's key the secret is, from the surest live ref that carries key facts:
-// ` = "Claude Code" (in use, $42.00 this month)`. In use means used within finding.IdleAfter of the
-// run that reported it. "" when no live provider key matched.
+// keyFacts is ` = "Claude Code" (in use, $42.00 this month)` from the surest live ref with key
+// facts, or "".
 func (it *Item) keyFacts() string {
 	var best *FindingRef
 	for _, r := range it.live() {
@@ -779,8 +751,8 @@ func (it *Item) keyFacts() string {
 	return out
 }
 
-// primaryLocation is the location that exposed the secret the most; among equals, the owner's
-// repository, then the most recent commit, then the path.
+// primaryLocation is the worst exposed location; among equals, the owner's repository, then the
+// most recent commit, then the path.
 func (it *Item) primaryLocation() (Location, bool) {
 	locs := it.current()
 	if len(locs) == 0 {
@@ -813,16 +785,14 @@ func (it *Item) primaryLocation() (Location, bool) {
 	return best, true
 }
 
-// Name is the location as a title shows it: <repo>:<file> for git history (the repository
-// without its ~/src/ prefix), else the path.
-func (l Location) Name() string {
+// name is <repo>:<file> for git history, else the path.
+func (l Location) name() string {
 	if l.Repo != "" && strings.HasPrefix(l.Path, l.Repo+"/") {
 		return strings.TrimPrefix(l.Repo, "~/src/") + ":" + strings.TrimPrefix(l.Path, l.Repo+"/")
 	}
 	return l.Path
 }
 
-// firstCommitted is the earliest commit date among the locations, "" when none was committed.
 func (it *Item) firstCommitted() string {
 	first := ""
 	for _, l := range it.Secret.Locations {
@@ -833,7 +803,6 @@ func (it *Item) firstCommitted() string {
 	return first
 }
 
-// lastCommitted is the latest commit date among the locations, "" when none was committed.
 func (it *Item) lastCommitted() string {
 	last := ""
 	for _, l := range it.Secret.Locations {
@@ -844,49 +813,18 @@ func (it *Item) lastCommitted() string {
 	return last
 }
 
-// upstreamCopy reports whether a location is in someone else's repository or in history a fork
-// inherited.
 func (it *Item) upstreamCopy() bool {
-	for _, l := range it.Secret.Locations {
-		if l.Origin == secretrisk.OriginThirdParty || l.Origin == secretrisk.OriginForkUpstream {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(it.Secret.Locations, func(l Location) bool {
+		return l.Origin == secretrisk.OriginThirdParty || l.Origin == secretrisk.OriginForkUpstream
+	})
 }
 
-// owned reports whether a location is in one of the owner's repositories.
 func (it *Item) owned() bool {
-	for _, l := range it.Secret.Locations {
-		if l.Origin == secretrisk.OriginOwned {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(it.Secret.Locations, func(l Location) bool { return l.Origin == secretrisk.OriginOwned })
 }
 
-// reopenedStillPresent: the last done/reopen event is an automatic reopen.
 func (it *Item) reopenedStillPresent() bool {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Action {
-		case actAutoReopen:
-			return it.Status != Done
-		case actDone, actReopen:
-			return false
-		}
-	}
-	return false
+	return it.Status != Done && it.latestOf(actAutoReopen, actDone, actReopen) == actAutoReopen
 }
 
-// notedHistoryOnly reports whether the history-only note was logged since the last done.
-func (it *Item) notedHistoryOnly() bool {
-	for i := len(it.History) - 1; i >= 0; i-- {
-		switch it.History[i].Action {
-		case actHistory:
-			return true
-		case actDone:
-			return false
-		}
-	}
-	return false
-}
+func (it *Item) notedHistoryOnly() bool { return it.latestOf(actHistory, actDone) == actHistory }
