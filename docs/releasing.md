@@ -124,14 +124,7 @@ go install github.com/segurata/segurata/cmd/segurata@latest   # or @v0.1.0
 Builds from source with your Go toolchain (the version in `go.mod` or newer). `segurata version`
 then shows the module version without a commit or date.
 
-This works only once the code is public at `https://github.com/segurata/segurata`, because the
-module path is `github.com/segurata/segurata`. The go command maps a `github.com/<owner>/<repo>`
-path straight to `https://github.com/<owner>/<repo>` with no lookup that could point elsewhere
-(`vcsPaths` in the Go source, `src/cmd/go/internal/vcs/vcs.go`), the module proxy fetches it the
-same way, and a `go.mod` whose module path differs from the path asked for is rejected. A
-repository living anywhere else cannot serve this module path;
-a vanity path (`segurata.dev/segurata`) could, but would change the module path. Until then, clone
-the repository and run `go build ./cmd/segurata`.
+From a clone, `go build ./cmd/segurata` builds the same binary in the current folder.
 
 ### Release binaries
 
@@ -156,9 +149,6 @@ $path = [Environment]::GetEnvironmentVariable("Path", "User")
 A new terminal then finds `segurata`. The binary has no Authenticode signature, so SmartScreen may
 warn the first time it runs; the cosign signature over `checksums.txt` is what proves its origin.
 There is no winget or Scoop manifest.
-
-While the repository is private, release downloads (and so the cask) need a GitHub token with read
-access to it, for example `gh release download v0.1.0 --repo segurata/segurata`.
 
 ## Project website
 
