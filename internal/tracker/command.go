@@ -96,10 +96,7 @@ func (c CLI) find(t *Tracker, ref string) (*Item, error) {
 	return t.find(ref)
 }
 
-func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, c.name()+":", err)
-	return 1
-}
+func (c CLI) fail(err error) int { return textfmt.Fail(c.Err, c.name(), err) }
 
 type multi []string
 

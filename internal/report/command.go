@@ -11,6 +11,7 @@ import (
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/statefile"
+	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -23,10 +24,7 @@ type CLI struct {
 	Now      func() time.Time
 }
 
-func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, "report:", err)
-	return 1
-}
+func (c CLI) fail(err error) int { return textfmt.Fail(c.Err, "report", err) }
 
 // Run prints the report, or writes it to --out with mode 0600: it names accounts and paths.
 func (c CLI) Run(args []string) int {

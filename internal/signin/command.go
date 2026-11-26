@@ -47,10 +47,7 @@ type CLI struct {
 	Interval  time.Duration        // zero is the default
 }
 
-func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, "signin:", err)
-	return 1
-}
+func (c CLI) fail(err error) int { return textfmt.Fail(c.Err, "signin", err) }
 
 func (c CLI) Run(ctx context.Context, args []string) int {
 	fs := cliflag.New("signin", c.Err)

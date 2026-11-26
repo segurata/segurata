@@ -84,10 +84,7 @@ func (c CLI) Run(args []string) int {
 	}
 }
 
-func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, "rotations:", textfmt.Terminal(err.Error()))
-	return 1
-}
+func (c CLI) fail(err error) int { return textfmt.Fail(c.Err, "rotations", err) }
 
 func splitList(s string) map[string]bool {
 	m := map[string]bool{}

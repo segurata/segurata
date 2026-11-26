@@ -129,6 +129,9 @@ func TestListWatchUnwatch(t *testing.T) {
 	if _, e, code := x.run(t, "watch", "aws", "123"); code != 1 || !strings.Contains(e, "no accounts list") {
 		t.Errorf("aws watch: %d %q", code, e)
 	}
+	if _, e, _ := x.run(t, "watch", "aws\x1b]0;owned\a", "123"); strings.ContainsAny(e, "\x1b\a") || !strings.HasPrefix(e, `accounts: aws\x1b]0;owned\a has no`) {
+		t.Errorf("a name from the command line reaches stderr escaped: %q", e)
+	}
 }
 
 // Without a list, unwatch writes one: every person's account seen but the one taken out.

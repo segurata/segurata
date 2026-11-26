@@ -66,10 +66,7 @@ type options struct {
 	minAge                            time.Duration
 }
 
-func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, "redact:", err)
-	return 1
-}
+func (c CLI) fail(err error) int { return textfmt.Fail(c.Err, "redact", err) }
 
 func (c CLI) Run(ctx context.Context, args []string) int {
 	o, ok := c.parse(args)

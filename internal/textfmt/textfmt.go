@@ -26,6 +26,21 @@ func Line(w io.Writer, format string, a ...any) {
 	fmt.Fprintln(w, Terminal(fmt.Sprintf(format, a...)))
 }
 
+// Fail writes err to w after prefix, when there is one, through Terminal line by line, and returns
+// the exit status of a failed command.
+func Fail(w io.Writer, prefix string, err error) int {
+	msg := err.Error()
+	if prefix != "" {
+		msg = prefix + ": " + msg
+	}
+	lines := strings.Split(msg, "\n")
+	for i, l := range lines {
+		lines[i] = Terminal(l)
+	}
+	fmt.Fprintln(w, strings.Join(lines, "\n"))
+	return 1
+}
+
 func OrDash(s string) string {
 	if s == "" {
 		return "-"

@@ -1,6 +1,7 @@
 package textfmt
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,18 @@ func TestLineEscapesTheWholeLineOnce(t *testing.T) {
 	Line(&b, "%s · %d · %v", "a\x1b[2J", 3, "b\nc")
 	if got, want := b.String(), `a\x1b[2J · 3 · b\nc`+"\n"; got != want {
 		t.Errorf("Line wrote %q, want %q", got, want)
+	}
+}
+
+func TestFailEscapesEachLineOfTheError(t *testing.T) {
+	for prefix, want := range map[string]string{
+		"redact": "redact: verification failed:\n  a\\x1b[2J.env: mode changed\n",
+		"":       "verification failed:\n  a\\x1b[2J.env: mode changed\n",
+	} {
+		var b strings.Builder
+		if code := Fail(&b, prefix, errors.New("verification failed:\n  a\x1b[2J.env: mode changed")); code != 1 || b.String() != want {
+			t.Errorf("Fail(%q) = %d, wrote %q, want %q", prefix, code, b.String(), want)
+		}
 	}
 }
 

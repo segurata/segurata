@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -43,10 +44,7 @@ type CLI struct {
 	Email    func() string // the owner's commit email (attribution.GitEmail); nil for none
 }
 
-func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, "accounts:", err)
-	return 1
-}
+func (c CLI) fail(err error) int { return textfmt.Fail(c.Err, "accounts", err) }
 
 func (c CLI) Run(args []string) int {
 	if len(args) == 0 {

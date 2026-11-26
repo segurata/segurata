@@ -13,6 +13,7 @@ import (
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/runfile"
+	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -28,10 +29,7 @@ type CLI struct {
 	Now      func() time.Time
 }
 
-func (c CLI) fail(err error) int {
-	fmt.Fprintln(c.Err, err)
-	return 1
-}
+func (c CLI) fail(err error) int { return textfmt.Fail(c.Err, "", err) }
 
 // Accept records a finding of the latest run as an accepted risk, or lists the accepted ones.
 func (c CLI) Accept(args []string) int {
