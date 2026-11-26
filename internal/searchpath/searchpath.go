@@ -1,4 +1,4 @@
-// Package searchpath cleans PATH values. Standard library only.
+// Package searchpath cleans PATH values.
 package searchpath
 
 import (
@@ -7,10 +7,8 @@ import (
 	"strings"
 )
 
-// Clean keeps the first occurrence of each absolute directory in a PATH value, dropping
-// duplicates and entries that depend on where or how a process starts (relative, "~", empty): a
-// launchd or systemd environment cannot expand them, and an interactive one would resolve them
-// against whatever directory it runs in.
+// Clean keeps the first occurrence of each absolute directory in a PATH value: relative, "~" and
+// empty entries would resolve against whatever directory a process starts in.
 func Clean(path string) string {
 	seen := map[string]bool{}
 	var out []string

@@ -20,12 +20,11 @@ func Terminal(s string) string {
 	return quoted[1 : len(quoted)-1]
 }
 
-// Line writes one formatted line to a terminal user, its control characters made visible.
+// Line writes one line through Terminal.
 func Line(w io.Writer, format string, a ...any) {
 	fmt.Fprintln(w, Terminal(fmt.Sprintf(format, a...)))
 }
 
-// OrDash is s, or "-" when s is empty, for table cells.
 func OrDash(s string) string {
 	if s == "" {
 		return "-"
@@ -33,7 +32,6 @@ func OrDash(s string) string {
 	return s
 }
 
-// Plural is one when n is 1, else many.
 func Plural(n int, one, many string) string {
 	if n == 1 {
 		return one
@@ -41,12 +39,10 @@ func Plural(n int, one, many string) string {
 	return many
 }
 
-// Count is "1 thing" or "N things".
 func Count(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, Plural(n, one, many))
 }
 
-// UpperFirst is s with its first letter upper-cased; "" stays "".
 func UpperFirst(s string) string {
 	r, size := utf8.DecodeRuneInString(s)
 	if size == 0 {
@@ -63,11 +59,9 @@ func JoinAnd(items []string) string {
 	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 }
 
-// USD writes an amount of dollars with cents: "$42.50".
 func USD(v float64) string { return fmt.Sprintf("$%.2f", v) }
 
-// pronouns rewrite a predicate written about one thing ("it") for several, longest first so that
-// "it is" turns into "they are" before a lone "it" turns into "them".
+// pronouns rewrite a predicate about "it" for several, longest first.
 var pronouns = []struct {
 	re   *regexp.Regexp
 	many string
@@ -79,11 +73,8 @@ var pronouns = []struct {
 	{regexp.MustCompile(`\bit\b`), "them"},
 }
 
-// PluralPredicate is a predicate written for one subject, rewritten for n of them: "can read the
-// pages shared with it" stays as is for 1 and becomes "can read the pages shared with them" for 4;
-// "it is installed on" becomes "they are installed on". A lone "it" left after the subject forms
-// is an object ("shared with it"), so it becomes "them". For group titles that put a count in front
-// of what one finding's title says about one thing.
+// PluralPredicate rewrites a predicate about one subject for n of them: "it is shared with it"
+// becomes "they are shared with them".
 func PluralPredicate(n int, predicate string) string {
 	if n == 1 {
 		return predicate
@@ -94,8 +85,7 @@ func PluralPredicate(n int, predicate string) string {
 	return predicate
 }
 
-// Truncate cuts s to n runes, the last one an ellipsis, when it is longer. A cut that would fall
-// inside a `code span` moves to before its opening backtick, so a command is never shown half.
+// Truncate cuts s to n runes ending in an ellipsis, never inside a `code span`.
 func Truncate(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -123,10 +113,8 @@ func openTick(r []rune) int {
 	return open
 }
 
-// Clip splits a text into a head of at most n runes and the rest, for views that show the head and
-// fold the rest away. The head is the first line; when that is longer than n it ends at the last
-// sentence end (". ", "; ", ": ", "! ", "? ") that fits, or else at the last word that fits followed
-// by an ellipsis. It never ends inside a `code span`. The rest keeps its line breaks.
+// Clip splits text into a head of at most n runes, its first line cut at the last sentence or else
+// word end that fits and never inside a `code span`, and the rest with its line breaks.
 func Clip(s string, n int) (head, rest string) {
 	s = strings.TrimSpace(s)
 	first, more, _ := strings.Cut(s, "\n")

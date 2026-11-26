@@ -5,27 +5,18 @@ import (
 	"testing"
 )
 
-func TestOrDash(t *testing.T) {
-	if got := OrDash(""); got != "-" {
-		t.Errorf(`OrDash("") = %q`, got)
-	}
-	if got := OrDash("P1"); got != "P1" {
-		t.Errorf(`OrDash("P1") = %q`, got)
-	}
-}
-
-func TestPlural(t *testing.T) {
-	for n, want := range map[int]string{0: "files", 1: "file", 2: "files"} {
-		if got := Plural(n, "file", "files"); got != want {
-			t.Errorf("Plural(%d) = %q, want %q", n, got, want)
-		}
-	}
-}
-
-func TestCount(t *testing.T) {
-	for n, want := range map[int]string{0: "0 integrations", 1: "1 integration", 4: "4 integrations"} {
-		if got := Count(n, "integration", "integrations"); got != want {
-			t.Errorf("Count(%d) = %q, want %q", n, got, want)
+func TestWordingHelpers(t *testing.T) {
+	for _, c := range []struct{ got, want string }{
+		{OrDash(""), "-"}, {OrDash("P1"), "P1"},
+		{Plural(0, "file", "files"), "files"}, {Plural(1, "file", "files"), "file"}, {Plural(2, "file", "files"), "files"},
+		{Count(0, "integration", "integrations"), "0 integrations"}, {Count(1, "integration", "integrations"), "1 integration"},
+		{Count(4, "integration", "integrations"), "4 integrations"},
+		{USD(42), "$42.00"},
+		{UpperFirst(""), ""}, {UpperFirst("owner"), "Owner"}, {UpperFirst("élan"), "Élan"}, {UpperFirst("Admin"), "Admin"},
+		{Terminal("plain · text"), "plain · text"}, {Terminal("bad \xff byte"), `bad \xff byte`},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
 		}
 	}
 }
@@ -95,12 +86,6 @@ func TestClip(t *testing.T) {
 	}
 }
 
-func TestUSD(t *testing.T) {
-	if got := USD(42); got != "$42.00" {
-		t.Errorf("USD(42) = %q", got)
-	}
-}
-
 func TestJoinAnd(t *testing.T) {
 	for _, c := range []struct {
 		in   []string
@@ -108,14 +93,6 @@ func TestJoinAnd(t *testing.T) {
 	}{{nil, ""}, {[]string{"a"}, "a"}, {[]string{"a", "b"}, "a and b"}, {[]string{"a", "b", "c"}, "a, b and c"}} {
 		if got := JoinAnd(c.in); got != c.want {
 			t.Errorf("JoinAnd(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-func TestUpperFirst(t *testing.T) {
-	for in, want := range map[string]string{"": "", "owner": "Owner", "élan": "Élan", "Admin": "Admin"} {
-		if got := UpperFirst(in); got != want {
-			t.Errorf("UpperFirst(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

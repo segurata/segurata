@@ -120,7 +120,9 @@ func TestAFindingsScopeAndPath(t *testing.T) {
 	tally.Declare("files", true, "")
 	tally.Declare(PathScope("files", "~/locked"), false, "unreadable")
 	end := tally.End("c", "", time.Now(), time.Now(), nil)
-	at := func(p string) Finding { return Finding{Account: "local", Scope: "files", Evidence: map[string]any{"path": p}} }
+	at := func(p string) Finding {
+		return Finding{Account: "local", Scope: "files", Evidence: map[string]any{"path": p}}
+	}
 	if _, unchecked := CoverageOf(&end).UncheckedFinding(at("~/locked/x")); !unchecked {
 		t.Error("a finding under an unreadable path was taken as checked")
 	}
