@@ -37,38 +37,45 @@ func TestRedactNeverReturnsTheSecret(t *testing.T) {
 
 func TestFillKeepsConnectorChoicesAndSetsDerivedFields(t *testing.T) {
 	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.FixedZone("x", 3600))
-	f := Finding{Connector: "c", Account: "a", Resource: Resource{Type: "t", ID: "1"}}
+	f := Finding{Connector: "c", Account: "a", Resource: Resource{Type: "t", ID: "1"}, Remediation: Remediation{Summary: "by hand", Automatable: true}}
 	f.Fill(now)
 	if f.Type != "finding" || f.ID != StableID("c", "a", "t", "1") || !f.ObservedAt.Equal(now) || f.ObservedAt.Location() != time.UTC {
 		t.Fatalf("unexpected fill: %+v", f)
 	}
-	g := Finding{ID: "custom"}
-	g.Fill(now)
-	if g.ID != "custom" {
+	labelled := Finding{Connector: "c", Instance: "work", Account: "a", Resource: Resource{Type: "t", ID: "1"}}
+	labelled.Fill(now)
+	if labelled.ID != StableID("work", "c", "a", "t", "1") {
+		t.Fatal("an instance's findings must not share ids with the unnamed instance's")
+	}
+	custom := Finding{ID: "custom", Remediation: Remediation{Action: "macos.firewall.enable"}}
+	custom.Fill(now)
+	if custom.ID != "custom" {
 		t.Fatal("Fill overwrote an explicit id")
 	}
-}
-
-func TestFillDerivesAutomatableFromAction(t *testing.T) {
-	manual := Finding{Remediation: Remediation{Summary: "by hand", Automatable: true}}
-	manual.Fill(time.Now())
-	auto := Finding{Remediation: Remediation{Action: "macos.firewall.enable"}}
-	auto.Fill(time.Now())
-	if manual.Remediation.Automatable || !auto.Remediation.Automatable {
-		t.Fatalf("automatable must be true iff an action is set: manual=%v auto=%v",
-			manual.Remediation.Automatable, auto.Remediation.Automatable)
+	if f.Remediation.Automatable || !custom.Remediation.Automatable {
+		t.Fatal("automatable must be true iff an action is set")
 	}
 }
 
-func TestSeverityRank(t *testing.T) {
+func TestSeverityRankPickAndValid(t *testing.T) {
 	order := []Severity{SevInfo, SevLow, SevMedium, SevHigh, SevCritical}
-	for i := 1; i < len(order); i++ {
-		if order[i].Rank() <= order[i-1].Rank() {
-			t.Fatalf("%s should outrank %s", order[i], order[i-1])
+	var picked string
+	for i, s := range order {
+		if i > 0 && s.Rank() <= order[i-1].Rank() {
+			t.Fatalf("%s should outrank %s", s, order[i-1])
 		}
+		if !s.Valid() {
+			t.Errorf("%s is not valid", s)
+		}
+		picked += s.Pick("h", "m", "l")
 	}
-	if Severity("bogus").Rank() != 0 {
-		t.Fatal("unknown severity should rank lowest")
+	if picked != "llmhh" {
+		t.Fatalf("Pick: %q", picked)
+	}
+	for _, bogus := range []Severity{"bogus", "High", ""} {
+		if bogus.Rank() != 0 || bogus.Valid() {
+			t.Errorf("%q must rank lowest and be invalid", bogus)
+		}
 	}
 }
 
@@ -79,15 +86,5 @@ func TestLabel(t *testing.T) {
 	}
 	if f := (Finding{Connector: "openrouter", Instance: "work"}); f.Selector() != "openrouter:work" {
 		t.Errorf("selector %q", f.Selector())
-	}
-}
-
-func TestSeverityPick(t *testing.T) {
-	var got []string
-	for _, s := range []Severity{SevCritical, SevHigh, SevMedium, SevLow, SevInfo} {
-		got = append(got, s.Pick("h", "m", "l"))
-	}
-	if strings.Join(got, "") != "hhmll" {
-		t.Fatalf("%q", got)
 	}
 }

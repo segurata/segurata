@@ -1,18 +1,14 @@
 package finding
 
-// Theme is the part of the tracker's briefing a connector's items go to. A connector declares one
-// in its description (docs/connectors.md, "Theme and grouping"); the core writes it, resolved by
-// ThemeFor, into every run_end record, and the tracker files the run's items under it. A connector
-// that declares none goes to ThemeOther. A run_end without a theme was written before connectors
-// declared themes and grouping.
+// Theme is the part of the tracker's briefing a connector's items go to (docs/connectors.md,
+// "Theme and grouping").
 type Theme struct {
 	ID          string `json:"id"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 }
 
-// The themes connectors share, in the order the briefing lists them. A connector names one of these
-// by its id alone; its title and description are the ones here.
+// The shared themes, which a connector names by id alone.
 var (
 	ThemeMac               = Theme{"mac", "This Mac", "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."}
 	ThemeBrowserExtensions = Theme{"browser-extensions", "Browser extensions", "Extensions that can read or drive your pages, one item per extension."}
@@ -23,15 +19,13 @@ var (
 	ThemeAISpend           = Theme{"ai-spend", "AI providers", "OpenAI, Anthropic and OpenRouter keys, limits and spend."}
 )
 
-// ThemeOther is the theme of a connector that declares none.
 var ThemeOther = Theme{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."}
 
-// Themes are the shared themes in briefing order.
+// Themes are in briefing order.
 var Themes = []Theme{ThemeMac, ThemeBrowserExtensions, ThemeGitHub, ThemeConnectedApps, ThemeGoogle, ThemeCloud, ThemeAISpend}
 
-// ThemeFor is the theme a declaration stands for: a shared theme's own title and description when
-// it names one by id (ThemeOther for no id), otherwise the declaration with its id as the title
-// when it gives none.
+// ThemeFor resolves a declaration: a shared theme by id (ThemeOther for none), else the declaration
+// titled by its id when it gives no title.
 func ThemeFor(declared Theme) Theme {
 	if declared.ID == "" || declared.ID == ThemeOther.ID {
 		return ThemeOther
