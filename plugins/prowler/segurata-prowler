@@ -124,7 +124,8 @@ DENIED_CALL = re.compile(r"HttpError 403 when requesting https://([a-z0-9-]+)\.g
 # Google answers 403 to calls on a project with billing disabled, or to an API that is disabled,
 # where there is nothing to check.
 BILLING_OFF = re.compile(r"check billing account associated|requires billing to be enabled")
-API_OFF = re.compile(r"SERVICE_DISABLED|API has not been used in project")
+# Google's message names the consumer (quota) project, by number, which need not be the audited one.
+OFF_IN_PROJECT = re.compile(r"API has not been used in project ([^\s\"']+) before")
 SERVICEUSAGE_TARGET = re.compile(r"services/([a-z0-9-]+)\.googleapis\.com")
 TOKEN_LIKE = re.compile(r"ya29\.[A-Za-z0-9_\-.]+")
 # The lookbehind leaves out Python's local "PermissionError: [Errno 13] Permission denied".
@@ -305,9 +306,10 @@ class Gcloud:
         return token
 
     def projects(self, account):
-        """{active project id: whether it has a parent}; folders exist only under an organization."""
+        """{active project id: (whether it has a parent, its number)}; folders exist only under an organization."""
         rows = self.read_json(account, "projects", "list", "--filter=lifecycleState:ACTIVE")
-        return {p["projectId"]: bool((p.get("parent") or {}).get("type")) for p in rows or [] if p.get("projectId")}
+        return {p["projectId"]: (bool((p.get("parent") or {}).get("type")), str(p.get("projectNumber") or ""))
+                for p in rows or [] if p.get("projectId")}
 
     def read_json(self, account, *args):
         """Parsed output of a read, retried once when Google throttled or dropped it."""
@@ -573,18 +575,21 @@ def summarize(records, config, account, project, profile):
     return findings, counts
 
 
-def log_problems(text, project):
+def log_problems(text, project, number=""):
     """(services with their API disabled, services refused for lack of billing, services refused
-    otherwise) in Prowler's log; organization-level refusals are no gap in the project."""
+    otherwise) in Prowler's log; organization-level refusals are no gap in the project. A 403 for an
+    API disabled in another project is a refusal: the audited project's checks still saw nothing."""
+    audited = {project, number} - {""}
     disabled, unbilled, refused = set(), set(), set()
-    for service, p in DISABLED_API.findall(text):
-        if p == project:
-            disabled.add(service)
     for line in text.splitlines():
-        for host, path in DENIED_CALL.findall(line):
+        calls = DENIED_CALL.findall(line)
+        if not calls:
+            disabled.update(service for service, p in DISABLED_API.findall(line) if p == project)
+        for host, path in calls:
             if "organizations/" in path:
                 continue
-            if host != "serviceusage" and API_OFF.search(line):
+            off = OFF_IN_PROJECT.search(line) if host != "serviceusage" else None
+            if off and off.group(1) in audited:
                 disabled.add(host)
                 continue
             target = SERVICEUSAGE_TARGET.search(path) if host == "serviceusage" else None
@@ -596,7 +601,7 @@ class Timeout(Exception):
     pass
 
 
-Context = namedtuple("Context", "config emit gcloud prowler in_org")
+Context = namedtuple("Context", "config emit gcloud prowler in_org numbers")
 
 
 def prowler_args(prowler, project, outdir, config):
@@ -720,7 +725,7 @@ def report_project(project, owner, account, records, text, ctx):
     findings, counts = summarize(records, ctx.config, owner, project, profile)
     for f in findings:
         emit.finding(f)
-    disabled, unbilled, refused = log_problems(text, project)
+    disabled, unbilled, refused = log_problems(text, project, ctx.numbers.get(project, ""))
     detail = "%d FAIL, %d PASS, %d MANUAL; %d muted, %d already checked by gcp, %d below severity_min" % (
         counts["FAIL"], counts["PASS"], counts["MANUAL"], counts["muted"], counts["overlap"], counts["below_min"])
     detail += "; profile %s; %d lowered by relevance, %d not applicable" % (
@@ -765,12 +770,14 @@ def list_projects(config, emit, gcloud, known):
 
 
 def projects_to_scan(config, emit, listing):
-    """[(project, the accounts that list it)] after projects and skip_projects, and {project: in an organization}."""
-    owners, in_org = {}, {}
+    """[(project, the accounts that list it)] after projects and skip_projects, {project: in an
+    organization} and {project: its number}."""
+    owners, in_org, numbers = {}, {}, {}
     for account, projects in listing.items():
-        for p, org in projects.items():
+        for p, (org, number) in projects.items():
             owners.setdefault(p, []).append(account)
             in_org[p] = in_org.get(p, False) or org
+            numbers[p] = numbers.get(p) or number
     if config.projects:
         for p in config.projects:
             if p not in owners:
@@ -782,7 +789,7 @@ def projects_to_scan(config, emit, listing):
             emit.scope(p, False, "expected: in connectors.prowler.config.skip_projects")
         else:
             todo.append((p, owners[p]))
-    return todo, in_org
+    return todo, in_org, numbers
 
 
 def inventory_gcp(config, emit):
@@ -803,8 +810,8 @@ def inventory_gcp(config, emit):
     except (RuntimeError, ValueError) as e:
         emit.status("gcp", "error", "gcloud auth list failed: %s" % e, scope="*")
         return
-    todo, in_org = projects_to_scan(config, emit, list_projects(config, emit, gcloud, known))
-    ctx = Context(config, emit, gcloud, prowler, in_org)
+    todo, in_org, numbers = projects_to_scan(config, emit, list_projects(config, emit, gcloud, known))
+    ctx = Context(config, emit, gcloud, prowler, in_org, numbers)
     with ThreadPoolExecutor(max_workers=config.parallel) as pool:
         for fut in [pool.submit(inspect_project, p, cands, ctx) for p, cands in todo]:
             fut.result()

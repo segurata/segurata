@@ -3,6 +3,7 @@ a synthetic OCSF fixture (testdata/ocsf). No real network, no real cloud account
 
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -28,6 +29,7 @@ ALICE = "alice@example.com"
 BOB = "bob@example.org"
 ROBOT = "robot@demo-proj-alpha.iam.gserviceaccount.com"
 ALPHA, BETA, GAMMA = "demo-proj-alpha", "demo-proj-beta", "demo-proj-gamma"
+ALPHA_NUMBER = "123456789012"
 DELTA = "demo-proj-delta"  # hygiene failures next to exposures (testdata/ocsf/demo-proj-delta.json)
 UNKNOWN = {"class": "unknown", "services_enabled": None, "services_non_default": None,
            "billing_enabled": None, "in_organization": None, "resources": {}, "unread": ["profile"]}
@@ -58,7 +60,7 @@ class Fake:
 
     def projects(self, account, ids, parent=None):
         """parent, e.g. {"type": "organization", "id": "1"}, for every project; None for none."""
-        rows = [{"projectId": p, "lifecycleState": "ACTIVE", "name": p} for p in ids]
+        rows = [{"projectId": p, "projectNumber": str(100 + i), "lifecycleState": "ACTIVE", "name": p} for i, p in enumerate(ids)]
         for r in rows:
             if parent:
                 r["parent"] = parent
@@ -170,15 +172,18 @@ class MappingTest(unittest.TestCase):
     def test_log_problems(self):
         def call(host, path, body):
             return "<HttpError 403 when requesting https://%s.googleapis.com/%s?alt=json returned \"%s\">" % (host, path, body)
-        disabled_api = call("dataproc", "v1/projects/%s/regions/-/clusters" % ALPHA,
-                            "Cloud Dataproc API has not been used in project 123456789012 before or it is disabled. "
-                            "Details: [{'reason': 'SERVICE_DISABLED'}]")
+        def disabled_api(project):
+            return call("dataproc", "v1/projects/%s/regions/-/clusters" % ALPHA,
+                        "Cloud Dataproc API has not been used in project %s before or it is disabled. "
+                        "Details: [{'reason': 'SERVICE_DISABLED'}]" % project)
         cases = {
             "disabled API, Prowler's own line": (
                 "dataproc API has not been used in project %s before or it is disabled." % ALPHA, ({"dataproc"}, set(), set())),
             "disabled API, other project": (
                 "dataproc API has not been used in project %s before or it is disabled." % BETA, (set(), set(), set())),
-            "403 for a disabled API": (disabled_api, ({"dataproc"}, set(), set())),
+            "403 for an API disabled in the project, by number": (disabled_api(ALPHA_NUMBER), ({"dataproc"}, set(), set())),
+            "403 for an API disabled in the project, by id": (disabled_api(ALPHA), ({"dataproc"}, set(), set())),
+            "403 for an API disabled in another project": (disabled_api("987654321098"), (set(), set(), {"dataproc"})),
             "403 without billing": (call("container", "v1/projects/%s/locations/-/clusters" % ALPHA,
                                          "This API method requires billing to be enabled."), (set(), {"container"}, set())),
             "403 reading an API state": (call("serviceusage", "v1/projects/%s/services/compute.googleapis.com" % ALPHA,
@@ -188,7 +193,16 @@ class MappingTest(unittest.TestCase):
         }
         for name, (text, want) in cases.items():
             with self.subTest(name):
-                self.assertEqual(prowler.log_problems(text, ALPHA), want)
+                self.assertEqual(prowler.log_problems(text, ALPHA, ALPHA_NUMBER), want)
+        self.assertEqual(prowler.log_problems(disabled_api(ALPHA_NUMBER), ALPHA), (set(), set(), {"dataproc"}),
+                         "a number that cannot be told for the project's stays refused")
+
+    def test_projects_to_scan_keeps_each_project_number(self):
+        listing = {ALICE: {ALPHA: (False, ALPHA_NUMBER), BETA: (False, "")}, BOB: {BETA: (True, "222")}}
+        todo, in_org, numbers = prowler.projects_to_scan(prowler.Config({}), prowler.Emitter(io.StringIO()), listing)
+        self.assertEqual(todo, [(ALPHA, [ALICE]), (BETA, [ALICE, BOB])])
+        self.assertEqual(in_org, {ALPHA: False, BETA: True})
+        self.assertEqual(numbers, {ALPHA: ALPHA_NUMBER, BETA: "222"})
 
     def test_severity_min_filters_and_narrows_the_run(self):
         config = prowler.Config({"severity_min": "high"})

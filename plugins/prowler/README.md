@@ -278,7 +278,9 @@ Not in Prowler, only in `gcp`: billing budgets and local credential files (ADC, 
 
 A disabled API leaves nothing of that service to check, so it does not make the run partial,
 whether Prowler logs it as disabled or Google refuses a call to it (403 `SERVICE_DISABLED`); the
-project's summary names it. The same holds for a call Google refuses (403) because the project has
+project's summary names it. Google's 403 names the project the call is billed to, by number; when
+that is not the audited project, the API may well be on there and its checks saw nothing, so the
+call counts as refused. The same holds for a call Google refuses (403) because the project has
 billing disabled ("check billing account associated", "requires billing to be enabled"): nothing
 can run there. A service refused for any other reason as well still leaves the project uninspected.
 
