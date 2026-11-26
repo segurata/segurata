@@ -591,7 +591,7 @@ reads the new value from the clipboard (or a pipe with `--stdin`; never an argum
 fingerprint that it is new and that the old value is still where the scan saw it, shows a plan
 with redacted values and, with `--apply` and a confirmation, rewrites each `used_in` file
 atomically, checks the result, marks the item rotated and clears the clipboard. With
-`--to-keychain <service>` the new value goes to the Keychain and rc lines become
+`--to-keychain <service>` (macOS) the new value goes to the Keychain and rc lines become
 `export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`, as
 [docs/secrets.md](docs/secrets.md#shell-variables-from-the-keychain) recommends. No backup unless
 `--backup`: a backup is one more plaintext copy of the old value.

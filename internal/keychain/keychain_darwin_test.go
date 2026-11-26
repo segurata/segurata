@@ -5,10 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/segurata/segurata/internal/proc"
-	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 func TestStoreSendsTheValueOnStdinOnly(t *testing.T) {
@@ -87,14 +83,8 @@ func TestRead(t *testing.T) {
 	}
 }
 
-func TestExecEndsAHungProgramWithItsContext(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	if _, err := Exec(ctx, nil, proctest.Hung(t, "op", "")); err == nil {
-		t.Fatal("a hung program succeeded")
-	}
-	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
-		t.Fatalf("took %s", took)
+func TestHintPromptsForTheValue(t *testing.T) {
+	if got := Default("me").Hint("svc"); got != "add it with: security add-generic-password -s svc -a $USER -w" {
+		t.Errorf("hint %q", got)
 	}
 }

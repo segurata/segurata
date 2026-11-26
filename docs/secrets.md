@@ -186,6 +186,22 @@ an index cannot be read or if a destination's mode, identity or contents changed
 On macOS, it also requires ACLs on the file and its parent directories to contain only deny
 entries.
 
+**On Windows** there is no `security`: `--to-keychain` is refused, because no Windows shell
+runs the lookup it writes. Store each key in Credential Manager instead, from `cmd.exe` (the
+command prompts for the value, so it stays out of history):
+
+```bat
+cmdkey /generic:ANTHROPIC_API_KEY /user:%USERNAME% /pass
+```
+
+segurata reads that item for a `keychain:ANTHROPIC_API_KEY` reference in its config. The item is
+stored per user on this machine and does not roam. Delete the plaintext line from your PowerShell
+profile or other scripts by hand. A scheduled task that resolves `keychain:` references must run
+as the logged-on user: Credential Manager is not available in other logon sessions.
+`segurata rotations replace` reads the new value from the clipboard there too; Windows may keep a
+copy in Clipboard history (Win+V) or sync it with cloud clipboard, so clear it there afterwards,
+or pipe the value in with `--stdin`. On Linux use `env:` or `op://` references and `--stdin`.
+
 Better still, do not export it to every shell; fetch it where it is used:
 `ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)" command`. With 1Password, the same with
 `op read op://…` or `op run`. The first read from a new binary asks for Keychain permission.

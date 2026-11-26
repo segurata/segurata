@@ -5,8 +5,11 @@
 package proc
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -29,4 +32,22 @@ func Interactive(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = WaitDelay
 	return cmd
+}
+
+// Runner runs one external program with stdin and returns its stdout.
+type Runner func(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
+
+// Exec is the real Runner, bounded to 30 seconds. Its error carries stderr, never stdout, which
+// may hold a secret value.
+func Exec(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := Command(ctx, name, args...)
+	cmd.Stdin = bytes.NewReader(stdin)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(errb.String()))
+	}
+	return out.Bytes(), nil
 }

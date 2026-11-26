@@ -12,6 +12,7 @@ import (
 
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -190,7 +191,7 @@ func TestDoctorUnconfiguredSecretAndOneConnector(t *testing.T) {
 	wantLines(t, out,
 		"WARN  config  "+fx.env.ConfigPath+": not found",
 		"WARN  api     secret API_KEY: not configured: the connector is skipped",
-		`fix: add "secrets": {"API_KEY": "keychain:segurata-api"} to connectors.api`,
+		`fix: add "secrets": {"API_KEY": "keychain:segurata-api"} to connectors.api in the config, and the item (`+keychain.Default("").Hint("segurata-api")+")",
 	)
 	for _, other := range []string{"plugin", "cdp", "cloud"} {
 		if strings.Contains(out, other) {

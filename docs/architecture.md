@@ -773,13 +773,17 @@ the request, without writing it to disk. A literal value in the config is reject
 | Reference | Resolved with |
 |---|---|
 | `env:NAME` | Environment variable |
-| `keychain:service` | `/usr/bin/security find-generic-password -s service -w` (macOS Keychain) |
+| `keychain:service` | macOS: `/usr/bin/security find-generic-password -s service -w` (login Keychain). Windows: `CredReadW` of the generic credential whose target name is `service` (Credential Manager). Elsewhere refused: use `env:` or `op://` |
 | `op://vault/item/field` | `op read` (1Password CLI) |
 
-Both programs run through `internal/keychain` with a 30 s timeout inside the run's deadline, so a
+Both programs run through `proc.Exec` with a 30 s timeout inside the run's deadline, so a
 prompt nobody answers in a scheduled run fails the reference instead of hanging. A missing
 Keychain item and a denied read (`User interaction is not allowed`) are reported apart, with
-security's reason for the latter.
+security's reason for the latter; the missing-item message carries the command that adds it
+(`keychain.Store.Hint`: `security add-generic-password …` on macOS, `cmdkey /generic:… /pass` on
+Windows). On Windows the credential's blob is UTF-16LE text, as `cmdkey` and PowerShell store it;
+an odd length or one over 2560 bytes is refused, and a scheduled task outside the user's logon
+session gets that reason instead of a missing item.
 
 Config at `~/.config/segurata/config.json` (override with `SEGURATA_CONFIG`):
 
@@ -1164,7 +1168,9 @@ places. `rotations next` and the "Rotate N P0 secrets" entry of `status` follow 
   `internal/secretrisk/guides.go`: two to four steps per type, each citing the provider page it
   was checked against.
 - `replace <id>` never stores, prints or passes the new value as an argument. It reads it from
-  `pbpaste` or a pipe (`--stdin` refuses a terminal, which would echo it). A value must be one
+  the clipboard (`internal/clipboard`: `pbpaste` on macOS, `CF_UNICODETEXT` on Windows, which
+  then warns that Clipboard history or cloud clipboard may keep a copy; refused elsewhere) or a
+  pipe (`--stdin` refuses a terminal, which would echo it). A value must be one
   line of `[A-Za-z0-9._~+/=:@%-]`, so it can go unquoted into a shell, `.env` or JSON line;
   anything else is edited by hand.
 - Locating the old value without having it: the redacted hint gives its length, prefix and last
@@ -1180,12 +1186,15 @@ places. `rotations next` and the "Rotate N P0 secrets" entry of `status` follow 
   fsync, rename; mode kept; a symlink's target is written, the link stays), then re-reads every
   file: the old fingerprint must be gone from all of it and each edited line must hold the new
   value. Only then is the item marked `rotated` and the clipboard cleared (`pbcopy` with empty
-  stdin).
+  stdin, `EmptyClipboard` on Windows).
 - `--to-keychain <service>`: for shell rc files whose line is a plain `[export ]NAME=value`, the
   value is stored with `security -i` reading `add-generic-password -U -a $USER -s <service> -w
   <value>` from stdin (no argument list carries it), read back with `find-generic-password -w`
   and compared by fingerprint before any file changes; the line becomes
-  `export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`.
+  `export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"`. On Windows no
+  shell runs that lookup, so the plan refuses `--to-keychain` and `next` does not offer it: the
+  value goes into Credential Manager with `cmdkey` and segurata config references it as
+  `keychain:<service>`.
 - `--backup` keeps a 0600 copy of each file as it was. It is off by default because the copy
   holds the old value in plaintext.
 - History: `next` (once per run of consecutive calls), `replace-plan` (dry run),

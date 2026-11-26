@@ -14,6 +14,7 @@ import (
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/clipboard"
 	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -22,16 +23,17 @@ import (
 
 // CLI is the `segurata rotations` command family.
 type CLI struct {
-	Out, Err io.Writer
-	In       io.Reader     // confirmations, and the new value with replace --stdin
-	TTY      bool          // In is a terminal
-	Paths    tracker.Paths // zero means tracker.DefaultPaths
-	Config   string        // config file whose expected rules sync applies; "" means none
-	KeyPath  string        // fingerprint key; "" means fingerprint.DefaultPath
-	Home     func() (string, error)
-	User     string          // Keychain account for replace --to-keychain
-	Exec     keychain.Runner // pbpaste, pbcopy (empty stdin clears the clipboard), security
-	Now      func() time.Time
+	Out, Err  io.Writer
+	In        io.Reader     // confirmations, and the new value with replace --stdin
+	TTY       bool          // In is a terminal
+	Paths     tracker.Paths // zero means tracker.DefaultPaths
+	Config    string        // config file whose expected rules sync applies; "" means none
+	KeyPath   string        // fingerprint key; "" means fingerprint.DefaultPath
+	Home      func() (string, error)
+	User      string                              // Keychain account for replace --to-keychain
+	Keychain  func(account string) keychain.Store // keychain.Default
+	Clipboard clipboard.Clipboard                 // the new value for replace without --stdin
+	Now       func() time.Time
 }
 
 const usage = `usage: segurata rotations <command>

@@ -31,7 +31,7 @@ import (
 const replaceUsage = `usage: segurata rotations replace <id> [--stdin] [--to-keychain <service>] [--apply [--yes] [--backup]]
 
 After you rotated the secret at the provider, copy the new value and run this. It reads the new
-value from the clipboard (pbpaste), or from stdin with --stdin (piped, never typed: a terminal
+value from the clipboard (pbpaste on macOS), or from stdin with --stdin (piped, never typed: a terminal
 would echo it). Never pass it as an argument or an environment variable: both show up in process
 listings and shell history.
 
@@ -43,19 +43,24 @@ with redacted values. With --apply it asks for confirmation (stdin must be a ter
 gone and the new one is in place, marks the item rotated and clears the clipboard.
 Plaintext replacements require an untracked file whose POSIX permissions keep it private.
 
-  --to-keychain <service>  for shell rc files (~/.zshrc, ~/.zprofile, ~/.bashrc…), store the new
-                           value in the login Keychain under <service> (fed to security -i on
-                           stdin) and rewrite the line to read it from there:
+  --to-keychain <service>  macOS only. For shell rc files (~/.zshrc, ~/.zprofile, ~/.bashrc…),
+                           store the new value in the login Keychain under <service> (fed to
+                           security -i on stdin) and rewrite the line to read it from there:
                              export NAME="$(security find-generic-password -a "$USER" -s <service> -w)"
                            Other used_in files still get the plaintext value.
   --backup                 keep a 0600 copy of each file as it was, next to it. Off by default: a
                            backup holds the OLD value in plaintext, one more copy to delete.`
 
-const (
-	pbpaste     = "/usr/bin/pbpaste"
-	pbcopy      = "/usr/bin/pbcopy"
-	minValueLen = 8
+const minValueLen = 8
+
+// Shell rc lines can read the macOS Keychain; on Windows no shell runs the lookup --to-keychain
+// writes, so it is refused, and next offers it on macOS only.
+var (
+	refuseToKeychain = runtime.GOOS == "windows"
+	offerToKeychain  = runtime.GOOS == "darwin"
 )
+
+const toKeychainOnWindows = "--to-keychain rewrites shell rc lines to read the macOS Keychain; on Windows store the value with cmdkey and reference it as keychain:<service> in segurata config, or edit the rc by hand"
 
 var (
 	// safeValue survives being pasted unquoted into a shell line, a .env file or a JSON string.
@@ -240,6 +245,9 @@ func (r *replacement) plan(v, service string) error {
 	}
 	r.service = service
 	if service != "" {
+		if refuseToKeychain {
+			return errors.New(toKeychainOnWindows)
+		}
 		if !safeService.MatchString(service) {
 			return fmt.Errorf("--to-keychain %q: use letters, digits and . _ / @ : -", service)
 		}
@@ -516,11 +524,10 @@ func (r *replacement) note(written []string) string {
 }
 
 // storeInKeychain checks the files again, stores v and reads it back before any file changes.
-func (r *replacement) storeInKeychain(ctx context.Context, run keychain.Runner, v string) error {
+func (r *replacement) storeInKeychain(ctx context.Context, kc keychain.Store, v string) error {
 	if err := r.preflight(ctx); err != nil {
 		return err
 	}
-	kc := keychain.Keychain{Run: run, Account: r.account}
 	if err := kc.Store(ctx, r.service, v); err != nil {
 		return err
 	}
@@ -544,7 +551,7 @@ func (c CLI) readNewValue(ctx context.Context, fromStdin bool) ([]byte, error) {
 	if fromStdin {
 		raw, err = io.ReadAll(io.LimitReader(c.In, 64<<10))
 	} else {
-		raw, err = c.Exec(ctx, nil, pbpaste)
+		raw, err = c.Clipboard.Read(ctx)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading the new value: %w", err)
@@ -607,6 +614,9 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	if err == nil {
 		err = r.plan(v, *service)
 	}
+	if caveat := c.Clipboard.Caveat(); err == nil && !*fromStdin && caveat != "" {
+		r.warn = append(r.warn, caveat)
+	}
 	if err == nil {
 		err = r.preflight(ctx)
 	}
@@ -644,7 +654,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		return c.fail(errors.New(note))
 	}
 	if r.service != "" {
-		if err := r.storeInKeychain(ctx, c.Exec, v); err != nil {
+		if err := r.storeInKeychain(ctx, c.Keychain(r.account), v); err != nil {
 			return failed(err, nil)
 		}
 	}
@@ -663,7 +673,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	}
 	fmt.Fprintf(c.Out, "\nReplaced in %s and checked. %s is now rotated.\n", textfmt.Count(len(r.files), "file", "files"), it.Secret.ID)
 	if !*fromStdin {
-		if _, err := c.Exec(ctx, nil, pbcopy); err != nil {
+		if err := c.Clipboard.Clear(ctx); err != nil {
 			fmt.Fprintln(c.Err, "rotations: could not clear the clipboard, clear it yourself:", err)
 		} else {
 			fmt.Fprintln(c.Out, "Clipboard cleared.")

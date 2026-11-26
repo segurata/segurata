@@ -1,7 +1,7 @@
 // Package secrets resolves secret references so connector credentials never live in plain files.
 //
 //	env:NAME              environment variable
-//	keychain:service      macOS Keychain generic password
+//	keychain:service      macOS Keychain or Windows Credential Manager generic password
 //	op://vault/item/field 1Password CLI
 package secrets
 
@@ -15,9 +15,13 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/keychain"
+	"github.com/segurata/segurata/internal/proc"
 )
 
-var run keychain.Runner = keychain.Exec
+var (
+	store keychain.Store = keychain.Default("")
+	run   proc.Runner    = proc.Exec // op
+)
 
 // Resolve returns the value a reference points to. ctx bounds the program that reads it, which may
 // wait on a prompt nobody answers in an unattended run.
@@ -32,10 +36,10 @@ func Resolve(ctx context.Context, ref string) (string, error) {
 		return v, nil
 	case strings.HasPrefix(ref, "keychain:"):
 		svc := strings.TrimPrefix(ref, "keychain:")
-		v, err := keychain.Keychain{Run: run}.Read(ctx, svc)
+		v, err := store.Read(ctx, svc)
 		switch {
 		case errors.Is(err, keychain.ErrNotFound) || err == nil && v == "":
-			return "", fmt.Errorf("keychain item %q not found (add it with: security add-generic-password -s %s -a $USER -w)", svc, svc)
+			return "", fmt.Errorf("keychain item %q not found (%s)", svc, store.Hint(svc))
 		case err != nil:
 			return "", fmt.Errorf("keychain item %q could not be read: %w", svc, err)
 		}

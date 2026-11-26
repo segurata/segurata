@@ -20,3 +20,15 @@ func TestAKilledWrapperDoesNotWaitForItsChild(t *testing.T) {
 		t.Fatalf("Wait blocked for %s on the orphaned child", took)
 	}
 }
+
+func TestExecEndsAHungProgramWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := proc.Exec(ctx, nil, proctest.Hung(t, "op", "")); err == nil {
+		t.Fatal("a hung program succeeded")
+	}
+	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
+		t.Fatalf("took %s", took)
+	}
+}

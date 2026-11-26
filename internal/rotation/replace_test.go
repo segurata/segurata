@@ -3,12 +3,13 @@ package rotation
 import (
 	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -28,53 +29,82 @@ func fakeKey() string {
 	return testcorpus.Fake(rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), "sk-ant-FAKE", 60, testcorpus.Alnum)
 }
 
-// call is one external command a test runner saw.
+// call is one clipboard or Keychain operation a test saw.
 type call struct {
-	name  string
-	args  []string
-	stdin string
+	name  string   // paste, clear, store or read
+	args  []string // the Keychain account and service
+	stdin string   // the value stored
 }
 
-// fakeOS stands in for pbpaste, pbcopy and security: a clipboard and a Keychain in memory.
+// fakeOS stands in for the clipboard and the Keychain, in memory.
 type fakeOS struct {
 	mu        sync.Mutex
 	calls     []call
 	clip      string
+	caveat    string
 	items     map[string]string // Keychain service → value
-	keepStale bool              // security -i "succeeds" but stores nothing
-	onPaste   func()            // runs when pbpaste is called: another command at work meanwhile
+	keepStale bool              // Store "succeeds" but stores nothing
+	onPaste   func()            // runs when the clipboard is read: another command at work meanwhile
 }
 
-func (f *fakeOS) run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+func (f *fakeOS) Read(context.Context) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, call{name, args, string(stdin)})
-	switch {
-	case name == pbpaste:
-		if f.onPaste != nil {
-			f.onPaste()
-		}
-		return []byte(f.clip + "\n"), nil
-	case name == pbcopy:
-		f.clip = string(stdin)
-		return nil, nil
-	case name == keychain.Security && len(args) == 1 && args[0] == "-i":
-		fields := strings.Fields(string(stdin))
-		if len(fields) != 8 || fields[0] != "add-generic-password" || fields[1] != "-U" || fields[2] != "-a" || fields[4] != "-s" || fields[6] != "-w" {
-			return nil, errors.New("unexpected security -i input")
-		}
-		if !f.keepStale {
-			f.items[fields[5]] = fields[7]
-		}
-		return []byte("security> "), nil
-	case name == keychain.Security && len(args) == 6 && args[0] == "find-generic-password":
-		v, ok := f.items[args[4]]
-		if !ok {
-			return nil, errors.New("security: The specified item could not be found in the keychain.")
-		}
-		return []byte(v + "\n"), nil
+	f.calls = append(f.calls, call{name: "paste"})
+	if f.onPaste != nil {
+		f.onPaste()
 	}
-	return nil, errors.New("unexpected command " + name)
+	return []byte(f.clip + "\n"), nil
+}
+
+func (f *fakeOS) Clear(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call{name: "clear"})
+	f.clip = ""
+	return nil
+}
+
+func (f *fakeOS) Caveat() string { return f.caveat }
+
+func (f *fakeOS) keychain(account string) keychain.Store { return fakeKeychain{f, account} }
+
+type fakeKeychain struct {
+	os      *fakeOS
+	account string
+}
+
+func (k fakeKeychain) Store(_ context.Context, service, value string) error {
+	f := k.os
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call{"store", []string{k.account, service}, value})
+	if !f.keepStale {
+		f.items[service] = value
+	}
+	return nil
+}
+
+func (k fakeKeychain) Read(_ context.Context, service string) (string, error) {
+	f := k.os
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call{"read", []string{k.account, service}, ""})
+	v, ok := f.items[service]
+	if !ok {
+		return "", fmt.Errorf("%w: %s", keychain.ErrNotFound, service)
+	}
+	return v, nil
+}
+
+func (fakeKeychain) Hint(string) string { return "" }
+
+// needsRCKeychain skips where --to-keychain is refused.
+func needsRCKeychain(t *testing.T) {
+	t.Helper()
+	if refuseToKeychain {
+		t.Skip(toKeychainOnWindows)
+	}
 }
 
 // fixture is a temporary HOME with an rc file and a .env holding the same fake key, and a ledger
@@ -168,7 +198,7 @@ func (fx *fixture) runInput(t *testing.T, stdin io.Reader, tty bool, args ...str
 	t.Helper()
 	var o, e bytes.Buffer
 	code := CLI{Out: &o, Err: &e, In: stdin, TTY: tty, Paths: tracker.Paths{Tracker: fx.state}, User: "tester",
-		Home: func() (string, error) { return fx.home, nil }, Exec: fx.os.run, Now: func() time.Time { return t0 }}.Run(args)
+		Home: func() (string, error) { return fx.home, nil }, Keychain: fx.os.keychain, Clipboard: fx.os, Now: func() time.Time { return t0 }}.Run(args)
 	fx.noLeak(t, o.String()+e.String())
 	return o.String(), e.String(), code
 }
@@ -192,6 +222,7 @@ func TestACLReportAllowsDenyEntriesOnly(t *testing.T) {
 }
 
 func TestReplaceChecksGitBeforeChangingTheKeychain(t *testing.T) {
+	needsRCKeychain(t)
 	fixture := newReplaceFixture(t)
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -239,8 +270,8 @@ func TestReplaceKeepsAFileModeChangedDuringConfirmation(t *testing.T) {
 	}
 }
 
-// noLeak checks that neither value reached the output nor any runner argument. Only the stdin of
-// `security -i` may carry the new value.
+// noLeak checks that neither value reached the output nor any Keychain argument. Only a Store may
+// carry the new value.
 func (fx *fixture) noLeak(t *testing.T, output string) {
 	t.Helper()
 	for _, v := range []string{fx.old, fx.new} {
@@ -254,8 +285,8 @@ func (fx *fixture) noLeak(t *testing.T, output string) {
 			if strings.Contains(strings.Join(c.args, " "), v) {
 				t.Fatalf("a secret value reached the arguments of %s", c.name)
 			}
-			if strings.Contains(c.stdin, v) && !(c.name == keychain.Security && c.args[0] == "-i" && v == fx.new) {
-				t.Fatalf("a secret value reached the stdin of %s %v", c.name, c.args)
+			if strings.Contains(c.stdin, v) && !(c.name == "store" && v == fx.new) {
+				t.Fatalf("a secret value reached %s %v", c.name, c.args)
 			}
 		}
 	}
@@ -282,7 +313,7 @@ func (fx *fixture) lastAction(t *testing.T) string {
 
 func (fx *fixture) cleared() bool {
 	for _, c := range fx.os.calls {
-		if c.name == pbcopy {
+		if c.name == "clear" {
 			return true
 		}
 	}
@@ -542,6 +573,9 @@ func TestReplaceRefusals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if slices.Contains(c.args, "--to-keychain") {
+				needsRCKeychain(t)
+			}
 			fx := newReplaceFixture(t)
 			if c.setup != nil {
 				c.setup(t, fx)
@@ -576,13 +610,14 @@ func TestReplaceFromStdin(t *testing.T) {
 		t.Error("value from stdin not written")
 	}
 	for _, c := range fx.os.calls {
-		if c.name == pbpaste || c.name == pbcopy {
+		if c.name == "paste" || c.name == "clear" {
 			t.Errorf("--stdin touched the clipboard: %s", c.name)
 		}
 	}
 }
 
 func TestReplaceToKeychain(t *testing.T) {
+	needsRCKeychain(t)
 	fx := newReplaceFixture(t)
 	o, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--to-keychain", "ANTHROPIC_API_KEY")
 	if code != 0 {
@@ -603,12 +638,12 @@ func TestReplaceToKeychain(t *testing.T) {
 	}
 	var stored bool
 	for _, c := range fx.os.calls {
-		if c.name == keychain.Security && c.args[0] == "-i" {
-			stored = strings.Contains(c.stdin, " -a tester -s ANTHROPIC_API_KEY -w ")
+		if c.name == "store" {
+			stored = strings.Join(c.args, " ") == "tester ANTHROPIC_API_KEY" && c.stdin == fx.new
 		}
 	}
 	if !stored {
-		t.Error("security -i did not receive the add command on stdin")
+		t.Error("the new value was not stored for the user's account")
 	}
 	if !strings.Contains(fx.item(t).History[len(fx.item(t).History)-1].Detail, "Keychain as ANTHROPIC_API_KEY") {
 		t.Error("history does not record the Keychain service")
@@ -616,6 +651,7 @@ func TestReplaceToKeychain(t *testing.T) {
 }
 
 func TestReplaceToKeychainNeedsAPlainAssignment(t *testing.T) {
+	needsRCKeychain(t)
 	fx := newReplaceFixture(t)
 	write(t, fx.zshrc, "# shell\nexport ANTHROPIC_API_KEY=\""+fx.old+"\" # main key\n", 0o640)
 	_, e, code := fx.run(t, "y\n", true, "replace", fx.id(), "--apply", "--to-keychain", "ANTHROPIC_API_KEY")
@@ -673,6 +709,8 @@ func TestReplaceRefusesItemsItCannotLocate(t *testing.T) {
 }
 
 func TestNext(t *testing.T) {
+	defer func(orig bool) { offerToKeychain = orig }(offerToKeychain)
+	offerToKeychain = true
 	fx := newReplaceFixture(t)
 	_, e, code := fx.run(t, "", true, "next")
 	if code != 0 {
@@ -720,5 +758,50 @@ func TestNext(t *testing.T) {
 	}
 	if o, _, _ := fx.run(t, "", true, "next", "--service", "anthropic"); !strings.Contains(o, fx.id()) {
 		t.Errorf("--service next:\n%s", o)
+	}
+}
+
+// Where no shell reads the Keychain (Windows), --to-keychain is refused before anything is read
+// back, stored or written.
+func TestReplaceRefusesToKeychainWhereNoShellReadsIt(t *testing.T) {
+	defer func(orig bool) { refuseToKeychain = orig }(refuseToKeychain)
+	refuseToKeychain = true
+	for _, args := range [][]string{{"--to-keychain", "ANTHROPIC_API_KEY"}, {"--apply", "--to-keychain", "ANTHROPIC_API_KEY"}} {
+		fx := newReplaceFixture(t)
+		zBefore, eBefore := read(t, fx.zshrc), read(t, fx.env)
+		_, e, code := fx.run(t, "y\n", true, append([]string{"replace", fx.id()}, args...)...)
+		if code != 1 || !strings.Contains(e, "on Windows store the value with cmdkey and reference it as keychain:<service>") {
+			t.Fatalf("%v: %d %q", args, code, e)
+		}
+		for _, c := range fx.os.calls {
+			if c.name == "store" || c.name == "clear" {
+				t.Errorf("%v: refused, yet ran %s", args, c.name)
+			}
+		}
+		if read(t, fx.zshrc) != zBefore || read(t, fx.env) != eBefore || fx.item(t).Status != tracker.Open {
+			t.Errorf("%v: a refused replace changed a file or the item", args)
+		}
+	}
+}
+
+func TestReplaceWarnsWhereTheClipboardKeepsACopy(t *testing.T) {
+	fx := newReplaceFixture(t)
+	fx.os.caveat = "kept in clipboard history"
+	if o, e, code := fx.run(t, "", true, "replace", fx.id()); code != 0 || !strings.Contains(o, "Warning: kept in clipboard history") {
+		t.Errorf("clipboard: %d %s\n%s", code, e, o)
+	}
+	if o, e, code := fx.run(t, fx.new+"\n", false, "replace", fx.id(), "--stdin"); code != 0 || strings.Contains(o, "clipboard history") {
+		t.Errorf("--stdin: %d %s\n%s", code, e, o)
+	}
+}
+
+func TestNextOffersToKeychainOnlyWhereShellsReadIt(t *testing.T) {
+	defer func(orig bool) { offerToKeychain = orig }(offerToKeychain)
+	offerToKeychain = false
+	fx := newReplaceFixture(t)
+	o, e, code := fx.run(t, "", true, "next")
+	if code != 0 || strings.Contains(o, "to-keychain") || !strings.Contains(o, "~/.zshrc:2") ||
+		!strings.Contains(o, "segurata rotations replace "+fx.id()+" --apply\n") {
+		t.Errorf("next: %d %s\n%s", code, e, o)
 	}
 }

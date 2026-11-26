@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/secrets"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -180,7 +181,7 @@ func (e Env) target(ctx context.Context, cfg config.Config, t run.Target) []conn
 		case kind == "secret":
 			if _, set := t.Instance.Secrets[arg]; !set {
 				checks = append(checks, connector.Check{Level: connector.Warn, What: "secret " + arg, Detail: "not configured: the connector is skipped",
-					Fix: fmt.Sprintf(`add "secrets": {"%s": "keychain:%s"} to connectors.%s in the config, and the Keychain item`, arg, keychainService(d.Name, arg), t.Label())})
+					Fix: keychainFix(d.Name, arg, t.Label())})
 			}
 		}
 	}
@@ -285,6 +286,12 @@ func dirCheck(label, dir, creator string) connector.Check {
 		return connector.Check{Level: connector.Warn, What: what, Detail: fmt.Sprintf("mode %#o, want 0700", st.Mode().Perm()), Fix: "chmod 700 " + dir}
 	}
 	return connector.Check{Level: connector.OK, What: what, Detail: "mode 0700"}
+}
+
+// keychainFix configures secret as a keychain: reference and says how to add its item.
+func keychainFix(connector, secret, label string) string {
+	svc := keychainService(connector, secret)
+	return fmt.Sprintf(`add "secrets": {"%s": "keychain:%s"} to connectors.%s in the config, and the item (%s)`, secret, svc, label, keychain.Default("").Hint(svc))
 }
 
 // keychainService is the Keychain service the connectors' setup messages suggest.
