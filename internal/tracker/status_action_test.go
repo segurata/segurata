@@ -50,6 +50,23 @@ func TestAdminOnlyChecksAskForNoInstall(t *testing.T) {
 	if !strings.Contains(action, "Install what the detail names") {
 		t.Errorf("unsupported: %q", action)
 	}
+	for _, detail := range []string{"rg (ripgrep) is required: install it (https://github.com/BurntSushi/ripgrep#installation)",
+		"the gh CLI is not installed: GitHub keys not listed (https://github.com/settings/keys)"} {
+		if action, _ := statusAction(finding.Status{State: finding.StateUnsupported, Detail: detail}, "x", ""); !strings.HasPrefix(action, "Install what the detail names.") {
+			t.Errorf("missing tool %q: %q", detail, action)
+		}
+	}
+	// Nothing to audit here is no tool to install: the way out is to mark it expected.
+	for _, st := range []finding.Status{
+		{Connector: "browser-extensions", Account: "this machine", State: finding.StateUnsupported, Detail: "no Brave or Chrome profile found"},
+		{Connector: "macos", Account: "this machine", State: finding.StateUnsupported, Detail: "the macos connector only runs on macOS"},
+	} {
+		action, cmd := statusAction(st, st.Connector, "T-0009")
+		if strings.Contains(action, "Install what") || !strings.HasPrefix(action, "Nothing to install") ||
+			len(action) > actionLen || cmd != `segurata track expect T-0009 --reason "…"` {
+			t.Errorf("%s %q: %q, %q", st.Connector, st.Detail, action, cmd)
+		}
+	}
 	// A reauth without a fix must not assume a browser connector.
 	if got, _ := statusAction(finding.Status{State: finding.StateReauth, Detail: "InvalidClientTokenId"}, "aws", ""); !strings.Contains(got, "with the provider's CLI otherwise") {
 		t.Errorf("aws reauth should not point to the browser only: %q", got)

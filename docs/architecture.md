@@ -237,8 +237,10 @@ gcloud auth login for this account", `gh auth refresh -h github.com -s read:user
 command is the rerun. Actions are state-specific and name the real config key:
 `connectors."<label>".secrets` for missing credentials, `connectors."connected-apps".config.services`
 for a signed-out service, and `segurata track expect <id>` (see "Expected statuses") for a
-limitation kept on purpose. An `unsupported` check that needs administrator rights asks for no
-install.
+limitation kept on purpose. An `unsupported` status asks to install something only when its detail
+names a missing tool; one that needs administrator rights asks for no install, and one with nothing
+to audit on the machine (no Brave or Chrome profile, another OS) has `segurata track expect <id>` as
+its command.
 
 A run whose `run_end` names no theme was written before connectors declared themes and grouping.
 Its findings stay in the items that already hold them, under their titles and with the repository

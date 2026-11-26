@@ -152,6 +152,13 @@ func adminOnly(detail string) bool {
 	return textfmt.ContainsAny(d, "needs admin", "need sudo", "needs sudo", "requires root")
 }
 
+// missingTool reports whether an unsupported status's detail names a tool to install; otherwise
+// the connector found nothing it audits here (no browser profile, another OS).
+func missingTool(detail string) bool {
+	d := strings.ToLower(detail)
+	return textfmt.ContainsAny(d, "not installed", "not found", "is required", "install ")
+}
+
 // statusAction is what to do about a status and the command: the fix the detail names, then a
 // rerun, or the rerun alone; and how to expect it, for item itemID.
 func statusAction(st finding.Status, lbl, itemID string) (string, string) {
@@ -186,9 +193,15 @@ func statusAction(st finding.Status, lbl, itemID string) (string, string) {
 			action = "Grant the missing permission with the command below."
 		}
 	case finding.StateUnsupported:
-		action = "Install what the detail names (respecting the 4-day quarantine)."
-		if adminOnly(st.Detail) {
+		switch {
+		case adminOnly(st.Detail):
 			action = "This check needs administrator rights, which segurata does not use; nothing to install."
+		case missingTool(st.Detail):
+			action = "Install what the detail names."
+		default:
+			action = "Nothing to install: this connector found nothing to audit on this machine (see the detail). As it should be? Mark it expected with the command below."
+			cmd, expect = "segurata track expect "+itemID+` --reason "…"`, ""
+			return action, cmd
 		}
 	case finding.StateError:
 		switch {
