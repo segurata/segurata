@@ -3,11 +3,12 @@ package report
 import (
 	"bytes"
 	"fmt"
-	"github.com/segurata/segurata/internal/config"
 	"io"
 	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/config"
+	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/tracker"
@@ -15,7 +16,6 @@ import (
 
 const usage = "usage: segurata report [--format text|md|html] [--out file] [--dir out] [--min-severity low] [--top 10]"
 
-// CLI is `segurata report`.
 type CLI struct {
 	Out, Err io.Writer
 	Paths    tracker.Paths // zero means tracker.DefaultPaths
@@ -28,22 +28,17 @@ func (c CLI) fail(err error) int {
 	return 1
 }
 
-// Run builds the report and prints it, or writes it to --out with mode 0600: it names accounts,
-// services and file paths.
+// Run prints the report, or writes it to --out with mode 0600: it names accounts and paths.
 func (c CLI) Run(args []string) int {
 	fs := cliflag.New("report", c.Err)
-	format := fs.String("format", string(Text), "text, md or html")
+	format := fs.String("format", string(doc.Text), "text, md or html")
 	out := fs.String("out", "", "write the report to this file (mode 0600) instead of stdout")
 	dir := fs.String("dir", config.DefaultOutDir(), "inventory output directory")
 	minSev := fs.String("min-severity", string(finding.SevLow), "leave findings below this severity out of the lists")
 	top := fs.Int("top", 10, "findings listed per connector")
 	pos, err := cliflag.Parse(fs, args)
-	if err != nil || len(pos) > 0 || *top < 1 || !validSeverity(finding.Severity(*minSev)) {
-		fmt.Fprintln(c.Err, usage)
-		return 2
-	}
-	f := Format(*format)
-	if !f.Valid() {
+	f := doc.Format(*format)
+	if err != nil || len(pos) > 0 || *top < 1 || !finding.Severity(*minSev).Valid() || !f.Valid() {
 		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
@@ -60,7 +55,7 @@ func (c CLI) Run(args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	r, err := Build(Inputs{OutDir: *dir, Now: now, Tracker: t, TrackerPath: paths.Tracker, Sync: opt,
+	r, err := build(inputs{OutDir: *dir, Now: now, Tracker: t, TrackerPath: paths.Tracker, Sync: opt,
 		MinSev: finding.Severity(*minSev), Top: *top})
 	if err != nil {
 		return c.fail(err)
@@ -80,13 +75,4 @@ func (c CLI) Run(args []string) int {
 	}
 	fmt.Fprintf(c.Out, "Report written to %s (mode 0600).\n", *out)
 	return 0
-}
-
-func validSeverity(s finding.Severity) bool {
-	for _, x := range severities {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }

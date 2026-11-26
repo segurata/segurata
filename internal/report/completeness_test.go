@@ -14,7 +14,7 @@ import (
 
 func runsByLabel(t *testing.T, out string, tr *tracker.Tracker) (*Report, map[string]*Run) {
 	t.Helper()
-	r, err := Build(Inputs{OutDir: out, Now: now, Tracker: tr, MinSev: finding.SevLow, Top: 10})
+	r, err := build(inputs{OutDir: out, Now: now, Tracker: tr, MinSev: finding.SevLow, Top: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestRunCompletenessAndUninspectedScopes(t *testing.T) {
 		}
 	}
 
-	for _, f := range []Format{Text, Markdown, HTML} {
+	for _, f := range []doc.Format{doc.Text, doc.Markdown, doc.HTML} {
 		out := render(t, r, f)
 		for _, want := range []string{
 			"Run completeness", "2026-11-21 (partial)", "2026-11-21 (no run_end)",
@@ -111,7 +111,7 @@ func TestARunThatInspectedNothingShowsTheLastOneThatDid(t *testing.T) {
 	if len(r.Accepted) != 1 || r.Accepted[0].Gone {
 		t.Fatalf("accepted %+v", r.Accepted)
 	}
-	for _, f := range []Format{Text, Markdown, HTML} {
+	for _, f := range []doc.Format{doc.Text, doc.Markdown, doc.HTML} {
 		out := render(t, r, f)
 		for _, want := range []string{"App with full Drive access", "the run of 2026-11-21 inspected nothing", "browser not reachable over CDP", "the run of 2026-11-01 is shown instead"} {
 			if !strings.Contains(out, want) && !strings.Contains(out, doc.EscapeMarkdown(want)) {

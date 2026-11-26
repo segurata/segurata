@@ -123,7 +123,7 @@ func (x *fx) build(t *testing.T) *Report {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := Build(Inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10})
+	r, err := build(inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestBuildAcceptedAndLedger(t *testing.T) {
 	}
 }
 
-func render(t *testing.T, r *Report, f Format) string {
+func render(t *testing.T, r *Report, f doc.Format) string {
 	t.Helper()
 	var buf bytes.Buffer
 	if err := r.Render(&buf, f); err != nil {
@@ -214,7 +214,7 @@ func render(t *testing.T, r *Report, f Format) string {
 func TestRenderEveryFormatSaysTheSame(t *testing.T) {
 	x := newFx(t)
 	r := x.build(t)
-	for _, f := range []Format{Text, Markdown, HTML} {
+	for _, f := range []doc.Format{doc.Text, doc.Markdown, doc.HTML} {
 		out := render(t, r, f)
 		for _, want := range []string{
 			"segurata remediate " + x.f.ID, // automatable
@@ -245,7 +245,7 @@ func TestRenderEveryFormatSaysTheSame(t *testing.T) {
 
 func TestHTMLIsSelfContainedAndEscaped(t *testing.T) {
 	x := newFx(t)
-	out := render(t, x.build(t), HTML)
+	out := render(t, x.build(t), doc.HTML)
 	for _, bad := range []string{"<script", "<link", "src=", "@import", "Guest account <b>on</b>"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("HTML contains %q", bad)
@@ -260,7 +260,7 @@ func TestHTMLIsSelfContainedAndEscaped(t *testing.T) {
 
 func TestMarkdownEscapesTitles(t *testing.T) {
 	x := newFx(t)
-	out := render(t, x.build(t), Markdown)
+	out := render(t, x.build(t), doc.Markdown)
 	if strings.Contains(out, "<b>") || !strings.Contains(out, `Guest account \<b\>on\</b\>`) {
 		t.Error("markdown does not escape a title's markup")
 	}
@@ -270,7 +270,7 @@ func TestTopCapsEachConnector(t *testing.T) {
 	x := newFx(t)
 	r := x.build(t)
 	r.Top = 1
-	out := render(t, r, Text)
+	out := render(t, r, doc.Text)
 	if !strings.Contains(out, "… and 2 more in ") {
 		t.Errorf("no cap note:\n%s", out)
 	}
@@ -307,6 +307,19 @@ func TestCLIWritesPrivateFile(t *testing.T) {
 	if code := c.Run([]string{"--dir", filepath.Join(x.dir, "missing")}); code != 1 {
 		t.Errorf("missing out dir: exit %d", code)
 	}
+	if code := c.Run([]string{"--dir", x.out, "--out", filepath.Join(dest, "under-a-file")}); code != 1 {
+		t.Errorf("unwritable --out: exit %d", code)
+	}
+	if code := (CLI{Out: &stdout, Err: &stderr, Paths: tracker.Paths{Tracker: dest}, Now: c.Now}).Run([]string{"--dir", x.out}); code != 1 {
+		t.Errorf("unreadable tracker: exit %d", code)
+	}
+}
+
+// A severity the report does not know is counted with info, never dropped from the headline.
+func TestUnknownSeverityCountsAsInfo(t *testing.T) {
+	if got := sevIndex("bogus"); severities[got] != finding.SevInfo {
+		t.Errorf("bogus counts as %s", severities[got])
+	}
 }
 
 // A status the config expects leaves "Needs attention" and is counted on one line with its reason.
@@ -315,11 +328,11 @@ func TestExpectedStatusesAreOneLine(t *testing.T) {
 	tr := tracker.New(now) // synced in memory with the config's rules
 	cfg := config.Config{Connectors: map[string]config.ConnectorConfig{"aws": {Expected: []config.Expected{
 		{State: finding.StateMissingCredentials, Reason: "no AWS account on this Mac"}}}}}
-	r, err := Build(Inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10, Sync: tracker.SyncOptions{Expect: cfg.Expect}})
+	r, err := build(inputs{OutDir: x.out, Now: now, Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10, Sync: tracker.SyncOptions{Expect: cfg.Expect}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := render(t, r, Text)
+	out := render(t, r, doc.Text)
 	if strings.Contains(out, "segurata inventory aws") || !strings.Contains(out, "1 expected (by your config): no AWS account on this Mac (1).") {
 		t.Errorf("report:\n%s", out)
 	}
@@ -340,11 +353,11 @@ func TestSyncedTrackerReportsItems(t *testing.T) {
 	if _, err := tr.Sync(tracker.SyncOptions{OutDir: x.out}, now); err != nil {
 		t.Fatal(err)
 	}
-	r, err := Build(Inputs{OutDir: x.out, Now: now.Add(time.Hour), Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10})
+	r, err := build(inputs{OutDir: x.out, Now: now.Add(time.Hour), Tracker: tr, TrackerPath: x.tracker, MinSev: finding.SevLow, Top: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := render(t, r, Text)
+	out := render(t, r, doc.Text)
 	for _, want := range []string{"10 open: P0 4, P1 1, P2 3, P3 2.", "Findings in the latest runs: 1 critical, 1 high, 1 medium", "Findings by connector",
 		"Setup blockers", "openrouter:work · org: needs a fresh sign-in", "Changes in the last 7 days", "Other items: 11 new, 1 reopened."} {
 		if !strings.Contains(out, want) {
