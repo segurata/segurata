@@ -41,7 +41,10 @@ func private(path string, fi fs.FileInfo, was fs.FileMode) (connector.FileChange
 }
 
 // undo puts the old owner and DACL back with Windows PowerShell from System32, never one earlier in
-// PATH, and without a profile that could run first.
+// PATH, and without a profile that could run first. Get-Acl and Set-Acl come from the module in
+// $PSHOME, which only TrustedInstaller may change: autoloading would search the inherited
+// PSModulePath, which PowerShell 7 fills with its own modules, which Windows PowerShell cannot load,
+// and where any folder listed first could shadow the cmdlets. The script stops at its first error.
 func undo(c connector.FileChange) (connector.Step, error) {
 	if c.Access == "" || !plainSDDL.MatchString(c.Access) {
 		return connector.Step{}, errors.New("no access list to restore")
@@ -51,7 +54,7 @@ func undo(c connector.FileChange) (connector.Step, error) {
 		return connector.Step{}, err
 	}
 	p := connector.PowerShellString(c.Path)
-	script := "$a=Get-Acl -LiteralPath " + p + "; $a.SetSecurityDescriptorSddlForm(" + connector.PowerShellString(c.Access) +
+	script := `$ErrorActionPreference='Stop'; Import-Module -Name "$PSHOME\Modules\Microsoft.PowerShell.Security"; $a=Get-Acl -LiteralPath ` + p + "; $a.SetSecurityDescriptorSddlForm(" + connector.PowerShellString(c.Access) +
 		"); Set-Acl -LiteralPath " + p + " -AclObject $a"
 	return connector.Step{Argv: []string{filepath.Join(sys, "WindowsPowerShell", "v1.0", "powershell.exe"),
 		"-NoProfile", "-NonInteractive", "-Command", script}}, nil

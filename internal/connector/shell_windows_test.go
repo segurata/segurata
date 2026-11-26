@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/segurata/segurata/internal/fileacl"
@@ -38,7 +40,9 @@ func TestMakePrivateCommandClosesTheFile(t *testing.T) {
 			t.Fatalf("%s not exposed before: %o %v", c.path, m, err)
 		}
 		cmd := MakePrivateCommand("windows", c.path, c.dir)
-		if out, err := exec.Command(ps, "-NoProfile", "-NonInteractive", "-Command", cmd).CombinedOutput(); err != nil {
+		run := exec.Command(ps, "-NoProfile", "-NonInteractive", "-Command", cmd)
+		run.Env = freshPowerShellEnv()
+		if out, err := run.CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v\n%s", cmd, err, out)
 		}
 		if m, err := fileacl.Exposure(c.path); err != nil || fileacl.Exposed(m) {
@@ -50,4 +54,14 @@ func TestMakePrivateCommandClosesTheFile(t *testing.T) {
 			}
 		}
 	}
+}
+
+// freshPowerShellEnv is this process's environment as a newly opened Windows PowerShell gets it:
+// without the PSModulePath a PowerShell 7 parent (the CI step's shell) prepends its own modules to,
+// which Windows PowerShell cannot load.
+func freshPowerShellEnv() []string {
+	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return strings.EqualFold(name, "PSModulePath")
+	})
 }
