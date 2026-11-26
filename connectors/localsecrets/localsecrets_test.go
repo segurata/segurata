@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
@@ -240,33 +241,23 @@ func (f *fakeTool) Run(_ context.Context, args ...string) ([]byte, error) {
 	return f.reply(args)
 }
 
-type recorder struct {
-	mu       sync.Mutex
-	findings []finding.Finding
-	statuses []finding.Status
-	skipped  []string // "scope: reason"
-}
+type recorder struct{ httpxtest.Recorder }
 
+// Finding stamps what the run would before the tracker reads it.
 func (r *recorder) Finding(f finding.Finding) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	f.Connector = name
 	f.Fill(time.Now())
-	r.findings = append(r.findings, f)
+	r.Recorder.Finding(f)
 }
-func (r *recorder) Status(s finding.Status) {
-	r.mu.Lock()
-	r.statuses = append(r.statuses, s)
-	r.mu.Unlock()
-}
-func (r *recorder) Scope(id string, inspected bool, reason string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !inspected {
-		r.skipped = append(r.skipped, id+": "+reason)
+
+// skipped is each scope declared not inspected, as "scope: reason".
+func (r *recorder) skipped() []string {
+	var out []string
+	for _, s := range r.Skipped() {
+		out = append(out, s.Scope+": "+s.Reason)
 	}
+	return out
 }
-func (r *recorder) Log(string) {}
 
 func (fx *fixture) connector(t *testing.T, gitleaksReport string) *Connector {
 	rg, err := exec.LookPath("rg")
@@ -339,7 +330,7 @@ func TestInventoryEndToEnd(t *testing.T) {
 	}
 
 	// No raw value anywhere in what the connector emitted.
-	all, _ := json.Marshal(rec.findings)
+	all, _ := json.Marshal(rec.Findings)
 	for _, s := range fx.secrets {
 		for _, piece := range []string{s, pemBody(s)} {
 			if len(piece) >= 6 && strings.Contains(string(all), piece) {
@@ -350,7 +341,7 @@ func TestInventoryEndToEnd(t *testing.T) {
 
 	byKey := map[string][]finding.Finding{}
 	var summary *finding.Finding
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if f.Resource.Type == secretrisk.NoiseSummaryType {
 			summary = &f
 			continue
@@ -447,9 +438,9 @@ func TestInventoryEndToEnd(t *testing.T) {
 		t.Error("ssh key comment leaked")
 	}
 
-	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateOK || !strings.Contains(rec.statuses[0].Detail, "gitleaks: 1 repositories (0 unchanged, 0 incremental, 1 full), 0 failed") ||
-		!strings.Contains(rec.statuses[0].Detail, "noise not emitted (emit_noise: true lists it): 2; by type: assignment 1, generic-api-key 1; by place: repo 1, ~/src/shop 1") {
-		t.Errorf("statuses %+v", rec.statuses)
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateOK || !strings.Contains(rec.Statuses[0].Detail, "gitleaks: 1 repositories (0 unchanged, 0 incremental, 1 full), 0 failed") ||
+		!strings.Contains(rec.Statuses[0].Detail, "noise not emitted (emit_noise: true lists it): 2; by type: assignment 1, generic-api-key 1; by place: repo 1, ~/src/shop 1") {
+		t.Errorf("statuses %+v", rec.Statuses)
 	}
 	if st, err := os.Stat(filepath.Join(fx.home, ".config", "segurata", "fingerprint.key")); err != nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("fingerprint key not created 0600: %v", err)
@@ -464,7 +455,7 @@ func TestEmitNoiseListsNoiseFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]finding.Severity{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		got[evidence(f, "type")+" "+evidence(f, "path")] = f.Severity
 	}
 	if got["generic-api-key ~/src/shop/app.js"] != finding.SevInfo || got["assignment ~/src/shop/.env"] != finding.SevInfo {
@@ -473,8 +464,8 @@ func TestEmitNoiseListsNoiseFindings(t *testing.T) {
 	if _, ok := got["generic-api-key ~/src/shop/README.md"]; ok {
 		t.Error("placeholder from gitleaks kept")
 	}
-	if strings.Contains(rec.statuses[0].Detail, "noise not emitted") {
-		t.Errorf("status counts noise that was emitted: %s", rec.statuses[0].Detail)
+	if strings.Contains(rec.Statuses[0].Detail, "noise not emitted") {
+		t.Errorf("status counts noise that was emitted: %s", rec.Statuses[0].Detail)
 	}
 }
 
@@ -486,7 +477,7 @@ func TestFingerprintsAreStableAcrossRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 		m := map[string]bool{}
-		for _, f := range rec.findings {
+		for _, f := range rec.Findings {
 			m[evidence(f, "fingerprint")] = true
 		}
 		return m
@@ -505,8 +496,8 @@ func TestMissingRipgrepIsUnsupported(t *testing.T) {
 	if err := c.Inventory(context.Background(), connector.Request{}, rec); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateUnsupported || len(rec.findings) != 0 {
-		t.Errorf("statuses %+v findings %d", rec.statuses, len(rec.findings))
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateUnsupported || len(rec.Findings) != 0 {
+		t.Errorf("statuses %+v findings %d", rec.Statuses, len(rec.Findings))
 	}
 }
 
@@ -518,11 +509,11 @@ func TestGitleaksFailureIsAStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var failed bool
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		failed = failed || (s.State == finding.StateError && s.Account == "~/src/shop" && s.Scope == "history:~/src/shop")
 	}
 	if !failed {
-		t.Errorf("no error status, scoped to the repository's history, for the failed repository: %+v", rec.statuses)
+		t.Errorf("no error status, scoped to the repository's history, for the failed repository: %+v", rec.Statuses)
 	}
 }
 
@@ -544,7 +535,7 @@ func TestUnreadPartsAreDeclared(t *testing.T) {
 		if err := c.Inventory(context.Background(), connector.Request{Config: tc.cfg}, rec); err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.Join(rec.skipped, " | "); got != tc.want {
+		if got := strings.Join(rec.skipped(), " | "); got != tc.want {
 			t.Errorf("%v: skipped %q, want %q", tc.cfg, got, tc.want)
 		}
 	}
@@ -660,7 +651,7 @@ func TestTrailsFindAgreesWithInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if isTrail(evidence(f, "kind")) && evidence(f, "source") == "scan" {
 			want[evidence(f, "path")+" "+evidence(f, "type")+" "+evidence(f, "fingerprint")] = true
 		}
@@ -772,7 +763,7 @@ func TestLogsKeepTheMatchesOfEveryPassThatReadsThem(t *testing.T) {
 			t.Fatal(err)
 		}
 		var got []string
-		for _, f := range rec.findings {
+		for _, f := range rec.Findings {
 			if p := evidence(f, "path"); strings.HasSuffix(p, ".log") {
 				got = append(got, p+" "+evidence(f, "type"))
 			}

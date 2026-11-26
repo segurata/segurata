@@ -99,7 +99,7 @@ func (fx *fixture) livenessConnector(t *testing.T, f *fakeProviders) *Connector 
 func livenessOf(t *testing.T, rec *recorder, typ string) map[string]*secretrisk.Liveness {
 	t.Helper()
 	out := map[string]*secretrisk.Liveness{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		ev, ok := secretrisk.EvidenceOf(f)
 		if ok && ev.Type == typ {
 			out[ev.Source+":"+ev.Path] = ev.Liveness
@@ -126,7 +126,7 @@ func TestLivenessAtScanTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	raw, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	for _, s := range fx.secrets {
 		if len(s) >= 6 && strings.Contains(string(raw), s) {
 			t.Fatal("a raw secret reached the output")
@@ -160,7 +160,7 @@ func TestLivenessAtScanTime(t *testing.T) {
 			}
 		}
 	}
-	detail := rec.statuses[0].Detail
+	detail := rec.Statuses[0].Detail
 	// The fixture's private keys are looked up too; with no gh and no ~/.ssh they stay unknown.
 	if !strings.Contains(detail, "liveness: 6 asked, 0 from cache, 0 values recovered from git history; 2 live, 1 dead, 0 unregistered, 3 unknown") || !strings.Contains(detail, "1 not allowed") {
 		t.Errorf("status detail: %s", detail)
@@ -173,8 +173,8 @@ func TestLivenessAtScanTime(t *testing.T) {
 	if err := c.Inventory(context.Background(), req, rec2); err != nil {
 		t.Fatal(err)
 	}
-	if f.askedCount() != before || !strings.Contains(rec2.statuses[0].Detail, "3 asked, 3 from cache,") {
-		t.Errorf("second run asked %d more; %s", f.askedCount()-before, rec2.statuses[0].Detail)
+	if f.askedCount() != before || !strings.Contains(rec2.Statuses[0].Detail, "3 asked, 3 from cache,") {
+		t.Errorf("second run asked %d more; %s", f.askedCount()-before, rec2.Statuses[0].Detail)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestLivenessGates(t *testing.T) {
 		if f.askedCount() != 0 {
 			t.Errorf("%s: asked %d times", tc.name, f.askedCount())
 		}
-		detail := rec.statuses[0].Detail
+		detail := rec.Statuses[0].Detail
 		if tc.detail == "" && strings.Contains(detail, "liveness") || tc.detail != "" && !strings.Contains(detail, tc.detail) {
 			t.Errorf("%s: %s", tc.name, detail)
 		}
@@ -391,7 +391,7 @@ func TestLivenessLookupsAtScanTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	raw, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	for _, s := range append(fx.secrets, body) {
 		if len(s) >= 6 && strings.Contains(string(raw), s) {
 			t.Fatal("a raw secret reached the output")
@@ -560,7 +560,7 @@ func TestCloudflareOnlyWhenNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := 0
-	for _, fd := range rec.findings {
+	for _, fd := range rec.Findings {
 		if ev, ok := secretrisk.EvidenceOf(fd); ok && ev.Type == "cloudflare-token" {
 			n++
 		}
@@ -571,7 +571,7 @@ func TestCloudflareOnlyWhenNamed(t *testing.T) {
 	if !f.askedAbout(named) || f.askedAbout(bare) {
 		t.Errorf("named asked %v, bare asked %v", f.askedAbout(named), f.askedAbout(bare))
 	}
-	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	raw, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	if strings.Contains(string(raw), named) || strings.Contains(string(raw), bare) {
 		t.Fatal("a token reached the output")
 	}
@@ -599,7 +599,7 @@ func TestLivenessNeverDiscardsTheScan(t *testing.T) {
 	req := connector.Request{Known: &attribution.Known{}, Config: map[string]any{"liveness": map[string]any{"enabled": true, "owners": []any{"unknown"}}}}
 	reported := func(rec *recorder) int {
 		n := 0
-		for _, f := range rec.findings {
+		for _, f := range rec.Findings {
 			if _, ok := secretrisk.EvidenceOf(f); ok {
 				n++
 			}
@@ -616,8 +616,8 @@ func TestLivenessNeverDiscardsTheScan(t *testing.T) {
 	if err := fx.livenessConnector(t, f).Inventory(ctx, req, rec); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(start); d > 20*time.Second || reported(rec) == 0 || f.askedCount() != 0 || !strings.Contains(rec.statuses[0].Detail, "interrupted") {
-		t.Errorf("deadline in 30s: took %s, %d findings, %d asked; %v", d, reported(rec), f.askedCount(), rec.statuses)
+	if d := time.Since(start); d > 20*time.Second || reported(rec) == 0 || f.askedCount() != 0 || !strings.Contains(rec.Statuses[0].Detail, "interrupted") {
+		t.Errorf("deadline in 30s: took %s, %d findings, %d asked; %v", d, reported(rec), f.askedCount(), rec.Statuses)
 	}
 
 	fx = newFixture(t)
@@ -631,7 +631,7 @@ func TestLivenessNeverDiscardsTheScan(t *testing.T) {
 	if reported(rec) == 0 || f.askedCount() == 0 {
 		t.Errorf("cancelled while probing: %d findings, %d asked", reported(rec), f.askedCount())
 	}
-	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	raw, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	for _, s := range fx.secrets {
 		if len(s) >= 6 && strings.Contains(string(raw), s) {
 			t.Fatal("a raw secret reached the output")
@@ -729,14 +729,14 @@ func TestAWSSecretKeyForms(t *testing.T) {
 	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"emit_noise": true}}, rec); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	raw, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	for _, s := range fx.secrets {
 		if len(s) >= 6 && strings.Contains(string(raw), s) {
 			t.Fatal("a raw secret reached the output")
 		}
 	}
 	got := map[string]string{} // fingerprint -> type
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if ev, ok := secretrisk.EvidenceOf(f); ok {
 			got[ev.Fingerprint] = ev.Type
 		}
@@ -780,13 +780,13 @@ func TestLivenessPairsEachSecretKeyWithItsKeyID(t *testing.T) {
 	if err := c.Inventory(context.Background(), req, rec); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	raw, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	for _, s := range fx.secrets {
 		if len(s) >= 6 && strings.Contains(string(raw), s) {
 			t.Fatal("a raw secret reached the output")
 		}
 	}
-	checkThreePairs(t, f, vars, rec.findings, func(v, typ string) string { return fx.fpOf(t, c, v, typ) })
+	checkThreePairs(t, f, vars, rec.Findings, func(v, typ string) string { return fx.fpOf(t, c, v, typ) })
 }
 
 // checkThreePairs asserts that the owner's two pairs of vars were each tried as a pair, the second

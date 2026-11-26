@@ -52,6 +52,19 @@ func (r *Recorder) Log(msg string) {
 	r.Logs = append(r.Logs, msg)
 }
 
+// Skipped is every scope declared not inspected, in the order declared.
+func (r *Recorder) Skipped() []finding.Skipped {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []finding.Skipped
+	for _, s := range r.Scopes {
+		if !s.Inspected {
+			out = append(out, finding.Skipped{Scope: s.ID, Reason: s.Reason})
+		}
+	}
+	return out
+}
+
 // ByResource fails the test when there is no finding for the resource.
 func (r *Recorder) ByResource(t *testing.T, typ, id string) finding.Finding {
 	t.Helper()

@@ -87,14 +87,14 @@ func TestXRateLimitedAndSignedOut(t *testing.T) {
 	}
 
 	// Signed out of X, and only X selected: last run's findings of every service stay unresolved.
-	if len(rec.skipped()) != len(services)-1 || rec.skipped()[0] != (finding.Skipped{Scope: "github", Reason: `not in the "services" config`}) {
-		t.Errorf("services left out of the config must be declared skipped: %+v", rec.skipped())
+	if len(rec.Skipped()) != len(services)-1 || rec.Skipped()[0] != (finding.Skipped{Scope: "github", Reason: `not in the "services" config`}) {
+		t.Errorf("services left out of the config must be declared skipped: %+v", rec.Skipped())
 	}
 	var tally finding.Tally
 	for _, s := range rec.Statuses {
 		tally.Status(s)
 	}
-	for _, s := range rec.skipped() {
+	for _, s := range rec.Skipped() {
 		tally.Declare(s.Scope, false, s.Reason)
 	}
 	end := tally.End(name, "", time.Now(), time.Now(), nil)

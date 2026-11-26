@@ -69,16 +69,6 @@ func fixture(t *testing.T, name string) string {
 
 type recorder struct{ httpxtest.Recorder }
 
-func (r *recorder) skipped() []string {
-	var out []string
-	for _, s := range r.Scopes {
-		if !s.Inspected {
-			out = append(out, s.ID)
-		}
-	}
-	return out
-}
-
 func (r *recorder) byTitle(t *testing.T, sub string) finding.Finding {
 	t.Helper()
 	for _, match := range []func(string, string) bool{strings.HasSuffix, strings.Contains} {
@@ -349,8 +339,8 @@ func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 		t.Errorf("linked projects: %v", got)
 	}
 	// The person's account the config leaves out is declared skipped; the service account is not.
-	if !slices.Equal(rec.skipped(), []string{"work@example.org"}) {
-		t.Errorf("skipped %v, want the unwatched work@example.org only", rec.skipped())
+	if want := []finding.Skipped{{Scope: "work@example.org", Reason: "not in connectors.gcp.config.accounts"}}; !slices.Equal(rec.Skipped(), want) {
+		t.Errorf("skipped %v, want the unwatched work@example.org only", rec.Skipped())
 	}
 }
 
@@ -395,8 +385,8 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 	// The skipped project is declared, so findings earlier runs made there are not taken as
 	// resolved. The service account is not: nothing is scoped to it, and declaring it would mark
 	// every run partial.
-	if got := strings.Join(rec.skipped(), ","); got != "demo-blog" {
-		t.Errorf("skipped scopes %q", got)
+	if want := []finding.Skipped{{Scope: "demo-blog", Reason: "in connectors.gcp.config.skip_projects"}}; !slices.Equal(rec.Skipped(), want) {
+		t.Errorf("skipped scopes %v", rec.Skipped())
 	}
 }
 

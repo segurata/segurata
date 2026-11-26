@@ -159,7 +159,7 @@ func TestNotebookOutputsAreIgnoredOnDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	var lines []string
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if evidence(f, "path") == "~/src/shop/lesson.ipynb" {
 			lines = append(lines, evidence(f, "line"))
 		}
@@ -305,7 +305,7 @@ func TestThirdPartyRepositoriesAreNotTheOwners(t *testing.T) {
 		t.Fatal(err)
 	}
 	byPath := map[string]finding.Finding{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		byPath[evidence(f, "path")] = f
 	}
 	check := func(path string, sev finding.Severity, origin, reused string) {
@@ -355,7 +355,7 @@ func TestPartialGitHubOwnersAreNotCached(t *testing.T) {
 	if err := c.Inventory(context.Background(), connector.Request{Config: cfg}, rec); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if evidence(f, "path") == "~/src/app/config/live.env" && evidence(f, "origin") == secretrisk.OriginThirdParty {
 			t.Errorf("the organization's repository was taken for a third-party one")
 		}
@@ -388,7 +388,7 @@ func TestOwnedOwnersConfigWithoutGH(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := map[string]finding.Severity{}
-		for _, f := range rec.findings {
+		for _, f := range rec.Findings {
 			out[evidence(f, "path")] = f.Severity
 		}
 		return out
@@ -429,7 +429,7 @@ func TestTemporaryAWSAndPresignedURLs(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string][]finding.Finding{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		got[evidence(f, "path")] = append(got[evidence(f, "path")], f)
 	}
 	signed := got["~/src/shop/.env.signed"]
@@ -451,9 +451,9 @@ func TestTemporaryAWSAndPresignedURLs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var summary *finding.Finding
-	for i, f := range rec.findings {
+	for i, f := range rec.Findings {
 		if f.Resource.Type == secretrisk.NoiseSummaryType {
-			summary = &rec.findings[i]
+			summary = &rec.Findings[i]
 		}
 	}
 	if summary == nil {
@@ -486,7 +486,7 @@ func TestURLHostsAndGcloudFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	byNote := map[string]finding.Finding{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if strings.HasPrefix(evidence(f, "path"), "~/.config/gcloud/logs") {
 			t.Errorf("gcloud log scanned: %s", f.Title)
 		}
@@ -530,7 +530,7 @@ func TestFixturePathsLowerImpact(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]finding.Severity{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		got[evidence(f, "path")] = f.Severity
 	}
 	if got["~/src/shop/src/Register.test.tsx"] != finding.SevHigh { // high − 1 = medium, × pushed history
@@ -591,7 +591,7 @@ func TestNoiseCopyOfARealSecretIsEmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]finding.Finding{}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		got[evidence(f, "path")] = f
 	}
 	cred, git := got["~/.aws/credentials"], got["~/src/shop/lib/s3.py"]

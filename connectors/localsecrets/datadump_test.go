@@ -384,10 +384,10 @@ func TestDataDumpsOnlyRunsNothingElse(t *testing.T) {
 	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": "only"}}, rec); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.findings) != 3 || len(rec.statuses) != 1 || !strings.Contains(rec.statuses[0].Detail, "data dumps: 3 in 1 of 1 repositories (0 from cache)") {
-		t.Errorf("findings %d, statuses %+v", len(rec.findings), rec.statuses)
+	if len(rec.Findings) != 3 || len(rec.Statuses) != 1 || !strings.Contains(rec.Statuses[0].Detail, "data dumps: 3 in 1 of 1 repositories (0 from cache)") {
+		t.Errorf("findings %d, statuses %+v", len(rec.Findings), rec.Statuses)
 	}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if f.Resource.Type != "data_dump" {
 			t.Errorf("only data dumps expected, got %s", f.Title)
 		}

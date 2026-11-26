@@ -335,10 +335,8 @@ func TestInventoryRepositories(t *testing.T) {
 // skippedScopes are the scopes a run declared skipped, sorted.
 func skippedScopes(rec *httpxtest.Recorder) []string {
 	var out []string
-	for _, s := range rec.Scopes {
-		if !s.Inspected {
-			out = append(out, s.ID+" ("+s.Reason+")")
-		}
+	for _, s := range rec.Skipped() {
+		out = append(out, s.Scope+" ("+s.Reason+")")
 	}
 	sort.Strings(out)
 	return out

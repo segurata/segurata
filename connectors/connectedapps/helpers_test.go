@@ -109,16 +109,6 @@ func (b *fakeBrowser) readiness(t *testing.T) {
 
 type recorder struct{ httpxtest.Recorder }
 
-func (r *recorder) skipped() []finding.Skipped {
-	var out []finding.Skipped
-	for _, s := range r.Scopes {
-		if !s.Inspected {
-			out = append(out, finding.Skipped{Scope: s.ID, Reason: s.Reason})
-		}
-	}
-	return out
-}
-
 func (r *recorder) byName(t *testing.T, name string) finding.Finding {
 	t.Helper()
 	for _, f := range r.Findings {

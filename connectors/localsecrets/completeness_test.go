@@ -66,7 +66,7 @@ echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, t
 				t.Fatal(err)
 			}
 			var files, paths []string
-			for _, s := range rec.skipped {
+			for _, s := range rec.skipped() {
 				if strings.HasPrefix(s, secretrisk.FilesScope+": ") {
 					files = append(files, s)
 				}
@@ -78,7 +78,7 @@ echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, t
 				t.Errorf("unreadable paths skipped %q, want %q", paths, tc.unreadable)
 			}
 			if got := len(files) > 0; got != tc.skipped {
-				t.Errorf("files scope skipped = %v, want %v (skipped: %q)", got, tc.skipped, rec.skipped)
+				t.Errorf("files scope skipped = %v, want %v (skipped: %q)", got, tc.skipped, rec.skipped())
 			}
 			for _, s := range files {
 				if !strings.Contains(s, "rg") {
@@ -89,7 +89,7 @@ echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, t
 				}
 			}
 			var detail string
-			for _, s := range rec.statuses {
+			for _, s := range rec.Statuses {
 				if s.Account == localAccount && s.Scope == "" {
 					detail = s.Detail
 				}
@@ -121,7 +121,7 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var files []string
-	for _, s := range rec.skipped {
+	for _, s := range rec.skipped() {
 		if strings.HasPrefix(s, secretrisk.FilesScope) {
 			files = append(files, s)
 		}
@@ -130,7 +130,7 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 		t.Errorf("files skipped %q, want %q", files, want)
 	}
 	var detail string
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		if s.Account == localAccount && s.Scope == "" {
 			detail = s.Detail
 		}
@@ -139,11 +139,11 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 		t.Errorf("status detail %q does not count the unreadable file", detail)
 	}
 	var zshrc bool
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		zshrc = zshrc || strings.HasSuffix(evidence(f, "path"), ".zshrc")
 	}
 	if !zshrc {
-		t.Errorf("the readable files were not searched: %d findings", len(rec.findings))
+		t.Errorf("the readable files were not searched: %d findings", len(rec.Findings))
 	}
 }
 
@@ -166,13 +166,13 @@ func TestFailedLsFilesIsAScopedErrorNotAnEmptyRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	var failed int
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		if s.State == finding.StateError && s.Scope == secretrisk.FilesScope && s.Account == "~/src/shop" && strings.Contains(s.Detail, "git ls-files") {
 			failed++
 		}
 	}
 	if failed != 1 {
-		t.Errorf("want one error status for ~/src/shop scoped to %q, got %d: %+v", secretrisk.FilesScope, failed, rec.statuses)
+		t.Errorf("want one error status for ~/src/shop scoped to %q, got %d: %+v", secretrisk.FilesScope, failed, rec.Statuses)
 	}
 	if lsCalls != 1 {
 		t.Errorf("ls-files ran %d times for one repository in one run", lsCalls)
@@ -249,11 +249,11 @@ func TestRepositoryConfigRunsNothing(t *testing.T) {
 	}
 	if _, err := exec.LookPath("gitleaks"); err == nil {
 		var scanned bool
-		for _, f := range rec.findings {
+		for _, f := range rec.Findings {
 			scanned = scanned || evidence(f, "source") == "gitleaks"
 		}
 		if !scanned {
-			t.Errorf("gitleaks found nothing in the repository's history: %+v", rec.statuses)
+			t.Errorf("gitleaks found nothing in the repository's history: %+v", rec.Statuses)
 		}
 	}
 }
