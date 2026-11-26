@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
@@ -96,35 +97,32 @@ func (b *fakeBrowser) readiness(t *testing.T) {
 	}
 }
 
-type recorder struct {
-	findings []finding.Finding
-	statuses []finding.Status
-	skipped  []finding.Skipped
-}
+type recorder struct{ httpxtest.Recorder }
 
-func (r *recorder) Finding(f finding.Finding) { r.findings = append(r.findings, f) }
-func (r *recorder) Status(s finding.Status)   { r.statuses = append(r.statuses, s) }
-func (r *recorder) Scope(id string, inspected bool, reason string) {
-	if !inspected {
-		r.skipped = append(r.skipped, finding.Skipped{Scope: id, Reason: reason})
+func (r *recorder) skipped() []finding.Skipped {
+	var out []finding.Skipped
+	for _, s := range r.Scopes {
+		if !s.Inspected {
+			out = append(out, finding.Skipped{Scope: s.ID, Reason: s.Reason})
+		}
 	}
+	return out
 }
-func (r *recorder) Log(string) {}
 
 func (r *recorder) byName(t *testing.T, name string) finding.Finding {
 	t.Helper()
-	for _, f := range r.findings {
+	for _, f := range r.Findings {
 		if f.Resource.Name == name {
 			return f
 		}
 	}
-	t.Fatalf("no finding named %q in %d findings", name, len(r.findings))
+	t.Fatalf("no finding named %q in %d findings", name, len(r.Findings))
 	return finding.Finding{}
 }
 
 func (r *recorder) state(account string) []finding.State {
 	var out []finding.State
-	for _, s := range r.statuses {
+	for _, s := range r.Statuses {
 		if s.Account == account {
 			out = append(out, s.State)
 		}
@@ -133,7 +131,7 @@ func (r *recorder) state(account string) []finding.State {
 }
 
 func (r *recorder) detail(account string, st finding.State) string {
-	for _, s := range r.statuses {
+	for _, s := range r.Statuses {
 		if s.Account == account && s.State == st {
 			return s.Detail
 		}

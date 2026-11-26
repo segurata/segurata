@@ -39,7 +39,7 @@ func TestGitHubCLIDependencyOffersTheScopeDrop(t *testing.T) {
 	e := &env{service: "github", emit: &recorder{}, now: now, seen: map[string]int{}}
 	e.report(grant{who: "octo", resType: "github_oauth_app", name: "GitHub CLI", scopes: []string{"Delete repositories", "Full control of private repositories"}})
 	e.report(grant{who: "octo", resType: "github_oauth_app", name: "GitHub CLI", scopes: []string{"Full control of private repositories"}})
-	fs := e.emit.(*recorder).findings
+	fs := e.emit.(*recorder).Findings
 	if fs[0].Remediation.Action != actionGHDropScopes || fs[1].Remediation.Action != "" {
 		t.Fatalf("actions %q %q: only a token holding a removable scope gets one", fs[0].Remediation.Action, fs[1].Remediation.Action)
 	}

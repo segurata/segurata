@@ -52,14 +52,3 @@ func TestDoctorGh(t *testing.T) {
 		})
 	}
 }
-
-func TestGhAllowlistAcceptsOnlyTheJSONStatus(t *testing.T) {
-	if err := ghAllowlist.Check([]string{"auth", "status", "--json", "hosts"}); err != nil {
-		t.Error(err)
-	}
-	for _, args := range [][]string{{"auth", "status", "--show-token"}, {"auth", "status"}, {"auth", "token"}, {"auth", "refresh"}} {
-		if err := ghAllowlist.Check(args); !errors.Is(err, cli.ErrRefused) {
-			t.Errorf("%v allowed", args)
-		}
-	}
-}

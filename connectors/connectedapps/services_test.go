@@ -34,12 +34,12 @@ func TestXReadsTheListResponseOnceAndDropsTokens(t *testing.T) {
 	if len(b.opened) != 1 {
 		t.Fatalf("opened %v: X must be read from the list page alone", b.opened)
 	}
-	all, _ := json.Marshal([]any{rec.findings, rec.statuses})
+	all, _ := json.Marshal([]any{rec.Findings, rec.Statuses})
 	if strings.Contains(string(all), "SECRET-TOKEN") {
 		t.Fatal("a token reached the output")
 	}
-	if len(rec.findings) != 3 {
-		t.Fatalf("%d findings, want one per app", len(rec.findings))
+	if len(rec.Findings) != 3 {
+		t.Fatalf("%d findings, want one per app", len(rec.Findings))
 	}
 	chirp := rec.byName(t, "Chirp Scheduler")
 	if chirp.Severity != finding.SevHigh || chirp.Title != "Chirp Scheduler can read your direct messages" {
@@ -83,18 +83,18 @@ func TestXRateLimitedAndSignedOut(t *testing.T) {
 	b = &fakeBrowser{pages: map[string]any{xURL: page("https://x.com/i/flow/login", "Sign in to X", nil)}}
 	rec = run(t, b, nil, "x")
 	if !reflect.DeepEqual(rec.state("x"), []finding.State{finding.StateSignedOut}) {
-		t.Errorf("statuses %+v", rec.statuses)
+		t.Errorf("statuses %+v", rec.Statuses)
 	}
 
 	// Signed out of X, and only X selected: last run's findings of every service stay unresolved.
-	if len(rec.skipped) != len(services)-1 || rec.skipped[0] != (finding.Skipped{Scope: "github", Reason: `not in the "services" config`}) {
-		t.Errorf("services left out of the config must be declared skipped: %+v", rec.skipped)
+	if len(rec.skipped()) != len(services)-1 || rec.skipped()[0] != (finding.Skipped{Scope: "github", Reason: `not in the "services" config`}) {
+		t.Errorf("services left out of the config must be declared skipped: %+v", rec.skipped())
 	}
 	var tally finding.Tally
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		tally.Status(s)
 	}
-	for _, s := range rec.skipped {
+	for _, s := range rec.skipped() {
 		tally.Declare(s.Scope, false, s.Reason)
 	}
 	end := tally.End(name, "", time.Now(), time.Now(), nil)
@@ -133,13 +133,13 @@ func TestSlackReadsEachSignedInWorkspace(t *testing.T) {
 		t.Errorf("big: %+v", big)
 	}
 	if !reflect.DeepEqual(rec.state("slack:zeta-team.slack.com"), []finding.State{finding.StateSignedOut}) {
-		t.Errorf("zeta statuses %+v", rec.statuses)
+		t.Errorf("zeta statuses %+v", rec.Statuses)
 	}
 	// The workspace id the apps' links name, for attribution; none for a signed-out workspace.
 	if ws := rec.byName(t, "acme-team.slack.com"); ws.Resource.Type != "slack_workspace" || ws.Evidence["team_id"] != "T0ACME123" || ws.Severity != finding.SevInfo {
 		t.Errorf("workspace record: %+v", ws)
 	}
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if f.Resource.Type == "slack_workspace" && f.Resource.Name != "acme-team.slack.com" {
 			t.Errorf("workspace record for a workspace not read: %+v", f)
 		}
@@ -147,7 +147,7 @@ func TestSlackReadsEachSignedInWorkspace(t *testing.T) {
 
 	rec = run(t, &fakeBrowser{pages: map[string]any{slackSignin: page(slackSignin, "Sign in to Slack", nil)}, neverReady: map[string]bool{slackSignin: true}}, nil, "slack")
 	if !reflect.DeepEqual(rec.state("slack"), []finding.State{finding.StateSignedOut}) {
-		t.Errorf("no workspaces: %+v", rec.statuses)
+		t.Errorf("no workspaces: %+v", rec.Statuses)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestSlackGradesAppsByTheirDeclaredScopes(t *testing.T) {
 	}
 	// One app, two workspaces, two declarations.
 	var shared []finding.Finding
-	for _, f := range rec.findings {
+	for _, f := range rec.Findings {
 		if f.Resource.Name == "Shared Bot" {
 			shared = append(shared, f)
 		}
@@ -223,7 +223,7 @@ func TestSlackGradesAppsByTheirDeclaredScopes(t *testing.T) {
 		t.Errorf("zeta workspace record: %+v", ws)
 	}
 	if d := rec.detail("slack:acme-team.slack.com", finding.StateOK); d != "4 apps" {
-		t.Errorf("acme status %q (%+v)", d, rec.statuses)
+		t.Errorf("acme status %q (%+v)", d, rec.Statuses)
 	}
 
 	// No list and no row: nothing can be listed, so the workspace is unverified, not "0 apps".
@@ -233,8 +233,8 @@ func TestSlackGradesAppsByTheirDeclaredScopes(t *testing.T) {
 	}, responses: map[string]*cdp.Response{"https://acme-team.slack.com/apps/manage": {Status: 200, Body: []byte(`{"ok":false,"error":"not_allowed"}`)}},
 		neverReady: map[string]bool{"https://acme-team.slack.com/apps/manage": true}}
 	rec = run(t, b, nil, "slack")
-	if d := rec.detail("slack:acme-team.slack.com", finding.StateUnverified); !strings.Contains(d, `the app list answered "not_allowed"`) || len(rec.findings) != 0 {
-		t.Errorf("unlisted workspace: %+v %+v", rec.statuses, rec.findings)
+	if d := rec.detail("slack:acme-team.slack.com", finding.StateUnverified); !strings.Contains(d, `the app list answered "not_allowed"`) || len(rec.Findings) != 0 {
+		t.Errorf("unlisted workspace: %+v %+v", rec.Statuses, rec.Findings)
 	}
 }
 
@@ -252,12 +252,12 @@ func TestNotionReadsDeveloperConnections(t *testing.T) {
 		t.Errorf("reader: %+v", r)
 	}
 	if !reflect.DeepEqual(rec.state("notion:Example Space"), []finding.State{finding.StateOK}) {
-		t.Errorf("statuses %+v", rec.statuses)
+		t.Errorf("statuses %+v", rec.Statuses)
 	}
 
 	rec = run(t, &fakeBrowser{pages: map[string]any{notionURL: map[string]any{"url": "https://www.notion.so/login", "text": "Log in"}}}, nil, "notion")
 	if !reflect.DeepEqual(rec.state("notion"), []finding.State{finding.StateSignedOut}) {
-		t.Errorf("signed out: %+v", rec.statuses)
+		t.Errorf("signed out: %+v", rec.Statuses)
 	}
 }
 
@@ -311,8 +311,8 @@ func TestFacebookStates(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := run(t, &fakeBrowser{pages: map[string]any{fbURL: c.page}}, nil, "facebook")
-			if !reflect.DeepEqual(rec.state("facebook"), []finding.State{c.state}) || len(rec.findings) != 0 {
-				t.Fatalf("statuses %+v", rec.statuses)
+			if !reflect.DeepEqual(rec.state("facebook"), []finding.State{c.state}) || len(rec.Findings) != 0 {
+				t.Fatalf("statuses %+v", rec.Statuses)
 			}
 		})
 	}
@@ -341,8 +341,8 @@ func TestPageOnlyServices(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rec := run(t, &fakeBrowser{pages: map[string]any{c.url: c.page}}, nil, c.svc)
-			if !reflect.DeepEqual(rec.state(c.svc), []finding.State{c.state}) || len(rec.findings) != 0 {
-				t.Fatalf("statuses %+v findings %d", rec.statuses, len(rec.findings))
+			if !reflect.DeepEqual(rec.state(c.svc), []finding.State{c.state}) || len(rec.Findings) != 0 {
+				t.Fatalf("statuses %+v findings %d", rec.Statuses, len(rec.Findings))
 			}
 		})
 	}
@@ -369,7 +369,7 @@ func TestBrowserErrorsBecomeStatuses(t *testing.T) {
 	b := &fakeBrowser{fail: map[string]error{fbURL: errTest}}
 	rec := run(t, b, nil, "facebook")
 	if d := rec.detail("facebook", finding.StateError); d != errTest.Error() {
-		t.Fatalf("statuses %+v", rec.statuses)
+		t.Fatalf("statuses %+v", rec.Statuses)
 	}
 }
 
@@ -412,13 +412,13 @@ const xOldList = `{"applications":[
 func TestXGroupsAppsApprovedMoreThanTenYearsAgo(t *testing.T) {
 	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*cdp.Response{xURL: {Status: 200, Body: []byte(xOldList)}}}
 	rec := run(t, b, nil, "x")
-	if len(rec.findings) != 3 {
-		t.Fatalf("%d findings, want the two recent apps and one batch", len(rec.findings))
+	if len(rec.Findings) != 3 {
+		t.Fatalf("%d findings, want the two recent apps and one batch", len(rec.Findings))
 	}
-	if rec.findings[0].Resource.Name != "Mid Writer" || rec.findings[1].Resource.Name != "New Reader" {
-		t.Errorf("recent apps not listed oldest first: %s, %s", rec.findings[0].Resource.Name, rec.findings[1].Resource.Name)
+	if rec.Findings[0].Resource.Name != "Mid Writer" || rec.Findings[1].Resource.Name != "New Reader" {
+		t.Errorf("recent apps not listed oldest first: %s, %s", rec.Findings[0].Resource.Name, rec.Findings[1].Resource.Name)
 	}
-	batch := rec.findings[2]
+	batch := rec.Findings[2]
 	if batch.Resource.Type != "x_old_apps" || batch.Severity != finding.SevHigh || batch.Account != "x:@chirper" ||
 		batch.Title != "Revoke 2 X apps authorized before November 2016 (services mostly defunct)" {
 		t.Fatalf("batch: %s %s %q", batch.Resource.Type, batch.Severity, batch.Title)
@@ -429,8 +429,8 @@ func TestXGroupsAppsApprovedMoreThanTenYearsAgo(t *testing.T) {
 	if batch.CreatedAt == nil || batch.CreatedAt.Year() != 2009 {
 		t.Errorf("batch created_at %v, want the oldest approval", batch.CreatedAt)
 	}
-	if rec.findings[0].Evidence["age_years"] != 6 {
-		t.Errorf("age_years %v", rec.findings[0].Evidence["age_years"])
+	if rec.Findings[0].Evidence["age_years"] != 6 {
+		t.Errorf("age_years %v", rec.Findings[0].Evidence["age_years"])
 	}
 }
 
@@ -452,7 +452,7 @@ func TestGitHubCLIIsADependencyToNarrowNotRevoke(t *testing.T) {
 	e := &env{service: "github", emit: &recorder{}, now: now, seen: map[string]int{}}
 	e.report(grant{who: "octo", resType: "github_oauth_app", name: "GitHub CLI", scopes: []string{
 		"Full control of orgs and teams, read and write org projects", "Delete repositories", "Full control of private repositories"}})
-	f := e.emit.(*recorder).findings[0]
+	f := e.emit.(*recorder).Findings[0]
 	if f.Severity != finding.SevHigh || f.Title != "GitHub CLI can delete your repositories (segurata depends on it)" || f.Evidence["dependency"] != "segurata depends on it" {
 		t.Errorf("finding %s %q %v", f.Severity, f.Title, f.Evidence)
 	}
@@ -462,7 +462,7 @@ func TestGitHubCLIIsADependencyToNarrowNotRevoke(t *testing.T) {
 	}
 
 	e.report(grant{who: "octo", resType: "github_oauth_app", name: "Some CLI", scopes: []string{"Delete repositories"}})
-	if other := e.emit.(*recorder).findings[1]; other.Evidence["dependency"] != nil {
+	if other := e.emit.(*recorder).Findings[1]; other.Evidence["dependency"] != nil {
 		t.Errorf("only segurata's own dependencies are labelled: %+v", other)
 	}
 }
