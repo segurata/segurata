@@ -165,11 +165,14 @@ class ScanTreeTest(Base):
         repo.write("a.txt", "one\ntwo Acme-Corp\n")
         repo.write("acme-corp/b.txt", "clean\n")
         repo.write("gone.txt", "acme-corp\n")
+        os.symlink("/home/ACME-corp/notes.txt", os.path.join(repo.path, "link"))
+        os.symlink("a.txt", os.path.join(repo.path, "clean-link"))
         repo.commit("init")
         os.remove(os.path.join(repo.path, "gone.txt"))  # deleted in the working tree: not published
         repo.write("untracked.txt", "acme-corp\n")
         hits = identifiers.scan_tree(repo.path, identifiers.load(self.ids("acme-corp\n")))
-        self.assertEqual(hits, ["identifier on line 1: a.txt:2", "identifier on line 1: in the path <identifier 1>/b.txt"])
+        self.assertEqual(hits, ["identifier on line 1: a.txt:2", "identifier on line 1: in the path <identifier 1>/b.txt",
+                                "identifier on line 1: link:1"])
         self.assertNoIdentifier(hits, "acme-corp")
 
     def test_unicode_variants(self):
