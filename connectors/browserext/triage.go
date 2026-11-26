@@ -10,7 +10,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Verdicts, in increasing order of urgency.
+// verdicts in increasing order of urgency
 type verdict int
 
 const (
@@ -21,13 +21,12 @@ const (
 
 func (v verdict) String() string { return [...]string{"keep", "review", "remove"}[v] }
 
-// staleAfter: an extension not updated for this long is either abandoned or sits in a profile
-// nobody opens.
 const staleAfter = 365 * 24 * time.Hour
 
-// Risk capabilities, in plain words. capAllSites is granted access to every site; the rest map
-// from Chromium API permissions.
-const capAllSites = "read and change all sites"
+const (
+	capAllSites = "read and change all sites"
+	capOnClick  = "all sites, on click"
+)
 
 var apiCapability = map[string]string{
 	"debugger": "debugger", "cookies": "cookies", "webRequest": "webRequest", "webRequestBlocking": "webRequest",
@@ -35,11 +34,10 @@ var apiCapability = map[string]string{
 	"downloads": "downloads", "management": "management",
 }
 
-// Capabilities that make a "remove" verdict high rather than medium.
+// severe capabilities make a "remove" verdict high rather than medium.
 var severe = map[string]bool{capAllSites: true, "debugger": true, "cookies": true, "nativeMessaging": true}
 
-// Category hints. IDs are the Chrome Web Store ids of extensions seen on the owner's machine;
-// names catch the rest. Kept short on purpose: a hint, not a catalogue.
+// Category hints: Web Store ids of common extensions, then names. A hint, not a catalogue.
 const (
 	catPasswords = "password manager"
 	catWallet    = "crypto wallet"
@@ -59,14 +57,16 @@ var categoryByID = map[string]string{
 }
 
 var categoryWords = []struct{ word, cat string }{
-	{"password", catPasswords}, {"contraseña", catPasswords},
+	// "password" alone would make a password generator or a show-password toggle a duplicate
+	// password manager, and so a remove verdict.
+	{"password manager", catPasswords}, {"gestor de contraseñas", catPasswords}, {"keepass", catPasswords},
 	{"wallet", catWallet},
 	{"chatgpt", catAI}, {"claude", catAI}, {"gemini", catAI}, {"copilot", catAI},
 	{"price tracker", catShopping}, {"coupon", catShopping},
 	{"devtools", catDev}, {"developer tools", catDev},
 }
 
-// One of these per profile is enough; a second one is a duplicate.
+// exclusive categories: a second one in a profile is a duplicate.
 var exclusive = map[string]bool{catPasswords: true}
 
 func category(id, name string) string {
@@ -93,7 +93,7 @@ func capabilities(in install) []string {
 		}
 	}
 	if in.onClick {
-		caps = append(caps, "all sites, on click")
+		caps = append(caps, capOnClick)
 	}
 	return caps
 }
@@ -115,14 +115,13 @@ func day(t time.Time) string {
 	return t.Format(time.DateOnly)
 }
 
-// assessment is the triage of one install.
 type assessment struct {
 	install
 	category string
 	caps     []string
 	verdict  verdict
 	sev      finding.Severity
-	reasons  []string // the reasons behind the verdict, most urgent first
+	reasons  []string // behind the verdict, most urgent first
 }
 
 func (a *assessment) add(v verdict, reason string) {
@@ -134,16 +133,14 @@ func (a *assessment) add(v verdict, reason string) {
 	}
 }
 
-// duplicate says which install of an exclusive category, in the same profile, another one
-// duplicates. primary is nil when nothing tells them apart.
 type duplicate struct {
-	primary *install
-	others  []string // names of the installs it competes with, when primary is nil
+	primary *install // nil when nothing tells them apart
+	others  []string // the names it competes with, when primary is nil
 }
 
-// duplicates finds installs that duplicate another of an exclusive category in the same profile.
-// The primary is the one named in the config, otherwise the one installed on a later day (the one
-// moved to). Installed the same day with none configured, none is primary: both are for review.
+// duplicates finds installs of an exclusive category that another in the same profile duplicates.
+// The primary is the configured one, else the one installed on a later day (the one moved to);
+// installed the same day, none is.
 func duplicates(ins []install, preferred []string) map[*install]duplicate {
 	out := map[*install]duplicate{}
 	groups := map[string][]*install{}
@@ -193,8 +190,7 @@ func boolCmp(a, b bool) int {
 	return -1
 }
 
-// assess applies the triage rules to every install. preferred lists extension ids the owner names
-// as primary in their category.
+// assess triages every install; preferred are extension ids configured as primary.
 func assess(ins []install, now time.Time, preferred []string) []assessment {
 	dups := duplicates(ins, preferred)
 	out := make([]assessment, 0, len(ins))
@@ -202,7 +198,7 @@ func assess(ins []install, now time.Time, preferred []string) []assessment {
 		in := ins[i]
 		a := assessment{install: in, category: category(in.id, in.name), caps: capabilities(in)}
 		stale := !in.updated.IsZero() && now.Sub(in.updated) > staleAfter
-		sensitive := slices.ContainsFunc(a.caps, func(c string) bool { return c != capAllSites && c != "all sites, on click" })
+		sensitive := len(withoutAllSites(a.caps)) > 0
 		if !in.enabled {
 			a.add(review, "disabled: remove it if you no longer use it")
 			a.sev = finding.SevLow
@@ -250,7 +246,7 @@ func assess(ins []install, now time.Time, preferred []string) []assessment {
 }
 
 func withoutAllSites(caps []string) []string {
-	return slices.DeleteFunc(slices.Clone(caps), func(c string) bool { return c == capAllSites || c == "all sites, on click" })
+	return slices.DeleteFunc(slices.Clone(caps), func(c string) bool { return c == capAllSites || c == capOnClick })
 }
 
 func (a assessment) severity() finding.Severity {

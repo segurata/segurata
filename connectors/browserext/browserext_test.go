@@ -177,6 +177,14 @@ func TestDuplicatePrimary(t *testing.T) {
 	if got := verdicts([]install{pm("aeblfdkhhhdcdjpifhhbdiojplfjncoa", "1Password", day), other}, nil); !strings.HasPrefix(got["1Password"], "keep") {
 		t.Errorf("across profiles: %v", got)
 	}
+	// Named password managers are one too; a password tool is not.
+	named := []install{pm("aeblfdkhhhdcdjpifhhbdiojplfjncoa", "1Password", day), pm("lp", "LastPass: Free Password Manager", day.Add(48*time.Hour)),
+		pm("kp", "KeePassXC-Browser", day.Add(-48*time.Hour)), pm("gen", "Strong Password Generator", day), pm("show", "Mostrar contraseña", day)}
+	got = verdicts(named, nil)
+	if !strings.HasPrefix(got["1Password"], "remove: second password manager in this profile; LastPass") || !strings.HasPrefix(got["KeePassXC-Browser"], "remove: second password manager") ||
+		!strings.HasPrefix(got["Strong Password Generator"], "keep") || !strings.HasPrefix(got["Mostrar contraseña"], "keep") {
+		t.Errorf("named: %v", got)
+	}
 	if ids := primaries(map[string]any{"primary": []any{"abc", 3}}); fmt.Sprint(ids) != "[abc]" {
 		t.Errorf("primaries %v", ids)
 	}
