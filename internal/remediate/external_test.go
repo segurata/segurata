@@ -52,7 +52,7 @@ func TestExternalRemediationShowsConfirmsAndApplies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	io := quietIO()
+	io := connectortest.QuietIO()
 	if err := Execute(context.Background(), pluginFinding, r, Options{IO: io, TTY: true}, neverReinventory(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestExternalRemediationShowsConfirmsAndApplies(t *testing.T) {
 	if _, err := os.Stat(applied); err == nil {
 		t.Fatal("dry run applied")
 	}
-	io = quietIO()
+	io = connectortest.QuietIO()
 	io.In = strings.NewReader("n\n")
 	if err := Execute(context.Background(), pluginFinding, r, Options{Apply: true, TTY: true, IO: io}, neverReinventory(t)); err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestExternalRemediationShowsConfirmsAndApplies(t *testing.T) {
 	if _, err := os.Stat(applied); err == nil {
 		t.Fatal("applied without a yes")
 	}
-	io = quietIO()
+	io = connectortest.QuietIO()
 	io.In = strings.NewReader("y\n")
 	if err := Execute(context.Background(), pluginFinding, r, Options{Apply: true, TTY: true, IO: io}, results("other")); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestExternalApplyRefusesAPlanThatChangedSinceShown(t *testing.T) {
 	changed := strings.Replace(goodPlan, "t1", "t2", 1)
 	e, applied := demoPlugin(t, goodPlan, changed)
 	r := external{conn: e}
-	err := Execute(context.Background(), pluginFinding, r, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t))
+	err := Execute(context.Background(), pluginFinding, r, Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}, neverReinventory(t))
 	if err == nil || !strings.Contains(err.Error(), "plan changed") {
 		t.Fatalf("want a refusal, got %v", err)
 	}

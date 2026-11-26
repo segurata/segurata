@@ -3,14 +3,21 @@
 package connectortest
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/segurata/segurata/internal/connector"
 )
+
+// QuietIO is an IO with no input and buffers for output nobody reads.
+func QuietIO() connector.IO {
+	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+}
 
 // NeedShell skips the test where shell scripts cannot run.
 func NeedShell(t *testing.T) {

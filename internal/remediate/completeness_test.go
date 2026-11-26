@@ -7,6 +7,7 @@ import (
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/run"
 )
@@ -71,7 +72,7 @@ func TestVerifyNeedsTheFindingsScopeInspected(t *testing.T) {
 				cancel()
 			}
 			r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
-			err := Execute(ctx, c.f, r, Options{Apply: true, Yes: true, IO: quietIO()}, checkRun(t, c.s))
+			err := Execute(ctx, c.f, r, Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}, checkRun(t, c.s))
 			if c.verify && err != nil {
 				t.Fatalf("want verified, got %v", err)
 			}
@@ -82,7 +83,7 @@ func TestVerifyNeedsTheFindingsScopeInspected(t *testing.T) {
 	}
 	killed := func(context.Context) ([]*run.Result, error) { return []*run.Result{{Name: "macos"}}, nil }
 	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
-	if err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, killed); !errors.Is(err, errUnverified) {
+	if err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}, killed); !errors.Is(err, errUnverified) {
 		t.Fatalf("a check run without run_end must not verify: %v", err)
 	}
 }

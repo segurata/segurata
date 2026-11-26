@@ -1,7 +1,6 @@
 package openrouter
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"net/url"
@@ -12,14 +11,11 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
 )
 
 const testWriteKey = "sk-or-v1-WRITE-not-a-real-management-key-1111"
-
-func quietIO() connector.IO {
-	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
-}
 
 func keysServer(t *testing.T) *httpxtest.Server {
 	self := orKey("self", 5.0, nil, 0, nil)
@@ -65,9 +61,9 @@ func TestInventoryOffersDeletionForUnusedEnabledKeys(t *testing.T) {
 	keys := map[string]apiKey{
 		"never":    {Hash: "never"},
 		"legacy":   {Hash: "legacy", Usage: 12},
-		"stale":    {Hash: "stale", LastUsedAt: ptr(daysAgo(120))},
-		"busy":     {Hash: "busy", LastUsedAt: ptr(daysAgo(1))},
-		"expired":  {Hash: "expired", ExpiresAt: ptr(daysAgo(5))},
+		"stale":    {Hash: "stale", LastUsedAt: new(daysAgo(120))},
+		"busy":     {Hash: "busy", LastUsedAt: new(daysAgo(1))},
+		"expired":  {Hash: "expired", ExpiresAt: new(daysAgo(5))},
 		"disabled": {Hash: "disabled", Disabled: true},
 	}
 	for n, want := range cases {
@@ -76,8 +72,6 @@ func TestInventoryOffersDeletionForUnusedEnabledKeys(t *testing.T) {
 		}
 	}
 }
-
-func ptr(s string) *string { return &s }
 
 func TestDeletePlanIsExactAndBlockedWithoutAWriteKey(t *testing.T) {
 	srv := keysServer(t)
@@ -96,7 +90,7 @@ func TestDeletePlanIsExactAndBlockedWithoutAWriteKey(t *testing.T) {
 	if !strings.Contains(p.Blocked, "remediation_secrets") || !strings.Contains(p.Blocked, "read/write") {
 		t.Errorf("blocked %q", p.Blocked)
 	}
-	if err := r.Apply(context.Background(), orFinding("legacy"), p, quietIO()); err == nil || len(srv.Deleted) != 0 {
+	if err := r.Apply(context.Background(), orFinding("legacy"), p, connectortest.QuietIO()); err == nil || len(srv.Deleted) != 0 {
 		t.Fatalf("apply without a write key: %v %v", err, srv.Deleted)
 	}
 }
@@ -109,7 +103,7 @@ func TestDeleteAppliesWithTheWriteKeyAndRefusesTheRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Apply(context.Background(), f, p, quietIO()); err != nil {
+	if err := r.Apply(context.Background(), f, p, connectortest.QuietIO()); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(srv.Deleted, []string{"/keys/never"}) {
@@ -121,7 +115,7 @@ func TestDeleteAppliesWithTheWriteKeyAndRefusesTheRest(t *testing.T) {
 		}
 	}
 	srv.DeleteAuth = http.Header{"Authorization": {"Bearer another"}}
-	if err := r.Apply(context.Background(), f, p, quietIO()); err == nil || !strings.Contains(err.Error(), writeSecret+" was refused") {
+	if err := r.Apply(context.Background(), f, p, connectortest.QuietIO()); err == nil || !strings.Contains(err.Error(), writeSecret+" was refused") {
 		t.Fatalf("read-only write key: %v", err)
 	}
 }

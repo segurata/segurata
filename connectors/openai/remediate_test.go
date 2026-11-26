@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"reflect"
@@ -17,10 +16,6 @@ import (
 )
 
 const testWriteKey = "sk-admin-WRITE-not-a-real-key-111111111"
-
-func quietIO() connector.IO {
-	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
-}
 
 // keysServer lists one project with a never-used, a stale and a busy key, and two admin keys, one
 // of them the inventory's own.
@@ -63,9 +58,9 @@ func TestInventoryOffersDeletionOnlyForUnusedKeys(t *testing.T) {
 		want      string
 	}{
 		{nil, nil, ActionDeleteUnusedKey},
-		{ptr(now.Add(-200 * 24 * time.Hour)), nil, ActionDeleteUnusedKey},
-		{ptr(now.Add(-2 * 24 * time.Hour)), nil, ""},
-		{nil, ptr(now.Add(-time.Hour)), ""}, // expired: nothing can use it anyway
+		{new(now.Add(-200 * 24 * time.Hour)), nil, ActionDeleteUnusedKey},
+		{new(now.Add(-2 * 24 * time.Hour)), nil, ""},
+		{nil, new(now.Add(-time.Hour)), ""}, // expired: nothing can use it anyway
 	} {
 		if got := unusedAction(c.last, c.exp, now); got != c.want {
 			t.Errorf("last %v expires %v: %q, want %q", c.last, c.exp, got, c.want)
@@ -79,8 +74,6 @@ func TestInventoryOffersDeletionOnlyForUnusedKeys(t *testing.T) {
 		t.Fatalf("a key whose last use is unknown is offered for deletion: %s %+v", f.Severity, f.Remediation)
 	}
 }
-
-func ptr(t time.Time) *time.Time { return &t }
 
 func TestDeletePlanIsExactAndBlockedWithoutAWriteKey(t *testing.T) {
 	srv := keysServer(t)
@@ -100,7 +93,7 @@ func TestDeletePlanIsExactAndBlockedWithoutAWriteKey(t *testing.T) {
 	if !strings.Contains(p.Blocked, "remediation_secrets") || !strings.Contains(p.SideEffects[0], "No undo") {
 		t.Errorf("blocked %q side effects %v", p.Blocked, p.SideEffects)
 	}
-	if err := r.Apply(context.Background(), keyFindingFor("api_key", "key_stale"), p, quietIO()); err == nil || len(srv.Deleted) != 0 {
+	if err := r.Apply(context.Background(), keyFindingFor("api_key", "key_stale"), p, connectortest.QuietIO()); err == nil || len(srv.Deleted) != 0 {
 		t.Fatalf("apply without a write key: %v, deleted %v", err, srv.Deleted)
 	}
 }
@@ -114,7 +107,7 @@ func TestDeleteAppliesWithTheWriteKeyOnly(t *testing.T) {
 		if err != nil || p.Blocked != "" {
 			t.Fatalf("%s: %v %q", f.ID, err, p.Blocked)
 		}
-		if err := r.Apply(context.Background(), f, p, quietIO()); err != nil {
+		if err := r.Apply(context.Background(), f, p, connectortest.QuietIO()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -144,7 +137,7 @@ func TestDeleteRefusesKeysInUseGoneOrSegurataSOwn(t *testing.T) {
 	}
 	altered.Calls[0].URL = srv.URL + "/organization/projects/proj_lab/api_keys/key_busy"
 	shown := &connectortest.ShownOnce{Remediator: r, Shown: &altered}
-	opt := remediate.Options{Apply: true, Yes: true, IO: quietIO()}
+	opt := remediate.Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}
 	if err := remediate.Execute(context.Background(), f, shown, opt, nil); err == nil || len(srv.Deleted) != 0 {
 		t.Fatalf("altered plan: %v, deleted %v", err, srv.Deleted)
 	}
@@ -160,7 +153,7 @@ func TestReadOnlyWriteKeyIsExplained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Apply(context.Background(), f, p, quietIO()); err == nil || !strings.Contains(err.Error(), writeSecret+" was refused") {
+	if err := r.Apply(context.Background(), f, p, connectortest.QuietIO()); err == nil || !strings.Contains(err.Error(), writeSecret+" was refused") {
 		t.Fatalf("want the read-only explanation, got %v", err)
 	}
 }

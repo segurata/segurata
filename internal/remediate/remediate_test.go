@@ -20,10 +20,6 @@ import (
 
 var enable = connector.Step{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "on"}, Sudo: true}
 
-func quietIO() connector.IO {
-	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
-}
-
 // fakeRemediator records Apply calls.
 type fakeRemediator struct {
 	plan    connector.Plan
@@ -65,7 +61,7 @@ func neverReinventory(t *testing.T) Reinventory {
 func TestDryRunPrintsThePlanAndNeverApplies(t *testing.T) {
 	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable", Summary: "Turn on the firewall.", Commands: []connector.Step{enable},
 		Undo: []connector.Step{{Argv: []string{"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "off"}, Sudo: true}}}}
-	io := quietIO()
+	io := connectortest.QuietIO()
 	if err := Execute(context.Background(), target, r, Options{IO: io, TTY: true}, neverReinventory(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +94,7 @@ func TestApplyNeedsAConfirmation(t *testing.T) {
 	}
 	for _, c := range cases {
 		r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
-		io := quietIO()
+		io := connectortest.QuietIO()
 		io.In = strings.NewReader(c.answer)
 		check := results()
 		if c.applied == 0 {
@@ -121,7 +117,7 @@ func TestVerifyAfterApply(t *testing.T) {
 	var slept []time.Duration
 	sleep = func(d time.Duration) { slept = append(slept, d) }
 	t.Cleanup(func() { sleep = func(time.Duration) {} })
-	opt := Options{Apply: true, Yes: true, IO: quietIO()}
+	opt := Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}
 	if err := Execute(context.Background(), target, r, opt, results("other")); err != nil {
 		t.Fatalf("finding gone should pass: %v", err)
 	}
@@ -233,7 +229,7 @@ func TestChmod600PlansExactlyAndApplies(t *testing.T) {
 	if !reflect.DeepEqual(want, p) || p.NeedsSudo() {
 		t.Fatalf("plan %+v", p)
 	}
-	if err := fs.Apply(context.Background(), f, p, quietIO()); err != nil {
+	if err := fs.Apply(context.Background(), f, p, connectortest.QuietIO()); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
@@ -259,7 +255,7 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 	_ = os.Chmod(other, 0o640)
 	p.Files[0].Path = other
 	altered := &connectortest.ShownOnce{Remediator: files{}, Shown: &p}
-	if err := Execute(context.Background(), f, altered, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t)); err == nil {
+	if err := Execute(context.Background(), f, altered, Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}, neverReinventory(t)); err == nil {
 		t.Fatal("applied an altered plan")
 	}
 	if fi, _ := os.Stat(other); fi.Mode().Perm() != 0o640 {
@@ -364,7 +360,7 @@ func TestTheCoreRefusesAPlanThatDriftedBetweenConfirmAndApply(t *testing.T) {
 	now := shown
 	now.Summary = "Turn on the firewall, and more."
 	r := &driftingRemediator{plans: []connector.Plan{shown, now}}
-	err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t))
+	err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}, neverReinventory(t))
 	if err == nil || !strings.Contains(err.Error(), "plan changed") {
 		t.Fatalf("want a refusal, got %v", err)
 	}
@@ -373,7 +369,7 @@ func TestTheCoreRefusesAPlanThatDriftedBetweenConfirmAndApply(t *testing.T) {
 	}
 
 	same := &driftingRemediator{plans: []connector.Plan{shown}}
-	if err := Execute(context.Background(), target, same, Options{Apply: true, Yes: true, IO: quietIO()}, results()); err != nil {
+	if err := Execute(context.Background(), target, same, Options{Apply: true, Yes: true, IO: connectortest.QuietIO()}, results()); err != nil {
 		t.Fatal(err)
 	}
 	if len(same.applied) != 1 || same.applied[0].Summary != shown.Summary {
@@ -397,7 +393,7 @@ func TestTheCoreRefusesAGroupPlanThatDrifted(t *testing.T) {
 	now := shown
 	now.Summary = "Enable secret scanning in 3 repositories."
 	r := &driftingGroup{driftingRemediator{plans: []connector.Plan{shown, now}}}
-	opt := Options{Apply: true, Yes: true, IO: quietIO(), Group: []finding.Finding{a, b}}
+	opt := Options{Apply: true, Yes: true, IO: connectortest.QuietIO(), Group: []finding.Finding{a, b}}
 	if err := Execute(context.Background(), a, r, opt, neverReinventory(t)); err == nil || len(r.applied) != 0 {
 		t.Fatalf("err=%v applied=%v", err, r.applied)
 	}

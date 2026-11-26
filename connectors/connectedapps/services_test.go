@@ -381,10 +381,10 @@ const errTest = testErr("target crashed")
 
 func TestFlexTime(t *testing.T) {
 	cases := map[string]*time.Time{
-		`1436392529000`:                    ptr(time.UnixMilli(1436392529000).UTC()),
-		`"1436392529000"`:                  ptr(time.UnixMilli(1436392529000).UTC()),
-		`"2026-11-22T10:35:25Z"`:           ptr(time.Date(2026, 11, 22, 10, 35, 25, 0, time.UTC)),
-		`"Wed Jul 08 21:55:29 +0000 2015"`: ptr(time.Date(2015, 7, 8, 21, 55, 29, 0, time.UTC)),
+		`1436392529000`:                    new(time.UnixMilli(1436392529000).UTC()),
+		`"1436392529000"`:                  new(time.UnixMilli(1436392529000).UTC()),
+		`"2026-11-22T10:35:25Z"`:           new(time.Date(2026, 11, 22, 10, 35, 25, 0, time.UTC)),
+		`"Wed Jul 08 21:55:29 +0000 2015"`: new(time.Date(2015, 7, 8, 21, 55, 29, 0, time.UTC)),
 		`null`:                             nil,
 		`"soon"`:                           nil,
 	}
@@ -398,8 +398,6 @@ func TestFlexTime(t *testing.T) {
 		}
 	}
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // xOldList has two apps approved more than ten years before now and one recent app.
 const xOldList = `{"applications":[

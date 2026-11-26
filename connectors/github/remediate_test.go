@@ -1,7 +1,6 @@
 package github
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 )
@@ -19,10 +19,6 @@ type recordingExec struct{ ran []string }
 func (r *recordingExec) Run(_ context.Context, s connector.Step, _ connector.IO) error {
 	r.ran = append(r.ran, s.String())
 	return nil
-}
-
-func quietIO() connector.IO {
-	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 }
 
 // roundTrip gives findings the shape remediate reads back from a run file.
@@ -184,7 +180,7 @@ func TestApplyRunsExactlyThePlanThroughALiveAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ApplyGroup(context.Background(), group, p, quietIO()); err != nil {
+	if err := c.ApplyGroup(context.Background(), group, p, connectortest.QuietIO()); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(ex.ran, strs(p.Commands)) {
@@ -194,7 +190,7 @@ func TestApplyRunsExactlyThePlanThroughALiveAllowlist(t *testing.T) {
 	altered := p
 	altered.Commands = append([]connector.Step{scanningStep("acme-corp/api", "enabled", []string{featureScanning})}, p.Commands...)
 	ex.ran = nil
-	if err := c.ApplyGroup(context.Background(), group, altered, quietIO()); err == nil || len(ex.ran) != 0 {
+	if err := c.ApplyGroup(context.Background(), group, altered, connectortest.QuietIO()); err == nil || len(ex.ran) != 0 {
 		t.Fatalf("an altered plan must be refused before running: %v ran=%v", err, ex.ran)
 	}
 

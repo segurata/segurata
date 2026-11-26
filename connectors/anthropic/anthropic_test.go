@@ -19,8 +19,6 @@ var now = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
 func daysAgo(d int) string { return now.Add(-time.Duration(d) * 24 * time.Hour).Format(time.RFC3339) }
 
-func ptr[T any](v T) *T { return &v }
-
 func apiKeyJSON(id, status string, createdDays int, creator string, principal any) map[string]any {
 	k := map[string]any{
 		"type": "api_key", "id": id, "name": id, "status": status, "created_at": daysAgo(createdDays),
@@ -181,7 +179,7 @@ func TestUnreadableUsersOrUsageNeverInventsRisk(t *testing.T) {
 		Type string `json:"type"`
 		ID   string `json:"id"`
 	}{"user", "user_gone"}}
-	created := ptr(now.Add(-400 * 24 * time.Hour))
+	created := new(now.Add(-400 * 24 * time.Hour))
 	if a := keyAssessment(k, created, nil, nil, now); a.Severity != finding.SevInfo {
 		t.Fatalf("unknown members and usage gave %s %v", a.Severity, a.Reasons)
 	}

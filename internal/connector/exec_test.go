@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/proc/proctest"
 )
@@ -20,10 +21,6 @@ type recordingExec struct{ ran []connector.Step }
 func (r *recordingExec) Run(_ context.Context, s connector.Step, _ connector.IO) error {
 	r.ran = append(r.ran, s)
 	return nil
-}
-
-func quietIO() connector.IO {
-	return connector.IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 }
 
 func TestAllowlistMatchesExactArgvAndSudo(t *testing.T) {
@@ -51,13 +48,13 @@ func TestRunChecksEveryStepBeforeRunningAny(t *testing.T) {
 	ex := &recordingExec{}
 	p := connector.Plan{Action: "a", Commands: []connector.Step{enable, {Argv: []string{"/bin/rm", "-rf", "/"}, Sudo: true}}}
 	allow := connector.Allowlist{"a": {enable}}
-	if err := allow.Run(context.Background(), p, ex, quietIO()); !errors.Is(err, connector.ErrRefused) {
+	if err := allow.Run(context.Background(), p, ex, connectortest.QuietIO()); !errors.Is(err, connector.ErrRefused) {
 		t.Fatalf("want refusal, got %v", err)
 	}
 	if len(ex.ran) != 0 {
 		t.Fatalf("ran %v before refusing the plan", ex.ran)
 	}
-	if err := allow.Run(context.Background(), connector.Plan{Action: "a", Commands: []connector.Step{enable}}, ex, quietIO()); err != nil || len(ex.ran) != 1 {
+	if err := allow.Run(context.Background(), connector.Plan{Action: "a", Commands: []connector.Step{enable}}, ex, connectortest.QuietIO()); err != nil || len(ex.ran) != 1 {
 		t.Fatalf("err=%v ran=%v", err, ex.ran)
 	}
 }

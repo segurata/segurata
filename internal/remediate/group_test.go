@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/run"
 )
@@ -66,7 +67,7 @@ func TestMembersGatherTheSameActionAndGroupOfOneInstance(t *testing.T) {
 func TestGroupPlanCoversEveryMemberAndVerifiesEach(t *testing.T) {
 	a, b := grouped("a", "me", finding.SevMedium), grouped("b", "me", finding.SevMedium)
 	g := &fakeGroup{fakeRemediator: fakeRemediator{plan: connector.Plan{Action: a.Remediation.Action, Summary: "Enable."}}}
-	io := quietIO()
+	io := connectortest.QuietIO()
 	if err := Execute(context.Background(), a, g, Options{IO: io, Group: []finding.Finding{a, b}}, neverReinventory(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestGroupPlanCoversEveryMemberAndVerifiesEach(t *testing.T) {
 			return []*run.Result{{Name: "github", Findings: fs, End: tally.End("github", "", target.ObservedAt, target.ObservedAt, nil)}}, nil
 		}
 	}
-	opt := Options{Apply: true, Yes: true, IO: quietIO(), Group: []finding.Finding{a, b}}
+	opt := Options{Apply: true, Yes: true, IO: connectortest.QuietIO(), Group: []finding.Finding{a, b}}
 	if err := Execute(context.Background(), a, g, opt, fresh(b)); !errors.Is(err, errStillPresent) {
 		t.Fatalf("one member still offering the action: want errStillPresent, got %v", err)
 	}
@@ -99,7 +100,7 @@ func TestGroupPlanCoversEveryMemberAndVerifiesEach(t *testing.T) {
 func TestAGroupNeedsAGroupRemediator(t *testing.T) {
 	a, b := grouped("a", "me", finding.SevMedium), grouped("b", "me", finding.SevMedium)
 	r := &fakeRemediator{plan: connector.Plan{Action: a.Remediation.Action}}
-	err := Execute(context.Background(), a, r, Options{Apply: true, Yes: true, IO: quietIO(), Group: []finding.Finding{a, b}}, neverReinventory(t))
+	err := Execute(context.Background(), a, r, Options{Apply: true, Yes: true, IO: connectortest.QuietIO(), Group: []finding.Finding{a, b}}, neverReinventory(t))
 	if err == nil || r.applied != 0 {
 		t.Fatalf("a single-finding remediator must not apply a group of two: err=%v applied=%d", err, r.applied)
 	}
@@ -111,7 +112,7 @@ func TestBlockedPlansAreShownButNeverApplied(t *testing.T) {
 		Blocked: "set OPENAI_ADMIN_WRITE_KEY under connectors.openai.remediation_secrets"}}
 	f := target
 	f.Remediation.Action = r.plan.Action
-	io := quietIO()
+	io := connectortest.QuietIO()
 	if err := Execute(context.Background(), f, r, Options{IO: io}, neverReinventory(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestBlockedPlansAreShownButNeverApplied(t *testing.T) {
 			t.Errorf("dry run lacks %q:\n%s", want, out)
 		}
 	}
-	err := Execute(context.Background(), f, r, Options{Apply: true, Yes: true, TTY: true, IO: quietIO()}, neverReinventory(t))
+	err := Execute(context.Background(), f, r, Options{Apply: true, Yes: true, TTY: true, IO: connectortest.QuietIO()}, neverReinventory(t))
 	if err == nil || !strings.Contains(err.Error(), "remediation_secrets") || r.applied != 0 {
 		t.Fatalf("a blocked plan must be refused before asking: err=%v applied=%d", err, r.applied)
 	}
@@ -130,11 +131,11 @@ func TestBlockedPlansAreShownButNeverApplied(t *testing.T) {
 func TestTerminalStepsNeedATerminalEvenWithYes(t *testing.T) {
 	step := connector.Step{Argv: []string{"gh", "auth", "refresh", "-h", "github.com", "-r", "delete_repo"}, Terminal: true}
 	r := &fakeRemediator{plan: connector.Plan{Action: "connected-apps.gh.drop-scopes", Summary: "Drop.", Commands: []connector.Step{step}}}
-	err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, TTY: false, IO: quietIO()}, neverReinventory(t))
+	err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, TTY: false, IO: connectortest.QuietIO()}, neverReinventory(t))
 	if !errors.Is(err, errNeedsTerminal) || r.applied != 0 {
 		t.Fatalf("err=%v applied=%d", err, r.applied)
 	}
-	io := quietIO()
+	io := connectortest.QuietIO()
 	if err := Execute(context.Background(), target, r, Options{IO: io}, neverReinventory(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +203,7 @@ func TestChmodGroupClosesEachFileOnceAndKeepsScriptsRunnable(t *testing.T) {
 	if !strings.Contains(strings.Join(p.SideEffects, "\n"), "Left out: "+done+" is already private") {
 		t.Fatalf("side effects %v", p.SideEffects)
 	}
-	if err := fs.ApplyGroup(context.Background(), group, p, quietIO()); err != nil {
+	if err := fs.ApplyGroup(context.Background(), group, p, connectortest.QuietIO()); err != nil {
 		t.Fatal(err)
 	}
 	for path, mode := range map[string]os.FileMode{env: 0o600, script: 0o700} {
