@@ -1104,7 +1104,7 @@ every run without a new scan.
 - URL credentials (`url-credentials`, `url-token-param`) are judged by host, written into the
   note (`postgresql://…@host`, `https://host/…?access_token=…`): localhost, loopback, `example.*`,
   `.local`, `.test`, `.invalid` are noise; private, CGNAT and link-local addresses, single-label
-  names, `.internal` and `.lan` are low; public hosts keep medium, high for managed databases
+  names, `.internal`, `.lan`, `.home.arpa` and `.cluster.local` (Kubernetes) are low; public hosts keep medium, high for managed databases
   (Neon, Supabase, RDS, MongoDB Atlas, Upstash, PlanetScale, Railway) or a `prod`, `production`,
   `prd` or `live` label. ripgrep prints only the match, so the line of a query-string token is read
   back from its file to find the URL it belongs to.
@@ -1125,7 +1125,7 @@ every run without a new scan.
   `noise not emitted …: N; by type: …; by place: …` (the 25 largest places, the rest summed), and
   one `info` finding of resource type `noise_summary` carries the same counts plus
   `noise_fingerprints`, every fingerprint whose copies are all noise with its type. `track sync`
-  applies it like a noise sighting (`SyncNoise`): an item whose secret a corrected rule made noise
+  applies it like a noise sighting (`syncNoise`): an item whose secret a corrected rule made noise
   closes as `reclassified`. Fingerprints without an item are ignored, so `sync --include-noise`
   needs `emit_noise: true` to track noise-only secrets.
 
