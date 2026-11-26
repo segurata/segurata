@@ -187,14 +187,9 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      # The scripts' end-to-end gate tests skip without gitleaks and git-filter-repo: CI has both.
+      # The scripts' end-to-end gate tests skip without gitleaks: CI has it.
       - if: matrix.dir == 'scripts'
         uses: ./.github/actions/install-gitleaks
-      - if: matrix.dir == 'scripts'
-        name: install git-filter-repo
-        run: |
-          printf 'git-filter-repo==2.47.0 --hash=sha256:2cd04929b9024e83e65db571cbe36aec65ead0cb5f9ec5abe42158654af5ad83\n' > "$RUNNER_TEMP/filter-repo.txt"
-          python -m pip install --require-hashes --only-binary :all: -r "$RUNNER_TEMP/filter-repo.txt"
       - name: unittest
         working-directory: ${{ matrix.dir }}
         run: python -m unittest -v

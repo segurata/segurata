@@ -5,16 +5,12 @@
 # it, all output goes through identifiers.py's mask.
 #
 # Usage: scripts/check-public.sh [--identifiers FILE] [--require-identifiers]
-#                                [--allow-author ID]... [--skip-authors]
+#                                [--allow-author ID]...
 #                                [--history | --unpushed | --pre-push REMOTE URL]
 #   --identifiers FILE     default: $SEGURATA_PUBLIC_GATE, else ~/.config/segurata/public-gate.txt
 #   --require-identifiers  fail when the identifiers file is missing, instead of warning
 #   --allow-author ID      allow an exact public Git identity "Name <email>" in author,
 #                          committer and tagger headers only. May be repeated.
-#   --skip-authors         with --unpushed or --pre-push, leave commits' author and committer
-#                          lines out of the identifiers scan (messages are still scanned): for a
-#                          private remote, where the owner's name is expected until
-#                          prepare-public-history.sh decides the authors of the public history
 #   --history              also scan every commit reachable from any ref; works on bare clones
 #   --pre-push REMOTE URL  as git's pre-push hook, which passes the remote and its URL: scan only
 #                          what the push sends, read from stdin ("<local ref> <local sha> <remote
@@ -36,7 +32,6 @@ require_identifiers=false
 history=false
 pre_push=false
 unpushed=false
-skip_authors=()
 allow_authors=()
 self=("$0" "$@")
 while [ $# -gt 0 ]; do
@@ -47,7 +42,6 @@ while [ $# -gt 0 ]; do
     --history) history=true; shift ;;
     --pre-push) pre_push=true; shift; break ;;
     --unpushed) unpushed=true; shift ;;
-    --skip-authors) skip_authors=(--skip-authors); shift ;;
     *) usage ;;
   esac
 done
@@ -57,9 +51,7 @@ if $pre_push && [ $# -ne 2 ]; then
   exit 2
 fi
 [ $# -eq 0 ] || $pre_push || usage
-if [ ${#skip_authors[@]} -gt 0 ] && ! $pre_push && ! $unpushed; then usage; fi
 if [ ${#allow_authors[@]} -gt 0 ]; then
-  [ ${#skip_authors[@]} -eq 0 ] || usage
   $history || $pre_push || $unpushed || usage
   require_identifiers=true
 fi
@@ -162,7 +154,7 @@ fi
 
 if [ -f "$identifiers" ] && $pre_push; then
   echo "== private identifiers: pushed commits and ref names"
-  scan python3 "$here/identifiers.py" scan-push "$repo" "$identifiers" ${skip_authors[@]+"${skip_authors[@]}"} ${allow_authors[@]+"${allow_authors[@]}"} <"$tmp/push"
+  scan python3 "$here/identifiers.py" scan-push "$repo" "$identifiers" ${allow_authors[@]+"${allow_authors[@]}"} <"$tmp/push"
 elif [ -f "$identifiers" ]; then
   if [ "$bare" = false ]; then
     echo "== private identifiers: tracked files"

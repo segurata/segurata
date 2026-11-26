@@ -34,9 +34,9 @@ deleted in the next is still caught. Install it, keeping the hooks you already h
 scripts/install-hooks.sh
 ```
 
-While the remote is the private one, install it with `--skip-authors`: the commits' author lines
-carry the owner's name until `scripts/prepare-public-history.sh` decides the public history's
-authors; messages and content are still scanned.
+The gate also scans commits' author and committer lines. If your public Git identity contains a
+listed identifier, exempt that exact identity with `--allow-author 'Name <email>'`; messages,
+content and ref names are still scanned.
 
 ## Rules
 

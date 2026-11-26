@@ -66,16 +66,20 @@ class Base(unittest.TestCase):
 
 class LoadTest(Base):
     def test_entries(self):
-        entries = identifiers.load(self.ids("# a comment\n\n  acme-corp  \nJane Client==>a client\n"))
-        self.assertEqual(entries, [(3, "acme-corp", "REDACTED"), (4, "Jane Client", "a client")])
+        entries = identifiers.load(self.ids("# a comment\n\n  acme-corp  \nJane Client\n"))
+        self.assertEqual(entries, [(3, "acme-corp"), (4, "Jane Client")])
+
+    def test_old_rewrite_syntax_keeps_the_identifier(self):
+        """Lines from the history rewrite, "X==>Y", still load: X is the identifier, Y is ignored."""
+        entries = identifiers.load(self.ids("Jane Client ==> a client\nacme-corp==>the ACME-CORP team\n"))
+        self.assertEqual(entries, [(1, "Jane Client"), (2, "acme-corp")])
 
     def test_rejects(self):
         cases = {
             "abc\n": "at least 4",
             "regex:acme.*\n": "only literal",
             "glob:*acme*\n": "only literal",
-            "acme-corp==>the ACME-CORP team\n": "replacement contains",
-            "Ñandú-corp==>the ñANDÚ-CORP team\n": "replacement contains",
+            "abc==>a longer text\n": "at least 4",
             "# nothing\n": "no identifiers",
             b"acme-corp\n\xd1and\xfa-corp\n": "line 2: not UTF-8",
             "Withheld\n": "the mask's own text",
@@ -104,35 +108,6 @@ class CheckOutsideTest(Base):
     def test_outside(self):
         repo = self.repo()
         identifiers.check_outside(self.ids("acme-corp\n"), repo.path)
-
-
-class ReplaceFileTest(Base):
-    def test_case_insensitive_literal_regexes(self):
-        out = os.path.join(self.tmp.name, "expressions.txt")
-        identifiers.replace_file(identifiers.load(self.ids("acme.corp\nJane==>a client\n")), out)
-        self.assertEqual(os.stat(out).st_mode & 0o777, 0o600)
-        with open(out, "rb") as f:
-            lines = f.read().splitlines()
-        self.assertEqual(lines, [rb"regex:(?i)acme\.corp==>REDACTED", rb"regex:(?i)Jane==>a client"])
-        pattern = re.compile(lines[0][len(b"regex:") : lines[0].index(b"==>")])
-        self.assertTrue(pattern.search(b"see ACME.Corp here"))
-        self.assertFalse(pattern.search(b"acmeXcorp"))  # the dot is literal
-
-    def test_unicode_case_and_forms(self):
-        """filter-repo applies the expressions to bytes, where (?i) is ASCII only: every other case
-        variant and the decomposed forms are spelled out, so the rewrite matches what the gate does."""
-        out = os.path.join(self.tmp.name, "expressions.txt")
-        identifiers.replace_file(identifiers.load(self.ids("Ñandú-Ácme\nStraße-corp\n")), out)
-        with open(out, "rb") as f:
-            lines = f.read().splitlines()
-        nandu, strasse = (re.compile(line[len(b"regex:") : line.index(b"==>")]) for line in lines)
-        for text in ("Ñandú-Ácme", "ñandú-ácme", "ÑANDÚ-ÁCME", "ñANDÚ-áCME", "N\u0303andu\u0301-A\u0301cme"):
-            with self.subTest(text=text):
-                self.assertTrue(nandu.search(f"x {text} y".encode()))
-        self.assertFalse(nandu.search("nandu-acme".encode()))
-        for text in ("Straße-corp", "STRASSE-CORP", "strasse-corp", "STRAẞE-CORP"):
-            with self.subTest(text=text):
-                self.assertTrue(strasse.search(text.encode()))
 
 
 class MaskTest(Base):
@@ -348,15 +323,13 @@ class MainTest(Base):
 
     def test_author_options(self):
         identity = "Public Name <public@example.com>"
-        self.assertEqual(identifiers.author_options("scan-push", ["--skip-authors"]), (True, ()))
-        self.assertEqual(identifiers.author_options("scan-history", ["--allow-author", identity]),
-                         (False, {identity.encode()}))
-        for command, args in (("scan-history", ["--skip-authors"]), ("scan-push", ["--allow-author"]),
-                              ("scan-push", ["--allow-author", "no email"]), ("scan-push", ["--allow-author", "a <b>\nc"]),
-                              ("scan-history", ["--other", identity])):
-            with self.subTest(command=command, args=args):
+        self.assertEqual(identifiers.author_options([]), set())
+        self.assertEqual(identifiers.author_options(["--allow-author", identity]), {identity.encode()})
+        for args in (["--skip-authors"], ["--allow-author"], ["--allow-author", "no email"],
+                     ["--allow-author", "a <b>\nc"], ["--other", identity]):
+            with self.subTest(args=args):
                 with self.assertRaises(identifiers.InputError):
-                    identifiers.author_options(command, args)
+                    identifiers.author_options(args)
 
 
 if __name__ == "__main__":

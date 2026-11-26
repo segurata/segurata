@@ -186,21 +186,21 @@ class PrePushTest(GateBase):
         self.assertEqual(code, 1, output)
         self.assertIn("pushed commits (3)", output)  # a new destination ref scans the full history
 
-    def test_skip_authors(self):
+    def test_author_lines_are_scanned(self):
+        """The public remote checks every author and committer line: only --allow-author exempts one."""
+        author = "ñandú-ácme <dev@example.com>"
         self.repo_.write("b.txt", "clean\n")
         self.repo_.git("add", "-A")
-        self.repo_.git("commit", "-q", "-m", "more", "--author", "ñandú-ácme <dev@example.com>")
+        self.repo_.git("commit", "-q", "-m", "more", "--author", author)
         code, output = self.gate("--require-identifiers", "--unpushed")
         self.assertEqual(code, 1, output)
         self.assertIn("(message, author or committer)", output)
-        code, output = self.gate("--require-identifiers", "--skip-authors", "--unpushed")
+        code, output = self.gate("--unpushed", "--allow-author", author)
         self.assertEqual(code, 0, output)
-        self.repo_.git("commit", "-q", "--allow-empty", "-m", "for ÑANDÚ-ácme")
+        code, output = self.gate("--unpushed", "--allow-author", author.replace("dev@", "other@"))
+        self.assertEqual(code, 1, output)  # only the exact identity
         code, output = self.gate("--require-identifiers", "--skip-authors", "--unpushed")
-        self.assertEqual(code, 1, output)  # the message is still scanned
-        self.assertIn("(message)", output)
-        code, output = self.gate("--require-identifiers", "--skip-authors")
-        self.assertEqual(code, 2, output)  # only for what a push sends
+        self.assertEqual(code, 2, output)  # the option is gone
 
     def test_clean_push_and_deletion(self):
         self.repo_.write("b.txt", "still clean\n")
@@ -212,84 +212,6 @@ class PrePushTest(GateBase):
         code, output = self.gate("--require-identifiers", "--pre-push", "origin", "url", stdin=deletion)
         self.assertEqual(code, 0, output)
         self.assertIn("no commits to push", output)
-
-
-@unittest.skipUnless(shutil.which("gitleaks") and shutil.which("git-filter-repo"), "needs gitleaks and git-filter-repo")
-class PreparePublicHistoryTest(GateBase):
-    def setUp(self):
-        super().setUp()
-        repo = self.repo_
-        repo.write("a.txt", "clean\n")
-        repo.commit("init")
-        # Case and Unicode variants of the identifier, in content and messages, gone from the tip.
-        repo.write("notes.txt", "for ÑANDÚ-ácme\nand N\u0303andu\u0301-A\u0301cme\n")
-        repo.commit("work for ñandú-ÁCME")
-        repo.git("rm", "-q", "notes.txt")
-        repo.commit("tidy")
-        repo.git("tag", "-a", "v1", "-m", "release")
-        repo.git("gc", "--quiet")
-        self.runs = 0
-
-    def prepare(self, *args):
-        self.runs += 1
-        workdir = os.path.join(self.tmp.name, f"public{self.runs}")
-        done = subprocess.run(
-            [os.path.join(SCRIPTS, "prepare-public-history.sh"), "--source", self.repo_.path,
-             "--identifiers", self.ids_file, "--workdir", workdir, *args],
-            env=ENV, capture_output=True,
-        )
-        output = (done.stdout + done.stderr).decode("utf-8", "replace")
-        report = ""
-        if os.path.exists(os.path.join(workdir, "report.txt")):
-            with open(os.path.join(workdir, "report.txt"), encoding="utf-8") as f:
-                report = f.read()
-        self.assertNoIdentifier(output + report, self.IDENT)
-        return done.returncode, output, report
-
-    def test_authors_gate_fails_without_a_choice(self):
-        code, output, report = self.prepare()
-        self.assertEqual(code, 1, output)
-        self.assertIn("== authors\nTest Author <author@example.com>\nFAIL: authors unchanged", report)
-        self.assertIn("GATES FAILED", report)
-        self.assertIn(report, output)
-
-    def test_keep_authors(self):
-        code, output, report = self.prepare("--keep-authors")
-        self.assertEqual(code, 0, output)
-        self.assertIn("== authors\nTest Author <author@example.com>\nok: published as listed (--keep-authors)", report)
-        self.assertIn("check-public: clean", report)
-        self.assertIn("ALL GATES PASSED", report)
-
-    def test_mailmap(self):
-        mailmap = os.path.join(self.tmp.name, "mailmap")
-        with open(mailmap, "w") as f:
-            f.write("Public Name <public@example.com> <author@example.com>\n")
-        code, output, report = self.prepare("--mailmap", mailmap)
-        self.assertEqual(code, 0, output)
-        self.assertIn("== authors\nPublic Name <public@example.com>\nok: rewritten with --mailmap", report)
-        self.assertNotIn("author@example.com", report)
-
-    def test_mailmap_and_keep_authors_exclude_each_other(self):
-        code, output, _ = self.prepare("--keep-authors", "--mailmap", self.ids_file)
-        self.assertEqual(code, 2, output)
-
-    def test_only_exact_public_author_headers_are_accepted(self):
-        author = f"{self.IDENT} <public@example.com>"
-        mailmap = os.path.join(self.tmp.name, "mailmap")
-        with open(mailmap, "w", encoding="utf-8") as f:
-            f.write(author + " <author@example.com>\n")
-        code, output, _ = self.prepare("--mailmap", mailmap, "--allow-author", author)
-        self.assertEqual(code, 0, output)
-        code, output, _ = self.prepare("--mailmap", mailmap, "--allow-author", author.replace("public@", "other@"))
-        self.assertEqual(code, 1, output)
-
-    def test_branch_name_is_masked_everywhere(self):
-        self.repo_.git("branch", "ñandú-ácme-main")
-        code, output, report = self.prepare("--keep-authors", "--branch", "ñandú-ácme-main")
-        self.assertEqual(code, 1, output)
-        self.assertIn("branch: <identifier 2>-main", report)
-        self.assertIn("ref refs/heads/<identifier 2>-main", report)
-        self.assertIn("== cloning <identifier 2>-main into", output)
 
 
 if __name__ == "__main__":

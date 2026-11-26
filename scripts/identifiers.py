@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Private identifiers gate, shared by check-public.sh and prepare-public-history.sh.
+"""Private identifiers gate, run by check-public.sh.
 
 The identifiers file lives outside the repository (it would leak what it lists). It is UTF-8, one
 entry per line; blank lines and lines starting with # are ignored:
 
     acme-internal-project
-    Jane Client==>a client
+    Jane Client
 
-The text before "==>" is the identifier, matched as a literal and caselessly: both sides are
-Unicode-casefolded and compatibility-normalized, so Ñ matches ñ, Á matches á, and a decomposed á
-(a + combining accent) matches too. Content that is not valid UTF-8 is also read as Latin-1. The
-text after "==>" is what prepare-public-history.sh writes in its place; REDACTED when omitted. Its
-rewrite covers the case variants and the decomposed forms; anything it misses fails the gate that
-runs after it.
+Each line is an identifier, matched as a literal and caselessly: both sides are Unicode-casefolded
+and compatibility-normalized, so Ñ matches ñ, Á matches á, and a decomposed á (a + combining
+accent) matches too. Content that is not valid UTF-8 is also read as Latin-1. A line written
+"Jane Client==>a client", the old rewrite syntax, still loads: the text before "==>" is the
+identifier and the rest is ignored.
 
 No output ever contains an identifier: every line printed goes through mask(), which writes each
 occurrence as <identifier N>, N being the identifier's line number in the file. A line the mask
@@ -20,16 +19,11 @@ cannot clean is withheld whole. So a report can be pasted anywhere.
 
 Commands:
     identifiers.py check FILE REPO            validate the file, and that it is outside REPO
-    identifiers.py replace-file FILE OUT      write git filter-repo --replace-text expressions
     identifiers.py scan-tree REPO FILE        tracked files of the working tree: content and paths
     identifiers.py scan-history REPO FILE     every object reachable from any ref, and ref names
-    identifiers.py scan-push REPO FILE [--skip-authors]
-                                              what a git push sends: the pre-push hook's stdin
+    identifiers.py scan-push REPO FILE        what a git push sends: the pre-push hook's stdin
                                               names the refs; only objects reachable from the
-                                              destination tips named by Git are left out. With
-                                              --skip-authors, commits' author and committer lines
-                                              are not scanned (their messages are), for a private
-                                              remote: prepare-public-history.sh decides authors
+                                              destination tips named by Git are left out
     identifiers.py push-revs REPO             the pre-push stdin as git log arguments, one line
     identifiers.py mask FILE                  copy stdin to stdout, masked
     identifiers.py run-masked FILE CMD...     run CMD with its stdout and stderr masked
@@ -41,7 +35,6 @@ scan-* exit 1 when an identifier is found, 2 on a usage or input error. run-mask
 CMD's status.
 """
 
-import functools
 import os
 import re
 import subprocess
@@ -49,7 +42,6 @@ import sys
 import threading
 import unicodedata
 
-DEFAULT_REPLACEMENT = "REDACTED"
 MIN_LENGTH = 4
 WITHHELD = "<identifier {}>: line withheld"
 
@@ -66,7 +58,7 @@ def fold(text):
 
 
 def load(path):
-    """Returns [(line number, identifier, replacement)], as text."""
+    """Returns [(line number, identifier)], as text."""
     try:
         with open(path, "rb") as f:
             lines = f.read().splitlines()
@@ -80,18 +72,14 @@ def load(path):
             raise InputError(f"line {number}: not UTF-8")
         if not line or line.startswith("#"):
             continue
-        ident, sep, replacement = line.partition("==>")
-        ident = ident.strip()
-        replacement = replacement.strip() if sep else DEFAULT_REPLACEMENT
+        ident = line.partition("==>")[0].strip()
         if ident.startswith(("regex:", "glob:")):
             raise InputError(f"line {number}: only literal identifiers are supported")
         if len(ident) < MIN_LENGTH:
             raise InputError(f"line {number}: an identifier needs at least {MIN_LENGTH} characters")
-        if fold(ident) in fold(replacement):
-            raise InputError(f"line {number}: the replacement contains the identifier")
         if fold(ident) in fold(WITHHELD):
             raise InputError(f"line {number}: the identifier is part of the mask's own text")
-        entries.append((number, ident, replacement))
+        entries.append((number, ident))
     if not entries:
         raise InputError(f"no identifiers in {path}")
     return entries
@@ -117,7 +105,7 @@ def matches(data, entries):
     found = {}
     for text in views(data):
         folded = fold(text)
-        for number, ident, _ in entries:
+        for number, ident in entries:
             at = folded.find(fold(ident))
             if at != -1 and number not in found:
                 found[number] = folded.count("\n", 0, at) + 1
@@ -140,7 +128,7 @@ def mask(data, entries):
         origin.extend([i] * len(piece))
     folded = "".join(folded)
     spans = []
-    for number, ident, _ in entries:
+    for number, ident in entries:
         key = fold(ident)
         at = folded.find(key)
         while at != -1:
@@ -173,41 +161,6 @@ def git(repo, *args, stdin=None):
     ).stdout
 
 
-@functools.cache
-def case_classes():
-    """casefolded text -> every single character that casefolds to it."""
-    classes = {}
-    for cp in range(sys.maxunicode + 1):
-        char = chr(cp)
-        classes.setdefault(char.casefold(), set()).add(char)
-    return classes
-
-
-def pattern(ident):
-    """A bytes regex for filter-repo, case-insensitive like the gate: ASCII case through (?i),
-    every other case variant, the decomposed forms and multi-character folds (ß, ss) as explicit
-    alternatives."""
-    pieces = []
-    for char in ident:
-        forms = case_classes().get(char.casefold(), set()) | {char}
-        forms |= {unicodedata.normalize("NFD", form) for form in forms}
-        if len(char.casefold()) > 1:
-            forms.add(char.casefold())
-        if all(len(form) == 1 and form.isascii() for form in forms):
-            pieces.append(re.escape(char))
-        else:
-            pieces.append("(?:" + "|".join(sorted(re.escape(form) for form in forms)) + ")")
-    return "(?i)" + "".join(pieces)
-
-
-def replace_file(entries, out):
-    """filter-repo expressions, one case-insensitive regex per identifier."""
-    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        for _, ident, replacement in entries:
-            f.write(f"regex:{pattern(ident)}==>{replacement}\n".encode("utf-8"))
-
-
 def hits_in(entries, data, where):
     """One masked report line per identifier found in data; where(line) describes the place."""
     return [mask(f"identifier on line {number}: ".encode() + where(line), entries) for number, line in matches(data, entries)]
@@ -234,19 +187,19 @@ def scan_tree(repo, entries):
 identity_header = re.compile(rb"(author|committer|tagger) (.+ <[^<>]*>) -?\d+ [+-]\d{4}")
 
 
-def without_authors(data, approved=(), skip_authors=False):
+def without_authors(data, approved):
     """Drop approved identity headers. The body and any other headers remain scannable."""
     header, sep, message = data.partition(b"\n\n")
     kept = []
     for line in header.split(b"\n"):
         m = identity_header.fullmatch(line)
-        if m and (m[2] in approved or skip_authors and m[1] != b"tagger"):
+        if m and m[2] in approved:
             line = line[:m.start(2)] + line[m.end(2):]
         kept.append(line)
     return b"\n".join(kept) + sep + message
 
 
-def scan_objects(repo, entries, refs, objects, skip_authors=False, approved=()):
+def scan_objects(repo, entries, refs, objects, approved=()):
     """Ref names and objects: {object id: the path rev-list found it at}."""
     hits = []
     for ref in refs:
@@ -262,14 +215,12 @@ def scan_objects(repo, entries, refs, objects, skip_authors=False, approved=()):
         data = batch[start : start + int(size)]
         pos = start + int(size) + 1
         where = objects.get(oid, b"")
-        if kind in (b"commit", b"tag") and (approved or skip_authors):
-            data = without_authors(data, approved, skip_authors)
+        if kind in (b"commit", b"tag") and approved:
+            data = without_authors(data, approved)
         if kind == b"blob":
             hits += hits_in(entries, data, lambda line: b"blob %s %s:%d" % (oid, where, line))
         elif kind == b"tree":
             hits += hits_in(entries, data, lambda _: b"a file or folder name in /" + where)
-        elif kind == b"commit" and skip_authors:
-            hits += hits_in(entries, data, lambda _: b"commit %s (message)" % oid)
         elif kind == b"commit":
             hits += hits_in(entries, data, lambda _: b"commit %s (message, author or committer)" % oid)
         else:
@@ -325,9 +276,9 @@ def has_commit(repo, oid):
     return subprocess.run(probe, stderr=subprocess.DEVNULL).returncode == 0
 
 
-def scan_push(repo, entries, lines, skip_authors=False, approved=()):
+def scan_push(repo, entries, lines, approved=()):
     revs, refs = push_revs(repo, lines)
-    return scan_objects(repo, entries, refs, rev_list_objects(repo, *revs) if revs else {}, skip_authors, approved)
+    return scan_objects(repo, entries, refs, rev_list_objects(repo, *revs) if revs else {}, approved)
 
 
 def run_masked(entries, cmd):
@@ -348,9 +299,7 @@ def run_masked(entries, cmd):
     return 128 - code if code < 0 else code
 
 
-def author_options(command, args):
-    if command == "scan-push" and args == ["--skip-authors"]:
-        return True, ()
+def author_options(args):
     approved = set()
     for i in range(0, len(args), 2):
         if args[i] != "--allow-author" or i + 1 == len(args):
@@ -359,7 +308,7 @@ def author_options(command, args):
         if not re.fullmatch(rb"[^<>\r\n]+ <[^<>\r\n]+>", value):
             raise InputError("expected an approved author in Name <email> format")
         approved.add(value)
-    return False, approved
+    return approved
 
 
 def report(hits):
@@ -378,9 +327,6 @@ def main(argv):
             check_outside(argv[2], argv[3])
             load(argv[2])
             return 0
-        if command == "replace-file" and len(argv) == 4:
-            replace_file(load(argv[2]), argv[3])
-            return 0
         if command == "push-revs" and len(argv) == 3:
             revs, _ = push_revs(argv[2], sys.stdin.buffer.read().splitlines())
             print(" ".join(revs))
@@ -395,11 +341,11 @@ def main(argv):
         if command == "scan-tree" and len(argv) == 4:
             return report(scan_tree(argv[2], load(argv[3])))
         if command in ("scan-history", "scan-push") and len(argv) >= 4:
-            skip, approved = author_options(command, argv[4:])
+            approved = author_options(argv[4:])
             entries = load(argv[3])
             if command == "scan-history":
                 return report(scan_history(argv[2], entries, approved))
-            return report(scan_push(argv[2], entries, sys.stdin.buffer.read().splitlines(), skip, approved))
+            return report(scan_push(argv[2], entries, sys.stdin.buffer.read().splitlines(), approved))
     except InputError as e:
         print(f"identifiers.py: {e}", file=sys.stderr)
         return 2

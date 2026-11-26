@@ -1,7 +1,7 @@
 # gitleaks rules for this repository: the default rule set, minus the fake and published example
 # values that tests, fixtures and docs contain on purpose. Allow a value only when it is provably
 # not a credential, by its exact text and never by path, so a real secret added to the same file
-# is still caught. Used by scripts/check-public.sh and scripts/prepare-public-history.sh.
+# is still caught. Used by scripts/check-public.sh.
 
 [extend]
 useDefault = true
