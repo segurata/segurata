@@ -16,23 +16,18 @@ go test ./...
 scripts/check-public.sh                     # gitleaks and private identifiers over tracked files
 ```
 
-`scripts/check-public.sh` needs [gitleaks](https://github.com/gitleaks/gitleaks). Run without
-options it checks the tracked files of the working tree only, not the commits: `--history` adds
-every commit. Maintainers keep a list of private identifiers (client names, internal hosts, project
-ids) outside the repository, at `~/.config/segurata/public-gate.txt` or `$SEGURATA_PUBLIC_GATE`
-(format in [`scripts/identifiers.py`](scripts/identifiers.py)), and gate every push with a pre-push
-hook. As the hook, `--pre-push` reads the refs being pushed from git and scans exactly the commits
-the remote lacks, so a secret or identifier added in one commit and deleted in the next is still
-caught; by hand, `--unpushed` scans what `git push` of the current branch would send. Install the
-hook with:
+`scripts/check-public.sh` needs [gitleaks](https://github.com/gitleaks/gitleaks); its options
+(`--history`, `--unpushed`, `--pre-push`) are in its usage block. Maintainers keep a list of private
+identifiers (client names, internal hosts, project ids) outside the repository, at
+`~/.config/segurata/public-gate.txt` or `$SEGURATA_PUBLIC_GATE` (format in
+[`scripts/identifiers.py`](scripts/identifiers.py)), and gate every push with a pre-push hook that
+scans exactly the commits the remote lacks, so a secret or identifier added in one commit and
+deleted in the next is still caught. Install it, keeping the hooks you already have, with:
 
 ```bash
 scripts/install-hooks.sh
 ```
 
-It keeps the hooks you have: with a global `core.hooksPath`, writing into it would replace that
-directory's pre-push hook and gate every other repository. The script gives this clone a hooks
-directory of its own that links the other hooks and runs the previous pre-push after the gate.
 While the remote is the private one, install it with `--skip-authors`: the commits' author lines
 carry the owner's name until `scripts/prepare-public-history.sh` decides the public history's
 authors; messages and content are still scanned.

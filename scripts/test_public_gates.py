@@ -22,6 +22,8 @@ class GateBase(Base):
         self.repo_ = self.repo()
         shutil.copy(GITLEAKS_CONFIG, os.path.join(self.repo_.path, ".gitleaks.toml"))
         self.ids_file = self.ids(f"# made up\n{self.IDENT}\n")
+        # Made up at run time, in the shape gitleaks' github-pat rule catches.
+        self.token = "ghp_" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(36))
 
     def gate(self, *args, stdin=b""):
         done = subprocess.run(
@@ -30,6 +32,7 @@ class GateBase(Base):
         )
         output = (done.stdout + done.stderr).decode("utf-8", "replace")
         self.assertNoIdentifier(output, self.IDENT)
+        self.assertNotIn(self.token, output)
         return done.returncode, output
 
 
@@ -62,6 +65,31 @@ class CheckPublicTest(GateBase):
         self.assertEqual(code, 1, output)
         self.assertIn("identifier on line 2: commit", output)
 
+    def test_merge_resolution_is_scanned_after_removal(self):
+        self.repo_.commit("init")
+        self.repo_.git("checkout", "-q", "-b", "side")
+        self.repo_.write("side.txt", "independent change\n")
+        self.repo_.commit("side")
+        self.repo_.git("checkout", "-q", "main")
+        self.repo_.git("merge", "-q", "--no-ff", "--no-commit", "side")
+        self.repo_.write("merge.txt", f"token = {self.token}\n")
+        self.repo_.commit("merge")
+        self.repo_.git("rm", "-q", "merge.txt")
+        self.repo_.commit("remove it")
+
+        code, output = self.gate("--history")
+        self.assertEqual(code, 1, output)
+        self.assertRegex(output, r"leaks found: [1-9]")
+
+    def test_git_metadata_is_scanned(self):
+        self.repo_.git("commit", "-q", "--allow-empty", "-m", f"token = {self.token}")
+        self.repo_.git("tag", "-a", "v0.1.0", "-m", f"token = {self.token}")
+
+        code, output = self.gate("--history")
+        self.assertEqual(code, 1, output)
+        self.assertIn("== gitleaks: Git metadata", output)
+        self.assertIn("leaks found: 2", output)
+
 
 @unittest.skipUnless(shutil.which("gitleaks"), "needs gitleaks")
 class PrePushTest(GateBase):
@@ -82,8 +110,6 @@ class PrePushTest(GateBase):
         installed = subprocess.run([os.path.join(SCRIPTS, "install-hooks.sh"), "--identifiers", self.ids_file],
                                    cwd=self.repo_.path, env=ENV, capture_output=True)
         self.assertEqual(installed.returncode, 0, installed.stderr)
-        # Made up at run time, in the shape gitleaks' github-pat rule catches.
-        self.token = "ghp_" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(36))
         self.repo_.write("a.txt", "clean\n")
         self.repo_.commit("init")
         code, output = self.push("-u", "main")
@@ -108,7 +134,8 @@ class PrePushTest(GateBase):
         self.repo_.git("rm", "-q", "config.txt")
         self.repo_.commit("remove it")
 
-    def test_added_then_deleted_is_caught(self):
+    def test_added_then_deleted_is_caught_and_stops_the_chain(self):
+        os.remove(self.chained)
         self.add_then_delete()
         code, output = self.gate("--require-identifiers")
         self.assertEqual(code, 0, output)  # the working tree is clean: a tree scan passes
@@ -118,40 +145,13 @@ class PrePushTest(GateBase):
         self.assertIn("identifier on line 2: blob", output)
         self.assertIn("config.txt:2", output)
         self.assertIn("check-public: FAILED", output)
-
-    def test_new_branch(self):
-        self.add_then_delete()
+        self.assertFalse(os.path.exists(self.chained), "a failed gate stops the chain")
+        # A new branch is scanned whole, even with HEAD under another remote's tracking ref.
         self.repo_.git("update-ref", "refs/remotes/private/main", "HEAD")
         code, output = self.push("main:refs/heads/feature")
         self.assertNotEqual(code, 0, output)
         self.assertIn("leaks found: 1", output)
         self.assertIn("identifier on line 2: blob", output)
-
-    def test_merge_resolution_is_scanned_after_removal(self):
-        self.repo_.git("checkout", "-q", "-b", "side")
-        self.repo_.write("side.txt", "independent change\n")
-        self.repo_.commit("side")
-        self.repo_.git("checkout", "-q", "main")
-        self.repo_.git("merge", "-q", "--no-ff", "--no-commit", "side")
-        self.repo_.write("merge.txt", f"token = {self.token}\n")
-        self.repo_.commit("merge")
-        self.repo_.git("rm", "-q", "merge.txt")
-        self.repo_.commit("remove it")
-
-        code, output = self.gate("--history")
-        self.assertEqual(code, 1, output)
-        self.assertRegex(output, r"leaks found: [1-9]")
-        self.assertNotIn(self.token, output)
-
-    def test_git_metadata_is_scanned(self):
-        self.repo_.git("commit", "-q", "--allow-empty", "-m", f"token = {self.token}")
-        self.repo_.git("tag", "-a", "v0.1.0", "-m", f"token = {self.token}")
-
-        code, output = self.gate("--history")
-        self.assertEqual(code, 1, output)
-        self.assertIn("== gitleaks: Git metadata", output)
-        self.assertIn("leaks found: 2", output)
-        self.assertNotIn(self.token, output)
 
     def test_new_branch_name(self):
         code, output = self.push("main:refs/heads/ñandú-ácme-fix")
@@ -170,12 +170,6 @@ class PrePushTest(GateBase):
                                    cwd=self.repo_.path, env=ENV, capture_output=True, text=True)
         self.assertEqual(installed.returncode, 0, installed.stderr)
         self.assertIn(f"chained to {self.shared}", installed.stdout)
-
-    def test_a_failed_gate_stops_the_chain(self):
-        os.remove(self.chained)
-        self.add_then_delete()
-        self.assertNotEqual(self.push("main")[0], 0)
-        self.assertFalse(os.path.exists(self.chained))
 
     def test_by_hand(self):
         code, output = self.gate("--require-identifiers", "--pre-push")

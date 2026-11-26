@@ -386,30 +386,14 @@ service accounts:
 - A token from elsewhere: set the `WORKSPACE_ACCESS_TOKEN` secret reference on the instance
   (`"secrets": {"WORKSPACE_ACCESS_TOKEN": "keychain:..."}`); gcloud is then not used.
 
-## Cloudflare (`cloudflare`)
+## Cloud and AI providers
 
-Read-only, GET only, with a user API token in `CLOUDFLARE_API_TOKEN`. It grades your API tokens
-(edit on all zones or accounts: high; edit without a client IP filter, no expiry, unused for 90
-days: medium), each account's 2FA enforcement (off: high), members without 2FA and extra super
-administrators (medium), and per zone the SSL mode (off: high, Flexible: medium), minimum TLS
-below 1.2 (medium), Always Use HTTPS and DNSSEC (low). The Global API Key cannot be listed by the
-API, so it is one reminder to check it by hand. `max_zones` (default 200) caps the zones checked,
-and requests are paced under Cloudflare's 1200 per five minutes. One instance per login:
-`cloudflare:<label>`.
+Each of these has its own page with endpoints or commands, severities, config keys and setup:
 
-Create the token at <https://dash.cloudflare.com/profile/api-tokens> (Create Custom Token) with
-User > API Tokens > Read, Account > Account Settings > Read, Zone > Zone > Read, Zone > Zone
-Settings > Read and Zone > DNS > Read, on all accounts and all zones, with a TTL. Then:
-
-```bash
-security add-generic-password -s segurata-cloudflare -a "$USER" -w
-```
-
-```json
-{"connectors": {"cloudflare": {"secrets": {"CLOUDFLARE_API_TOKEN": "keychain:segurata-cloudflare"}}}}
-```
-
-Endpoints, severities and limits: [docs/cloud-connectors.md](docs/cloud-connectors.md#cloudflare-cloudflare).
+- `aws`, `azure`, `vercel`, `supabase` and `cloudflare`: [docs/cloud-connectors.md](docs/cloud-connectors.md)
+- `gcp`: [docs/gcp-connector.md](docs/gcp-connector.md); Prowler's GCP checks on top of it:
+  [plugins/prowler](plugins/prowler/README.md)
+- `openai`, `anthropic` and `openrouter`: [docs/ai-connectors.md](docs/ai-connectors.md)
 
 ## Plaintext secrets on disk (`local-secrets`)
 

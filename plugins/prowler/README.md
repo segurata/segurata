@@ -228,12 +228,9 @@ Hygiene checks (Prowler 5.51.0 ids):
 | Log export and audit logs | `logging_sink_created`, `iam_audit_logs_enabled`, `cloudstorage_audit_logs_enabled`, `cloudstorage_bucket_logging_enabled`, `compute_subnet_flow_logs_enabled`, `compute_network_dns_logging_enabled`, `compute_loadbalancer_logging_enabled` |
 | Inventory, scanning, governance | `iam_cloud_asset_inventory_enabled`, `artifacts_container_analysis_enabled`, `gcr_container_scanning_enabled`, `iam_account_access_approval_enabled`, `iam_organization_essential_contacts_configured` |
 
-Never lowered by the profile, whatever the project runs: findings of kind `exposure` or
-`credential`, and these checks: firewall SSH/RDP open to the internet, VM public IP, default service
-account on a VM (with or without full API access), public image, Shodan-listed address, public
-bucket, Cloud SQL public IP or public access, public BigQuery dataset, public function, KMS key or
-secret, Vertex AI Workbench public IP, API key checks, and service-account admin roles and unused
-keys (`PROTECTED_CHECKS` in the script). `cloudstorage_uses_vpc_service_controls` is not in the
+Every other check keeps Prowler's severity whatever the project runs (public buckets, open
+firewalls, API keys, service-account keys and roles...), and so does a hygiene check whose finding
+is of kind `exposure` or `credential`. `cloudstorage_uses_vpc_service_controls` is not in the
 hygiene list because Prowler files it as `internet-exposed`.
 
 `severity_min` filters on Prowler's severity, before relevance.
@@ -279,7 +276,8 @@ Not in Prowler, only in `gcp`: billing budgets and local credential files (ADC, 
 | `status unsupported` (scope `*`) | Prowler or gcloud not found; a provider not implemented yet |
 | `scope` inspected false | Projects in `projects` no account lists; and, with a reason starting `expected:` so the coverage line counts them as left out on purpose, projects in `skip_projects` and people `accounts` leaves out |
 
-A disabled API leaves nothing of that service to check, so it does not make the run partial; the
+A disabled API leaves nothing of that service to check, so it does not make the run partial,
+whether Prowler logs it as disabled or Google refuses a call to it (403 `SERVICE_DISABLED`); the
 project's summary names it. The same holds for a call Google refuses (403) because the project has
 billing disabled ("check billing account associated", "requires billing to be enabled"): nothing
 can run there. A service refused for any other reason as well still leaves the project uninspected.

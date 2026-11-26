@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# Builds the history to publish, in a fresh bare clone in a new folder: one branch and the tags in
-# its history, rewritten with git filter-repo so the owner's private identifiers (scripts/identifiers.py
-# describes the file) are replaced in file contents and commit and tag messages. Then it gates the
-# result (identifiers, gitleaks, the branch tip unchanged, only that branch and tags) and writes a
-# report. Everything it prints, the report included, goes through identifiers.py's mask, so no
-# identifier is ever shown. The source repository is only cloned from, never changed. This script
-# never pushes: what the owner runs afterwards is in docs/releasing.md, "Going public".
+# Builds the history to publish in a fresh bare clone: one branch and its tags, rewritten with git
+# filter-repo to replace the private identifiers (scripts/identifiers.py), then gated and reported,
+# all output masked. It never changes the source and never pushes (docs/releasing.md, "Going public").
 #
 # Usage: scripts/prepare-public-history.sh [options]
 #   --source URL|PATH      repository to copy; default: this local repository
@@ -70,7 +66,7 @@ esac
 [ -f "$identifiers" ] || die "no identifiers file at $identifiers (--identifiers or SEGURATA_PUBLIC_GATE)"
 python3 "$here/identifiers.py" check "$identifiers" "$repo" || exit 2
 if [ -d "$source" ]; then python3 "$here/identifiers.py" check "$identifiers" "$source" || exit 2; fi
-# From here on everything printed goes through the mask: this script runs again under it.
+# Run again under the mask, so nothing printed from here on can show an identifier.
 if [ -z "${SEGURATA_GATE_MASKED:-}" ]; then
   SEGURATA_GATE_MASKED=1 exec python3 "$here/identifiers.py" run-masked "$identifiers" "$BASH" "${self[@]}"
 fi
@@ -88,7 +84,7 @@ workdir="$(cd "$workdir" && pwd -P)"
 public="$workdir/public.git"
 report="$workdir/report.txt"
 
-# The expressions name the identifiers: private, outside the work folder, deleted on exit.
+# The expressions name the identifiers: kept outside the work folder and deleted on exit.
 secret_dir="$(mktemp -d)"
 trap 'rm -rf "$secret_dir"' EXIT
 python3 "$here/identifiers.py" replace-file "$identifiers" "$secret_dir/expressions"
@@ -104,7 +100,7 @@ filter=(--replace-text "$secret_dir/expressions" --replace-message "$secret_dir/
   --replace-refs delete-no-add --quiet)
 if [ ${#drop[@]} -gt 0 ]; then filter+=("${drop[@]}" --invert-paths); fi
 if [ -n "$mailmap" ]; then filter+=(--mailmap "$mailmap"); fi
-# filter-repo removes origin, expires reflogs and repacks the rewritten objects.
+# filter-repo removes origin, expires reflogs and repacks, so no pre-rewrite object survives.
 (cd "$public" && git filter-repo "${filter[@]}")
 
 after_commits="$(git -C "$public" rev-list --count "$branch_ref")"
@@ -136,8 +132,7 @@ gates() {
   fi
 
   echo "== branch tip"
-  # The published tip must be the code that was tested: fix identifiers on the branch first
-  # (scripts/check-public.sh), and only history gets rewritten here.
+  # The published tip must be the code that was tested: only history gets rewritten here.
   if [ "$before_tree" = "$after_tree" ]; then echo "ok: tree $after_tree unchanged"; else
     fail "the tip's files changed ($before_tree -> $after_tree); clean the branch itself first"
   fi

@@ -27,7 +27,7 @@ class Repo:
         self.git("init", "-q", "-b", "main")
 
     def git(self, *args):
-        subprocess.run(["git", "-C", self.path, *args], env=GIT_ENV, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", self.path, *args], env=GIT_ENV, check=True, capture_output=True)
 
     def write(self, name, text):
         full = os.path.join(self.path, name)
@@ -165,11 +165,14 @@ class ScanTreeTest(Base):
         repo.write("a.txt", "one\ntwo Acme-Corp\n")
         repo.write("acme-corp/b.txt", "clean\n")
         repo.write("gone.txt", "acme-corp\n")
+        os.symlink("/home/ACME-corp/notes.txt", os.path.join(repo.path, "link"))
+        os.symlink("a.txt", os.path.join(repo.path, "clean-link"))
         repo.commit("init")
         os.remove(os.path.join(repo.path, "gone.txt"))  # deleted in the working tree: not published
         repo.write("untracked.txt", "acme-corp\n")
         hits = identifiers.scan_tree(repo.path, identifiers.load(self.ids("acme-corp\n")))
-        self.assertEqual(hits, ["identifier on line 1: a.txt:2", "identifier on line 1: in the path <identifier 1>/b.txt"])
+        self.assertEqual(hits, ["identifier on line 1: a.txt:2", "identifier on line 1: in the path <identifier 1>/b.txt",
+                                "identifier on line 1: link:1"])
         self.assertNoIdentifier(hits, "acme-corp")
 
     def test_unicode_variants(self):
@@ -339,6 +342,21 @@ class MainTest(Base):
         self.assertEqual(done.returncode, 3)
         self.assertEqual(done.stdout, b"out <identifier 1>\n")
         self.assertEqual(done.stderr, b"err <identifier 1>\n")
+        killed = self.run_script("run-masked", self.ids("acme-corp\n"), sys.executable, "-c",
+                                 "import os, signal; os.kill(os.getpid(), signal.SIGTERM)")
+        self.assertEqual(killed.returncode, 128 + 15, "a signal exits like a shell reports it")
+
+    def test_author_options(self):
+        identity = "Public Name <public@example.com>"
+        self.assertEqual(identifiers.author_options("scan-push", ["--skip-authors"]), (True, ()))
+        self.assertEqual(identifiers.author_options("scan-history", ["--allow-author", identity]),
+                         (False, {identity.encode()}))
+        for command, args in (("scan-history", ["--skip-authors"]), ("scan-push", ["--allow-author"]),
+                              ("scan-push", ["--allow-author", "no email"]), ("scan-push", ["--allow-author", "a <b>\nc"]),
+                              ("scan-history", ["--other", identity])):
+            with self.subTest(command=command, args=args):
+                with self.assertRaises(identifiers.InputError):
+                    identifiers.author_options(command, args)
 
 
 if __name__ == "__main__":

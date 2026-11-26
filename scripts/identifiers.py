@@ -220,10 +220,13 @@ def scan_tree(repo, entries):
             continue
         hits += hits_in(entries, path, lambda _: b"in the path " + path)
         full = os.path.join(repo, os.fsdecode(path))
-        if os.path.islink(full) or not os.path.isfile(full):
-            continue  # a symlink target is checked as its own path; a deleted file has no content
-        with open(full, "rb") as f:
-            data = f.read()
+        if os.path.islink(full):
+            data = os.fsencode(os.readlink(full))  # what git publishes for a symlink
+        elif os.path.isfile(full):
+            with open(full, "rb") as f:
+                data = f.read()
+        else:
+            continue  # deleted in the working tree
         hits += hits_in(entries, data, lambda line: path + b":%d" % line)
     return hits
 

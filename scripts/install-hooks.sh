@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 # Installs the leak gate (check-public.sh --pre-push) as this clone's pre-push hook without taking
-# any hook away. Git runs one hooks directory: core.hooksPath when set (often a global one shared by
-# every repository), else .git/hooks. Writing the gate there would replace the pre-push hook already
-# in it and, for a global directory, gate every other repository with a script they lack. So the
-# gate gets a directory of this clone's own, .git/hooks-segurata, set as core.hooksPath in this
-# clone's config only: it links every other hook of the directory git used before, and its pre-push
-# runs the gate of the checkout this script is in, then that directory's pre-push with the same
-# input. Running it again refreshes the links (a hook added to the previous directory since needs
-# that).
+# any hook away: .git/hooks-segurata becomes this clone's core.hooksPath, links every hook of the
+# directory git used before (which may be a global one), and chains the gate to its pre-push.
+# Writing the gate into that directory would replace its pre-push and, for a global one, gate every
+# other repository with a script they lack. Run it again to pick up hooks added there since.
 #
-# Usage: scripts/install-hooks.sh [--identifiers FILE] [--skip-authors]
+# Usage: scripts/install-hooks.sh [--identifiers FILE] [--allow-author ID]... [--skip-authors]
 #   --identifiers FILE   passed to the gate; default as check-public.sh's
+#   --allow-author ID    passed to the gate: exact approved public Git identity (repeatable)
 #   --skip-authors       passed to the gate: for a private remote (see check-public.sh)
-#   --allow-author ID   passed to the gate: exact approved public Git identity (repeatable)
 set -euo pipefail
 
 usage() { sed -n '/^# Usage:/,/^set /p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -32,11 +28,10 @@ if $skip_authors && $allow_authors; then usage; fi
 
 repo="$(git rev-parse --show-toplevel)"
 here="$(cd "$(dirname "$0")" && pwd)"
-# The common directory: core.hooksPath in the clone's config holds for all its worktrees.
+# The common directory: the clone's core.hooksPath holds for all its worktrees.
 gitdir="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
 dir="$gitdir/hooks-segurata"
-# The directory git ran hooks from before: recorded on the first install, as core.hooksPath points
-# here afterwards.
+# Recorded on the first install: afterwards core.hooksPath points here.
 prev="$(git config --local --get segurata.previousHooks || true)"
 if [ -z "$prev" ]; then
   prev="$(cd "$repo" && git rev-parse --git-path hooks)"

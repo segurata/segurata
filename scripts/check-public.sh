@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Leak gate for what this repository publishes: gitleaks and the owner's private identifiers (client
-# names, internal hosts, project ids...) over the content and paths of what is about to go out. By
-# default that is the tracked files of the working tree only, not the commits; --history adds every
-# commit, and --pre-push (as git's hook) or --unpushed (by hand) checks the history a push may
-# publish. The identifiers file lives outside the repository, because it would leak what it lists; its
-# format is in scripts/identifiers.py.
-# Gitleaks reports counts. Identifier hits name masked locations. With an identifiers file,
-# diagnostic output also goes through identifiers.py's mask. CI runs without
-# identifiers; locally it runs as a pre-push hook (scripts/install-hooks.sh).
+# Leak gate: gitleaks and the owner's private identifiers (format in scripts/identifiers.py) over
+# the content and paths of what is about to go out, by default the tracked files of the working tree.
+# The identifiers file lives outside the repository, because it would leak what it lists. With
+# it, all output goes through identifiers.py's mask.
 #
-# Usage: scripts/check-public.sh [--identifiers FILE] [--require-identifiers] [--skip-authors]
+# Usage: scripts/check-public.sh [--identifiers FILE] [--require-identifiers]
+#                                [--allow-author ID]... [--skip-authors]
 #                                [--history | --unpushed | --pre-push REMOTE URL]
 #   --identifiers FILE     default: $SEGURATA_PUBLIC_GATE, else ~/.config/segurata/public-gate.txt
 #   --require-identifiers  fail when the identifiers file is missing, instead of warning
@@ -82,7 +78,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 command -v gitleaks >/dev/null || { echo "check-public: gitleaks is not on PATH" >&2; exit 2; }
 if [ -f "$identifiers" ]; then
   python3 "$here/identifiers.py" check "$identifiers" "$repo" || exit 2
-  # From here on everything printed goes through the mask: this script runs again under it.
+  # Run again under the mask, so nothing printed from here on can show an identifier.
   if [ -z "${SEGURATA_GATE_MASKED:-}" ]; then
     SEGURATA_GATE_MASKED=1 exec python3 "$here/identifiers.py" run-masked "$identifiers" "$BASH" "${self[@]}"
   fi
@@ -94,7 +90,7 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 status=0
-# Runs a scanner: exit 1 marks the gate failed and goes on; any other failure stops it.
+# Exit 1 fails the gate and goes on; any other failure stops it.
 scan() { local rc=0; "$@" || rc=$?; case $rc in 0) ;; 1) status=1 ;; *) exit 2 ;; esac; }
 
 config="$tmp/gitleaks.toml"
@@ -111,8 +107,7 @@ scan_git() {
   scan gitleaks git "${gitleaks_flags[@]}" \
     --log-opts="--no-textconv --no-ext-diff --no-show-signature --diff-merges=separate $*" "$repo"
   mkdir "$tmp/metadata"
-  # Give the detector each commit's prose separately. Git's generated object IDs are not
-  # credentials, and a keyword in one message should not make it flag a hash in another.
+  # One file per commit's prose: a keyword in one message must not make gitleaks flag a hash in another.
   git -C "$repo" log --no-patch --no-show-signature -z --format='%H%n%an%n%ae%n%cn%n%ce%n%B' "$@" |
     while IFS= read -r -d '' record; do
       oid="${record%%$'\n'*}"
