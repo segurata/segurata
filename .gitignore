@@ -13,3 +13,6 @@ __pycache__/
 
 # GoReleaser output
 /dist/
+
+# Agentic QA reports, local evidence
+/docs/qa/
