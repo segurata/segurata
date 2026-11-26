@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 
@@ -48,23 +49,32 @@ var commands = []command{
 	{"version", "", "version, commit and build date", versionCmd},
 }
 
-func main() {
-	if len(os.Args) >= 2 {
+func main() { os.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr)) }
+
+// dispatch runs a command. Asking for help is a success, on stdout; anything unknown is a usage
+// error, on stderr.
+func dispatch(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		if slices.Contains([]string{"help", "-h", "--help"}, args[0]) {
+			usage(stdout)
+			return 0
+		}
 		for _, c := range commands {
-			if c.name == os.Args[1] {
-				os.Exit(c.run(os.Args[2:]))
+			if c.name == args[0] {
+				return c.run(args[1:])
 			}
 		}
 	}
-	usage()
-	os.Exit(2)
+	usage(stderr)
+	return 2
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage:")
+func usage(w io.Writer) {
+	fmt.Fprintln(w, "usage:")
 	for _, c := range commands {
-		fmt.Fprintf(os.Stderr, "  %s\n      %s\n", strings.TrimSpace("segurata "+c.name+" "+c.args), c.summary)
+		fmt.Fprintf(w, "  %s\n      %s\n", strings.TrimSpace("segurata "+c.name+" "+c.args), c.summary)
 	}
+	fmt.Fprintln(w, "\nsegurata <command> --help lists every flag of a command.")
 }
 
 func versionCmd([]string) int {

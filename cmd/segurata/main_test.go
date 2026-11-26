@@ -101,3 +101,21 @@ func freshDiscovery(t *testing.T) {
 	all = sync.OnceValue(discover)
 	t.Cleanup(func() { all = saved })
 }
+
+// Asking for help succeeds on stdout and says where the flags are; an unknown command is a usage
+// error on stderr.
+func TestHelpIsASuccessOnStdout(t *testing.T) {
+	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}} {
+		var out, errOut strings.Builder
+		if code := dispatch(args, &out, &errOut); code != 0 || errOut.Len() != 0 ||
+			!strings.Contains(out.String(), "segurata inventory") || !strings.Contains(out.String(), "<command> --help") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, out.String(), errOut.String())
+		}
+	}
+	for _, args := range [][]string{nil, {"nonsense"}} {
+		var out, errOut strings.Builder
+		if code := dispatch(args, &out, &errOut); code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "usage:") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, out.String(), errOut.String())
+		}
+	}
+}
