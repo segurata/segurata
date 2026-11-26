@@ -39,18 +39,25 @@ $env:GOTOOLCHAIN = 'local'
 $env:SEGURATA_TEST_DISPOSABLE_CLIPBOARD = '1'
 
 whoami /user /groups /priv
-$groups = whoami /groups /fo csv | ConvertFrom-Csv
 $profileDir = [Environment]::GetFolderPath('UserProfile')
+# The runner image sets a machine-wide TEMP outside every profile. A user's own TEMP, as Windows
+# creates it, is %LOCALAPPDATA%\Temp.
+if (-not $env:TEMP.StartsWith($profileDir + '\', 'OrdinalIgnoreCase')) {
+  "TEMP from the logon: $env:TEMP; using the user's own"
+  $env:TEMP = $env:TMP = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'
+  New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+}
+$groups = whoami /groups /fo csv | ConvertFrom-Csv
 $checks = [ordered]@{
   'runs as the standard user' = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq $Sid
   'not an administrator'      = -not ($groups | Where-Object SID -EQ 'S-1-5-32-544')
   'medium integrity'          = [bool]($groups | Where-Object SID -EQ 'S-1-16-8192')
   'interactive logon'         = [bool]($groups | Where-Object SID -EQ 'S-1-5-4')
   'own profile loaded'        = $env:USERPROFILE -eq $profileDir -and (Test-Path -LiteralPath (Join-Path $profileDir 'NTUSER.DAT'))
-  'temp in the profile'       = $env:TEMP.StartsWith($profileDir + '\', 'OrdinalIgnoreCase')
+  'temp in the profile'       = [IO.Path]::GetTempPath().StartsWith($profileDir + '\', 'OrdinalIgnoreCase') -and (Test-Path -LiteralPath $env:TEMP)
 }
 $checks.GetEnumerator() | ForEach-Object { '{0}: {1}' -f $_.Key, $_.Value }
-if ($checks.Values -contains $false) { Write-Error "this process does not hold a standard user's token" }
+if ($checks.Values -contains $false) { Write-Error "this process does not run as a standard user's sign-in would" }
 
 go env GOCACHE GOMODCACHE GOTMPDIR
 go test ./...
