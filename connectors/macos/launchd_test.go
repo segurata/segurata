@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -220,7 +221,7 @@ func TestBinaryPlistIsConvertedByPlutilForThatFileOnly(t *testing.T) {
 	if err != nil || m["Label"] != "com.example.bin" {
 		t.Fatalf("m=%v err=%v", m, err)
 	}
-	if _, err := guard(fr).Run(context.Background(), plutilBin, "-convert", "xml1", "-o", "-", p); err == nil {
+	if _, err := guard(fr).Run(context.Background(), plutilBin, "-convert", "xml1", "-o", "-", p); !errors.Is(err, cli.ErrRefused) {
 		t.Fatal("plutil is not on the fixed allowlist; only readPlist may run it, for the file it read")
 	}
 }
