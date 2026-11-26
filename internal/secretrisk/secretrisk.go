@@ -126,7 +126,7 @@ type Spot struct {
 }
 
 // Where locates one copy of a secret.
-func Where(source, kind, mode string, tracked, remote bool) Spot {
+func Where(kind, mode string, tracked, remote bool) Spot {
 	switch {
 	case tracked && remote:
 		return Spot{Remote, "git+remote", "committed to a git repository with a remote, so every clone has it"}
@@ -150,7 +150,7 @@ func WhereEvidence(e Evidence) Spot {
 	if s, ok := UpstreamSpot(e.Origin, e.Reused); ok {
 		return s
 	}
-	return Where(e.Source, e.Kind, e.Mode, e.Tracked, e.Remote)
+	return Where(e.Kind, e.Mode, e.Tracked, e.Remote)
 }
 
 func groupReadable(mode string) bool {

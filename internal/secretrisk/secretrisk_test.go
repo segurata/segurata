@@ -38,27 +38,27 @@ func TestPriority(t *testing.T) {
 
 func TestWhere(t *testing.T) {
 	cases := []struct {
-		source, kind, mode string
-		tracked, remote    bool
-		level              Exposure
-		label              string
+		kind, mode      string
+		tracked, remote bool
+		level           Exposure
+		label           string
 	}{
-		{"gitleaks", "repo", "", true, true, Remote, "git+remote"},
-		{"scan", "transcript", "600", false, false, Remote, "transcript"},
-		{"gitleaks", "repo", "", true, false, Shared, "git"},
-		{"scan", "config", "644", false, false, Shared, "readable"},
-		{"scan", "config", "640", false, false, Shared, "readable"},
-		{"scan", "history", "600", false, false, Local, "history"},
-		{"scan", "log", "600", false, false, Local, "log"},
-		{"scan", "repo", "600", false, false, Local, "local"},
+		{"repo", "", true, true, Remote, "git+remote"},
+		{"transcript", "600", false, false, Remote, "transcript"},
+		{"repo", "", true, false, Shared, "git"},
+		{"config", "644", false, false, Shared, "readable"},
+		{"config", "640", false, false, Shared, "readable"},
+		{"history", "600", false, false, Local, "history"},
+		{"log", "600", false, false, Local, "log"},
+		{"repo", "600", false, false, Local, "local"},
 	}
 	for _, c := range cases {
-		s := Where(c.source, c.kind, c.mode, c.tracked, c.remote)
+		s := Where(c.kind, c.mode, c.tracked, c.remote)
 		if s.Level != c.level || s.Label != c.label || s.Phrase == "" {
 			t.Errorf("%+v: got %+v", c, s)
 		}
 	}
-	got := Reason(lookup("stripe-live"), Where("scan", "transcript", "600", false, false))
+	got := Reason(lookup("stripe-live"), Where("transcript", "600", false, false))
 	if got != "Stripe live secret key; pasted into an agent transcript, so it reached the model provider" {
 		t.Errorf("reason %q", got)
 	}

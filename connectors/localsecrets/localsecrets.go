@@ -595,7 +595,7 @@ func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
 }
 
 func othersCanRead(mode string) bool {
-	return secretrisk.Where("", "", mode, false, false).Level == secretrisk.Shared
+	return secretrisk.Where("", mode, false, false).Level == secretrisk.Shared
 }
 
 // hardeningGroup is the file's folder, cut at three levels under the home (~/src/acme/app).

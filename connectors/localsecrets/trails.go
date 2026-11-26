@@ -149,7 +149,7 @@ func (t *Trails) Find(path, mode, text string) []Hit {
 func (t *Trails) find(path, mode, text string, matches func(string) [][]int) []Hit {
 	kind := t.s.kindOf(path)
 	patterns := patternsFor(kind)
-	spot := secretrisk.Where("scan", kind, mode, false, false)
+	spot := secretrisk.Where(kind, mode, false, false)
 	var hits []Hit
 	off := 0
 	for line := range strings.SplitAfterSeq(text, "\n") {

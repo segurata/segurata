@@ -58,7 +58,7 @@ func (l Location) Spot() secretrisk.Spot {
 	if s, ok := secretrisk.UpstreamSpot(l.Origin, l.Reused); ok {
 		return s
 	}
-	return secretrisk.Where(l.Source, l.Kind, l.Mode, l.Tracked, l.Remote)
+	return secretrisk.Where(l.Kind, l.Mode, l.Tracked, l.Remote)
 }
 
 // Where is path:line, or the path.
