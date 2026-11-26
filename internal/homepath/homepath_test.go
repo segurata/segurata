@@ -32,12 +32,13 @@ func TestExpandOnWindows(t *testing.T) {
 	}
 }
 
+// The Unix rules: the home prefix is compared byte for byte.
 func TestShorten(t *testing.T) {
 	for p, want := range map[string]string{
 		"/h": "~", "/h/a/b": "~/a/b", "/hx/a": "/hx/a", "/other": "/other", "": "", "/H/a": "/H/a",
 	} {
-		if got := Shorten(p, "/h"); got != want {
-			t.Errorf("Shorten(%q) = %q, want %q", p, got, want)
+		if got := shorten(p, "/h", false); got != want {
+			t.Errorf("shorten(%q) = %q, want %q", p, got, want)
 		}
 	}
 	if got := Shorten("/h/a", ""); got != "/h/a" {
