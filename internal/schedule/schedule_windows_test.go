@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+	"unsafe"
 
 	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 )
@@ -99,19 +99,40 @@ func text(raw []byte) string {
 }
 
 // The task's windowless console host runs the command it is given, and returns once it ends.
+// conhost starts the way Task Scheduler starts the task's action: with no console and no standard
+// handles. Started with NUL as input, as exec.Cmd would, a headless conhost reads end of input
+// and closes the console, ending the command, at once.
 func TestHeadlessConhostRunsTheCommand(t *testing.T) {
 	var env Env
 	if err := env.LoadTaskHost(); err != nil {
 		t.Fatal(err)
 	}
-	cmdExe := filepath.Join(filepath.Dir(env.SchTasks), "cmd.exe")
+	sys := filepath.Dir(env.SchTasks)
 	marker := filepath.Join(t.TempDir(), "ran")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := exec.CommandContext(ctx, env.Conhost, "--headless", cmdExe, "/d", "/c", "echo x> "+marker).Run(); err != nil {
+	// About two seconds pass before the command leaves its marker.
+	script := filepath.Join(sys, "PING.EXE") + " -n 3 127.0.0.1 >nul & echo x> " + marker
+	line, err := syscall.UTF16PtrFromString(strings.Join([]string{windowsArg(env.Conhost), "--headless",
+		windowsArg(filepath.Join(sys, "cmd.exe")), "/d", "/c", windowsArg(script)}, " "))
+	if err != nil {
 		t.Fatal(err)
 	}
+	const detachedProcess = 0x8
+	si := syscall.StartupInfo{Cb: uint32(unsafe.Sizeof(syscall.StartupInfo{}))}
+	var pi syscall.ProcessInformation
+	if err := syscall.CreateProcess(nil, line, nil, nil, false, detachedProcess, nil, nil, &si, &pi); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(pi.Thread)
+	defer syscall.CloseHandle(pi.Process)
+	if ev, err := syscall.WaitForSingleObject(pi.Process, 30000); ev != syscall.WAIT_OBJECT_0 {
+		_ = syscall.TerminateProcess(pi.Process, 1)
+		t.Fatalf("conhost --headless did not return: %d %v", ev, err)
+	}
+	var code uint32
+	if err := syscall.GetExitCodeProcess(pi.Process, &code); err != nil || code != 0 {
+		t.Fatalf("conhost --headless exited %d %v", code, err)
+	}
 	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("conhost --headless did not run the command: %v", err)
+		t.Fatalf("conhost --headless returned before the command ended: %v", err)
 	}
 }
