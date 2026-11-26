@@ -266,6 +266,7 @@ func (it *Item) keptApart() bool {
 	return it.Accepted != nil || it.Status == Ignored
 }
 
+// Closed reports whether the item is off the to-do list for a reason other than a snooze.
 func (it *Item) Closed() bool {
 	switch it.Status {
 	case Done, Ignored, Accepted, Reclassified, Expected, Merged:
@@ -307,6 +308,7 @@ func (it *Item) NewsSince(since time.Time) bool {
 	})
 }
 
+// EffectivePriority is the override, else the computed priority.
 func (it *Item) EffectivePriority() secretrisk.Priority {
 	if it.PriorityOverride != nil {
 		return it.PriorityOverride.Priority

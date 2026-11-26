@@ -11,24 +11,19 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Setup items: one per connector instance, account and state other than ok. A connector may
-// report several statuses under one key (gcp: one per project it could not read); the item keeps
-// one ref per distinct detail and its title counts them.
-
-// setupProposal is the setup item for a connector status other than ok, without refs: addStatus
-// adds one per distinct detail.
+// setupProposal is the setup item of a connector instance, account and state other than ok;
+// addStatus adds one ref per distinct detail.
 func setupProposal(lbl string, st finding.Status) (string, proposal) {
 	key := setupKey(lbl, st)
 	return key, proposal{theme: "setup", kind: KindSetup, connector: st.Connector, instance: st.Instance, account: st.Account}
 }
 
-// setupKey is the key of the setup item a status other than ok makes. An expected status keeps
-// the key of the state the connector reported, so the item it closes is the one it opened.
+// setupKey is from the state the connector reported, so an expected status closes the item it
+// opened.
 func setupKey(lbl string, st finding.Status) string {
 	return "setup:" + lbl + "|" + st.Account + "|" + string(reported(st).State)
 }
 
-// reported is the status as the connector reported it, before the config's expected rules.
 func reported(st finding.Status) finding.Status {
 	if st.State == finding.StateExpected && st.Was != "" {
 		st.State, st.Was, st.Expected = st.Was, "", ""
@@ -36,7 +31,6 @@ func reported(st finding.Status) finding.Status {
 	return st
 }
 
-// addStatus adds a status to a setup proposal: one ref per distinct detail.
 func (p *proposal) addStatus(st finding.Status, at time.Time) {
 	detail := st.Detail
 	if detail == "" {
@@ -55,7 +49,6 @@ func (p *proposal) addStatus(st finding.Status, at time.Time) {
 		Title: detail, Severity: sev, LastSeen: at.UTC(), Expected: st.Expected})
 }
 
-// finishSetup names a setup item and says what to do about its statuses.
 func (p *proposal) finishSetup(itemID string) {
 	if len(p.statuses) == 0 {
 		return
@@ -90,12 +83,11 @@ var statePhrase = map[finding.State]string{
 	finding.StateError:              "failed",
 }
 
-// scopedDetail reads a detail of the form "<noun> <name>: <what>", as gcp words a project it could not read.
+// scopedDetail reads "<noun> <name>: <what>", as gcp words a project it could not read.
 var scopedDetail = regexp.MustCompile(`^([a-z]+) (\S+): (.+)$`)
 
-// setupTitle is "<label> · <account>: <state phrase>" for one status. For several it counts them:
-// "gcp: permission denied on 6 projects for a@x.com" when every detail names a scope of the same
-// kind with the same problem, "… failed on 6 projects" when the problems differ, or "(2 problems)".
+// setupTitle is "<label> · <account>: <state phrase>" for one status; for several,
+// "gcp: permission denied on 6 projects for <account>", "… failed on 6 projects" or "(2 problems)".
 func setupTitle(lbl, account string, state finding.State, sts []finding.Status) string {
 	who := lbl
 	if account != "" {
@@ -130,7 +122,6 @@ func setupTitle(lbl, account string, state finding.State, sts []finding.Status) 
 	return s
 }
 
-// clis are the programs whose commands a status detail may name as the fix.
 const clis = `(?:gcloud|gh|aws|az|security|op|segurata|brew|softwareupdate)`
 
 var (
@@ -139,9 +130,8 @@ var (
 	denied      = regexp.MustCompile(`(?i)accessdenied|access denied|permission denied|not authorized|permission_denied|forbidden`)
 )
 
-// statusCommand is the command a status detail gives as the fix, or "": a backquoted command, or
-// the one after "run" ("run: gh auth refresh -h github.com -s read:user"). "for this account" is
-// replaced by the account.
+// statusCommand is the backquoted command, or the one after "run", a status detail gives as the
+// fix, with "for this account" made the account.
 func statusCommand(st finding.Status) string {
 	cmd := ""
 	if m := backtickCmd.FindStringSubmatch(st.Detail); m != nil {
@@ -156,16 +146,14 @@ func statusCommand(st finding.Status) string {
 }
 
 // adminOnly reports whether a detail says the check needs administrator rights, which segurata
-// never uses: there is nothing to install.
+// never uses.
 func adminOnly(detail string) bool {
 	d := strings.ToLower(detail)
 	return strings.Contains(d, "needs admin") || strings.Contains(d, "need sudo") || strings.Contains(d, "needs sudo") || strings.Contains(d, "requires root")
 }
 
-// statusAction is what to do about a status, and the command to run: the fix the detail names
-// when it names one (then the action says to rerun the connector after it), otherwise the rerun
-// that checks it. The action ends with how to keep the limitation on purpose, when that makes
-// sense; itemID names the setup item there ("" for a placeholder).
+// statusAction is what to do about a status and the command: the fix the detail names, then a
+// rerun, or the rerun alone; and how to expect it, for item itemID.
 func statusAction(st finding.Status, lbl, itemID string) (string, string) {
 	rerun := "segurata inventory " + lbl
 	if itemID == "" {
@@ -230,7 +218,6 @@ func statusAction(st finding.Status, lbl, itemID string) (string, string) {
 
 var openURL = regexp.MustCompile(`\bopen (https?://[^\s,;]+[^\s,;.)])`)
 
-// statusURL is the page a status detail says to open, or "".
 func statusURL(st finding.Status) string {
 	if m := openURL.FindStringSubmatch(st.Detail); m != nil {
 		return m[1]
@@ -238,8 +225,7 @@ func statusURL(st finding.Status) string {
 	return ""
 }
 
-// SetupStatuses are the statuses a setup item still holds, one per ref not gone, as the connector
-// reported them: the state comes from the key, the detail from the ref.
+// SetupStatuses are the statuses a setup item still holds, as the connector reported them.
 func (it *Item) SetupStatuses() []finding.Status {
 	if it.Kind != KindSetup {
 		return nil
@@ -255,8 +241,7 @@ func (it *Item) SetupStatuses() []finding.Status {
 	return out
 }
 
-// StatusCommands are the distinct commands a setup item's statuses name as their fix, in order
-// (StatusCommand of each).
+// StatusCommands are the distinct commands the item's statuses name as their fix.
 func (it *Item) StatusCommands() []string {
 	var out []string
 	for _, st := range it.SetupStatuses() {
@@ -267,10 +252,8 @@ func (it *Item) StatusCommands() []string {
 	return out
 }
 
-// BrowserSignIn reports whether the owner clears an active setup item by signing in, or
-// confirming their identity, in the browser segurata drives: a reauth or signedout status of a
-// connector that browser says drives it, with no command to run instead. `segurata signin`
-// opens these.
+// BrowserSignIn reports whether signing in, in the browser segurata drives, clears an active setup
+// item: what `segurata signin` opens.
 func (it *Item) BrowserSignIn(browser func(connector string) bool, now time.Time) bool {
 	if browser == nil || it.Kind != KindSetup || !it.Active(now) {
 		return false
@@ -282,10 +265,9 @@ func (it *Item) BrowserSignIn(browser func(connector string) bool, now time.Time
 	return len(sts) > 0 && browser(sts[0].Connector) && len(it.StatusCommands()) == 0
 }
 
-// StatusLabel is the connector instance a status is about, as the command line names it.
+// StatusLabel is the connector instance a status is about.
 func StatusLabel(st finding.Status) string { return finding.Label(st.Connector, st.Instance) }
 
-// setupState is the state a setup item's key names: the last field of setupKey.
 func (it *Item) setupState() finding.State {
 	return finding.State(it.Key[strings.LastIndex(it.Key, "|")+1:])
 }

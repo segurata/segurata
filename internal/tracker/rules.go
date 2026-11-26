@@ -13,33 +13,26 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Decisions with effects: answering a decision can add rules that every sync applies, so the
-// items in scope close (ignored or accepted, with a reason naming the decision) and findings in
-// scope found later never open an item. See docs/architecture.md, "Decisions and rules".
-
-// Effects a rule can have.
 const (
 	effectIgnore = "ignore"
 	effectAccept = "accept"
 )
 
-// Scope kinds a rule can name.
 var scopeKinds = []string{"path", "repo", "account", "gcp-project"}
 
-// Rule closes the items in its scope at every sync.
+// Rule closes the items in its scope at every sync. Answering a decision adds them; see
+// docs/architecture.md, "Decisions and rules".
 type Rule struct {
 	Effect string `json:"effect"` // ignore or accept
 	Scope  string `json:"scope"`  // path:~/src/old | repo:owner/name | account:<glob> | gcp-project:<id>
-	// Owners, when set, narrow the rule to rotate items attributed to one of these owners
-	// ("not-mine": rotate my secrets, ignore the rest). Other items in scope stay open.
+	// Owners narrow the rule to rotate items attributed to them; other items in scope stay open.
 	Owners   []attribution.Owner `json:"owners,omitempty"`
 	Reason   string              `json:"reason"`
 	Decision string              `json:"decision,omitempty"` // the decide item whose answer added it
 	At       time.Time           `json:"at"`
 }
 
-// OptionEffect is the rule an answer to a decision would add: the option's label, the effect and
-// the scope.
+// OptionEffect is the rule answering a decision with Option adds.
 type OptionEffect struct {
 	Option string              `json:"option"`
 	Effect string              `json:"effect"`
@@ -47,8 +40,7 @@ type OptionEffect struct {
 	Owners []attribution.Owner `json:"owners,omitempty"`
 }
 
-// parseEffect reads "ignore:path:~/src/legacyco", or "ignore@not-mine:path:~/src/legacyco" for a rule that
-// closes only rotate items attributed to those owners, into its effect, scope and owners.
+// parseEffect reads "ignore:path:~/src/old" or "ignore@not-mine:path:~/src/old".
 func parseEffect(spec string) (effect, scope string, owners []attribution.Owner, err error) {
 	effect, scope, _ = strings.Cut(strings.TrimSpace(spec), ":")
 	effect, who, narrowed := strings.Cut(effect, "@")
@@ -63,7 +55,6 @@ func parseEffect(spec string) (effect, scope string, owners []attribution.Owner,
 	return effect, scope, owners, checkScope(scope)
 }
 
-// checkScope validates "kind:value".
 func checkScope(scope string) error {
 	kind, value, ok := strings.Cut(scope, ":")
 	switch {
@@ -79,7 +70,7 @@ func checkScope(scope string) error {
 	return nil
 }
 
-// parseOption reads a decision option: "label" or "label=effect:kind:value".
+// parseOption reads "label" or "label=effect:kind:value".
 func parseOption(s string) (label string, eff *OptionEffect, err error) {
 	label, spec, ok := strings.Cut(s, "=")
 	label = strings.TrimSpace(label)
@@ -108,8 +99,7 @@ func (r Rule) validate() error {
 	return checkScope(r.Scope)
 }
 
-// spec is the rule as the command line writes it: "ignore path:~/src/legacyco", "ignore@not-mine
-// path:~/src/legacyco".
+// spec is the rule as the command line writes it: "ignore@not-mine path:~/src/old".
 func (r Rule) spec() string {
 	return r.Effect + ownersSuffix(r.Owners) + " " + r.Scope
 }
@@ -125,7 +115,7 @@ func ownersSuffix(owners []attribution.Owner) string {
 	return "@" + strings.Join(parts, ",")
 }
 
-// homePath writes a path inside the home directory as ~/…, as findings report paths.
+// homePath writes a path inside the home directory as ~/…, as findings and locations keep paths.
 func homePath(p string) string {
 	if home, err := os.UserHomeDir(); err == nil && (p == home || strings.HasPrefix(p, home+"/")) {
 		return "~" + p[len(home):]
@@ -133,22 +123,19 @@ func homePath(p string) string {
 	return p
 }
 
-// under reports whether p is prefix or inside it; both are compared as HomePath writes them.
 func under(p, prefix string) bool {
 	p, prefix = homePath(p), strings.TrimSuffix(homePath(prefix), "/")
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
-// liesUnder reports whether the item lies entirely under a path: every current location of a rotate
-// item, or every finding still reported of another item, has a path inside prefix. An item with
-// none does not.
+// liesUnder reports whether every current location, or every finding still reported, lies under
+// prefix.
 func (it *Item) liesUnder(prefix string) bool {
 	return it.allIn(func(p string) bool { return under(p, prefix) }, func(r FindingRef) string { return r.Path })
 }
 
-// allIn applies in to the path of every current location of a rotate item, or to what field reads
-// from every finding still reported of another item; false when there is nothing to test or a value
-// is empty.
+// allIn reports whether in holds for the path of every current location of a rotate item, or the
+// field of every finding still reported of another; false for none or an empty value.
 func (it *Item) allIn(in func(string) bool, field func(FindingRef) string) bool {
 	var values []string
 	if it.Secret != nil {
@@ -173,19 +160,15 @@ func (it *Item) allIn(in func(string) bool, field func(FindingRef) string) bool 
 	return true
 }
 
-// matches reports whether a rule covers the whole item: its scope does and, for a rule narrowed
-// to owners, the item is a rotate item attributed to one of them.
 func (r Rule) matches(it *Item) bool {
 	return r.inScope(it) && r.ownerMatches(it)
 }
 
-// ownerMatches reports whether the item's attribution is one of the rule's owners; true for a rule
-// not narrowed to owners. Items without attribution never match a narrowed rule.
 func (r Rule) ownerMatches(it *Item) bool {
 	return len(r.Owners) == 0 || slices.Contains(r.Owners, it.Owner())
 }
 
-// Owner is a rotate item's attribution, or "" for items that have none.
+// Owner is a rotate item's attribution, or "".
 func (it *Item) Owner() attribution.Owner {
 	if it.Secret == nil || it.Secret.Attribution == nil {
 		return ""
@@ -193,8 +176,7 @@ func (it *Item) Owner() attribution.Owner {
 	return it.Secret.Attribution.Owner
 }
 
-// inScope reports whether a rule's scope covers the whole item, whoever owns it. Decisions and
-// setup items are never in scope; path scopes cover rotate items by their locations.
+// inScope reports whether the rule's scope covers the whole item, whoever owns it.
 func (r Rule) inScope(it *Item) bool {
 	if it.Kind == KindDecide || it.Kind == KindSetup {
 		return false
@@ -213,12 +195,8 @@ func (r Rule) inScope(it *Item) bool {
 	return false
 }
 
-// applyRules closes, with the first rule that covers it, every open, in-progress or snoozed item
-// in a rule's scope, and returns how many it closed. An item reopened after the rule was added, by
-// hand or because a connector proved its secret live, is left alone: the owner or the evidence
-// overrode it. An item a rule narrowed to owners closed opens again (auto-reopen) once its
-// attribution is no longer one of them: a key that turned out to be the owner's is rotated after
-// all. An ignored secret a connector proves live opens again too (see reopenProvenLive).
+// applyRules closes every active item a rule covers, and returns how many. An item reopened after
+// the rule, by hand or by proof of life, is left alone: the owner or the evidence overrode it.
 func (t *Tracker) applyRules(now time.Time) int {
 	n := 0
 	for _, it := range t.Items {
@@ -253,7 +231,6 @@ func (t *Tracker) applyRules(now time.Time) int {
 	return n
 }
 
-// closing is the reason a rule gives the items it closes, before any attribution detail.
 func (r Rule) closing() string {
 	if r.Decision != "" {
 		return "by decision " + r.Decision + ": " + r.Reason
@@ -261,8 +238,8 @@ func (r Rule) closing() string {
 	return r.Reason
 }
 
-// reopenReattributed opens an item that a rule narrowed to owners ignored or accepted when the item
-// is no longer attributed to one of them.
+// reopenReattributed opens an item a rule narrowed to owners closed, once its attribution is no
+// longer one of them.
 func (t *Tracker) reopenReattributed(it *Item, now time.Time) {
 	var detail string
 	switch it.Status {
@@ -283,23 +260,15 @@ func (t *Tracker) reopenReattributed(it *Item, now time.Time) {
 	}
 }
 
-// reopenedSince reports whether the item was reopened by hand, or by proof that its secret is live,
-// after at.
 func (it *Item) reopenedSince(at time.Time) bool {
 	return slices.ContainsFunc(it.History, func(e Event) bool {
 		return (e.Action == actReopen || e.Action == actProvenLive) && e.At.After(at)
 	})
 }
 
-// decideWithEffects answers a decision, adds the rules its answer carries (the matching option's
-// effect, and every --ignore-scope and --accept-scope given) and applies them at once; it returns
-// the rules added and how many items they closed.
-//
-// owners, when given, narrow the rules of the scopes given here (not those of the options, which
-// carry their own) to rotate items attributed to those owners.
-//
-// A decision answered before is answered again: the new answer replaces the old one and its rules,
-// as reopening and answering would; the items the old rules closed stay as they are.
+// decideWithEffects answers a decision, adds the rules its answer carries and applies them; it
+// returns them and how many items they closed. owners narrow the scopes given here, not the
+// options'. A new answer replaces the old one and its rules; what they closed stays closed.
 func (t *Tracker) decideWithEffects(it *Item, at time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]Rule, int, error) {
 	add, err := t.decisionRules(it, at, answer, ignore, accept, owners)
 	if err != nil {
@@ -321,7 +290,6 @@ func (t *Tracker) decideWithEffects(it *Item, at time.Time, answer string, ignor
 	return add, t.applyRules(at), nil
 }
 
-// decisionRules are the rules answering a decision would add, without adding them.
 func (t *Tracker) decisionRules(it *Item, at time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]Rule, error) {
 	if it.Decision == nil {
 		return nil, fmt.Errorf("%s is not a decision", it.ID)
@@ -355,8 +323,6 @@ func (t *Tracker) decisionRules(it *Item, at time.Time, answer string, ignore, a
 	return add, nil
 }
 
-// previewDecision says what answering would do, without changing anything: one leverage line per
-// rule the answer adds.
 func (t *Tracker) previewDecision(it *Item, now time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]string, error) {
 	rules, err := t.decisionRules(it, now, answer, ignore, accept, owners)
 	if err != nil {
@@ -369,23 +335,19 @@ func (t *Tracker) previewDecision(it *Item, now time.Time, answer string, ignore
 	return out, nil
 }
 
-// answers reports whether an answer picks an option: the label itself, or the label followed by
-// ":" or a space ("yes: archive them").
+// answers reports whether an answer picks an option: the label, or the label and ":" or a space.
 func answers(answer, option string) bool {
 	a, o := strings.ToLower(strings.TrimSpace(answer)), strings.ToLower(option)
 	return a == o || strings.HasPrefix(a, o+":") || strings.HasPrefix(a, o+" ")
 }
 
-// dropRules removes the rules a decision added, when it is reopened; the items they closed stay
-// as they are.
 func (t *Tracker) dropRules(decision string) int {
 	n := len(t.Rules)
 	t.Rules = slices.DeleteFunc(t.Rules, func(r Rule) bool { return r.Decision == decision })
 	return n - len(t.Rules)
 }
 
-// optionLeverage says, per option with an effect, how many open items answering it would close:
-// `answering "yes" closes 128 items (P0 120, P1 8)`.
+// optionLeverage is, per option with an effect, `answering "yes" closes 128 items (P0 120, P1 8)`.
 func (t *Tracker) optionLeverage(it *Item, now time.Time) []string {
 	if it.Decision == nil {
 		return nil
@@ -398,9 +360,8 @@ func (t *Tracker) optionLeverage(it *Item, now time.Time) []string {
 	return out
 }
 
-// leverage says how many open items a rule would close, by priority, and for a rule narrowed to
-// owners how many in its scope it keeps open, by attribution: "closes 120 open items (P0 100, P1
-// 20) attributed not-mine, keeps 8 open (mine 5, unknown 3)".
+// leverage is "closes 120 open items (P0 100, P1 20) attributed not-mine, keeps 8 open (mine 5,
+// unknown 3)".
 func (t *Tracker) leverage(r Rule, now time.Time) string {
 	by := map[secretrisk.Priority]int{}
 	kept := map[attribution.Owner]int{}
@@ -435,7 +396,7 @@ func (t *Tracker) leverage(r Rule, now time.Time) string {
 		if kept[o] > 0 {
 			name := string(o)
 			if o == "" {
-				name = "not secrets" // items other than rotate items carry no attribution
+				name = "not secrets"
 			}
 			keptParts = append(keptParts, fmt.Sprintf("%s %d", name, kept[o]))
 		}
