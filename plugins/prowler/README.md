@@ -84,7 +84,10 @@ Accounts gcloud has no credentials for are reported as `missing_credentials` wit
 
 ## Configuration
 
-In `~/.config/segurata/config.json`; every key is optional:
+In `~/.config/segurata/config.json`; every key is optional, and `null` is the same as leaving it
+out. A malformed value (a string where a list or a boolean belongs, an empty string, a `timeout` or
+`parallel` that is not a whole number above 0, an empty `providers`, `accounts`, `projects` or
+`checks`) is an `error` status naming the key, and nothing is scanned:
 
 ```json
 "prowler": {
@@ -93,7 +96,6 @@ In `~/.config/segurata/config.json`; every key is optional:
     "accounts": ["me@example.com", "work@example.org"],
     "projects": ["my-project", "other-project"],
     "skip_projects": ["someone-elses-project"],
-    "checks": [],
     "excluded_checks": ["compute_instance_preemptible_vm_disabled"],
     "severity_min": "low",
     "include_overlaps": false,
@@ -116,7 +118,7 @@ In `~/.config/segurata/config.json`; every key is optional:
 | `accounts` | every account in `gcloud auth list` except service accounts | Accounts to scan as. People left out are declared as skipped scopes |
 | `projects` | every active project the accounts list | Restrict to these projects |
 | `skip_projects` | none | Project ids or shell patterns (`sys-*` skips Apps Script's default projects). Never scanned; declared as skipped scopes so earlier findings there are not taken as resolved |
-| `checks` | all | Only these Prowler check ids (`prowler gcp --list-checks`) |
+| `checks` | all | Only these Prowler check ids (`prowler gcp --list-checks`); leave it out for all |
 | `excluded_checks` | none | Never run these |
 | `severity_min` | none | `info`, `low`, `medium`, `high` or `critical`: Prowler runs only checks at or above it |
 | `include_overlaps` | `false` | Also run and report the checks segurata's `gcp` connector makes (table below) |

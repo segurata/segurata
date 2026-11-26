@@ -207,6 +207,27 @@ class InventoryTest(unittest.TestCase):
             records, _ = run({"protocol": 2, "config": {"emails": ["a@example.com"], "base_url": url}, "secrets": {"HIBP_API_KEY": KEY}})
             self.assertEqual(records[0]["state"], "error", url)
 
+    def test_malformed_config_values_are_error_statuses(self):
+        for key, value, problem in [
+            ("emails", "a@example.com", "must be a list of non-empty strings"),
+            ("emails", ["a@example.com", 3], "must be a list of non-empty strings"),
+            ("emails", ["a@example.com", " "], "must be a list of non-empty strings"),
+            ("request_delay_seconds", -1, "must be a number of seconds, 0 or more"),
+            ("request_delay_seconds", "6", "must be a number of seconds, 0 or more"),
+            ("request_delay_seconds", True, "must be a number of seconds, 0 or more"),
+            ("include_unverified", "false", "must be true or false"),
+            ("base_url", "", "must be a non-empty string"),
+            ("base_url", 3, "must be a non-empty string"),
+        ]:
+            with self.subTest(key=key, value=value):
+                config = {"emails": ["a@example.com"], key: value}
+                records, _ = run({"protocol": 2, "config": config, "secrets": {"HIBP_API_KEY": KEY}})
+                self.assertEqual([(r["state"], r["detail"]) for r in records], [("error", 'hibp config: "%s" %s' % (key, problem))])
+        records, _ = run({"protocol": 2, "config": {"emails": ["a@example.com"], "request_delay_seconds": 6}})
+        self.assertEqual(records[0]["state"], "missing_credentials", "a well-formed config goes on to the key")
+        records, _ = run({"protocol": 2, "config": {"emails": []}, "secrets": {"HIBP_API_KEY": KEY}})
+        self.assertIn("no addresses to check", records[0]["detail"])
+
     def test_runs_as_a_program_over_protocol_1(self):
         s = self.serve({"a@example.com": [(200, [breach("Adobe", ["Passwords"])], {})]})
         req = request(s, ["a@example.com"])

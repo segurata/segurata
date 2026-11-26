@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -55,14 +56,12 @@ func (c *Connector) Track(finding.Finding) *finding.Track {
 	return &finding.Track{Group: finding.GroupFinding, Kind: finding.TrackReview}
 }
 
-// primaries reads config "primary": extension ids that win a duplicate check in their category.
-// A malformed entry is dropped: without it the duplicate check still runs, it only names no primary.
-func primaries(cfg map[string]any) []string {
-	ids, _ := connector.LenientStrings(cfg, "primary")
-	return ids
-}
-
 func (c *Connector) Inventory(_ context.Context, req connector.Request, emit connector.Emitter) error {
+	// Extension ids that win a duplicate check in their category.
+	primaries, err := cfgkey.Strings(req.Config, "browser-extensions", "primary")
+	if err != nil {
+		return err
+	}
 	home, err := c.Home()
 	if err != nil {
 		emit.Status(finding.Status{Account: "this machine", State: finding.StateError, Detail: err.Error()})
@@ -87,7 +86,7 @@ func (c *Connector) Inventory(_ context.Context, req connector.Request, emit con
 			emit.Status(finding.Status{Account: b.name, State: finding.StateError, Detail: err.Error()})
 			continue
 		}
-		for _, f := range findings(b, assess(ins, now, primaries(req.Config))) {
+		for _, f := range findings(b, assess(ins, now, primaries)) {
 			emit.Finding(f)
 		}
 		emit.Status(finding.Status{Account: b.name, State: finding.StateOK})

@@ -32,6 +32,12 @@ rotation ledger) treats both alike. An external connector must name itself after
 (`segurata-example` declares `example`); a built-in name wins over an external one, and the first
 `PATH` directory over a later one.
 
+A built-in connector reads `Request.Config` with `internal/cfgkey` (`Strings`, `Selection`,
+`String`, `PositiveInt`, `Bool`) and stops on its error before inspecting anything: a key left out
+or `null` takes the default, and any other malformed value is an error naming the connector and
+the key, never a silent default. An external connector holds to the same rule and reports the
+error as an `error` status.
+
 A minimal built-in connector:
 
 ```go

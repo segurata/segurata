@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -66,10 +67,10 @@ type settings struct {
 func parseSettings(m map[string]any) (settings, error) {
 	var s settings
 	var err error
-	if s.maxRepos, err = connector.PositiveInt(m, "github", "max_repos", defaultMaxRepos); err != nil {
+	if s.maxRepos, err = cfgkey.PositiveInt(m, "github", "max_repos", defaultMaxRepos); err != nil {
 		return s, err
 	}
-	s.branchProtection, err = connector.Bool(m, "github", "branch_protection")
+	s.branchProtection, err = cfgkey.Bool(m, "github", "branch_protection", false)
 	return s, err
 }
 

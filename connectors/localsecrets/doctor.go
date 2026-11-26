@@ -10,7 +10,10 @@ import (
 
 // Doctor checks the tools the scan runs and prints the versions of rg and gitleaks.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
-	skipHistory, _ := req.Config["skip_git_history"].(bool)
+	cfg, err := parseSettings(req.Config, "")
+	if err != nil {
+		return []connector.Check{{Level: connector.Fail, What: "config", Detail: err.Error(), Fix: "fix connectors.local-secrets.config"}}
+	}
 	tools := []struct {
 		name    string
 		version cli.Runner // nil: presence only
@@ -26,7 +29,7 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 	}
 	var checks []connector.Check
 	for _, t := range tools {
-		if t.name == "gitleaks" && skipHistory {
+		if t.name == "gitleaks" && cfg.skipHistory {
 			checks = append(checks, connector.Check{Level: connector.OK, What: t.name, Detail: "not needed: skip_git_history is set"})
 			continue
 		}

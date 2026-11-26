@@ -172,12 +172,36 @@ func TestSettings(t *testing.T) {
 			t.Errorf("data_dumps %v: %v %v", v, s.dumps, err)
 		}
 	}
-	for _, bad := range []map[string]any{
-		{"gitleaks_timeout": "soon"}, {"data_dumps": "yes"},
-		{"owned_owners": "me"}, {"owned_owners": []any{"me", 3}}, {"owned_owners": []any{""}},
+	if s, err := parseSettings(map[string]any{"git_cache": false}, "/h"); err != nil || s.gitCache {
+		t.Errorf("git_cache false: %+v %v", s, err)
+	}
+	if s, err := parseSettings(nil, "/h"); err != nil || s.reposRoot != "/h/src" || !s.gitCache || s.workers != defaultWorkers || s.timeout != defaultTimeout {
+		t.Errorf("defaults: %+v %v", s, err)
+	}
+	for _, tc := range []struct {
+		bad  map[string]any
+		want string
+	}{
+		{map[string]any{"repos_root": ""}, `"repos_root" must be a non-empty string`},
+		{map[string]any{"repos_root": 3.0}, `"repos_root" must be a non-empty string`},
+		{map[string]any{"skip_git_history": "yes"}, `"skip_git_history" must be true or false`},
+		{map[string]any{"git_cache": 0.0}, `"git_cache" must be true or false`},
+		{map[string]any{"emit_noise": "true"}, `"emit_noise" must be true or false`},
+		{map[string]any{"gitleaks_workers": 0.0}, `"gitleaks_workers" must be a whole number above 0`},
+		{map[string]any{"gitleaks_workers": -3.0}, `"gitleaks_workers" must be a whole number above 0`},
+		{map[string]any{"gitleaks_workers": 2.5}, `"gitleaks_workers" must be a whole number above 0`},
+		{map[string]any{"gitleaks_workers": "6"}, `"gitleaks_workers" must be a whole number above 0`},
+		{map[string]any{"gitleaks_timeout": "soon"}, `"gitleaks_timeout" must be a duration such as "10m"`},
+		{map[string]any{"gitleaks_timeout": "-1m"}, `"gitleaks_timeout" must be a duration such as "10m"`},
+		{map[string]any{"gitleaks_timeout": ""}, `"gitleaks_timeout" must be a non-empty string`},
+		{map[string]any{"gitleaks_timeout": 600.0}, `"gitleaks_timeout" must be a non-empty string`},
+		{map[string]any{"data_dumps": "yes"}, `"data_dumps" must be true, false or "only"`},
+		{map[string]any{"owned_owners": "me"}, `"owned_owners" must be a list of non-empty strings`},
+		{map[string]any{"owned_owners": []any{"me", 3}}, `"owned_owners" must be a list of non-empty strings`},
+		{map[string]any{"owned_owners": []any{""}}, `"owned_owners" must be a list of non-empty strings`},
 	} {
-		if _, err := parseSettings(bad, "/h"); err == nil {
-			t.Errorf("%v accepted", bad)
+		if _, err := parseSettings(tc.bad, "/h"); err == nil || err.Error() != "local-secrets config: "+tc.want {
+			t.Errorf("%v: %v, want %s", tc.bad, err, tc.want)
 		}
 	}
 }

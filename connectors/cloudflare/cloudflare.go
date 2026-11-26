@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
@@ -80,7 +81,7 @@ func (c *Connector) Describe() connector.Description {
 type settings struct{ maxZones int }
 
 func parseSettings(m map[string]any) (settings, error) {
-	n, err := connector.PositiveInt(m, "cloudflare", "max_zones", defaultMaxZones)
+	n, err := cfgkey.PositiveInt(m, "cloudflare", "max_zones", defaultMaxZones)
 	return settings{maxZones: n}, err
 }
 

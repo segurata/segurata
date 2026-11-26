@@ -201,57 +201,105 @@ class Emitter:
 
 
 class Config:
+    """connectors.prowler.config. A key left out or null takes its default; any other malformed
+    value is a ValueError naming the key, never a silent default, as the built-in connectors do."""
+
     def __init__(self, raw):
-        raw = raw or {}
-        self.relevance = raw.get("relevance") is not False
+        raw = {} if raw is None else raw
+        if not isinstance(raw, dict):
+            raise ValueError("%s config must be an object" % NAME)
+        self.relevance = boolean(raw, "relevance", True)
         self.overrides = overrides_of(raw.get("relevance_overrides"))
-        self.not_applicable = not_applicable_of(raw.get("not_applicable", DEFAULT_NOT_APPLICABLE))
-        self.providers = strings(raw.get("providers")) or ["gcp"]
-        self.accounts = strings(raw.get("accounts"))
-        self.projects = strings(raw.get("projects"))
-        self.skip_projects = set(strings(raw.get("skip_projects")))
-        self.checks = strings(raw.get("checks"))
-        self.excluded_checks = strings(raw.get("excluded_checks"))
-        self.include_overlaps = raw.get("include_overlaps") is True
-        self.prowler_path = raw.get("prowler_path") or ""
-        self.gcloud_path = raw.get("gcloud_path") or ""
-        self.timeout = int(raw.get("timeout") or DEFAULT_TIMEOUT)
-        self.parallel = max(1, int(raw.get("parallel") or 1))
-        sev = (raw.get("severity_min") or "").lower()
+        na = raw.get("not_applicable")
+        self.not_applicable = not_applicable_of(DEFAULT_NOT_APPLICABLE if na is None else na)
+        self.providers = string_list(raw, "providers", selection=True) or ["gcp"]
+        self.accounts = string_list(raw, "accounts", selection=True) or []
+        self.projects = string_list(raw, "projects", selection=True) or []
+        self.skip_projects = set(string_list(raw, "skip_projects") or [])
+        self.checks = string_list(raw, "checks", selection=True) or []
+        self.excluded_checks = string_list(raw, "excluded_checks") or []
+        self.include_overlaps = boolean(raw, "include_overlaps", False)
+        self.prowler_path = string(raw, "prowler_path")
+        self.gcloud_path = string(raw, "gcloud_path")
+        self.timeout = positive_int(raw, "timeout", DEFAULT_TIMEOUT)
+        self.parallel = positive_int(raw, "parallel", 1)
+        sev = string(raw, "severity_min").lower()
         sev = "informational" if sev == "info" else sev
         if sev and sev not in PROWLER_SEVERITIES:
-            raise ValueError("severity_min must be one of " + ", ".join(["info"] + PROWLER_SEVERITIES[1:]))
+            raise config_error("severity_min", "must be one of " + ", ".join(["info"] + PROWLER_SEVERITIES[1:]))
         self.severities = PROWLER_SEVERITIES[PROWLER_SEVERITIES.index(sev):] if sev else []
 
 
+def config_error(key, problem):
+    return ValueError('%s config: "%s" %s' % (NAME, key, problem))
+
+
+def string_list(raw, key, selection=False):
+    """A list of non-empty strings, None when absent. A selection narrows what is scanned, so an
+    empty one, which would scan nothing, is an error."""
+    v = raw.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, list) or not all(isinstance(s, str) and s.strip() for s in v):
+        raise config_error(key, "must be a list of non-empty strings")
+    if selection and not v:
+        raise config_error(key, "must name at least one entry; leave it out for all")
+    return [s.strip() for s in v]
+
+
+def string(raw, key):
+    v = raw.get(key)
+    if v is None:
+        return ""
+    if not isinstance(v, str) or not v.strip():
+        raise config_error(key, "must be a non-empty string")
+    return v
+
+
+def boolean(raw, key, default):
+    v = raw.get(key)
+    if v is None:
+        return default
+    if not isinstance(v, bool):
+        raise config_error(key, "must be true or false")
+    return v
+
+
+def positive_int(raw, key, default):
+    v = raw.get(key)
+    if v is None:
+        return default
+    # bool is an int in Python, and JSON decodes 3.0 as a float.
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 1 or not float(v).is_integer():
+        raise config_error(key, "must be a whole number above 0")
+    return int(v)
+
+
 def overrides_of(raw):
-    raw = raw or {}
+    raw = {} if raw is None else raw
     if not isinstance(raw, dict):
-        raise ValueError("relevance_overrides must map check ids to \"keep\" or \"info\"")
+        raise config_error("relevance_overrides", 'must map check ids to "keep" or "info"')
     for check, value in raw.items():
         if value not in OVERRIDES:
-            raise ValueError("relevance_overrides.%s must be \"keep\" or \"info\", not %r" % (check, value))
+            raise config_error("relevance_overrides", '%s must be "keep" or "info", not %r' % (check, value))
     return dict(raw)
 
 
 def not_applicable_of(raw):
     """{check id: (where, reason)}"""
     if not isinstance(raw, list):
-        raise ValueError("not_applicable must be a list of {check, reason, where}")
+        raise config_error("not_applicable", "must be a list of {check, reason, where}")
     out = {}
     for entry in raw:
         check, reason = (entry.get("check"), entry.get("reason")) if isinstance(entry, dict) else (None, None)
         if not all(isinstance(v, str) and v.strip() for v in (check, reason)):
-            raise ValueError("each not_applicable entry needs a check and a reason")
-        where = entry.get("where") or "any"
+            raise config_error("not_applicable", "each entry needs a check and a reason")
+        where = entry.get("where")
+        where = "any" if where is None else where
         if where not in NA_WHERE:
-            raise ValueError("not_applicable %s: where must be one of %s" % (entry["check"], ", ".join(NA_WHERE)))
+            raise config_error("not_applicable", "%s: where must be one of %s" % (check, ", ".join(NA_WHERE)))
         out[check.strip()] = (where, reason.strip())
     return out
-
-
-def strings(v):
-    return [s.strip() for s in v or [] if isinstance(s, str) and s.strip()]
 
 
 def is_executable(path):
@@ -820,8 +868,8 @@ def inventory_gcp(config, emit):
 def inventory(req, emit):
     try:
         config = Config(req.get("config"))
-    except (ValueError, TypeError) as e:
-        emit.status("prowler", "error", "bad config: %s" % e, scope="*")
+    except ValueError as e:
+        emit.status("prowler", "error", str(e), scope="*")
         return
     for provider in config.providers:
         if provider == "gcp":

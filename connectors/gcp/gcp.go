@@ -15,6 +15,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
@@ -63,18 +64,20 @@ type settings struct {
 func parseSettings(m map[string]any) (settings, error) {
 	var s settings
 	var err error
-	if s.accounts, err = connector.Strings(m, "gcp", "accounts"); err != nil {
+	if s.accounts, err = cfgkey.Selection(m, "gcp", "accounts"); err != nil {
 		return s, err
 	}
-	if s.projects, err = connector.Strings(m, "gcp", "projects"); err != nil {
+	if s.projects, err = cfgkey.Selection(m, "gcp", "projects"); err != nil {
 		return s, err
 	}
-	if s.skipProjects, err = connector.Strings(m, "gcp", "skip_projects"); err != nil {
+	if s.skipProjects, err = cfgkey.Strings(m, "gcp", "skip_projects"); err != nil {
 		return s, err
 	}
-	s.billingProject, _ = m["billing_project"].(string)
-	s.gcloudPath, _ = m["gcloud_path"].(string)
-	return s, nil
+	if s.billingProject, err = cfgkey.String(m, "gcp", "billing_project"); err != nil {
+		return s, err
+	}
+	s.gcloudPath, err = cfgkey.String(m, "gcp", "gcloud_path")
+	return s, err
 }
 
 // target is one project and the accounts that list it, in config or `gcloud auth list` order.

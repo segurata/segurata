@@ -197,35 +197,57 @@ def to_finding(email, breach, now):
     }
 
 
+def config_error(key, problem):
+    return ValueError('%s config: "%s" %s' % (NAME, key, problem))
+
+
+def settings(config):
+    """connectors.hibp.config read strictly: a key left out or null takes its default, any other
+    malformed value is a ValueError naming the key, never a silent default."""
+    if not isinstance(config, dict):
+        raise ValueError("%s config must be an object" % NAME)
+    emails = config.get("emails")
+    if emails is None or emails == []:
+        raise ValueError('no addresses to check: add "emails": ["you@example.com"] under connectors.hibp.config')
+    if not isinstance(emails, list) or not all(isinstance(e, str) and e.strip() for e in emails):
+        raise config_error("emails", "must be a list of non-empty strings")
+    delay = config.get("request_delay_seconds")
+    delay = DEFAULT_DELAY if delay is None else delay
+    if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not 0 <= delay < float("inf"):
+        raise config_error("request_delay_seconds", "must be a number of seconds, 0 or more")
+    unverified = config.get("include_unverified")
+    unverified = True if unverified is None else unverified
+    if not isinstance(unverified, bool):
+        raise config_error("include_unverified", "must be true or false")
+    return [e.strip() for e in emails], base_url(config), float(delay), unverified
+
+
 def base_url(config):
     """The API base: the real one, or a local test server. Anything else would send the key away."""
-    url = config.get("base_url") or DEFAULT_BASE_URL
+    url = config.get("base_url")
+    url = DEFAULT_BASE_URL if url is None else url
+    if not isinstance(url, str) or not url.strip():
+        raise config_error("base_url", "must be a non-empty string")
     parsed = urllib.parse.urlparse(url)
     local = parsed.hostname in ("127.0.0.1", "localhost", "::1")
     if parsed.scheme != "https" and not (parsed.scheme == "http" and local):
-        raise ValueError("base_url must be https (or http on localhost for tests)")
+        raise config_error("base_url", "must be https (or http on localhost for tests)")
     return url.rstrip("/")
 
 
 def inventory(req, emit, get=http_get, sleep=time.sleep, now=None):
     now = now or datetime.now(timezone.utc)
-    config = req.get("config") or {}
+    try:
+        emails, base, delay, unverified = settings({} if req.get("config") is None else req.get("config"))
+    except ValueError as e:
+        emit.status(ACCOUNT, "error", str(e))
+        return
     key = (req.get("secrets") or {}).get(SECRET, "")
     if not key:
         emit.status(ACCOUNT, "missing_credentials", SETUP_HINT)
         return
-    emails = [e.strip() for e in config.get("emails") or [] if isinstance(e, str) and e.strip()]
-    if not emails:
-        emit.status(ACCOUNT, "error", 'no addresses to check: add "emails": ["you@example.com"] under connectors.hibp.config')
-        return
-    try:
-        base = base_url(config)
-    except ValueError as e:
-        emit.status(ACCOUNT, "error", str(e))
-        return
-    delay = float(config.get("request_delay_seconds", DEFAULT_DELAY))
     query = {"truncateResponse": "false"}
-    if config.get("include_unverified") is False:
+    if not unverified:
         query["IncludeUnverified"] = "false"
     headers = {"hibp-api-key": key, "user-agent": USER_AGENT}
     for i, email in enumerate(emails):

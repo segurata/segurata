@@ -188,9 +188,6 @@ func TestDuplicatePrimary(t *testing.T) {
 		!strings.HasPrefix(got["Strong Password Generator"], "keep") || !strings.HasPrefix(got["Mostrar contraseña"], "keep") {
 		t.Errorf("named: %v", got)
 	}
-	if ids := primaries(map[string]any{"primary": []any{"abc", 3}}); fmt.Sprint(ids) != "[abc]" {
-		t.Errorf("primaries %v", ids)
-	}
 }
 
 func TestCategoryOfPasswordTools(t *testing.T) {
@@ -208,6 +205,19 @@ func TestCategoryOfPasswordTools(t *testing.T) {
 	} {
 		if got := category(tc.id, tc.name); got != tc.want {
 			t.Errorf("category(%q, %q) = %q, want %q", tc.id, tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestPrimaryConfig(t *testing.T) {
+	c := &Connector{Home: func() (string, error) { return t.TempDir(), nil }, Now: func() time.Time { return now }, OS: "darwin"}
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"primary": []any{"abc"}}}, &httpxtest.Recorder{}); err != nil {
+		t.Errorf("a list of ids: %v", err)
+	}
+	for _, bad := range []any{"abc", []any{"abc", 3}, []any{""}} {
+		err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"primary": bad}}, &httpxtest.Recorder{})
+		if want := `browser-extensions config: "primary" must be a list of non-empty strings`; err == nil || err.Error() != want {
+			t.Errorf("%v: got %v, want %s", bad, err, want)
 		}
 	}
 }

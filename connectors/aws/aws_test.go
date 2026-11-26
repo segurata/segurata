@@ -299,6 +299,31 @@ func TestProfilesFromConfigSkipTheCLIListing(t *testing.T) {
 	}
 }
 
+// A malformed setting stops the run before any aws call: a bad "profiles" never falls back to every
+// profile, and a bad "cost_explorer" never silently turns the billed calls off.
+func TestMalformedConfigFailsToStart(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  map[string]any
+		want string
+	}{
+		{map[string]any{"profiles": "only"}, `aws config: "profiles" must be a list of non-empty strings`},
+		{map[string]any{"profiles": []any{"only", 3}}, `aws config: "profiles" must be a list of non-empty strings`},
+		{map[string]any{"profiles": []any{""}}, `aws config: "profiles" must be a list of non-empty strings`},
+		{map[string]any{"profiles": []any{}}, `aws config: "profiles" must name at least one entry; leave it out for all`},
+		{map[string]any{"cost_explorer": "yes"}, `aws config: "cost_explorer" must be true or false`},
+	} {
+		fr := &fakeRunner{}
+		err := newTest(fr, "").Inventory(context.Background(), connector.Request{Config: tc.cfg}, &httpxtest.Recorder{})
+		if err == nil || err.Error() != tc.want || len(fr.calls) != 0 {
+			t.Errorf("%v: %v, calls %v, want %s", tc.cfg, err, fr.calls, tc.want)
+		}
+		checks := newTest(fr, "").Doctor(context.Background(), connector.Request{Config: tc.cfg})
+		if len(checks) != 1 || checks[0].Level != connector.Fail || checks[0].Detail != tc.want || len(fr.calls) != 0 {
+			t.Errorf("doctor %v: %+v, calls %v", tc.cfg, checks, fr.calls)
+		}
+	}
+}
+
 func TestRootProfileIsCritical(t *testing.T) {
 	fr := healthyAccount()
 	fr.replies["configure list-profiles"] = "dev\n"

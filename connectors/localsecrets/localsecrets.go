@@ -19,6 +19,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/liveness"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
@@ -101,40 +102,50 @@ type settings struct {
 }
 
 func parseSettings(cfg map[string]any, home string) (settings, error) {
-	s := settings{reposRoot: filepath.Join(home, "src"), workers: defaultWorkers, timeout: defaultTimeout, gitCache: true}
-	if v, ok := cfg["repos_root"].(string); ok && v != "" {
-		s.reposRoot = homepath.Expand(v, home)
+	s := settings{reposRoot: filepath.Join(home, "src")}
+	root, err := cfgkey.String(cfg, name, "repos_root")
+	if err != nil {
+		return s, err
 	}
-	if v, ok := cfg["skip_git_history"].(bool); ok {
-		s.skipHistory = v
+	if root != "" {
+		s.reposRoot = homepath.Expand(root, home)
 	}
-	if v, ok := cfg["git_cache"].(bool); ok {
-		s.gitCache = v
+	for _, f := range []struct {
+		key string
+		dst *bool
+		def bool
+	}{{"skip_git_history", &s.skipHistory, false}, {"git_cache", &s.gitCache, true}, {"emit_noise", &s.emitNoise, false}} {
+		if *f.dst, err = cfgkey.Bool(cfg, name, f.key, f.def); err != nil {
+			return s, err
+		}
 	}
-	if v, ok := cfg["emit_noise"].(bool); ok {
-		s.emitNoise = v
+	if s.workers, err = cfgkey.PositiveInt(cfg, name, "gitleaks_workers", defaultWorkers); err != nil {
+		return s, err
 	}
-	var err error
-	if s.ownedOwners, err = connector.Strings(cfg, "local-secrets", "owned_owners"); err != nil {
+	if s.timeout, err = parseTimeout(cfg); err != nil {
+		return s, err
+	}
+	if s.ownedOwners, err = cfgkey.Strings(cfg, name, "owned_owners"); err != nil {
 		return s, err
 	}
 	if s.liveness, err = liveness.ParseConfig(cfg["liveness"]); err != nil {
 		return s, err
 	}
-	if s.dumps, err = parseDumpMode(cfg["data_dumps"]); err != nil {
-		return s, err
+	s.dumps, err = parseDumpMode(cfg["data_dumps"])
+	return s, err
+}
+
+// parseTimeout reads gitleaks_timeout, a Go duration per repository.
+func parseTimeout(cfg map[string]any) (time.Duration, error) {
+	v, err := cfgkey.String(cfg, name, "gitleaks_timeout")
+	if err != nil || v == "" {
+		return defaultTimeout, err
 	}
-	if v, ok := cfg["gitleaks_workers"].(float64); ok && v >= 1 {
-		s.workers = int(v)
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return defaultTimeout, fmt.Errorf("%s config: %q must be a duration such as \"10m\"", name, "gitleaks_timeout")
 	}
-	if v, ok := cfg["gitleaks_timeout"].(string); ok && v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			return s, fmt.Errorf("gitleaks_timeout %q is not a duration such as \"10m\"", v)
-		}
-		s.timeout = d
-	}
-	return s, nil
+	return d, nil
 }
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {

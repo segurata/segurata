@@ -12,7 +12,11 @@ import (
 
 // Doctor asks STS who each profile is.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
-	profiles, err := c.profiles(ctx, req.Config)
+	cfg, err := parseSettings(req.Config)
+	if err != nil {
+		return []connector.Check{{Level: connector.Fail, What: "aws config", Detail: err.Error(), Fix: "fix connectors.aws.config"}}
+	}
+	profiles, err := c.profiles(ctx, cfg)
 	if err != nil {
 		return []connector.Check{failure("aws CLI", "", err)}
 	}

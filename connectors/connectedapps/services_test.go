@@ -363,6 +363,9 @@ func TestSelectServices(t *testing.T) {
 	if _, err := selectServices(map[string]any{"services": "github"}); err == nil {
 		t.Error("a string instead of a list must be an error")
 	}
+	if _, err := selectServices(map[string]any{"services": []any{}}); err == nil {
+		t.Error("an empty list would inspect nothing and must be an error")
+	}
 }
 
 func TestBrowserErrorsBecomeStatuses(t *testing.T) {

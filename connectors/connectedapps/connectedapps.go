@@ -16,6 +16,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/cdp"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -63,7 +64,7 @@ var services = []service{
 }
 
 func selectServices(cfg map[string]any) ([]service, error) {
-	names, err := connector.Strings(cfg, "connected-apps", "services")
+	names, err := cfgkey.Selection(cfg, "connected-apps", "services")
 	if names == nil || err != nil {
 		return services, err
 	}

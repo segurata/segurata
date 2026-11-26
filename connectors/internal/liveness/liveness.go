@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
-	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -43,10 +43,10 @@ func ParseConfig(raw any) (Config, error) {
 	if !ok {
 		return c, fmt.Errorf(`liveness must be an object such as {"enabled": true, "owners": ["mine"]}`)
 	}
-	if c.Enabled, err = connector.Bool(m, "liveness", "enabled"); err != nil {
+	if c.Enabled, err = cfgkey.Bool(m, "liveness", "enabled", false); err != nil {
 		return c, err
 	}
-	list, err := connector.Strings(m, "liveness", "owners")
+	list, err := cfgkey.Strings(m, "liveness", "owners")
 	if err != nil {
 		return c, err
 	}
@@ -60,7 +60,7 @@ func ParseConfig(raw any) (Config, error) {
 		}
 		c.Owners = owners
 	}
-	if c.Providers, err = connector.Strings(m, "liveness", "providers"); err != nil {
+	if c.Providers, err = cfgkey.Strings(m, "liveness", "providers"); err != nil {
 		return c, err
 	}
 	for _, p := range c.Providers {
@@ -68,10 +68,10 @@ func ParseConfig(raw any) (Config, error) {
 			return c, fmt.Errorf("liveness.providers: unknown provider %q (known: %s)", p, strings.Join(Providers(), ", "))
 		}
 	}
-	if c.AWSProfiles, err = connector.Strings(m, "liveness", "aws_profiles"); err != nil {
+	if c.AWSProfiles, err = cfgkey.Strings(m, "liveness", "aws_profiles"); err != nil {
 		return c, err
 	}
-	if c.SSHHosts, err = connector.Strings(m, "liveness", "ssh_hosts"); err != nil {
+	if c.SSHHosts, err = cfgkey.Strings(m, "liveness", "ssh_hosts"); err != nil {
 		return c, err
 	}
 	if len(c.SSHHosts) > maxSSHHosts {

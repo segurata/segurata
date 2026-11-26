@@ -34,9 +34,12 @@ these steps.
 | Config key | Default | Meaning |
 |---|---|---|
 | `emails` | required | Addresses to check |
-| `request_delay_seconds` | 6 | Pause between addresses; 6 s keeps within 10 requests a minute. Lower it if your key allows more (`GET /subscription/status`, field `Rpm`) |
+| `request_delay_seconds` | 6 | Pause between addresses, 0 or more; 6 s keeps within 10 requests a minute. Lower it if your key allows more (`GET /subscription/status`, field `Rpm`) |
 | `include_unverified` | true | `false` leaves out breaches HIBP has not verified |
 | `base_url` | `https://haveibeenpwned.com/api/v3` | For tests only; anything other than https, or http on localhost, is refused so the key never goes elsewhere |
+
+A key left out or `null` takes its default; any other malformed value is an `error` status naming
+the key, and no address is checked.
 
 ## What it reports
 

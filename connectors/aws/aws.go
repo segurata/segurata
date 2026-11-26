@@ -18,6 +18,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
@@ -75,7 +76,26 @@ func (c *Connector) Track(finding.Finding) *finding.Track {
 	return &finding.Track{Group: finding.GroupFinding}
 }
 
+type settings struct {
+	profiles     []string // nil: every profile `aws configure list-profiles` names
+	costExplorer bool
+}
+
+func parseSettings(m map[string]any) (settings, error) {
+	var s settings
+	var err error
+	if s.profiles, err = cfgkey.Selection(m, "aws", "profiles"); err != nil {
+		return s, err
+	}
+	s.costExplorer, err = cfgkey.Bool(m, "aws", "cost_explorer", false)
+	return s, err
+}
+
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
+	cfg, err := parseSettings(req.Config)
+	if err != nil {
+		return err
+	}
 	now := c.Now()
 	local, issuers := c.scanLocalFiles(emit)
 	// Plain-text keys are reported last, so each says whether STS accepted it.
@@ -90,7 +110,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		}
 	}()
 
-	profiles, err := c.profiles(ctx, req.Config)
+	profiles, err := c.profiles(ctx, cfg)
 	if err != nil {
 		emit.Status(finding.Status{Account: "aws", State: classify(err), Detail: err.Error()})
 		return nil
@@ -100,21 +120,20 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 			Detail: "no AWS CLI profiles: run `aws configure sso` or set connectors.aws.config.profiles"})
 		return nil
 	}
-	costExplorer, _ := req.Config["cost_explorer"].(bool)
 	seen := map[string]bool{}
 	for _, p := range profiles {
 		if by := issuers[p]; by != awsfiles.AWS {
 			emit.Log(fmt.Sprintf("profile %s holds %s, not an AWS key: skipped", p, by))
 			continue
 		}
-		works[p] = c.inspectProfile(ctx, p, now, costExplorer, seen, emit)
+		works[p] = c.inspectProfile(ctx, p, now, cfg.costExplorer, seen, emit)
 	}
 	return nil
 }
 
-func (c *Connector) profiles(ctx context.Context, cfg map[string]any) ([]string, error) {
-	if listed, ok := connector.LenientStrings(cfg, "profiles"); ok {
-		return listed, nil
+func (c *Connector) profiles(ctx context.Context, cfg settings) ([]string, error) {
+	if cfg.profiles != nil {
+		return cfg.profiles, nil
 	}
 	out, err := c.aws(ctx, "configure", "list-profiles")
 	if err != nil {

@@ -5,22 +5,15 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/segurata/segurata/internal/cfgkey"
 )
 
 // Accounts are connectors.<key>.config.accounts, and whether it is set: without it, every account
-// is inspected.
-func (c Config) Accounts(key string) ([]string, bool) {
-	raw, ok := c.Connectors[key].Config["accounts"].([]any)
-	if !ok {
-		return nil, false
-	}
-	var out []string
-	for _, v := range raw {
-		if s, ok := v.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out, true
+// is inspected. It is read as the connector reads it, so a list the connector refuses is an error.
+func (c Config) Accounts(key string) ([]string, bool, error) {
+	list, err := cfgkey.Selection(c.Connectors[key].Config, key, "accounts")
+	return list, list != nil, err
 }
 
 // SetAccounts writes connectors.<key>.config.accounts through editFile.

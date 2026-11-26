@@ -51,7 +51,7 @@ func parseDumpMode(v any) (dumpMode, error) {
 			return dumpsOnly, nil
 		}
 	}
-	return dumpsOn, fmt.Errorf("data_dumps %v must be true, false or \"only\"", v)
+	return dumpsOn, fmt.Errorf("%s config: %q must be true, false or \"only\"", name, "data_dumps")
 }
 
 const (

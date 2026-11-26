@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,11 +36,11 @@ func TestSetAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if list, set := cfg.Accounts("gcp"); !set || !slices.Equal(list, []string{"me@x.com", "work@y.com"}) {
-		t.Errorf("accounts %v %v", list, set)
+	if list, set, err := cfg.Accounts("gcp"); !set || err != nil || !slices.Equal(list, []string{"me@x.com", "work@y.com"}) {
+		t.Errorf("accounts %v %v %v", list, set, err)
 	}
-	if _, set := cfg.Accounts("aws"); set {
-		t.Error("aws has no list")
+	if _, set, err := cfg.Accounts("aws"); set || err != nil {
+		t.Errorf("aws has no list: %v", err)
 	}
 	if changed, _, err := SetAccounts(file, "gcp", []string{"me@x.com", "work@y.com"}, now); changed || err != nil {
 		t.Errorf("an equal list rewrote the file: %v %v", changed, err)
@@ -54,5 +55,24 @@ func TestSetAccounts(t *testing.T) {
 	}
 	if st, err := os.Stat(other); err != nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("mode: %v", err)
+	}
+}
+
+func TestAccountsMalformed(t *testing.T) {
+	for raw, want := range map[string]string{
+		`"me@x.com"`:       `gcp config: "accounts" must be a list of non-empty strings`,
+		`["me@x.com", 3]`:  `gcp config: "accounts" must be a list of non-empty strings`,
+		`["me@x.com", ""]`: `gcp config: "accounts" must be a list of non-empty strings`,
+		`[]`:               `gcp config: "accounts" must name at least one entry; leave it out for all`,
+	} {
+		cfg := Config{Connectors: map[string]ConnectorConfig{"gcp": {Config: map[string]any{}}}}
+		var v any
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Connectors["gcp"].Config["accounts"] = v
+		if _, set, err := cfg.Accounts("gcp"); set || err == nil || err.Error() != want {
+			t.Errorf("%s: %v %v, want %s", raw, set, err, want)
+		}
 	}
 }

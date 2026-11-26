@@ -214,6 +214,40 @@ class MappingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             prowler.Config({"severity_min": "severe"})
 
+    def test_malformed_config_values_are_errors(self):
+        for key, value, problem in [
+            ("providers", [], "must name at least one entry; leave it out for all"),
+            ("accounts", [], "must name at least one entry; leave it out for all"),
+            ("accounts", "me@example.com", "must be a list of non-empty strings"),
+            ("projects", ["p", 3], "must be a list of non-empty strings"),
+            ("projects", [], "must name at least one entry; leave it out for all"),
+            ("skip_projects", [""], "must be a list of non-empty strings"),
+            ("checks", [], "must name at least one entry; leave it out for all"),
+            ("excluded_checks", "b", "must be a list of non-empty strings"),
+            ("relevance", "no", "must be true or false"),
+            ("include_overlaps", 1, "must be true or false"),
+            ("prowler_path", "", "must be a non-empty string"),
+            ("gcloud_path", 3, "must be a non-empty string"),
+            ("severity_min", 3, "must be a non-empty string"),
+            ("timeout", 0, "must be a whole number above 0"),
+            ("timeout", -60, "must be a whole number above 0"),
+            ("timeout", "1800", "must be a whole number above 0"),
+            ("timeout", True, "must be a whole number above 0"),
+            ("parallel", 1.5, "must be a whole number above 0"),
+            ("parallel", -2, "must be a whole number above 0"),
+        ]:
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(ValueError) as cm:
+                    prowler.Config({key: value})
+                self.assertEqual(str(cm.exception), 'prowler config: "%s" %s' % (key, problem))
+        with self.assertRaises(ValueError):
+            prowler.Config(["not", "an", "object"])
+        nulls = prowler.Config({k: None for k in ("providers", "accounts", "timeout", "parallel", "relevance", "not_applicable", "relevance_overrides")})
+        self.assertEqual((nulls.providers, nulls.accounts, nulls.timeout, nulls.parallel, nulls.relevance),
+                         (["gcp"], [], prowler.DEFAULT_TIMEOUT, 1, True), "null is the default")
+        self.assertEqual(nulls.not_applicable, prowler.Config({}).not_applicable)
+        self.assertEqual(prowler.Config({"timeout": 60.0, "skip_projects": []}).timeout, 60)
+
     def test_prowler_command_line(self):
         config = prowler.Config({"checks": ["a", "iam_sa_no_user_managed_keys"], "excluded_checks": ["b"], "severity_min": "medium"})
         args = prowler.prowler_args("/bin/prowler", ALPHA, "/tmp/x", config)
@@ -473,6 +507,9 @@ class InventoryTest(unittest.TestCase):
     def test_bad_config_is_an_error_status(self):
         _, records = self.fake.run({"severity_min": "severe"})
         self.assertEqual([(s["state"], s["scope"]) for s in of(records, "status")], [("error", "*")])
+        _, records = self.fake.run({"accounts": "me@example.com"})
+        self.assertEqual([s["detail"] for s in of(records, "status")], ['prowler config: "accounts" must be a list of non-empty strings'])
+        self.assertEqual(self.fake.prowler_runs(), [])
 
 
 def profile(cls="unknown", in_org=None, **over):
@@ -563,7 +600,7 @@ class RelevanceTest(unittest.TestCase):
         self.assertEqual(self.weigh("kms_key_rotation_enabled", "low", profile("production"),
                                     relevance_overrides={"kms_key_rotation_enabled": "info"}),
                          ("info", "relevance_overrides sets it to info"))
-        for bad in ({self.LOG: "drop"}, ["x"]):
+        for bad in ({self.LOG: "drop"}, ["x"], ""):
             with self.assertRaises(ValueError):
                 prowler.Config({"relevance_overrides": bad})
 
@@ -583,7 +620,7 @@ class RelevanceTest(unittest.TestCase):
                          "a configured list replaces the default one")
         self.assertEqual(self.weigh(aa, "high", profile("production", in_org=False), not_applicable=[]), ("high", ""))
         for bad in ([{"check": "x"}], [{"reason": "y"}], [{"check": 5, "reason": "y"}], ["x"],
-                    [{"check": "x", "reason": "y", "where": "sometimes"}], {"x": "y"}):
+                    [{"check": "x", "reason": "y", "where": "sometimes"}], [{"check": "x", "reason": "y", "where": ""}], {"x": "y"}):
             with self.assertRaises(ValueError, msg=bad):
                 prowler.Config({"not_applicable": bad})
 

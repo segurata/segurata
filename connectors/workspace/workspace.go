@@ -21,6 +21,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -98,22 +99,20 @@ var domainRE = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)+$`)
 
 func parseSettings(m map[string]any, home string) (settings, error) {
 	s := settings{inactiveDays: defaultInactiveDays}
-	for key, dst := range map[string]*string{"domain": &s.domain, "cloudsdk_config": &s.cloudsdkConfig,
-		"quota_project": &s.quotaProject, "gcloud_path": &s.gcloudPath} {
-		if v, ok := m[key]; ok && v != nil {
-			str, ok := v.(string)
-			if !ok {
-				return s, fmt.Errorf("workspace config: %q must be a string", key)
-			}
-			*dst = str
+	var err error
+	for _, f := range []struct {
+		key string
+		dst *string
+	}{{"domain", &s.domain}, {"cloudsdk_config", &s.cloudsdkConfig}, {"quota_project", &s.quotaProject}, {"gcloud_path", &s.gcloudPath}} {
+		if *f.dst, err = cfgkey.String(m, "workspace", f.key); err != nil {
+			return s, err
 		}
 	}
 	s.domain = strings.ToLower(strings.TrimSpace(s.domain))
 	if s.domain != "" && !domainRE.MatchString(s.domain) {
 		return s, fmt.Errorf("workspace config: %q does not look like a domain", s.domain)
 	}
-	var err error
-	if s.inactiveDays, err = connector.PositiveInt(m, "workspace", "inactive_days", defaultInactiveDays); err != nil {
+	if s.inactiveDays, err = cfgkey.PositiveInt(m, "workspace", "inactive_days", defaultInactiveDays); err != nil {
 		return s, err
 	}
 	switch {

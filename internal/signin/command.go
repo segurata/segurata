@@ -81,7 +81,13 @@ func (c CLI) Run(ctx context.Context, args []string) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	items := collect(tr.Items, targets, cfg.Accounts, *all, now)
+	for _, t := range targets {
+		if _, _, err := cfg.Accounts(t.Label()); err != nil {
+			return c.fail(err)
+		}
+	}
+	accounts := func(lbl string) ([]string, bool) { list, set, _ := cfg.Accounts(lbl); return list, set }
+	items := collect(tr.Items, targets, accounts, *all, now)
 	// Pages first, so the numbers read in order.
 	withPage := slices.DeleteFunc(slices.Clone(items), func(it item) bool { return it.Page == nil })
 	items = append(withPage, slices.DeleteFunc(items, func(it item) bool { return it.Page != nil })...)

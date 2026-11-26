@@ -32,7 +32,13 @@ This first scan reads local Brave and Chrome profiles on macOS or Linux. It need
 credentials. With an installed binary, use `segurata` in place of `./segurata`.
 
 The config is `~/.config/segurata/config.json` (`SEGURATA_CONFIG` overrides it); each connector's
-section below lists its keys. Pass a connector name to `inventory` to limit what runs.
+section below lists its keys. A key left out or set to `null` takes its default. A malformed value
+stops that connector with an error naming the key (`aws config: "profiles" must be a list of
+non-empty strings`), never a silent default: a value of another type, an empty or blank string or
+list entry, a number below 1 where a count or a limit belongs, or an empty list where the list
+picks what to inspect (`accounts`, `profiles`, `projects`, `services`), since it would inspect
+nothing; leave such a key out to inspect everything. Pass a connector name to `inventory` to limit
+what runs.
 
 Before the first inventory, `segurata doctor` checks, read-only, the config and its secret
 references (resolved, never printed), the browser's debugging port, each connector's CLIs and
@@ -706,7 +712,8 @@ manager, crypto wallet, AI assistant, shopping, dev tool) from a short list of i
 | `keep` | None of the above | `info` |
 
 - The primary password manager is the one named in the config, otherwise the one installed on a
-  later day. Name it with `"browser-extensions": {"config": {"primary": ["<extension id>"]}}`.
+  later day. Name it with `"browser-extensions": {"config": {"primary": ["<extension id>"]}}`;
+  `primary` must be a list of extension ids, and anything else stops the run with an error.
 - Not automatable: changing profile files while the browser runs is unsafe. Each finding links
   `brave://extensions/?id=<id>` (or `chrome://`) and names the profiles to open it in.
 - No network calls. Checking the Web Store (an extension pulled from the store, a change of owner)

@@ -423,6 +423,13 @@ func TestParseSettings(t *testing.T) {
 	for _, bad := range []map[string]any{
 		{"domain": "not a domain"},
 		{"domain": 3},
+		{"domain": ""},
+		{"domain": "  "},
+		{"domain": domain, "cloudsdk_config": ""},
+		{"domain": domain, "quota_project": ""},
+		{"domain": domain, "gcloud_path": ""},
+		{"domain": domain, "gcloud_path": []any{"/x"}},
+		{"domain": domain, "inactive_days": float64(-30)},
 		{"domain": domain, "inactive_days": float64(1.5)},
 		{"domain": domain, "inactive_days": float64(0)},
 		{"domain": domain, "inactive_days": "90"},

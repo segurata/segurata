@@ -419,6 +419,22 @@ func TestSigninWithoutTheBrowserPrintsTheURLsAndStops(t *testing.T) {
 	}
 }
 
+// A list the connector would refuse is not read as "every account is watched".
+func TestSigninRefusesAMalformedAccountsList(t *testing.T) {
+	x := newFixture(t)
+	if err := os.WriteFile(x.cfg, []byte(`{"connectors": {"web": {"config": {"accounts": "a@x.com"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := x.cli(t, &out).Run(context.Background(), []string{"--list"}); code != 1 ||
+		!strings.Contains(out.String(), `web config: "accounts" must be a list of non-empty strings`) {
+		t.Fatalf("exit %d\n%s", code, out.String())
+	}
+	if x.connected || len(x.ran) > 0 {
+		t.Fatal("a malformed config connected to the browser or ran a connector")
+	}
+}
+
 func TestSigninSelectorsAndHelp(t *testing.T) {
 	x := newFixture(t)
 	var out bytes.Buffer

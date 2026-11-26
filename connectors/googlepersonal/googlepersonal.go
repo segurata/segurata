@@ -14,6 +14,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/pagetext"
 	"github.com/segurata/segurata/internal/cdp"
+	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
@@ -78,7 +79,7 @@ func (GooglePersonal) Inventory(ctx context.Context, req connector.Request, emit
 // accountFilter: other accounts signed in to the browser, such as a mailbox you were given access
 // to, get no status, only a skipped scope.
 func accountFilter(cfg map[string]any) (map[string]bool, error) {
-	list, err := connector.Strings(cfg, "google-personal", "accounts")
+	list, err := cfgkey.Selection(cfg, "google-personal", "accounts")
 	if list == nil || err != nil {
 		return nil, err
 	}

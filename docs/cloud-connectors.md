@@ -30,6 +30,8 @@ the other checks still run.
 ## AWS (`aws`)
 
 Profiles come from `aws configure list-profiles`, or from `connectors.aws.config.profiles` when set.
+`profiles` must be a non-empty list of profile names: anything else (a string, an empty list, a
+non-string entry) stops the run with an error, never a scan of every profile.
 Each profile is resolved with `sts get-caller-identity`; profiles that reach an account already
 inspected are skipped. Every command gets `--profile <p> --region us-east-1 --output json
 --no-cli-pager`: IAM, STS, Budgets and Cost Explorer are served from us-east-1 in the `aws`
@@ -64,6 +66,8 @@ connector makes none unless the config says so:
 ```json
 {"connectors": {"aws": {"config": {"cost_explorer": true}}}}
 ```
+
+`cost_explorer` takes `true` or `false`; any other value is an error.
 
 With it on, each account adds two billed requests per run:
 

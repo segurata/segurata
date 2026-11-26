@@ -264,8 +264,10 @@ func TestAccountsFilterSkipsOtherAccountsWithoutStatus(t *testing.T) {
 	if want := (httpxtest.Scope{ID: "shared@example.test", Reason: "not in connectors.google-personal.config.accounts"}); len(rec.Scopes) != 1 || rec.Scopes[0] != want {
 		t.Fatalf("an account the config leaves out is a skipped scope: %+v", rec.Scopes)
 	}
-	if _, err := accountFilter(map[string]any{"accounts": "me@example.test"}); err == nil {
-		t.Fatal("a non-list accounts setting must be rejected")
+	for _, bad := range []any{"me@example.test", []any{}, []any{"me@example.test", ""}} {
+		if _, err := accountFilter(map[string]any{"accounts": bad}); err == nil {
+			t.Errorf("accounts %v must be rejected", bad)
+		}
 	}
 }
 

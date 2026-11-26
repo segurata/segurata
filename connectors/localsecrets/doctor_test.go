@@ -49,6 +49,11 @@ func TestDoctor(t *testing.T) {
 		t.Errorf("skip_git_history: %s", got)
 	}
 
+	if checks := c.Doctor(context.Background(), connector.Request{Config: map[string]any{"skip_git_history": "yes"}}); len(checks) != 1 ||
+		checks[0].Level != connector.Fail || checks[0].Detail != `local-secrets config: "skip_git_history" must be true or false` {
+		t.Errorf("malformed config: %+v", checks)
+	}
+
 	installed["rg"] = true
 	c.RG = &fakeTool{reply: func([]string) ([]byte, error) { return nil, errors.New("boom") }}
 	if ch := c.Doctor(context.Background(), connector.Request{})[0]; ch.Level != connector.OK || !strings.Contains(ch.Detail, "version unknown") {

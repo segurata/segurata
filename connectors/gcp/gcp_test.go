@@ -417,6 +417,17 @@ func TestBadConfigFailsToStart(t *testing.T) {
 	if err == nil {
 		t.Fatal("a non-list projects setting must be rejected")
 	}
+	for key, v := range map[string]any{
+		"accounts": []any{}, "projects": []any{}, "skip_projects": []any{""},
+		"billing_project": "", "gcloud_path": 3.0,
+	} {
+		if _, err := parseSettings(map[string]any{key: v}); err == nil || !strings.Contains(err.Error(), `gcp config: "`+key+`"`) {
+			t.Errorf("%s %v: %v", key, v, err)
+		}
+	}
+	if s, err := parseSettings(map[string]any{"skip_projects": []any{}, "billing_project": "quota"}); err != nil || s.billingProject != "quota" {
+		t.Errorf("an empty skip list skips nothing: %+v %v", s, err)
+	}
 }
 
 func TestReadOnlyGuard(t *testing.T) {

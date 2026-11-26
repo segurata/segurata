@@ -168,7 +168,10 @@ func (c CLI) list(out string, named []string) int {
 		if i > 0 {
 			fmt.Fprintln(c.Out)
 		}
-		list, set := cfg.Accounts(lbl)
+		list, set, err := cfg.Accounts(lbl)
+		if err != nil {
+			return c.fail(err)
+		}
 		switch {
 		case !isWatchable(lbl):
 			fmt.Fprintf(c.Out, "%s (no accounts list in its config: every account it reaches is inspected)\n", lbl)
@@ -224,7 +227,10 @@ func (c CLI) watch(out, lbl, account string, on bool) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	list, set := cfg.Accounts(lbl)
+	list, set, err := cfg.Accounts(lbl)
+	if err != nil {
+		return c.fail(err)
+	}
 	var next []string
 	switch {
 	case on && !set:

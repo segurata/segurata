@@ -79,7 +79,11 @@ func (x *fixture) accounts(t *testing.T, key string) ([]string, bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cfg.Accounts(key)
+	list, set, err := cfg.Accounts(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list, set
 }
 
 func TestListWatchUnwatch(t *testing.T) {
@@ -147,6 +151,21 @@ func TestUnwatchWithoutAListWritesOne(t *testing.T) {
 	}
 	if o, _, _ := x.run(t, "watch", "gcp", "b@x.com"); !strings.Contains(o, "is now: a@x.com, b@x.com") {
 		t.Errorf("watch: %q", o)
+	}
+}
+
+// A list the connector would refuse is never read as "every account is watched", nor rewritten.
+func TestMalformedListIsAnError(t *testing.T) {
+	cfg := `{"connectors": {"gcp": {"config": {"accounts": "a@x.com"}}}}`
+	x := newFixture(t, cfg)
+	runtest.Write(t, filepath.Join(x.out, "2026-11-24", "gcp.jsonl"), st("gcp", "a@x.com", finding.StateOK))
+	for _, args := range [][]string{{"list", "gcp", "--out", x.out}, {"watch", "gcp", "b@x.com"}, {"unwatch", "gcp", "a@x.com", "--out", x.out}} {
+		if o, e, code := x.run(t, args...); code == 0 || !strings.Contains(e, `gcp config: "accounts" must be a list of non-empty strings`) {
+			t.Errorf("%v: %d %q %q", args, code, o, e)
+		}
+	}
+	if b, _ := os.ReadFile(x.cfg); string(b) != cfg {
+		t.Errorf("config rewritten: %s", b)
 	}
 }
 

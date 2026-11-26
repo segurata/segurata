@@ -23,6 +23,10 @@ Optional, in `~/.config/segurata/config.json`:
 }}}}
 ```
 
+Every key is optional. A malformed value stops the run with an error naming the key, as the
+[README](../README.md#quickstart) says; `accounts` and `projects` cannot be empty lists, while an
+empty `skip_projects` skips nothing.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `accounts` | every account in `gcloud auth list` except service accounts (`*.iam.gserviceaccount.com`) | Accounts to inspect with; a service account listed here is used |
