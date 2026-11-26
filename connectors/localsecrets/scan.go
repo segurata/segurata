@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -119,19 +120,75 @@ func existing(paths []string) []string {
 // rgArgs are the flags every ripgrep run shares: search hidden and ignored files, print only the
 // match with its path and line, NUL after the path.
 func rgArgs() []string {
-	return append([]string{"--no-config", "--hidden", "--no-ignore", "--no-messages", "-o", "-n", "--null", "--no-heading", "-H",
+	return append([]string{"--no-config", "--hidden", "--no-ignore", "-o", "-n", "--null", "--no-heading", "-H",
 		"--color", "never"}, skipGlobs()...)
 }
 
-// rgOutput preserves partial findings but marks coverage incomplete on any error. Exit 1 means
-// no matches. Exit 2 can mean unreadable files even when --no-messages suppresses stderr.
+// rgOutput returns what ripgrep printed, partial output included, and marks the files scope
+// uninspected unless the search was complete. Exit 1 means no matches. macOS denies reads under
+// every home (TCC), so exit 2 is complete when ripgrep only reports unreadable paths below its roots.
 func (s *scan) rgOutput(args []string) []byte {
 	out, err := guardRG(s.c.RG).Run(s.ctx, args...)
+	if err == nil {
+		return out
+	}
 	var exit *exec.ExitError
-	if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
+	var ce *cli.Error
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return out
+	case errors.As(err, &ce):
+		if paths, ok := unreadableBelow(ce.Stderr, rgRoots(args)); ok && exit != nil && exit.ExitCode() == 2 {
+			s.skipUnreadable(paths)
+			return out
+		}
+		// Stderr names paths under the home: the reason keeps only the exit status.
+		s.emit.Scope(filesScope, false, ce.Cmd+": "+ce.Err.Error())
+	default:
 		s.emit.Scope(filesScope, false, "rg: "+err.Error())
 	}
 	return out
+}
+
+// unreadableErrs end ripgrep's message for a path it was not allowed to read.
+var unreadableErrs = []string{": Permission denied (os error 13)", ": Operation not permitted (os error 1)"}
+
+// unreadableBelow is the paths ripgrep's stderr reports unreadable, and whether that is all it
+// reports and none of them is a root of the search.
+func unreadableBelow(stderr string, roots []string) ([]string, bool) {
+	var paths []string
+	for line := range strings.Lines(strings.TrimSpace(stderr)) {
+		line = strings.TrimSuffix(line, "\n")
+		i := slices.IndexFunc(unreadableErrs, func(e string) bool { return strings.HasSuffix(line, e) })
+		if i < 0 || !strings.HasPrefix(line, "rg: ") {
+			return nil, false
+		}
+		path := strings.TrimSuffix(strings.TrimPrefix(line, "rg: "), unreadableErrs[i])
+		if slices.Contains(roots, path) {
+			return nil, false
+		}
+		paths = append(paths, path)
+	}
+	return paths, len(paths) > 0
+}
+
+// rgRoots are the paths a ripgrep command line searches: everything after "--".
+func rgRoots(args []string) []string {
+	if i := slices.Index(args, "--"); i >= 0 {
+		return args[i+1:]
+	}
+	return nil
+}
+
+func (s *scan) skipUnreadable(paths []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unreadable == nil {
+		s.unreadable = map[string]bool{}
+	}
+	for _, p := range paths {
+		s.unreadable[p] = true
+	}
 }
 
 // rgArgsFor is the ripgrep command line of one pass, or nil when none of its paths exist.
@@ -447,7 +504,7 @@ func (s *scan) serviceAccount(path string, line int, kind string) {
 func (s *scan) byName() {
 	var files []string
 	if paths := existing([]string{s.src}); len(paths) > 0 {
-		args := append([]string{"--no-config", "--files", "--null", "--hidden", "--no-ignore", "--no-messages"}, skipGlobs()...)
+		args := append([]string{"--no-config", "--files", "--null", "--hidden", "--no-ignore"}, skipGlobs()...)
 		args = append(append(args, globs("master.key", "*.p12", "*.pfx", "*.jks", "*.keystore")...), "--")
 		out := s.rgOutput(append(args, paths...))
 		for _, f := range bytes.Split(out, []byte{0}) {

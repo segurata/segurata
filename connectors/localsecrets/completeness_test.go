@@ -3,6 +3,7 @@ package localsecrets
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,17 +31,26 @@ func writeExe(t *testing.T, name, body string) string {
 }
 
 func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {
+	// The fake ripgrep's last argument is the last root of its search.
+	const lastRoot = `for root; do :; done; `
 	for _, tc := range []struct {
 		name, script string
 		timeout      time.Duration
 		skipped      bool
+		unreadable   int // paths the status detail counts as skipped
 	}{
-		{"regex error", `echo "rg: regex parse error" >&2; exit 2`, time.Minute, true},
-		{"partial output, then an error", `printf '%s\0001:x\n' "$HOME/.zshrc"; echo "rg: something broke" >&2; exit 2`, time.Minute, true},
-		{"killed", `kill -9 $$`, time.Minute, true},
-		{"timed out", `exec sleep 5`, 100 * time.Millisecond, true},
-		{"unreadable files only", `exit 2`, time.Minute, true},
-		{"no match", `exit 1`, time.Minute, false},
+		{"regex error", `echo "rg: regex parse error" >&2; exit 2`, time.Minute, true, 0},
+		{"partial output, then an error", `printf '%s\0001:x\n' "$HOME/.zshrc"; echo "rg: something broke" >&2; exit 2`, time.Minute, true, 0},
+		{"unreadable files and an I/O error", `echo "rg: /x/a: Permission denied (os error 13)" >&2
+echo "rg: /x/b: Input/output error (os error 5)" >&2; exit 2`, time.Minute, true, 0},
+		{"unreadable root", lastRoot + `echo "rg: $root: Permission denied (os error 13)" >&2; exit 2`, time.Minute, true, 0},
+		{"exit 2 without a message", `exit 2`, time.Minute, true, 0},
+		{"killed", `kill -9 $$`, time.Minute, true, 0},
+		{"timed out", `exec sleep 5`, 100 * time.Millisecond, true, 0},
+		{"unreadable files only", `echo "rg: /x/Mail: Operation not permitted (os error 1)" >&2
+echo "rg: /x/a: Permission denied (os error 13)" >&2
+echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, false, 2},
+		{"no match", `exit 1`, time.Minute, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fx := newFixture(t)
@@ -63,8 +73,61 @@ func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {
 				if !strings.Contains(s, "rg") {
 					t.Errorf("reason does not name ripgrep: %q", s)
 				}
+				if strings.Contains(s, "/x/") || strings.Contains(s, fx.home) {
+					t.Errorf("reason names a path: %q", s)
+				}
+			}
+			var detail string
+			for _, s := range rec.statuses {
+				if s.Account == localAccount && s.Scope == "" {
+					detail = s.Detail
+				}
+			}
+			want := fmt.Sprintf("; %d unreadable paths skipped", tc.unreadable)
+			if got := strings.Contains(detail, "unreadable paths skipped"); got != (tc.unreadable > 0) || tc.unreadable > 0 && !strings.Contains(detail, want) {
+				t.Errorf("status detail %q, want unreadable count %d", detail, tc.unreadable)
+			}
+			if strings.Contains(detail, "/x/") {
+				t.Errorf("status detail names a path: %q", detail)
 			}
 		})
+	}
+}
+
+// The real ripgrep exits 2 on a file it may not read, as it does on every macOS home: the rest of
+// the search is still complete, and still finds what it reads.
+func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every file")
+	}
+	fx := newFixture(t)
+	c := fx.connector(t, "[]")
+	locked := fx.write(t, ".config/locked.env", "TOKEN="+fx.stripe+"\n", 0o000)
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range rec.skipped {
+		if strings.HasPrefix(s, filesScope+": ") {
+			t.Errorf("files scope skipped: %q", s)
+		}
+	}
+	var detail string
+	for _, s := range rec.statuses {
+		if s.Account == localAccount && s.Scope == "" {
+			detail = s.Detail
+		}
+	}
+	if !strings.Contains(detail, "; 1 unreadable paths skipped") {
+		t.Errorf("status detail %q does not count the unreadable file", detail)
+	}
+	var zshrc bool
+	for _, f := range rec.findings {
+		zshrc = zshrc || strings.HasSuffix(evidence(f, "path"), ".zshrc")
+	}
+	if !zshrc {
+		t.Errorf("the readable files were not searched: %d findings", len(rec.findings))
 	}
 }
 

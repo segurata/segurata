@@ -265,6 +265,9 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	if s.omitted > 0 {
 		detail += fmt.Sprintf("; %d omitted because the value appeared in the path or note", s.omitted)
 	}
+	if n := len(s.unreadable); n > 0 {
+		detail += fmt.Sprintf("; %d unreadable paths skipped", n)
+	}
 	detail += noise.String() + live
 	if cfg.dumps == dumpsOff {
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
@@ -287,9 +290,10 @@ type scan struct {
 	now  time.Time
 	emit connector.Emitter
 
-	mu      sync.Mutex
-	rows    map[string]*row
-	omitted int
+	mu         sync.Mutex
+	rows       map[string]*row
+	omitted    int
+	unreadable map[string]bool // paths ripgrep was not allowed to read
 
 	held heldValues // values the liveness check may try (liveness.go)
 
