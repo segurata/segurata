@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,9 +22,13 @@ type fakeBrowser struct {
 	pages  map[string]any
 	fail   map[string]error
 	opened []string
+	// neverReady are given pages the readiness check must reject, so the real browser polls them
+	// until its tries run out.
+	neverReady map[string]bool
+	unready    map[string]bool
 }
 
-func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
+func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.opened = append(b.opened, url)
@@ -35,8 +40,29 @@ func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.Raw
 		v = map[string]any{"mail": "", "text": "", "apps": []any{}}
 	}
 	raw, _ := json.Marshal(v)
-	ready(raw) // exercised for coverage of the readiness predicates
+	// Polled like the real browser: the same value until ready accepts it or tries run out.
+	accepted := false
+	for i := 0; i < tries && !accepted; i++ {
+		accepted = ready(raw)
+	}
+	if !accepted {
+		if b.unready == nil {
+			b.unready = map[string]bool{}
+		}
+		b.unready[url] = true
+	}
 	return raw, nil
+}
+
+// readiness fails the test when a given page's readiness check did not do what the test says:
+// accept the page, or reject one in neverReady.
+func (b *fakeBrowser) readiness(t *testing.T) {
+	t.Helper()
+	for u := range b.pages {
+		if b.unready[u] != b.neverReady[u] && slices.Contains(b.opened, u) {
+			t.Errorf("%s: ready = %t, want %t", u, !b.unready[u], !b.neverReady[u])
+		}
+	}
 }
 
 const base = "https://myaccount.google.com/u/0/linkedapps/"
@@ -65,11 +91,12 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 		connectionsURL(1):            conns("b@example.test", reauthES),
 		connectionsURL(2):            conns("a@example.test", "Third-party apps"), // fallback to the default account
 		connectionsURL(3):            conns("never@example.test", "must not be reached"),
-	}}
+	}, neverReady: map[string]bool{connectionsURL(2): true}} // no apps listed: polled until tries run out
 	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
+	b.readiness(t)
 
 	for _, u := range b.opened {
 		if u == connectionsURL(3) {
@@ -167,6 +194,7 @@ func TestInventoryReportsUnreadableAppsAndKeepsTheRest(t *testing.T) {
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
+	b.readiness(t)
 	if len(rec.Findings) != 1 || fmt.Sprint(rec.Findings[0].Evidence["services"]) != "[example.test]" {
 		t.Fatalf("findings %+v", rec.Findings)
 	}
@@ -199,6 +227,7 @@ func TestFindingIDIgnoresGoogleTokensAndSeparatesRepeatedNames(t *testing.T) {
 		}}
 		rec := &httpxtest.Recorder{}
 		inventory(context.Background(), b, rec, now, nil)
+		b.readiness(t)
 		var ids []string
 		for _, f := range rec.Findings {
 			ids = append(ids, f.ID)
@@ -228,6 +257,7 @@ func TestAccountsFilterSkipsOtherAccountsWithoutStatus(t *testing.T) {
 	if err := inventory(context.Background(), b, rec, now, only); err != nil {
 		t.Fatal(err)
 	}
+	b.readiness(t)
 	if len(rec.Statuses) != 1 || rec.Statuses[0].Account != "me@example.test" {
 		t.Fatalf("statuses %+v", rec.Statuses)
 	}
@@ -318,6 +348,7 @@ func TestGcloudGrantIsADependencyNotARevocation(t *testing.T) {
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
+	b.readiness(t)
 	f := rec.Findings[0]
 	if !strings.HasSuffix(f.Title, "(segurata depends on it)") || f.Evidence["dependency"] != "segurata depends on it" ||
 		!strings.Contains(f.Remediation.Summary, "gcloud auth revoke") || strings.Contains(f.Remediation.Summary, "Remove all access") {
@@ -329,11 +360,13 @@ func TestGcloudGrantIsADependencyNotARevocation(t *testing.T) {
 // leaves every scope uninspected, so none of their findings look resolved.
 func TestUnreadableAccountPageLeavesEverythingUninspected(t *testing.T) {
 	b := &fakeBrowser{pages: map[string]any{connectionsURL(0): conns("a@example.test", "Third-party apps")},
-		fail: map[string]error{connectionsURL(1): errors.New("target closed")}}
+		fail:       map[string]error{connectionsURL(1): errors.New("target closed")},
+		neverReady: map[string]bool{connectionsURL(0): true}}
 	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
+	b.readiness(t)
 	last := rec.Statuses[len(rec.Statuses)-1]
 	if last.Account != "authuser 1" || last.State != finding.StateError || last.Scope != finding.ScopeAll {
 		t.Fatalf("status %+v", last)
