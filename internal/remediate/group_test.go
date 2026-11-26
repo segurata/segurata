@@ -81,8 +81,8 @@ func TestGroupPlanCoversEveryMemberAndVerifiesEach(t *testing.T) {
 		}
 	}
 	opt := Options{Apply: true, Yes: true, IO: quietIO(), Group: []finding.Finding{a, b}}
-	if err := Execute(context.Background(), a, g, opt, fresh(b)); !errors.Is(err, ErrStillPresent) {
-		t.Fatalf("one member still offering the action: want ErrStillPresent, got %v", err)
+	if err := Execute(context.Background(), a, g, opt, fresh(b)); !errors.Is(err, errStillPresent) {
+		t.Fatalf("one member still offering the action: want errStillPresent, got %v", err)
 	}
 	// The same repository finding without the action (its deploy key is still there) is fixed as
 	// far as this action goes.
@@ -131,7 +131,7 @@ func TestTerminalStepsNeedATerminalEvenWithYes(t *testing.T) {
 	step := connector.Step{Argv: []string{"gh", "auth", "refresh", "-h", "github.com", "-r", "delete_repo"}, Terminal: true}
 	r := &fakeRemediator{plan: connector.Plan{Action: "connected-apps.gh.drop-scopes", Summary: "Drop.", Commands: []connector.Step{step}}}
 	err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, TTY: false, IO: quietIO()}, neverReinventory(t))
-	if !errors.Is(err, ErrNeedsTerminal) || r.applied != 0 {
+	if !errors.Is(err, errNeedsTerminal) || r.applied != 0 {
 		t.Fatalf("err=%v applied=%d", err, r.applied)
 	}
 	io := quietIO()
@@ -187,7 +187,7 @@ func TestChmodGroupClosesEachFileOnceAndKeepsScriptsRunnable(t *testing.T) {
 	}
 	// Two secrets in .env are two findings naming one file.
 	group := []finding.Finding{member("a", env), member("b", env), member("c", script), member("d", done)}
-	fs := Files{}
+	fs := files{}
 	p, err := fs.PlanGroup(context.Background(), group)
 	if err != nil {
 		t.Fatal(err)

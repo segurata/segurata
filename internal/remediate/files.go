@@ -6,45 +6,43 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Files implements the generic file actions, which belong to the core rather than to a connector.
-type Files struct {
-	Home func() (string, error) // expands ~/; os.UserHomeDir by default
+// files applies the generic file actions, which belong to the core rather than to a connector.
+type files struct {
+	home func() (string, error) // nil means os.UserHomeDir
 }
 
-// Handles reports whether the action is one of the generic file actions.
-func (Files) Handles(action string) bool { return action == connector.ActionChmod600 }
-
-func (fs Files) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
+func (fs files) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
 	return fs.PlanGroup(ctx, []finding.Finding{f})
 }
 
-func (fs Files) Apply(ctx context.Context, f finding.Finding, p connector.Plan, io connector.IO) error {
+func (fs files) Apply(ctx context.Context, f finding.Finding, p connector.Plan, io connector.IO) error {
 	return fs.ApplyGroup(ctx, []finding.Finding{f}, p, io)
 }
 
-// PlanGroup reads each file the group names now (several findings may name one file) and plans a
-// mode change for those other accounts can still open. A file that cannot be changed is left out
-// with the reason; when none can, that is the error.
-func (fs Files) PlanGroup(_ context.Context, group []finding.Finding) (connector.Plan, error) {
+// PlanGroup plans a mode change for each file the group names (once per file) that other accounts
+// can still open. A file that cannot be changed is left out with the reason; when none can, that is
+// the error.
+func (fs files) PlanGroup(_ context.Context, group []finding.Finding) (connector.Plan, error) {
 	p := connector.Plan{Action: connector.ActionChmod600}
 	var left []string
-	var seen []string
+	seen := map[string]bool{}
 	for _, f := range group {
 		if f.Remediation.Action != connector.ActionChmod600 {
 			return connector.Plan{}, fmt.Errorf("unknown file action %q", f.Remediation.Action)
 		}
 		path, err := fs.path(f)
-		if err == nil && slices.Contains(seen, path) {
-			continue
+		if err == nil {
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
 		}
-		seen = append(seen, path)
 		var c connector.FileChange
 		if err == nil {
 			c, err = change(path)
@@ -63,14 +61,10 @@ func (fs Files) PlanGroup(_ context.Context, group []finding.Finding) (connector
 		return connector.Plan{}, fmt.Errorf("nothing to change in %d files: %s", len(left), strings.Join(left, "; "))
 	case len(p.Files) == 1:
 		p.Summary = fmt.Sprintf("Make %s readable and writable by its owner only.", p.Files[0].Path)
+		p.SideEffects = []string{"Other users and group members of this machine can no longer read the file; a program running as another user that reads it will fail."}
 	default:
 		p.Summary = fmt.Sprintf("Make %d files readable and writable by their owner only.", len(p.Files))
-	}
-	p.SideEffects = []string{
-		"Other users and group members of this machine can no longer read the file; a program running as another user that reads it will fail.",
-	}
-	if len(p.Files) > 1 {
-		p.SideEffects[0] = "Other users and group members of this machine can no longer read these files; a program running as another user that reads one will fail."
+		p.SideEffects = []string{"Other users and group members of this machine can no longer read these files; a program running as another user that reads one will fail."}
 	}
 	for _, why := range left {
 		p.SideEffects = append(p.SideEffects, "Left out: "+why+".")
@@ -78,8 +72,7 @@ func (fs Files) PlanGroup(_ context.Context, group []finding.Finding) (connector
 	return p, nil
 }
 
-// change is the mode change that closes one file to other accounts: owner read and write, and
-// the owner's execute bit as it was.
+// change closes one file to other accounts, keeping the owner's execute bit.
 func change(path string) (connector.FileChange, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -95,7 +88,7 @@ func change(path string) (connector.FileChange, error) {
 	return connector.FileChange{Path: path, Mode: 0o600 | was&0o100, Was: was}, nil
 }
 
-func (Files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan, _ connector.IO) error {
+func (files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan, _ connector.IO) error {
 	for _, c := range p.Files {
 		if err := os.Chmod(c.Path, c.Mode); err != nil {
 			return err
@@ -104,10 +97,10 @@ func (Files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan
 	return nil
 }
 
-func (fs Files) path(f finding.Finding) (string, error) {
+func (fs files) path(f finding.Finding) (string, error) {
 	p, _ := f.Evidence["path"].(string)
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
-		home := fs.Home
+		home := fs.home
 		if home == nil {
 			home = os.UserHomeDir
 		}
@@ -117,7 +110,7 @@ func (fs Files) path(f finding.Finding) (string, error) {
 		}
 		p = filepath.Join(h, rest)
 	}
-	if p == "" || !filepath.IsAbs(p) {
+	if !filepath.IsAbs(p) {
 		return "", errors.New("the finding has no absolute evidence.path to change")
 	}
 	return filepath.Clean(p), nil
