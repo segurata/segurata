@@ -75,7 +75,7 @@ func (s *scan) passes(history bool) []pass {
 	return append([]pass{
 		{withAssignment, s.hs(credFiles), noCode},
 		{withAssignment, []string{s.h(".claude")}, slices.Concat(limit, globs("*.json", "!projects", "!plugins/cache"))},
-		{withAssignment, []string{s.src}, slices.Concat(limit, srcExtra)},
+		{withAssignment, []string{s.src}, slices.Concat(limit, srcExtra, globs("!*.log"))}, // the trail pass reads them
 	}, s.trailPasses()...)
 }
 
@@ -355,14 +355,18 @@ func classify(path, text string, patterns []pattern) (classified, bool) {
 	return classified{}, false
 }
 
-// match records one ripgrep match. context is the whole line for needsLine types. Near a key id,
-// a secret-ish assignment is an AWS secret key, except in trails, whose lines are unrelated.
+// match records one ripgrep match. context is the whole line for needsLine types. A generic
+// assignment counts only where patternsFor has it; near a key id it is an AWS secret key, except
+// in trails, whose lines are unrelated.
 func (s *scan) match(path string, line int, text, context string, patterns []pattern, keyIDs []int) {
 	c, ok := classify(path, text, patterns)
 	if !ok || s.fileNotebookOutput(path, line) {
 		return
 	}
 	kind := s.kindOf(path)
+	if c.p.typ == assignment.typ && specificOnly(kind) {
+		return
+	}
 	switch c.p.typ {
 	case privateKeyType:
 		s.privateKey(path, line, kind, text)

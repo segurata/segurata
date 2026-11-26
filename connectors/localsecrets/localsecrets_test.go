@@ -33,7 +33,9 @@ var rng = rand.New(rand.NewPCG(7, 11))
 func fake(prefix string, n int) string { return testcorpus.Fake(rng, prefix, n, testcorpus.Alnum) }
 
 // fakePEM is a random key of a label in PEM armour, and its body.
-func fakePEM(label string) (pem, body string) { return testcorpus.PEM(label, testcorpus.Bytes(rng, 600)) }
+func fakePEM(label string) (pem, body string) {
+	return testcorpus.PEM(label, testcorpus.Bytes(rng, 600))
+}
 
 func opensshBlob(cipher string) []byte {
 	b := binary.BigEndian.AppendUint32([]byte("openssh-key-v1\x00"), uint32(len(cipher)))
@@ -746,5 +748,38 @@ func TestTrailsLinesFailsWhenRipgrepFails(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Logs get the specific patterns only, wherever a pass meets them: a log under repos_root is not
+// searched twice (once by the whole-tree pass when gitleaks is missing), and a generic assignment
+// in a log under ~/.config is not a finding, as Trails never reports one there.
+func TestLogsGetTheSpecificPatternsOnly(t *testing.T) {
+	fx := newFixture(t)
+	noise := fake("", 19) + "7"
+	fx.write(t, "src/shop/server.log", "auth "+fake("ghp_", 36)+"\nMY_TOKEN="+noise+"\n", 0o600)
+	fx.write(t, ".config/tool/debug.log", "MY_TOKEN="+fake("ghp_", 36)+"\nOTHER_TOKEN="+noise+"\n", 0o600)
+	c := fx.connector(t, "[]")
+	for _, gitleaks := range []bool{true, false} {
+		c.LookPath = func(n string) (string, error) {
+			if n == "gitleaks" && !gitleaks {
+				return "", exec.ErrNotFound
+			}
+			return "/bin/true", nil
+		}
+		rec := &recorder{}
+		if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false, "emit_noise": true}}, rec); err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, f := range rec.findings {
+			if p := evidence(f, "path"); strings.HasSuffix(p, ".log") {
+				got[p+" "+evidence(f, "type")] = evidence(f, "count")
+			}
+		}
+		want := map[string]string{"~/src/shop/server.log github": "1", "~/.config/tool/debug.log github": "1"}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("gitleaks installed %v: log findings %v, want %v", gitleaks, got, want)
+		}
 	}
 }
