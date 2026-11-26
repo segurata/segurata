@@ -9,8 +9,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Doctor finds gcloud as the inventory does, lists its credentialed accounts and asks each for one
-// project, through the same read-only allowlist, to tell which accounts' credentials expired.
+// Doctor asks each credentialed account for one project to tell whose credentials expired.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
 	cfg, err := parseSettings(req.Config)
 	if err != nil {

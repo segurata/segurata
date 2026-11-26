@@ -6,16 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// readOnly lists the only gcloud command paths this connector may run. Anything else is refused
-// before it reaches the CLI, so a bug cannot create, delete, disable, print a key string or change
-// gcloud config.
+// readOnly is every gcloud command path the connector may run; a bug cannot create, delete,
+// disable, print a key string or change gcloud config.
 var readOnly = cli.Allowlist{
 	"auth list",
 	"projects list",
@@ -28,10 +29,9 @@ var readOnly = cli.Allowlist{
 	"billing budgets list",
 }
 
-// gcloud wraps a Runner with the read-only guard, JSON output and retries on rate limits.
 type gcloud struct {
 	run     cli.Runner
-	backoff time.Duration // first retry delay; doubles each attempt
+	backoff time.Duration // doubles each attempt
 }
 
 const attempts = 3
@@ -68,7 +68,6 @@ func rateLimited(err error) bool {
 	return containsAny(errText(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
 }
 
-// errText is gcloud's stderr when the CLI ran and failed, which is where it explains failures.
 func errText(err error) string {
 	var ce *cli.Error
 	if errors.As(err, &ce) {
@@ -79,6 +78,9 @@ func errText(err error) string {
 
 const deniedPrefix = "permission denied: "
 
+// http403 matches the status code alone, not a project number that happens to contain 403.
+var http403 = regexp.MustCompile(`\b403\b`)
+
 // classify turns a gcloud failure into a status state and a short reason without secrets.
 func classify(err error) (finding.State, string) {
 	s := errText(err)
@@ -87,7 +89,7 @@ func classify(err error) (finding.State, string) {
 		return finding.StateReauth, "credentials expired: run gcloud auth login for this account"
 	case containsAny(s, "has not been used in project", "SERVICE_DISABLED", "it is disabled"):
 		return finding.StateError, "API not enabled: " + summarize(s, err)
-	case containsAny(s, "PERMISSION_DENIED", "does not have permission", "USER_PROJECT_DENIED", "403"):
+	case containsAny(s, "PERMISSION_DENIED", "does not have permission", "USER_PROJECT_DENIED") || http403.MatchString(s):
 		return finding.StateError, deniedPrefix + summarize(s, err)
 	case rateLimited(err):
 		return finding.StateError, "rate limited: " + summarize(s, err)
@@ -127,9 +129,5 @@ func summarize(stderr string, err error) string {
 			line = line[:i]
 		}
 	}
-	const max = 220
-	if len(line) > max {
-		line = line[:max] + "…"
-	}
-	return strings.TrimSpace(line)
+	return textfmt.Truncate(strings.TrimSpace(line), 221)
 }
