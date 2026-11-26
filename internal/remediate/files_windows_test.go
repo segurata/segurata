@@ -35,7 +35,7 @@ func chmodFinding(path string) finding.Finding {
 
 // A file BUILTIN\Users can read gets the private descriptor, and the undo step puts back exactly
 // the owner and DACL it had. A name holding any of PowerShell's single quotes stays one literal in
-// the undo script: the exit hidden in it would end the script before Set-Acl.
+// the undo script: the exit hidden in it would end the script before the access list is written.
 func TestMakePrivateClosesAWindowsFileAndUndoRestoresItsDACL(t *testing.T) {
 	for _, name := range []string{".env", "it's.env", "x\u2019;exit 7;\u2018.env", "x\u201A;exit 7;\u201B.env"} {
 		t.Run(name, func(t *testing.T) { closeAndUndo(t, name) })
@@ -133,7 +133,7 @@ func closeAndUndo(t *testing.T, name string) {
 	}
 }
 
-// sortedEntries is SDDL with its access entries sorted. Set-Acl writes an access list in .NET's
+// sortedEntries is SDDL with its access entries sorted. The undo writes an access list in .NET's
 // canonical order, which sorts the explicit entries by SID; the fixture's are all allow entries,
 // whose order never changes an access check.
 func sortedEntries(sddl string) string {

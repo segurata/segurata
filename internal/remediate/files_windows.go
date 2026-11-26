@@ -41,10 +41,11 @@ func private(path string, fi fs.FileInfo, was fs.FileMode) (connector.FileChange
 }
 
 // undo puts the old owner and DACL back with Windows PowerShell from System32, never one earlier in
-// PATH, and without a profile that could run first. Get-Acl and Set-Acl come from the module in
-// $PSHOME, which only TrustedInstaller may change: autoloading would search the inherited
-// PSModulePath, which PowerShell 7 fills with its own modules, which Windows PowerShell cannot load,
-// and where any folder listed first could shadow the cmdlets. The script stops at its first error.
+// PATH, and without a profile that could run first. The script calls .NET, no cmdlet, so no module
+// is loaded and none in PSModulePath can shadow it, and it stops at its first error. The SDDL
+// loads as the owner and DACL sections only, and File.SetAccessControl writes just the sections
+// loaded. Set-Acl would not do: it writes the SACL too, which takes SeSecurityPrivilege, which a
+// standard user never holds, and for an administrator it erases the file's audit entries.
 func undo(c connector.FileChange) (connector.Step, error) {
 	if c.Access == "" || !plainSDDL.MatchString(c.Access) {
 		return connector.Step{}, errors.New("no access list to restore")
@@ -53,9 +54,8 @@ func undo(c connector.FileChange) (connector.Step, error) {
 	if err != nil {
 		return connector.Step{}, err
 	}
-	p := connector.PowerShellString(c.Path)
-	script := `$ErrorActionPreference='Stop'; Import-Module -Name "$PSHOME\Modules\Microsoft.PowerShell.Security"; $a=Get-Acl -LiteralPath ` + p + "; $a.SetSecurityDescriptorSddlForm(" + connector.PowerShellString(c.Access) +
-		"); Set-Acl -LiteralPath " + p + " -AclObject $a"
+	script := "$ErrorActionPreference='Stop'; $a=[System.Security.AccessControl.FileSecurity]::new(); $a.SetSecurityDescriptorSddlForm(" +
+		connector.PowerShellString(c.Access) + ", 'Owner, Access'); [System.IO.File]::SetAccessControl(" + connector.PowerShellString(c.Path) + ", $a)"
 	return connector.Step{Argv: []string{filepath.Join(sys, "WindowsPowerShell", "v1.0", "powershell.exe"),
 		"-NoProfile", "-NonInteractive", "-Command", script}}, nil
 }
