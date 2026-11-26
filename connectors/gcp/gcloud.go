@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -64,7 +65,7 @@ func (g *gcloud) json(ctx context.Context, into any, args ...string) error {
 }
 
 func rateLimited(err error) bool {
-	return textfmt.ContainsAny(cli.Stderr(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
+	return textfmt.ContainsAny(printed(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
 }
 
 const deniedPrefix = "permission denied: "
@@ -72,8 +73,22 @@ const deniedPrefix = "permission denied: "
 // http403 matches the status code alone, not a project number that happens to contain 403.
 var http403 = regexp.MustCompile(`\b403\b`)
 
+// printed is what gcloud wrote on stderr, or the exit error when it wrote nothing. Never the
+// command line, which cli.Stderr falls back to: it holds project ids, and an id such as acme-403
+// must not read as a refusal.
+func printed(err error) string {
+	ce, ok := errors.AsType[*cli.Error](err)
+	switch {
+	case !ok:
+		return err.Error()
+	case strings.TrimSpace(ce.Stderr) == "" && ce.Err != nil:
+		return ce.Err.Error()
+	}
+	return ce.Stderr
+}
+
 func classify(err error) (finding.State, string) {
-	s := cli.Stderr(err)
+	s := printed(err)
 	switch {
 	case textfmt.ContainsAny(s, "Reauthentication failed", "gcloud auth login", "invalid_grant", "Please run:\n\n  $ gcloud auth"):
 		return finding.StateReauth, "credentials expired: run gcloud auth login for this account"

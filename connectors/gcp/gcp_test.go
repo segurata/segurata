@@ -469,6 +469,13 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestClassifyReadsWhatGcloudPrintedNotTheCommand(t *testing.T) {
+	err := &cli.Error{Cmd: "gcloud projects get-iam-policy acme-403", Err: errors.New("exit status 1")}
+	if state, why := classify(err); state != finding.StateError || why != "exit status 1" {
+		t.Errorf("classify = %s %q, want error \"exit status 1\"", state, why)
+	}
+}
+
 func TestGoogleManagedServiceAgentsAreSkipped(t *testing.T) {
 	for email, managed := range map[string]bool{
 		"123@cloudservices.gserviceaccount.com":                   true,
