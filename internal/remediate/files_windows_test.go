@@ -5,6 +5,7 @@ package remediate
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/winsys"
 )
 
 func exposedFile(t *testing.T, name string) string {
@@ -38,6 +40,60 @@ func TestMakePrivateClosesAWindowsFileAndUndoRestoresItsDACL(t *testing.T) {
 	for _, name := range []string{".env", "it's.env", "x\u2019;exit 7;\u2018.env", "x\u201A;exit 7;\u201B.env"} {
 		t.Run(name, func(t *testing.T) { closeAndUndo(t, name) })
 	}
+}
+
+// The undo puts back the owner and DACL only. It runs without SeSecurityPrivilege, which a
+// standard user never holds, and leaves the file's audit entries (its SACL) as they are.
+func TestUndoLeavesTheWindowsAuditEntries(t *testing.T) {
+	path := exposedFile(t, "audited.env")
+	p := connector.PowerShellString(path)
+	if out, err := windowsPowerShell(t, "$a=Get-Acl -Audit -LiteralPath "+p+
+		"; $a.AddAuditRule([Security.AccessControl.FileSystemAuditRule]::new('Everyone','Read','Success')); Set-Acl -LiteralPath "+p+" -AclObject $a"); err != nil {
+		if strings.Contains(out, "SeSecurityPrivilege") {
+			t.Skip("setting audit entries takes SeSecurityPrivilege, which this token lacks")
+		}
+		t.Fatalf("%v\n%s", err, out)
+	}
+	audit := func() string {
+		t.Helper()
+		out, err := windowsPowerShell(t, "(Get-Acl -Audit -LiteralPath "+p+").GetSecurityDescriptorSddlForm('Audit')")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		return strings.TrimSpace(out)
+	}
+	before := audit()
+	if !strings.Contains(before, "(AU;") {
+		t.Fatalf("no audit entry was set: %q", before)
+	}
+	f := chmodFinding(path)
+	plan, err := files{}.Plan(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (files{}).Apply(context.Background(), f, plan, connectortest.QuietIO()); err != nil {
+		t.Fatal(err)
+	}
+	undoIO := connectortest.QuietIO()
+	if err := (connector.System{}).Run(context.Background(), plan.Undo[0], undoIO); err != nil {
+		t.Fatalf("undo: %v\n%s", err, undoIO.Err)
+	}
+	if after := audit(); after != before {
+		t.Fatalf("undo changed the audit entries from %q to %q", before, after)
+	}
+}
+
+// windowsPowerShell runs script in Windows PowerShell from System32, with the security cmdlets
+// from $PSHOME, and returns its combined output.
+func windowsPowerShell(t *testing.T, script string) (string, error) {
+	t.Helper()
+	sys, err := winsys.System32()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(filepath.Join(sys, "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command",
+		`$ErrorActionPreference='Stop'; Import-Module -Name "$PSHOME\Modules\Microsoft.PowerShell.Security"; `+script).CombinedOutput()
+	return string(out), err
 }
 
 func closeAndUndo(t *testing.T, name string) {
