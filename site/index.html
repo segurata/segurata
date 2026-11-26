@@ -48,7 +48,7 @@
 2. If `segurata version` fails, install it with Go 1.26 or later: go install github.com/segurata/segurata/cmd/segurata@latest
    Other install options: https://github.com/segurata/segurata/blob/main/docs/releasing.md#installing
 3. Run `segurata connectors` and tell me which connectors apply here. Ask me before running any that signs in to a provider or checks a credential over the network.
-4. On macOS or Linux, start with the scan that needs no credentials:
+4. Start with the scan that needs no credentials:
    segurata doctor --connector browser-extensions
    segurata inventory browser-extensions
    segurata status
