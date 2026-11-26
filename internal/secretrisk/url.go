@@ -53,7 +53,7 @@ func urlHost(note string) string {
 var (
 	reservedSuffixes = []string{".localhost", ".example", ".test", ".invalid", ".local", ".example.com", ".example.org", ".example.net"}
 	reservedHosts    = set("localhost", "example.com", "example.org", "example.net")
-	privateSuffixes  = []string{".internal", ".lan", ".home.arpa"}
+	privateSuffixes  = []string{".internal", ".lan", ".home.arpa", ".cluster.local"} // cluster.local: Kubernetes, not mDNS
 	managedDatabases = []string{
 		"neon.tech",           // Neon: ep-<id>.<region>.aws.neon.tech
 		"supabase.co",         // Supabase direct: db.<ref>.supabase.co
@@ -71,6 +71,8 @@ func hostImpact(host string, base Impact) Impact {
 	switch {
 	case host == "":
 		return base
+	case hasSuffix(host, privateSuffixes):
+		return min(base, Low)
 	case reservedHosts[host] || hasSuffix(host, reservedSuffixes):
 		return Noise
 	}
@@ -83,8 +85,8 @@ func hostImpact(host string, base Impact) Impact {
 		}
 		return base
 	}
-	if !strings.Contains(host, ".") || hasSuffix(host, privateSuffixes) {
-		return min(base, Low) // a docker-compose service name, a LAN name
+	if !strings.Contains(host, ".") {
+		return min(base, Low) // a docker-compose service name
 	}
 	if managedDatabase(host) || anyLabel(host, prodWords) {
 		return High

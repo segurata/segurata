@@ -115,7 +115,8 @@ func TestURLCredentialImpactByHost(t *testing.T) {
 		"app.test": Noise, "x.invalid": Noise, "web.localhost": Noise,
 		"10.1.2.3": Low, "172.20.0.4": Low, "192.168.23.12": Low, "100.80.1.1": Low, "169.254.1.1": Low,
 		"fe80::1": Low, "fd00::5": Low, "postgres": Low, "db.internal": Low, "nas.lan": Low,
-		"api.acme.io": Medium, "8.8.8.8": Medium,
+		"pg.prod.svc.cluster.local": Low, // Kubernetes' cluster domain, not mDNS
+		"api.acme.io":               Medium, "8.8.8.8": Medium,
 		"ep-cool-1.eu-central-1.aws.neon.tech": High, "db.abcdefgh.supabase.co": High,
 		"aws-0-eu-west-1.pooler.supabase.com": High, "shop.cluster-x.eu-west-1.rds.amazonaws.com": High,
 		"cluster0.ab1cd.mongodb.net": High, "prod-db.acme.io": High, "db.production.acme.io": High,
