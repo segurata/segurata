@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -67,7 +68,6 @@ type activityItem struct {
 	} `json:"events"`
 }
 
-// audit is one run against one tenant.
 type audit struct {
 	api  *httpx.Client
 	cfg  settings
@@ -75,7 +75,6 @@ type audit struct {
 	emit connector.Emitter
 }
 
-// pages follows nextPageToken and collects the items under key.
 func pages[T any](ctx context.Context, api *httpx.Client, path string, q url.Values, pick func(*page[T]) []T) ([]T, error) {
 	var out []T
 	for range 10000 {
@@ -102,7 +101,6 @@ func (a *audit) status(state finding.State, detail string) {
 	a.emit.Status(finding.Status{Account: a.cfg.domain, State: state, Detail: detail})
 }
 
-// apiFailure turns the usual Admin SDK errors into a state and an actionable detail.
 func (a *audit) apiFailure(err error) (finding.State, string) {
 	var se *httpx.StatusError
 	if !errors.As(err, &se) {
@@ -127,8 +125,7 @@ func (a *audit) run(ctx context.Context, info tokenInfo) {
 		a.status(a.apiFailure(err))
 		return
 	}
-	// tokeninfo leaves out the email when the token lacks the email scope, so the user list is
-	// what proves the credentials belong to this tenant.
+	// Without the email scope tokeninfo gives no email: the user list proves the tenant.
 	if len(users) > 0 && !anyInDomain(users, a.cfg.domain) {
 		a.status(finding.StateMissingCredentials, otherTenant(a.cfg.domain, "list the users of another tenant (no account ends in @"+a.cfg.domain+")"))
 		return
@@ -197,8 +194,7 @@ type grant struct {
 	token
 }
 
-// grants lists every live account's third-party OAuth tokens; suspended and archived accounts
-// cannot use theirs. Accounts whose listing failed are counted in the returned error.
+// grants lists the OAuth tokens of live accounts: suspended and archived ones cannot use theirs.
 func (a *audit) grants(ctx context.Context, accounts []account) ([]grant, error) {
 	var mu sync.Mutex
 	var out []grant
@@ -210,10 +206,9 @@ func (a *audit) grants(ctx context.Context, accounts []account) ([]grant, error)
 		if !acc.live() {
 			continue
 		}
-		wg.Add(1)
-		go func(email string) {
-			defer wg.Done()
-			sem <- struct{}{}
+		email := acc.email
+		sem <- struct{}{}
+		wg.Go(func() {
 			defer func() { <-sem }()
 			var p page[token]
 			err := a.api.Get(ctx, "/directory/v1/users/"+url.PathEscape(email)+"/tokens", nil, &p)
@@ -229,7 +224,7 @@ func (a *audit) grants(ctx context.Context, accounts []account) ([]grant, error)
 			for _, t := range p.Items {
 				out = append(out, grant{user: email, token: t})
 			}
-		}(acc.email)
+		})
 	}
 	wg.Wait()
 	if first != nil {
@@ -246,8 +241,6 @@ type appActivity struct {
 	lastEvent         string // RFC 3339, so later events compare greater
 }
 
-// activity counts OAuth authorizations and revocations per app over the activity window
-// (Reports API, applicationName=token).
 func (a *audit) activity(ctx context.Context) (map[string]*appActivity, error) {
 	items, err := pages(ctx, a.api, "/reports/v1/activity/users/all/applications/token", url.Values{
 		"maxResults": {"1000"}, "startTime": {a.now.Add(-activityWindow).Format(time.RFC3339)},
@@ -262,19 +255,13 @@ func (a *audit) activity(ctx context.Context) (map[string]*appActivity, error) {
 			for _, x := range ev.Parameters {
 				p[x.Name] = x.Value
 			}
-			key := p["client_id"]
-			if key == "" {
-				key = p["app_name"]
-			}
+			key := cmp.Or(p["client_id"], p["app_name"])
 			if key == "" {
 				continue
 			}
 			act := out[key]
 			if act == nil {
-				act = &appActivity{app: p["app_name"], clientID: p["client_id"]}
-				if act.app == "" {
-					act.app = key
-				}
+				act = &appActivity{app: cmp.Or(p["app_name"], key), clientID: p["client_id"]}
 				out[key] = act
 			}
 			switch ev.Name {

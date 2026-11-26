@@ -7,9 +7,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 )
 
-// Doctor obtains the tenant's access token exactly as the inventory does (the secret, or gcloud
-// with the tenant's own CLOUDSDK_CONFIG) and asks tokeninfo for its scopes and account. The token
-// is discarded; nothing is printed but the outcome.
+// Doctor obtains the token as the inventory does and asks tokeninfo for its scopes and account.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
 	cfg, err := parseSettings(req.Config, c.home)
 	if err != nil {
@@ -47,7 +45,6 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 	return checks
 }
 
-// splitHelp separates a token problem from the sign-in steps that follow it.
 func splitHelp(why string) (string, string) {
 	if detail, help, ok := strings.Cut(why, "\n\n"); ok {
 		return detail, help
