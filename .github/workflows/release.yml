@@ -38,6 +38,8 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Only v* tags may deploy to this environment, which alone holds the tap's deploy key.
+    environment: release
     permissions:
       contents: write # create the GitHub release and upload its assets
       id-token: write # keyless cosign signature with this workflow's OIDC identity
@@ -63,9 +65,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional. Without the token secret the Homebrew cask is built but not pushed.
-          HOMEBREW_TAP_OWNER: ${{ vars.HOMEBREW_TAP_OWNER }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Optional. Without the deploy key the Homebrew cask is built but not pushed.
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
 
   # Checks the published signature the way docs/releasing.md tells users to.
   verify:

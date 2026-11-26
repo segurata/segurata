@@ -61,17 +61,22 @@ homebrew_casks:
   - name: segurata
     binaries: [segurata]
     homepage: https://github.com/segurata/segurata
-    description: Inventories, assesses and cleans up a personal digital footprint
+    description: Security audits for the accounts and computers you manage
     repository:
-      owner: '{{ if isEnvSet "HOMEBREW_TAP_OWNER" }}{{ .Env.HOMEBREW_TAP_OWNER }}{{ else }}segurata{{ end }}'
+      owner: segurata
       name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
-    # No tap token, no tap update; the rest of the release goes ahead.
-    skip_upload: '{{ if isEnvSet "HOMEBREW_TAP_GITHUB_TOKEN" }}auto{{ else }}true{{ end }}'
+      branch: main
+      # A write deploy key of the tap alone, held by the release environment.
+      git:
+        url: git@github.com:segurata/homebrew-tap.git
+        private_key: '{{ envOrDefault "HOMEBREW_TAP_DEPLOY_KEY" "" }}'
+    # No deploy key, no tap update; the rest of the release goes ahead.
+    skip_upload: '{{ if isEnvSet "HOMEBREW_TAP_DEPLOY_KEY" }}auto{{ else }}true{{ end }}'
     commit_msg_template: "segurata {{ .Tag }}"
     caveats: |
       The binary is not notarized by Apple. If macOS refuses to run it, check the release
-      signature (docs/releasing.md) and then run:
+      signature (https://github.com/segurata/segurata/blob/main/docs/releasing.md)
+      and then run:
         xattr -d com.apple.quarantine "$(brew --prefix)/bin/segurata"
 
 changelog:

@@ -46,9 +46,9 @@ To check the GoReleaser config locally: `goreleaser check`, and `goreleaser rele
 
 | Setting | Where | Needed for |
 |---|---|---|
-| `HOMEBREW_TAP_GITHUB_TOKEN` | Actions secret | Pushing the cask. A fine-grained token with the `segurata` organization as resource owner, access to the `homebrew-tap` repository only, and Contents read and write. Without it the release still publishes, with the tap step skipped |
-| `HOMEBREW_TAP_OWNER` | Actions variable | Optional. Owner of the `homebrew-tap` repository; `segurata` when unset |
-| `homebrew-tap` repository | GitHub | Must exist (public, with a default branch) before the first release with the token set |
+| `release` environment | Settings > Environments | Deployment rule: tags matching `v*` only, so no branch workflow can read its secret |
+| `HOMEBREW_TAP_DEPLOY_KEY` | Secret of the `release` environment | Pushing the cask: the private half of an ed25519 deploy key with write access, added to `segurata/homebrew-tap` only (the organization must allow deploy keys). Without it the release still publishes, with the tap step skipped |
+| `homebrew-tap` repository | GitHub | Public, default branch `main` |
 
 The workflow uses no other secret. The default `GITHUB_TOKEN` creates the release; `id-token:
 write` exists only in the release job, for the signature.
@@ -228,9 +228,11 @@ private:
    artifacts in the destination repository. Its Actions history and logs become public too.
 2. Confirm that the conduct address in `CODE_OF_CONDUCT.md` is monitored. Enable GitHub's
    private reporting as soon as the repository is public.
-3. Tap: `gh repo create segurata/homebrew-tap --public --add-readme`, then a fine-grained token as
-   in [Repository settings](#repository-settings), stored with
-   `gh secret set HOMEBREW_TAP_GITHUB_TOKEN --repo segurata/segurata`.
+3. Tap: `gh repo create segurata/homebrew-tap --public --add-readme`, then a deploy key as in
+   [Repository settings](#repository-settings): `ssh-keygen -t ed25519 -N "" -f tap`,
+   `gh repo deploy-key add tap.pub --repo segurata/homebrew-tap --allow-write`,
+   `gh secret set HOMEBREW_TAP_DEPLOY_KEY --repo segurata/segurata --env release < tap`, then
+   delete both files.
 4. Go public, then turn on private vulnerability reporting:
 
    ```bash
