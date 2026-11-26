@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -88,5 +89,69 @@ func TestFetchErrorHidesThePath(t *testing.T) {
 	}
 	if ShownPath("/v1/models") != "/v1/models" || ShownPath("/bot") != "/bot" {
 		t.Error("ShownPath changed a path without a token")
+	}
+}
+
+func TestGetDecodesOnlyA2xxJSONBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ok":
+			_, _ = w.Write([]byte(`{"name":"n"}`))
+		case "/html":
+			_, _ = w.Write([]byte(`<html>`))
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
+		}
+	}))
+	defer srv.Close()
+	c, ctx := New(srv.URL, http.Header{}), context.Background()
+	var out struct{ Name string }
+	if err := c.Get(ctx, "/ok", nil, &out); err != nil || out.Name != "n" {
+		t.Fatalf("Get /ok: %v %+v", err, out)
+	}
+	if err := c.Get(ctx, "/html", nil, &out); err == nil || !strings.Contains(err.Error(), "unexpected response") {
+		t.Errorf("an unreadable body: %v", err)
+	}
+	err := c.Get(ctx, "/denied", nil, &out)
+	if !IsStatus(err, http.StatusUnauthorized) || err.Error() != "GET /denied: HTTP 401: bad key" {
+		t.Errorf("a 401: %v", err)
+	}
+}
+
+func TestTimes(t *testing.T) {
+	str := func(s string) *string { return &s }
+	sec := func(n int64) *int64 { return &n }
+	at := time.Date(2026, 11, 24, 10, 30, 0, 0, time.UTC)
+	for _, in := range []string{"2026-11-24T10:30:00Z", "2026-11-24T11:30:00+01:00", "2026-11-24T10:30:00", "2026-11-24 10:30:00Z", "2026-11-24 10:30:00"} {
+		if got := ParseTime(str(in)); got == nil || !got.Equal(at) || got.Location() != time.UTC {
+			t.Errorf("ParseTime(%q) = %v", in, got)
+		}
+	}
+	for _, in := range []*string{nil, str(""), str("yesterday")} {
+		if got := ParseTime(in); got != nil {
+			t.Errorf("ParseTime guessed %v", got)
+		}
+	}
+	if got := Unix(sec(at.Unix())); got == nil || !got.Equal(at) {
+		t.Errorf("Unix = %v", got)
+	}
+	if Unix(nil) != nil || Unix(sec(0)) != nil {
+		t.Error("Unix of nothing")
+	}
+	if Days(at, at.Add(-49*time.Hour)) != 2 {
+		t.Error("Days counts whole days")
+	}
+}
+
+func TestAssessmentKeepsTheWorstSeverity(t *testing.T) {
+	var a Assessment
+	a.Raise(finding.SevMedium, "m")
+	a.Raise(finding.SevLow, "l")
+	if a = a.Done("fine"); a.Severity != finding.SevMedium || len(a.Reasons) != 2 {
+		t.Errorf("%+v", a)
+	}
+	if fine := (Assessment{}).Done("fine"); fine.Severity != finding.SevInfo || fine.Reasons[0] != "fine" {
+		t.Errorf("nothing raised: %+v", fine)
 	}
 }
