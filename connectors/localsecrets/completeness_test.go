@@ -292,3 +292,22 @@ echo '[]'`)
 		})
 	}
 }
+
+// The index is listed whole and by repository-relative name when segurata runs from a directory
+// inside the repository: git otherwise lists only that directory, relative to it.
+func TestIndexListingIgnoresTheWorkingDirectory(t *testing.T) {
+	r := newHistoryRepo(t)
+	r.writeFile("db/backup.sql", []byte("x\n"))
+	r.writeFile("sub/deep/x.txt", []byte("x\n"))
+	r.commitAll("files")
+	t.Chdir(filepath.Join(r.dir, "sub", "deep"))
+	s, _ := r.dumpScan(cli.Exec{Path: "git", Timeout: time.Minute}, nil, nil)
+	files, err := s.lsFiles(r.dir)
+	if err != nil || !files[filepath.Join(r.dir, "db", "backup.sql")] || !files[filepath.Join(r.dir, "sub", "deep", "x.txt")] {
+		t.Errorf("ls-files from a subdirectory: %v, %v", files, err)
+	}
+	dumps, err := s.trackedDumps(r.dir)
+	if _, ok := dumps["db/backup.sql"]; err != nil || !ok {
+		t.Errorf("tracked dumps from a subdirectory: %v, %v", dumps, err)
+	}
+}

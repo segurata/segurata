@@ -32,6 +32,11 @@ func ReadEnv() []string {
 	return env
 }
 
+// WholeTree ends a `git ls-files` command line so it lists the whole index by repository-relative
+// name, wherever segurata runs: git otherwise reads pathspecs, and prints names, relative to the
+// working directory when that lies inside the work tree.
+func WholeTree() []string { return []string{"--full-name", "--", ":(top)"} }
+
 // Tracked checks the on-disk indices of the repositories containing an absolute path, including
 // enclosing repositories. A failed index lookup leaves tracking unknown.
 func Tracked(ctx context.Context, path string) (bool, error) {
@@ -59,7 +64,7 @@ func indexContains(ctx context.Context, root, dot, path string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := proc.Command(ctx, "git", "--git-dir="+dot, "--work-tree="+root,
-		"ls-files", "--cached", "-z", "--", ":(literal,icase)"+path)
+		"ls-files", "--cached", "-z", "--full-name", "--", ":(top,literal,icase)"+path)
 	// In particular, a Git invocation that launched segurata must not supply its alternate index.
 	for _, v := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(v), "GIT_") {

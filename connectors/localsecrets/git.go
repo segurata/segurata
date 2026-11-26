@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/gitlocal"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -80,7 +81,7 @@ func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 
 // lsFiles is the set of absolute paths git tracks in the repository at root.
 func (s *scan) lsFiles(root string) (map[string]bool, error) {
-	out, err := guardGit(s.c.Git).Run(s.ctx, gitDirArg(root), "--work-tree="+root, "ls-files", "-z")
+	out, err := guardGit(s.c.Git).Run(s.ctx, append([]string{gitDirArg(root), "--work-tree=" + root, "ls-files", "-z"}, gitlocal.WholeTree()...)...)
 	if err != nil {
 		return nil, err
 	}

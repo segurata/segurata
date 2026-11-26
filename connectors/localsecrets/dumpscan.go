@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/gitlocal"
 	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
@@ -430,7 +431,7 @@ func parseDumpLog(out string, byPath map[string]*dumpHistory, firstAt map[string
 
 // trackedDumps maps each path in the index whose name looks like a dump to its blob.
 func (s *scan) trackedDumps(repo string) (map[string]string, error) {
-	out, err := guardGit(s.c.Git).Run(s.ctx, gitDirArg(repo), "--work-tree="+repo, "ls-files", "-s", "-z")
+	out, err := guardGit(s.c.Git).Run(s.ctx, append([]string{gitDirArg(repo), "--work-tree=" + repo, "ls-files", "-s", "-z"}, gitlocal.WholeTree()...)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing tracked files: %w", err)
 	}
