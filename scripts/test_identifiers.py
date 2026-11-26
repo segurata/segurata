@@ -27,7 +27,7 @@ class Repo:
         self.git("init", "-q", "-b", "main")
 
     def git(self, *args):
-        subprocess.run(["git", "-C", self.path, *args], env=GIT_ENV, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", self.path, *args], env=GIT_ENV, check=True, capture_output=True)
 
     def write(self, name, text):
         full = os.path.join(self.path, name)
@@ -339,6 +339,21 @@ class MainTest(Base):
         self.assertEqual(done.returncode, 3)
         self.assertEqual(done.stdout, b"out <identifier 1>\n")
         self.assertEqual(done.stderr, b"err <identifier 1>\n")
+        killed = self.run_script("run-masked", self.ids("acme-corp\n"), sys.executable, "-c",
+                                 "import os, signal; os.kill(os.getpid(), signal.SIGTERM)")
+        self.assertEqual(killed.returncode, 128 + 15, "a signal exits like a shell reports it")
+
+    def test_author_options(self):
+        identity = "Public Name <public@example.com>"
+        self.assertEqual(identifiers.author_options("scan-push", ["--skip-authors"]), (True, ()))
+        self.assertEqual(identifiers.author_options("scan-history", ["--allow-author", identity]),
+                         (False, {identity.encode()}))
+        for command, args in (("scan-history", ["--skip-authors"]), ("scan-push", ["--allow-author"]),
+                              ("scan-push", ["--allow-author", "no email"]), ("scan-push", ["--allow-author", "a <b>\nc"]),
+                              ("scan-history", ["--other", identity])):
+            with self.subTest(command=command, args=args):
+                with self.assertRaises(identifiers.InputError):
+                    identifiers.author_options(command, args)
 
 
 if __name__ == "__main__":
