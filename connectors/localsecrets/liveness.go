@@ -18,7 +18,8 @@ import (
 )
 
 // The liveness check runs here because only the scan holds the values: each reported secret of an
-// allowed owner and a supported type is tried once, and its findings get the result.
+// allowed owner and a supported type is tried once, and its findings get the result. Values stay
+// in memory for the length of the run.
 
 // livenessMargin is left before the run's deadline, so a slow provider never costs the findings.
 const (
@@ -166,7 +167,7 @@ func (s *scan) hold(abs string, ev secretrisk.Evidence, value string) {
 		h.aws.add(place, true, ev)
 		return
 	case ev.Type == "cloudflare-token" && !namesCloudflare(ev):
-		return // CF_TOKEN may be any provider's
+		return // CF_TOKEN may be any provider's: it is never sent to Cloudflare
 	case ev.Type == awsSecretType:
 		h.aws.add(place, false, ev)
 	case !liveness.Supported(ev.Type):
@@ -339,7 +340,7 @@ func historyPlace(ev secretrisk.Evidence) string {
 const maxRecoverBlob = 8 << 20
 
 // recoverer reads a history leak's value again, and id's: the window of the reported line and its
-// neighbours, as committed, whose fingerprint matches.
+// neighbours, as committed, whose fingerprint matches. The value lives only in the probe.
 func (s *scan) recoverer(ev secretrisk.Evidence, id *secretrisk.Evidence) func(context.Context) (string, string, bool) {
 	return func(ctx context.Context) (string, string, bool) {
 		value, ok := s.recoverValue(ctx, ev)

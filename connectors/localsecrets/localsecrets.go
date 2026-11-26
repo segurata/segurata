@@ -83,7 +83,7 @@ func (c *Connector) Describe() connector.Description {
 		Protocol: connector.ProtocolVersion,
 		Summary:  "Plaintext secrets in config, .env files, histories, logs, agent transcripts, git history; database dumps committed to git; SSH keys without a passphrase",
 		Needs:    []string{"cli:rg", "cli:gitleaks (optional)", "cli:git", "cli:ssh-keygen", "cli:gh (optional)", "cli:aws (optional)", "cli:ssh (optional)"},
-		Timeout:  "6h",
+		Timeout:  "6h", // an hour per ripgrep pass, gitleaks_timeout per repository
 	}
 }
 
@@ -580,7 +580,7 @@ func secretScope(ev secretrisk.Evidence) string {
 
 // remedy offers a chmod 600 for a working file other users can read: ranked by the finding when
 // they can now, low (grouped by top folder) when only a parent folder keeps them out. Noise gets
-// no fix.
+// no fix: closing a third-party file for its `password=` buys nothing.
 func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
 	r := finding.Remediation{Summary: summary, URL: url}
 	if ev.Source == "gitleaks" || ev.Mode == "" || secretrisk.ImpactOf(ev) == secretrisk.Noise {

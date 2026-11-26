@@ -22,6 +22,8 @@ type pattern struct {
 	re     *regexp.Regexp // src anchored to the whole match
 }
 
+// privateKeyType matches the key body in escaped "\n" form (JSON, transcripts) or the header line
+// alone, whose body is then read from the file.
 const privateKeyType = "private-key"
 
 // Nothing in an AWS secret access key says AWS: the name it is assigned to does, or the key id

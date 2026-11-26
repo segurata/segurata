@@ -236,7 +236,8 @@ func (m *matcher) needleAt(id int32, text string, i int) bool {
 	return true
 }
 
-// subset is the alternation of the patterns in mask, in their order.
+// subset is the alternation of the patterns in mask, in their order: a pattern that cannot match
+// a text never takes part in its leftmost-first result.
 func (m *matcher) subset(mask uint64) *regexp.Regexp {
 	if mask == 1<<len(m.ps)-1 {
 		return m.all
@@ -435,6 +436,7 @@ func factors(re *syntax.Regexp, dmin, dmax int, back *[256]bool) []factor {
 			return factors(re.Sub[0], dmin, dmax, back)
 		}
 	case syntax.OpAlternate:
+		// Every branch must give a factor: the union of their literals, over the union of offsets.
 		var u factor
 		for i, s := range re.Sub {
 			f := pick(factors(s, dmin, dmax, back))

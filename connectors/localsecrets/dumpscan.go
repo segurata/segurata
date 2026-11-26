@@ -26,7 +26,8 @@ import (
 
 // The data-dump check lists every path tracked or ever added whose name looks like a dump, then
 // asks git for blob sizes, first commits and remote branches, and reads the first bytes of one
-// blob per path. History facts are cached per repository while its tips are unchanged, blobs by id.
+// blob per path, nothing else of the content. History facts are cached per repository while its
+// tips are unchanged, blobs by id.
 
 type dumpMode int
 

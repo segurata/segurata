@@ -55,6 +55,7 @@ var gitleaksCheck = cli.CheckFunc(func(args []string) error {
 	return nil
 })
 
+// gitEnv keeps git to local data, even in an untrusted repository.
 var gitEnv = gitlocal.ReadEnv()
 
 // gitLogSafety opens every --log-opts: no textconv or external diff from the repository.

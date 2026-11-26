@@ -751,10 +751,10 @@ func TestTrailsLinesFailsWhenRipgrepFails(t *testing.T) {
 	}
 }
 
-// Logs get the specific patterns only, wherever a pass meets them: a log under repos_root is not
-// searched twice (once by the whole-tree pass when gitleaks is missing), and a generic assignment
-// in a log under ~/.config is not a finding, as Trails never reports one there.
-func TestLogsGetTheSpecificPatternsOnly(t *testing.T) {
+// A log keeps every match of the passes that read it: the credential-file pass reads ~/.config
+// with the assignment pattern, and so does the whole-tree pass over repos_root when gitleaks is
+// missing; with gitleaks, repos_root's logs get the trail pass's specific patterns only.
+func TestLogsKeepTheMatchesOfEveryPassThatReadsThem(t *testing.T) {
 	fx := newFixture(t)
 	noise := fake("", 19) + "7"
 	fx.write(t, "src/shop/server.log", "auth "+fake("ghp_", 36)+"\nMY_TOKEN="+noise+"\n", 0o600)
@@ -771,14 +771,19 @@ func TestLogsGetTheSpecificPatternsOnly(t *testing.T) {
 		if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false, "emit_noise": true}}, rec); err != nil {
 			t.Fatal(err)
 		}
-		got := map[string]string{}
+		var got []string
 		for _, f := range rec.findings {
 			if p := evidence(f, "path"); strings.HasSuffix(p, ".log") {
-				got[p+" "+evidence(f, "type")] = evidence(f, "count")
+				got = append(got, p+" "+evidence(f, "type"))
 			}
 		}
-		want := map[string]string{"~/src/shop/server.log github": "1", "~/.config/tool/debug.log github": "1"}
-		if fmt.Sprint(got) != fmt.Sprint(want) {
+		slices.Sort(got)
+		want := []string{"~/.config/tool/debug.log assignment", "~/.config/tool/debug.log github", "~/src/shop/server.log github"}
+		if !gitleaks {
+			want = append(want, "~/src/shop/server.log assignment")
+			slices.Sort(want)
+		}
+		if !slices.Equal(got, want) {
 			t.Errorf("gitleaks installed %v: log findings %v, want %v", gitleaks, got, want)
 		}
 	}

@@ -259,7 +259,7 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 }
 
 // runGitleaks scans the commits logOpts names (all when empty), the report piped to this process
-// so values never reach a file. It returns the prepared leaks and how many were omitted.
+// so values never reach a file or the terminal. It returns the prepared leaks and how many were omitted.
 func (s *scan) runGitleaks(repo, logOpts string) ([]cachedLeak, int, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
 	defer cancel()
