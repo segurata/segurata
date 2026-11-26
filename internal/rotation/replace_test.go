@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -538,8 +539,9 @@ func TestReplaceBackupIsPrivate(t *testing.T) {
 	if len(backups) != 1 {
 		t.Fatalf("backups %v", backups)
 	}
-	if st, _ := os.Stat(backups[0]); st.Mode().Perm() != 0o600 || read(t, backups[0]) != before {
-		t.Errorf("backup mode %o or content differs", st.Mode().Perm())
+	fileacltest.AssertPrivate(t, backups[0])
+	if read(t, backups[0]) != before {
+		t.Error("backup content differs")
 	}
 }
 

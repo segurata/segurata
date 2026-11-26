@@ -20,6 +20,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -466,9 +467,7 @@ func TestInventoryEndToEnd(t *testing.T) {
 		!strings.Contains(rec.Statuses[0].Detail, "noise not emitted (emit_noise: true lists it): 2; by type: assignment 1, generic-api-key 1; by place: repo 1, ~/src/shop 1") {
 		t.Errorf("statuses %+v", rec.Statuses)
 	}
-	if st, err := os.Stat(filepath.Join(fx.home, ".config", "segurata", "fingerprint.key")); err != nil || st.Mode().Perm() != 0o600 {
-		t.Errorf("fingerprint key not created 0600: %v", err)
-	}
+	fileacltest.AssertPrivate(t, filepath.Join(fx.home, ".config", "segurata", "fingerprint.key"))
 }
 
 func TestEmitNoiseListsNoiseFindings(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -527,9 +528,7 @@ func TestBackupIsOptInAndLoud(t *testing.T) {
 	if len(matches) != 1 || fx.read(matches[0]) != before {
 		t.Fatalf("backup: %v", matches)
 	}
-	if st, _ := os.Stat(matches[0]); st.Mode().Perm() != 0o600 {
-		t.Errorf("backup mode %o", st.Mode().Perm())
-	}
+	fileacltest.AssertPrivate(t, matches[0])
 }
 
 func TestScopeIsRequired(t *testing.T) {

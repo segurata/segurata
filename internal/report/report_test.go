@@ -12,6 +12,7 @@ import (
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/doc"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runtest"
@@ -287,10 +288,7 @@ func TestCLIWritesPrivateFile(t *testing.T) {
 	if code := c.Run([]string{"--dir", x.out, "--format", "html", "--out", dest}); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
-	st, err := os.Stat(dest)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("report not 0600: %v %v", err, st.Mode())
-	}
+	fileacltest.AssertPrivate(t, dest)
 	raw, _ := os.ReadFile(dest)
 	if !strings.HasPrefix(string(raw), "<!doctype html>") {
 		t.Error("not an HTML page")

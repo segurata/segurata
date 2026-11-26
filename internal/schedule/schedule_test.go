@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/proc/proctest"
 	"github.com/segurata/segurata/internal/tracker"
@@ -178,9 +179,7 @@ func TestInstallApplyWritesLoadsAndReplaces(t *testing.T) {
 		t.Fatalf("plist mode %v", st.Mode().Perm())
 	}
 	for _, dir := range []string{p.Logs, p.State} {
-		if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o700 {
-			t.Fatalf("%s: %v %v", dir, st, err)
-		}
+		fileacltest.AssertPrivateDir(t, dir)
 	}
 	if got := r.ran(launchctl, "bootstrap"); len(got) != 1 || !slices.Equal(got[0], []string{launchctl, "bootstrap", "gui/501", p.Plist}) {
 		t.Fatalf("bootstrap calls %v", got)

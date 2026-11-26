@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
@@ -253,10 +254,7 @@ func TestStatusBriefing(t *testing.T) {
 		t.Fatalf("status --write: %d %q\n%s", code, e, o)
 	}
 	for _, name := range []string{"status.md", "status.html"} {
-		st, err := os.Stat(filepath.Join(filepath.Dir(x.path), name))
-		if err != nil || st.Mode().Perm() != 0o600 {
-			t.Errorf("%s: %v", name, err)
-		}
+		fileacltest.AssertPrivate(t, filepath.Join(filepath.Dir(x.path), name))
 	}
 	x.now = x.now.Add(time.Hour)
 	// A plain status is read-only: the tracker file is not rewritten.

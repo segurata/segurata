@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
@@ -155,9 +156,7 @@ func TestHistoryCacheScansOnlyNewCommits(t *testing.T) {
 		t.Fatalf("first run: %v", scans)
 	}
 	cache := r.cacheFile(t)
-	if st, err := os.Stat(cache); err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("cache not written 0600: %v", err)
-	}
+	fileacltest.AssertPrivate(t, cache)
 	raw, _ := os.ReadFile(cache)
 	if strings.Contains(string(raw), s1) {
 		t.Fatal("cache holds a raw secret")

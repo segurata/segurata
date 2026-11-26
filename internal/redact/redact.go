@@ -24,6 +24,7 @@ import (
 	"github.com/segurata/segurata/connectors/localsecrets"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/fanout"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/homepath"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -262,7 +263,7 @@ func guard(abs string, minAge time.Duration, now time.Time, open map[string]bool
 	if !st.Mode().IsRegular() {
 		return nil, skipIrreg
 	}
-	if uid, ok := statefile.OwnerID(st); ok && uid != os.Getuid() {
+	if mine, err := fileacl.OwnedByMe(abs, st); err != nil || !mine {
 		return nil, skipOwner
 	}
 	if now.Sub(st.ModTime()) < minAge {

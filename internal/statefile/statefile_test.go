@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 )
 
 func TestReplaceKeepsTheGivenModeAndLeavesNoTemporaryFile(t *testing.T) {
@@ -37,13 +39,8 @@ func TestWriteJSONIsPrivate(t *testing.T) {
 	if err := WriteJSON(path, map[string]int{"a": 1}); err != nil {
 		t.Fatal(err)
 	}
-	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %v err %v", st.Mode().Perm(), err)
-	}
-	if dir, _ := os.Stat(filepath.Dir(path)); dir.Mode().Perm() != 0o700 {
-		t.Errorf("dir mode %v", dir.Mode().Perm())
-	}
+	fileacltest.AssertPrivate(t, path)
+	fileacltest.AssertPrivateDir(t, filepath.Dir(path))
 }
 
 func TestBackupsInTheSameSecondDoNotCollide(t *testing.T) {
@@ -58,11 +55,10 @@ func TestBackupsInTheSameSecondDoNotCollide(t *testing.T) {
 		t.Fatalf("second backup in the same second: %q %v", b, err)
 	}
 	for name, want := range map[string]string{a: "one", b: "two"} {
-		raw, _ := os.ReadFile(name)
-		st, err := os.Stat(name)
-		if err != nil || string(raw) != want || st.Mode().Perm() != 0o600 {
+		if raw, err := os.ReadFile(name); err != nil || string(raw) != want {
 			t.Errorf("%s: %q, %v", name, raw, err)
 		}
+		fileacltest.AssertPrivate(t, name)
 	}
 	if _, err := Backup(filepath.Join(p, "missing", "x"), nil, now); err == nil {
 		t.Error("a backup in a missing directory succeeded")

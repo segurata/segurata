@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
@@ -421,10 +422,7 @@ func TestCache(t *testing.T) {
 	if err := c.Cache.Save(now); err != nil {
 		t.Fatal(err)
 	}
-	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("cache file %v %v", st, err)
-	}
+	fileacltest.AssertPrivate(t, path)
 	raw, _ := os.ReadFile(path)
 	if strings.Contains(string(raw), "fake-key") {
 		t.Fatal("the cache holds a value")

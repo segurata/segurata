@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
@@ -340,9 +341,7 @@ func TestThirdPartyRepositoriesAreNotTheOwners(t *testing.T) {
 	if o.ghCalls != calls {
 		t.Errorf("gh asked again within the cache's lifetime")
 	}
-	if st, err := os.Stat(filepath.Join(o.home, ".cache", "segurata", "github-owners.json")); err != nil || st.Mode().Perm() != 0o600 {
-		t.Errorf("owners cache: %v", err)
-	}
+	fileacltest.AssertPrivate(t, filepath.Join(o.home, ".cache", "segurata", "github-owners.json"))
 }
 
 // A gh answer without the organizations is not cached: the next run asks again, and meanwhile

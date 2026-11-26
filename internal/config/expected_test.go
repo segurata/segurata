@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -127,9 +128,7 @@ func TestAddExpectedKeepsTheFileInOrder(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("config:\n%s", got)
 	}
-	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
-		t.Errorf("mode %o", st.Mode().Perm())
-	}
+	fileacltest.AssertPrivate(t, p)
 	cfg, err := Load(p)
 	if err != nil || len(cfg.Instances("anthropic")[0].Expected) != 1 {
 		t.Fatalf("%v %+v", err, cfg)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -328,9 +329,7 @@ func TestDataDumpCacheReuse(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("dump cache files %v", files)
 	}
-	if st, err := os.Stat(files[0]); err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("cache not 0600: %v", err)
-	}
+	fileacltest.AssertPrivate(t, files[0])
 	raw, _ := os.ReadFile(files[0])
 	if strings.Contains(string(raw), "example.test") {
 		t.Fatal("the cache holds dump content")

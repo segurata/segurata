@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 )
 
 func TestSetAccounts(t *testing.T) {
@@ -53,9 +55,7 @@ func TestSetAccounts(t *testing.T) {
 	if changed, backup, err := SetAccounts(other, "google-personal", []string{"me@x.com"}, now); !changed || backup != "" || err != nil {
 		t.Errorf("new file: %v %q %v", changed, backup, err)
 	}
-	if st, err := os.Stat(other); err != nil || st.Mode().Perm() != 0o600 {
-		t.Errorf("mode: %v", err)
-	}
+	fileacltest.AssertPrivate(t, other)
 }
 
 func TestAccountsMalformed(t *testing.T) {

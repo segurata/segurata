@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +20,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/connector/connectortest"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/proc"
@@ -131,12 +131,7 @@ func TestInventoryWritesRecordsResolvesSecretsAndProtectsOutput(t *testing.T) {
 	if strings.Contains(string(raw), "s3cret") {
 		t.Fatal("secret value written to output")
 	}
-	if runtime.GOOS != "windows" {
-		st, _ := os.Stat(res[0].File)
-		if st.Mode().Perm() != 0o600 {
-			t.Fatalf("output mode %v, want 0600", st.Mode().Perm())
-		}
-	}
+	fileacltest.AssertPrivate(t, res[0].File)
 }
 
 func TestExternalConnectorSpeaksTheProtocol(t *testing.T) {

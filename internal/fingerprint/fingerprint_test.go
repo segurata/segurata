@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 )
 
 func fakeSecret(t *testing.T) string {
@@ -27,10 +29,7 @@ func TestKeyIsCreatedPrivateAndStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("key file mode %v err %v", st.Mode().Perm(), err)
-	}
+	fileacltest.AssertPrivate(t, path)
 	b, err := Open(path)
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/remediate"
 	"github.com/segurata/segurata/internal/run"
@@ -80,9 +81,7 @@ func TestCommands(t *testing.T) {
 	if code != 0 || !strings.Contains(o, "Accepted "+dbg.ID) || !strings.Contains(o, "no end date") {
 		t.Fatalf("accept: %d %q %q", code, o, e)
 	}
-	if st, err := os.Stat(state); err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("state file: %v", err)
-	}
+	fileacltest.AssertPrivate(t, state)
 	o, _, _ = cli("accept", "--list")
 	if !strings.Contains(o, dbg.ID) || !strings.Contains(o, "reason: AI agents drive Brave") || !strings.Contains(o, "1 accepted findings") {
 		t.Errorf("list:\n%s", o)

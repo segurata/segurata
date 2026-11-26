@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/runtest"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -67,9 +68,7 @@ func TestCommands(t *testing.T) {
 	if code != 0 || !strings.Contains(o, "3 secrets (3 new") || !strings.Contains(o, "P0 1") || !strings.Contains(o, "Open by owner: mine 0, not-mine 0, unknown 3") {
 		t.Fatalf("sync: %d %q %q", code, o, e)
 	}
-	if st, err := os.Stat(state); err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("state file: %v", err)
-	}
+	fileacltest.AssertPrivate(t, state)
 	o, _, _ = run("list", "--priority", "P0,P1")
 	if !strings.Contains(o, "aaaaaaaa") || strings.Contains(o, "bbbbbbbb") || !strings.Contains(o, "git+remote") || !strings.Contains(o, "1 items") ||
 		!strings.Contains(o, "LIVE") || !strings.Contains(o, "unknown  live") || !strings.Contains(o, "Liveness checked for 1 of 3 secrets: 1 live, 2 unchecked.") {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/connector/connectortest"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
@@ -232,9 +233,7 @@ func TestChmod600PlansExactlyAndApplies(t *testing.T) {
 	if err := fs.Apply(context.Background(), f, p, connectortest.QuietIO()); err != nil {
 		t.Fatal(err)
 	}
-	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %o", fi.Mode().Perm())
-	}
+	fileacltest.AssertPrivate(t, path)
 	if _, err := fs.Plan(context.Background(), f); err == nil {
 		t.Fatal("an already private file has nothing to plan")
 	}

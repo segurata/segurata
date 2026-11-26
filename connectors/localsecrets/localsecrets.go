@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/liveness"
 	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/homepath"
@@ -305,28 +306,16 @@ func (s *scan) kindOf(p string) string {
 	return "config"
 }
 
-// modeOf is the file's mode for other accounts: a class reads it only if every parent folder up
-// to root lets that class through, so a 644 file in a 700 home is closed. fileMode is the file's
-// own mode, set only when it differs.
+// modeOf is the file's mode for other accounts once the folders up to root have had their say
+// (fileacl.Effective). fileMode is the file's own mode, set only when it differs.
 func modeOf(p, root string) (effective, fileMode string) {
-	st, err := os.Stat(p)
+	perm, err := fileacl.Exposure(p)
 	if err != nil {
 		return "", ""
 	}
-	perm := st.Mode().Perm()
-	eff := perm
-	for d := filepath.Dir(p); ; d = filepath.Dir(d) {
-		if ds, err := os.Stat(d); err == nil {
-			if ds.Mode().Perm()&0o010 == 0 {
-				eff &^= 0o070
-			}
-			if ds.Mode().Perm()&0o001 == 0 {
-				eff &^= 0o007
-			}
-		}
-		if d == root || filepath.Dir(d) == d {
-			break
-		}
+	eff, err := fileacl.Effective(p, root)
+	if err != nil {
+		return "", ""
 	}
 	effective = fmt.Sprintf("%o", eff)
 	if eff != perm {

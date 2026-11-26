@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/gitlocal"
 	"github.com/segurata/segurata/internal/keychain"
@@ -367,7 +368,7 @@ func (f *fileEdit) validate(ctx context.Context) error {
 	if err != nil || !os.SameFile(f.info, st) || st.Mode() != f.info.Mode() {
 		return changed
 	}
-	if uid, ok := statefile.OwnerID(st); !ok || uid != os.Getuid() {
+	if mine, err := fileacl.OwnedByMe(f.abs, st); err != nil || !mine {
 		return fmt.Errorf("%q: file ownership could not be verified; edit it by hand", f.path)
 	}
 	dirs, private, err := parentPrivacy(f.abs)
@@ -440,13 +441,12 @@ func parentPrivacy(path string) (dirs []string, private bool, err error) {
 		if err != nil {
 			return nil, false, err
 		}
-		uid, ok := statefile.OwnerID(st)
-		if !ok || uid != 0 && uid != os.Getuid() ||
-			st.Mode().Perm()&0o022 != 0 && st.Mode()&fs.ModeSticky == 0 {
+		if changeable, err := fileacl.ChangeableByOthers(dir); err != nil || changeable {
 			return nil, false, fmt.Errorf("directory %q can be changed by another account; edit it by hand", dir)
 		}
 		dirs = append(dirs, dir)
-		private = private || uid == os.Getuid() && st.Mode().Perm()&0o011 == 0
+		mine, err := fileacl.OwnedByMe(dir, st)
+		private = private || err == nil && mine && st.Mode().Perm()&0o011 == 0
 		if filepath.Dir(dir) == dir {
 			return dirs, private, nil
 		}

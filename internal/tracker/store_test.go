@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 )
 
 func TestSaveLoadRoundTripModesAndBackup(t *testing.T) {
@@ -21,11 +22,8 @@ func TestSaveLoadRoundTripModesAndBackup(t *testing.T) {
 	if err := tr.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	for p, want := range map[string]fs.FileMode{dir: 0o700, path: 0o600} {
-		if st, err := os.Stat(p); err != nil || st.Mode().Perm() != want {
-			t.Fatalf("%s: %v %v, want %o", p, err, st, want)
-		}
-	}
+	fileacltest.AssertPrivateDir(t, dir)
+	fileacltest.AssertPrivate(t, path)
 	if _, err := os.Stat(path + ".bak"); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("a first save has nothing to back up")
 	}
@@ -49,9 +47,7 @@ func TestSaveLoadRoundTripModesAndBackup(t *testing.T) {
 	if err != nil || !bytes.Equal(bak, first) {
 		t.Fatalf("the backup is not the previous version: %v", err)
 	}
-	if st, _ := os.Stat(path + ".bak"); st.Mode().Perm() != 0o600 {
-		t.Errorf("backup mode %o", st.Mode().Perm())
-	}
+	fileacltest.AssertPrivate(t, path+".bak")
 	again, _ := Load(path)
 	if again.Items[0].History[len(again.Items[0].History)-1].Detail != "first note" || len(again.Themes) != len(themes) {
 		t.Error("round trip lost data")
