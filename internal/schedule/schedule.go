@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -47,13 +46,11 @@ type System struct{}
 // stopGrace lets an interrupted inventory write run_end and sync the tracker before it is killed.
 var stopGrace = 2 * time.Minute
 
-// Run gives an interrupted command time to stop on Unix. On Windows it cancels the process.
+// Run interrupts a cancelled command and gives it stopGrace to stop.
 func (System) Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error {
 	cmd := proc.Command(ctx, name, args...)
-	if runtime.GOOS != "windows" {
-		cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
-		cmd.WaitDelay = stopGrace
-	}
+	cmd.Cancel = func() error { return proc.Interrupt(cmd) }
+	cmd.WaitDelay = stopGrace
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	return cmd.Run()
 }

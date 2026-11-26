@@ -9,9 +9,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -51,6 +54,46 @@ func helper(exe, behavior string) int {
 			return 1
 		}
 		fmt.Println("done")
+		return 0
+	case "trap":
+		// A program that cleans up when asked to stop: it marks the file stopped and exits 0.
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		if err := touch(filepath.Join(arg, "ready")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		select {
+		case <-stop:
+			if err := touch(filepath.Join(arg, "stopped")); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return 0
+		case <-time.After(60 * time.Second):
+			return 1
+		}
+	case "spawn", "orphan":
+		// A wrapper that ignores being asked to stop and starts a child outside its process group,
+		// then waits for it (spawn) or leaves it behind (orphan). The child's PID goes to dir/pid.
+		signal.Notify(make(chan os.Signal, 1), os.Interrupt, syscall.SIGTERM)
+		self, dir, _ := strings.Cut(arg, "\t")
+		child := exec.Command(self)
+		child.Env = append(os.Environ(), sleepEnv+"=1")
+		detach(child)
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		tmp := filepath.Join(dir, "pid.tmp")
+		if err := os.WriteFile(tmp, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil || os.Rename(tmp, filepath.Join(dir, "pid")) != nil {
+			fmt.Fprintln(os.Stderr, "cannot record the child's pid")
+			return 1
+		}
+		if verb == "orphan" {
+			return 0
+		}
+		_ = child.Wait()
 		return 0
 	case "sh":
 		cmd := exec.Command(arg, append([]string{base(exe) + ".sh"}, os.Args[1:]...)...)
@@ -179,6 +222,47 @@ func Hung(t testing.TB, name, extra string) string {
 	}
 	return Script(t, "", name, extra+"\nsleep 60\necho done\n")
 }
+
+// Trap makes an executable that, asked to stop (os.Interrupt, or SIGTERM on Unix), creates
+// dir/stopped and exits 0. It creates dir/ready once it listens.
+func Trap(t testing.TB, dir string) string {
+	t.Helper()
+	return Helper(t, "", "trap", "trap "+dir)
+}
+
+// Spawn makes an executable that ignores being asked to stop and starts a sleeping child in a
+// process group of its own, which a signal to the parent's group misses, and writes the child's
+// PID to dir/pid. With orphan it exits at once and leaves the child behind; without, it waits.
+func Spawn(t testing.TB, dir string, orphan bool) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verb := "spawn"
+	if orphan {
+		verb = "orphan"
+	}
+	return Helper(t, "", verb, verb+" "+self+"\t"+dir)
+}
+
+// PID waits for the PID a Spawn fake wrote to dir/pid.
+func PID(t testing.TB, dir string) int {
+	t.Helper()
+	path := filepath.Join(dir, "pid")
+	AwaitFile(t, path)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pid
+}
+
+func touch(path string) error { return os.WriteFile(path, nil, 0o600) }
 
 // AwaitFile waits until path exists: a script touches it once it is ready (a signal trap
 // installed, a child started), so the test cancels a command that can no longer be cut short

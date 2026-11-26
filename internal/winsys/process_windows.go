@@ -8,7 +8,10 @@ import (
 )
 
 const (
-	CtrlBreakEvent = 1 // CTRL_BREAK_EVENT
+	CtrlBreakEvent  = 1   // CTRL_BREAK_EVENT
+	CreateSuspended = 0x4 // CREATE_SUSPENDED
+
+	processSetQuota = 0x100
 
 	jobObjectExtendedLimitInformation = 9
 	jobObjectLimitKillOnJobClose      = 0x2000
@@ -82,7 +85,12 @@ func NewKillOnCloseJob() (syscall.Handle, error) {
 	return syscall.Handle(h), nil
 }
 
-// AssignToJob puts a process, opened with PROCESS_SET_QUOTA and PROCESS_TERMINATE, in a job.
+// OpenForJob opens a process with the rights AssignToJob needs.
+func OpenForJob(pid uint32) (syscall.Handle, error) {
+	return syscall.OpenProcess(processSetQuota|syscall.PROCESS_TERMINATE, false, pid)
+}
+
+// AssignToJob puts a process, opened with OpenForJob, in a job.
 func AssignToJob(job, process syscall.Handle) error {
 	return procAssignProcessToJobObject.bool(uintptr(job), uintptr(process))
 }

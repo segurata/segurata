@@ -415,26 +415,25 @@ func TestRunEndsBeforeTheNextIsDue(t *testing.T) {
 // At its deadline a command is asked to stop (an inventory then writes run_end and syncs), and
 // killed if it has not after the grace period.
 func TestSystemInterruptsThenKills(t *testing.T) {
+	if !proctest.OwnConsole(t) {
+		return
+	}
 	defer func(g time.Duration) { stopGrace = g }(stopGrace)
-	if runtime.GOOS != "windows" {
-		stopGrace = 10 * time.Second // room for the trap on a loaded machine
-		dir := t.TempDir()
-		mark, ready := filepath.Join(dir, "stopped"), filepath.Join(dir, "ready")
-		polite := proctest.Hung(t, "polite", "trap 'echo stopped > "+mark+"; kill $!; exit 0' INT\nsleep 60 &\n: > "+ready+"\nwait")
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() { done <- System{}.Run(ctx, polite, nil, io.Discard, io.Discard) }()
-		proctest.AwaitFile(t, ready)
-		cancel()
-		<-done
-		if _, err := os.Stat(mark); err != nil {
-			t.Fatal("the command was not interrupted first")
-		}
+	stopGrace = 10 * time.Second // room for the trap on a loaded machine
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- System{}.Run(ctx, proctest.Trap(t, dir), nil, io.Discard, io.Discard) }()
+	proctest.AwaitFile(t, filepath.Join(dir, "ready"))
+	cancel()
+	<-done
+	if _, err := os.Stat(filepath.Join(dir, "stopped")); err != nil {
+		t.Fatal("the command was not interrupted first")
 	}
 	stopGrace = 200 * time.Millisecond
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if err := (System{}).Run(ctx, proctest.Hung(t, "stubborn", ""), nil, io.Discard, io.Discard); err == nil {
 		t.Fatal("a hung command succeeded")
