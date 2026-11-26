@@ -21,62 +21,49 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// ErrStillPresent means the remediation ran but the connector still reports the finding.
-var ErrStillPresent = errors.New("the finding is still reported after applying the remediation")
-
-// ErrUnverified means the remediation ran but the check run did not inspect the finding's scope
-// (it stopped early, or skipped that account or repository), so its absence proves nothing.
-var ErrUnverified = errors.New("could not verify the fix")
-
-// CredentialsFunc builds the credentials of the connector instance that produced a finding: its
-// request (config and resolved secrets) and its unresolved remediation_secrets. External connectors
-// and built-ins that implement connector.CredentialedRemediator need it; nothing else calls it.
+// CredentialsFunc builds the credentials of the connector instance that produced a finding.
 type CredentialsFunc func(f finding.Finding) (connector.Credentials, error)
 
-// For returns what can remediate f: the core for generic file actions, otherwise its connector. A
-// built-in connector implements connector.Remediator (and gets the instance's credentials when it
-// implements connector.CredentialedRemediator); an external one must declare the action in
-// describe's "remediates", and is wrapped in External with the request from creds.
+// For returns what can remediate f: the core for generic file actions, otherwise its connector. An
+// external connector must declare the action in describe's "remediates".
 func For(f finding.Finding, conns []connector.Connector, creds CredentialsFunc) (connector.Remediator, error) {
 	action := f.Remediation.Action
 	if action == "" {
 		return nil, fmt.Errorf("finding %s has no automatable remediation: %s", f.ID, f.Remediation.Summary)
 	}
-	if (Files{}).Handles(action) {
-		return Files{}, nil
+	if action == connector.ActionChmod600 {
+		return files{}, nil
+	}
+	credentials := func() (connector.Credentials, error) {
+		if creds == nil {
+			return connector.Credentials{}, errors.New("no credentials for the connector's instance")
+		}
+		return creds(f)
 	}
 	for _, c := range conns {
 		if c.Describe().Name != f.Connector {
 			continue
 		}
-		if cr, ok := c.(connector.CredentialedRemediator); ok {
-			if creds == nil {
-				return nil, errors.New("no credentials for the connector's instance")
-			}
-			cs, err := creds(f)
+		switch c := c.(type) {
+		case connector.CredentialedRemediator:
+			cs, err := credentials()
 			if err != nil {
 				return nil, err
 			}
-			return cr.WithCredentials(cs), nil
+			return c.WithCredentials(cs), nil
+		case connector.Remediator:
+			return c, nil
+		case *connector.External:
+			if !slices.Contains(c.Describe().Remediates, action) {
+				return nil, fmt.Errorf("external connector %s does not declare the remediation %s in describe (\"remediates\")", f.Connector, action)
+			}
+			cs, err := credentials()
+			if err != nil {
+				return nil, err
+			}
+			return external{conn: c, req: cs.Request}, nil
 		}
-		if r, ok := c.(connector.Remediator); ok {
-			return r, nil
-		}
-		e, ok := c.(*connector.External)
-		if !ok {
-			return nil, fmt.Errorf("connector %s cannot remediate", f.Connector)
-		}
-		if !slices.Contains(e.Describe().Remediates, action) {
-			return nil, fmt.Errorf("external connector %s does not declare the remediation %s in describe (\"remediates\")", f.Connector, action)
-		}
-		if creds == nil {
-			return nil, errors.New("no request for the external connector's instance")
-		}
-		cs, err := creds(f)
-		if err != nil {
-			return nil, err
-		}
-		return External{Conn: e, Req: cs.Request}, nil
+		return nil, fmt.Errorf("connector %s cannot remediate", f.Connector)
 	}
 	return nil, fmt.Errorf("connector %s is not installed", f.Connector)
 }
@@ -87,39 +74,37 @@ type Options struct {
 	Yes   bool // skip the confirmation prompt
 	TTY   bool // stdin is a terminal
 	IO    connector.IO
-	// Sleep waits between checks; nil means time.Sleep.
-	Sleep func(time.Duration)
 	// Group is every finding one plan fixes with the target, the target included (see Members).
 	// Empty means the target alone.
 	Group []finding.Finding
 }
 
-// ErrNeedsTerminal refuses a plan with an interactive step when nobody is at the terminal.
-var ErrNeedsTerminal = errors.New("this plan runs an interactive command (a browser sign-in or a prompt) and stdin is not a terminal: run it from a terminal")
+var (
+	errStillPresent  = errors.New("the finding is still reported after applying the remediation")
+	errUnverified    = errors.New("could not verify the fix")
+	errNeedsTerminal = errors.New("this plan runs an interactive command (a browser sign-in or a prompt) and stdin is not a terminal: run it from a terminal")
+)
 
 // Members is the group of findings one plan fixes with target: every finding of the same connector
-// instance with the same action and Remediation.Group, target first, accepted ones left out. A
-// finding without a group is its own group.
+// instance with the same action and Remediation.Group, target first, accepted ones left out.
 func Members(all []finding.Finding, target finding.Finding) []finding.Finding {
 	out := []finding.Finding{target}
 	if target.Remediation.Group == "" {
 		return out
 	}
 	for _, f := range all {
-		if f.ID != target.ID && !f.Hidden() && sameGroup(f, target) {
+		if f.ID != target.ID && !f.Hidden() && groupKey(f) == groupKey(target) {
 			out = append(out, f)
 		}
 	}
 	return out
 }
 
-func sameGroup(a, b finding.Finding) bool {
-	return a.Connector == b.Connector && a.Instance == b.Instance &&
-		a.Remediation.Action == b.Remediation.Action && a.Remediation.Group == b.Remediation.Group
+func groupKey(f finding.Finding) string {
+	return strings.Join([]string{f.Connector, f.Instance, f.Remediation.Action, f.Remediation.Group}, "\x00")
 }
 
-// planner adapts a Remediator to a group: a GroupRemediator plans the whole group, any other
-// remediator only a group of one.
+// planner adapts a Remediator to a group: only a GroupRemediator plans more than one finding.
 type planner struct {
 	r     connector.Remediator
 	group []finding.Finding
@@ -135,9 +120,8 @@ func (p planner) plan(ctx context.Context) (connector.Plan, error) {
 	return p.r.Plan(ctx, p.group[0])
 }
 
-// apply carries out confirmed, the plan the owner saw and agreed to, and only that plan: it asks the
-// remediator for the plan again, from the state as it is now, and refuses when the two differ. A
-// remediator therefore never acts on a stale or altered plan, and none needs a guard of its own.
+// apply plans again from the current state and refuses when that differs from the confirmed plan,
+// so no remediator needs a stale-plan guard of its own.
 func (p planner) apply(ctx context.Context, confirmed connector.Plan, io connector.IO) error {
 	now, err := p.plan(ctx)
 	if err != nil {
@@ -152,11 +136,10 @@ func (p planner) apply(ctx context.Context, confirmed connector.Plan, io connect
 	return p.r.Apply(ctx, p.group[0], confirmed, io)
 }
 
-// A fix often takes a moment to settle: a restarted process can drop its ports for a second and
-// open them again. So the check waits first, then requires the finding to be absent in several
-// consecutive inventories. Verified 2026-11-23: an AirPlay Receiver change looked fixed on an
-// immediate check while ControlCenter restarted, and the ports were back seconds later.
-var defaultSleep = time.Sleep
+// A fix can take a moment to settle, so the check waits and needs several clean inventories.
+// Verified 2026-11-23: an AirPlay Receiver change looked fixed on an immediate check while
+// ControlCenter restarted, and the ports were back seconds later.
+var sleep = time.Sleep
 
 const (
 	settleWait   = 5 * time.Second
@@ -178,7 +161,7 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 	if err != nil {
 		return err
 	}
-	Print(opt.IO.Out, f, p)
+	printPlan(opt.IO.Out, f, p)
 	printSection(opt.IO.Out, fmt.Sprintf("Fixes these %d findings:", len(group)), "", groupLines(group))
 	if !opt.Apply {
 		fmt.Fprintln(opt.IO.Out, "\nDry run: nothing was changed. Run again with --apply to apply this plan.")
@@ -188,7 +171,7 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 		return fmt.Errorf("cannot apply yet: %s", p.Blocked)
 	}
 	if p.NeedsTerminal() && !opt.TTY {
-		return ErrNeedsTerminal
+		return errNeedsTerminal
 	}
 	ok, err := prompt.Confirm(opt.IO.In, opt.IO.Out, opt.Yes, opt.TTY)
 	if err != nil {
@@ -201,27 +184,23 @@ func Execute(ctx context.Context, f finding.Finding, r connector.Remediator, opt
 	if err := pl.apply(ctx, p, opt.IO); err != nil {
 		return fmt.Errorf("apply %s: %w", p.Action, err)
 	}
-	sleep := opt.Sleep
-	if sleep == nil {
-		sleep = defaultSleep
-	}
 	fmt.Fprintf(opt.IO.Out, "Applied %s. Checking %d times with a fresh %s inventory, %s apart...\n",
 		p.Action, settleChecks, f.Selector(), settleWait)
-	for i := 0; i < settleChecks; i++ {
+	for range settleChecks {
 		sleep(settleWait)
 		results, err := reinventory(ctx)
 		if err != nil {
 			return fmt.Errorf("applied, but the check could not run: %w", err)
 		}
-		present, err := StillPresent(results, group...)
-		if errors.Is(err, ErrUnverified) {
+		present, err := stillPresent(results, group...)
+		if errors.Is(err, errUnverified) {
 			return fmt.Errorf("applied, but %w", err)
 		}
 		if err != nil {
 			return fmt.Errorf("applied, but the check failed: %w", err)
 		}
 		if present {
-			return ErrStillPresent
+			return errStillPresent
 		}
 	}
 	if len(group) == 1 {
@@ -244,12 +223,11 @@ func groupLines(group []finding.Finding) []string {
 	return out
 }
 
-// StillPresent reports whether a fresh run still needs the remediation of any target: it emits a
-// finding with the target's id that still offers the target's action. The same finding without
-// that action (a repository whose other problems remain, a grant with fewer scopes) is fixed as far
-// as this action goes. A run that could not start is an error, not a pass; one that did not
-// inspect a target's scope is ErrUnverified.
-func StillPresent(results []*run.Result, targets ...finding.Finding) (bool, error) {
+// stillPresent reports whether a fresh run still offers any target's action under the target's id.
+// The same finding without that action (a grant with fewer scopes) is fixed as far as this action
+// goes. A run that could not start is an error, not a pass: its silence proves nothing. One that did
+// not inspect a target's scope is errUnverified.
+func stillPresent(results []*run.Result, targets ...finding.Finding) (bool, error) {
 	if len(results) == 0 {
 		return false, errors.New("no connector ran")
 	}
@@ -271,15 +249,14 @@ func StillPresent(results []*run.Result, targets ...finding.Finding) (bool, erro
 		end := r.End
 		for _, t := range targets {
 			if why, unchecked := finding.CoverageOf(&end).UncheckedFinding(t); unchecked {
-				return false, fmt.Errorf("%w: %s", ErrUnverified, why)
+				return false, fmt.Errorf("%w: %s", errUnverified, why)
 			}
 		}
 	}
 	return false, nil
 }
 
-// Print shows the exact scope of a plan.
-func Print(w io.Writer, f finding.Finding, p connector.Plan) {
+func printPlan(w io.Writer, f finding.Finding, p connector.Plan) {
 	textfmt.Line(w, "Finding  %s [%s] %s · %s · %s", f.ID, f.Severity, f.Selector(), f.Account, f.Title)
 	textfmt.Line(w, "Action   %s", p.Action)
 	textfmt.Line(w, "Plan     %s", p.Summary)
@@ -300,7 +277,6 @@ func Print(w io.Writer, f finding.Finding, p connector.Plan) {
 	}
 }
 
-// printSection prints a titled, indented list, or nothing when the list is empty.
 func printSection[T any](w io.Writer, title, bullet string, items []T) {
 	if len(items) == 0 {
 		return
@@ -312,8 +288,7 @@ func printSection[T any](w io.Writer, title, bullet string, items []T) {
 }
 
 // List prints the automatable findings whose action ranks at or above minSev, worst first, leaving
-// out accepted ones. A group of findings one plan fixes (Remediation.Group) is one line, under the
-// id of its worst member, ranked by that member.
+// out accepted ones. A group (Remediation.Group) is one line under its worst member.
 func List(w io.Writer, all []finding.Finding, minSev finding.Severity) {
 	shown, accepted, below := 0, 0, 0
 	var visible []finding.Finding
@@ -330,15 +305,14 @@ func List(w io.Writer, all []finding.Finding, minSev finding.Severity) {
 	sort.SliceStable(visible, func(i, j int) bool {
 		return visible[i].ActionSeverity().Rank() > visible[j].ActionSeverity().Rank()
 	})
-	listed := map[string]bool{} // groups already printed
+	listed := map[string]bool{}
 	for _, f := range visible {
-		key := ""
-		if g := f.Remediation.Group; g != "" {
-			key = strings.Join([]string{f.Connector, f.Instance, f.Remediation.Action, g}, "\x00")
-			if listed[key] {
+		grouped := f.Remediation.Group != ""
+		if grouped {
+			if listed[groupKey(f)] {
 				continue
 			}
-			listed[key] = true
+			listed[groupKey(f)] = true
 		}
 		sev := f.ActionSeverity()
 		if sev.Rank() < minSev.Rank() {
@@ -347,10 +321,8 @@ func List(w io.Writer, all []finding.Finding, minSev finding.Severity) {
 		}
 		shown++
 		title := f.DisplayTitle()
-		if key != "" {
-			if n := len(Members(visible, f)); n > 1 {
-				title = fmt.Sprintf("%d findings of %s (first: %s)", n, f.Remediation.Group, title)
-			}
+		if n := len(Members(visible, f)); grouped && n > 1 {
+			title = fmt.Sprintf("%d findings of %s (first: %s)", n, f.Remediation.Group, title)
 		}
 		fmt.Fprintf(w, "%s  [%-8s] %-32s %-16s %s\n", f.ID, sev, f.Remediation.Action, f.Selector(), title)
 	}

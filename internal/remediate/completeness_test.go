@@ -75,14 +75,14 @@ func TestVerifyNeedsTheFindingsScopeInspected(t *testing.T) {
 			if c.verify && err != nil {
 				t.Fatalf("want verified, got %v", err)
 			}
-			if !c.verify && !errors.Is(err, ErrUnverified) {
-				t.Fatalf("want ErrUnverified, got %v", err)
+			if !c.verify && !errors.Is(err, errUnverified) {
+				t.Fatalf("want errUnverified, got %v", err)
 			}
 		})
 	}
 	killed := func(context.Context) ([]*run.Result, error) { return []*run.Result{{Name: "macos"}}, nil }
 	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
-	if err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, killed); !errors.Is(err, ErrUnverified) {
+	if err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, killed); !errors.Is(err, errUnverified) {
 		t.Fatalf("a check run without run_end must not verify: %v", err)
 	}
 }

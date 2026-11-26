@@ -17,12 +17,10 @@ import (
 	"github.com/segurata/segurata/internal/keychain"
 )
 
-// run runs `security` and `op` with a timeout and returns stdout, its error carrying stderr; tests
-// swap it.
 var run keychain.Runner = keychain.Exec
 
 // Resolve returns the value a reference points to. ctx bounds the program that reads it, which may
-// be waiting on a prompt nobody will answer in an unattended run.
+// wait on a prompt nobody answers in an unattended run.
 func Resolve(ctx context.Context, ref string) (string, error) {
 	switch {
 	case strings.HasPrefix(ref, "env:"):

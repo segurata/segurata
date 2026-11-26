@@ -14,6 +14,7 @@ import (
 
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
@@ -28,8 +29,8 @@ type CLI struct {
 	Config   string        // config file whose expected rules sync applies; "" means none
 	KeyPath  string        // fingerprint key; "" means fingerprint.DefaultPath
 	Home     func() (string, error)
-	User     string // Keychain account for replace --to-keychain
-	Exec     Runner // pbpaste, pbcopy, security
+	User     string          // Keychain account for replace --to-keychain
+	Exec     keychain.Runner // pbpaste, pbcopy (empty stdin clears the clipboard), security
 	Now      func() time.Time
 }
 
@@ -48,7 +49,6 @@ const usage = `usage: segurata rotations <command>
   closed for reopen) whose locations all lie under that path, e.g. a test log full of fixtures.
   sync, done, snooze, ignore and reopen are segurata track's, on secrets only.`
 
-// Run executes one subcommand and returns the exit code.
 func (c CLI) Run(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(c.Err, usage)
@@ -64,9 +64,8 @@ func (c CLI) Run(args []string) int {
 		fmt.Fprintln(c.Err, usage)
 		return 2
 	}
-	// Commands that save hold the tracker lock from load to save. replace does not: it holds the
-	// tracker across the clipboard, a confirmation and file writes, and records each outcome with
-	// tracker.Update instead.
+	// next --log saves under the lock; replace records with tracker.Update instead, not holding the
+	// lock across the clipboard, a confirmation and the writes.
 	now := c.Now()
 	t, path, unlock, err := tracker.LoadFor(c.Paths, now, cmd == "next")
 	defer unlock()
@@ -186,7 +185,6 @@ func (c CLI) show(t *tracker.Tracker, args []string) int {
 	return 0
 }
 
-// printLiveness says what the provider answered when the secret was tried.
 func printLiveness(w io.Writer, l *secretrisk.Liveness) {
 	if l == nil {
 		fmt.Fprintln(w, "liveness:    unchecked")
@@ -199,7 +197,6 @@ func printLiveness(w io.Writer, l *secretrisk.Liveness) {
 	fmt.Fprintln(w)
 }
 
-// printAttribution says whose the secret is and why.
 func printAttribution(w io.Writer, a *attribution.Result) {
 	if a == nil {
 		fmt.Fprintln(w, "\nowner:       not attributed yet (run segurata rotations sync)")

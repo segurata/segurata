@@ -526,7 +526,8 @@ func TestBackupIsOptInAndLoud(t *testing.T) {
 
 func TestScopeIsRequired(t *testing.T) {
 	fx := newFixture(t)
-	for _, args := range [][]string{{}, {"--apply"}, {"--trails", "--backup"}, {"--trails", "--min-priority", "P7"}, {"--trails", "x"}} {
+	for _, args := range [][]string{{}, {"--apply"}, {"--trails", "--backup"}, {"--trails", "--yes"}, {"--trails", "--min-age", "-1s"},
+		{"--trails", "--min-priority", "P7"}, {"--trails", "x"}, {"--bogus"}} {
 		if code, _ := fx.run("", false, args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
 		}
@@ -539,5 +540,31 @@ func TestMissingFingerprintKeyFails(t *testing.T) {
 	code, out := fx.run("", false, "--trails")
 	if code != 1 || !strings.Contains(out, "inventory local-secrets") {
 		t.Errorf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestAFileChangedAfterThePlanIsLeftAlone(t *testing.T) {
+	fx := newFixture(t)
+	p := fx.write(".claude/projects/a/s.jsonl", fx.transcript(), 0o600)
+	calls := 0
+	fx.during = func() {
+		if calls++; calls == 2 { // apply's lsof: an agent appended after the plan
+			f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = f.WriteString(`{"uuid":"6"}` + "\n")
+			f.Close()
+			if err := os.Chtimes(p, fx.old, fx.old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	code, out := fx.run("", false, "--trails", "--apply", "--yes")
+	if code != 0 || !strings.Contains(out, "Left alone: ~/.claude/projects/a/s.jsonl ("+skipChanged+")") || !strings.Contains(out, "Rewrote 0 files") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !strings.Contains(fx.read(p), fx.secrets["anthropic"]) || !strings.HasSuffix(fx.read(p), `{"uuid":"6"}`+"\n") {
+		t.Error("a file changed after the plan was rewritten")
 	}
 }

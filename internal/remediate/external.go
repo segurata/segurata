@@ -10,40 +10,34 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// ErrPluginSudo refuses a plan from an external connector that needs root. The core runs a sudo
-// step itself, with the owner's terminal attached, and only when the step is on a hand-written
-// allowlist of exact argument lists. A plugin's argv cannot be on that list: the core has never
-// seen it before the plan arrives, so it cannot vet it, and running it as root would hand the
-// plugin root on the owner's say-so alone.
-var ErrPluginSudo = errors.New("external connectors cannot run commands as root (protocol 2 has no sudo): fix this one by hand")
+// errPluginSudo: the core runs sudo only for argv on its own allowlist, and a plugin's argv is
+// unknown until the plan arrives, so running it as root would hand the plugin root.
+var errPluginSudo = errors.New("external connectors cannot run commands as root (protocol 2 has no sudo): fix this one by hand")
 
-// External remediates through an external connector's `plan` and `apply` subcommands (protocol 2).
-// Execute shows the plan and asks for confirmation exactly as for a built-in. The connector runs
-// the plan itself, as the owner; the core vets what it can: the action, the absence of sudo, and
-// that the plan it applies is the one that was shown.
-type External struct {
-	Conn *connector.External
-	Req  connector.Request // the finding's instance: config and resolved secrets
+// external remediates through an external connector's `plan` and `apply` (protocol 2). The
+// connector runs the plan itself, as the owner.
+type external struct {
+	conn *connector.External
+	req  connector.Request // the finding's instance: config and resolved secrets
 }
 
-func (x External) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
-	reply, err := x.Conn.RequestPlan(ctx, connector.RemediationRequest{Request: x.Req, Finding: f})
+func (x external) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
+	reply, err := x.conn.RequestPlan(ctx, connector.RemediationRequest{Request: x.req, Finding: f})
 	if err != nil {
 		return connector.Plan{}, err
 	}
-	return vetPlugin(x.Conn.Describe().Name, f, reply)
+	return vetPlugin(x.conn.Describe().Name, f, reply)
 }
 
-// Apply runs the connector's `apply` with p, the plan the owner confirmed.
-func (x External) Apply(ctx context.Context, f finding.Finding, p connector.Plan, io connector.IO) error {
-	return x.Conn.RequestApply(ctx, connector.RemediationRequest{Request: x.Req, Finding: f, Plan: &p}, io.Out, io.Err)
+func (x external) Apply(ctx context.Context, f finding.Finding, p connector.Plan, io connector.IO) error {
+	return x.conn.RequestApply(ctx, connector.RemediationRequest{Request: x.req, Finding: f, Plan: &p}, io.Out, io.Err)
 }
 
 // vetPlugin refuses a plan the core cannot show honestly or must not run.
 func vetPlugin(name string, f finding.Finding, reply connector.PlanReply) (connector.Plan, error) {
 	p := reply.Plan
 	if reply.SudoRequested || p.NeedsSudo() {
-		return connector.Plan{}, fmt.Errorf("%s: %w", name, ErrPluginSudo)
+		return connector.Plan{}, fmt.Errorf("%s: %w", name, errPluginSudo)
 	}
 	if p.Action != f.Remediation.Action {
 		return connector.Plan{}, fmt.Errorf("%s planned action %q for a finding whose action is %q", name, p.Action, f.Remediation.Action)

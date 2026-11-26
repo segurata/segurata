@@ -33,21 +33,6 @@ func literalFinder(values ...string) finder {
 	}
 }
 
-func TestStringSpans(t *testing.T) {
-	line := `{"a" : "x\"y", "b":[1,"z",{"c":null}], "d":true}`
-	spans, err := stringSpans(line)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, s := range spans {
-		got = append(got, line[s[0]:s[1]])
-	}
-	if want := []string{`"a"`, `"x\"y"`, `"b"`, `"z"`, `"c"`, `"d"`}; strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("spans %q, want %q", got, want)
-	}
-}
-
 func TestEscapedSecretIsReplacedInsideTheDecodedString(t *testing.T) {
 	secret := fake("tok", 30)
 	// The raw line spells one character of the secret as a \u escape, so it is not a substring.
@@ -120,8 +105,7 @@ func TestWholeJSONFileStaysValid(t *testing.T) {
 	}
 }
 
-// The hand-written JSON scanners must agree with encoding/json: wholeContent with json.Valid of
-// the text between quotes, stringSpans with the string tokens json.Decoder reads.
+// The hand-written JSON scanners must agree with encoding/json. Fuzz seeds run as tests too.
 
 func decoderSpans(line string) [][2]int {
 	dec := json.NewDecoder(strings.NewReader(line))
@@ -147,7 +131,8 @@ func jsonCorpus() []string {
 		enc, _ := json.Marshal(map[string]any{"k": s, "n": []any{1, s, map[string]any{"x\"y": s}, nil, true}, "e": ""})
 		out = append(out, string(enc))
 	}
-	out = append(out, testcorpus.Line(r, 200_000, 8, pool), `[]`, `{}`, `[ "a" , {"b" : "\"\\"} ]`)
+	out = append(out, testcorpus.Line(r, 200_000, 8, pool), `[]`, `{}`, `[ "a" , {"b" : "\"\\"} ]`,
+		`{"a" : "x\"y", "b":[1,"z",{"c":null}], "d":true}`)
 	return out
 }
 
@@ -172,14 +157,6 @@ func wholeContentSamples() []string {
 		}
 	}
 	return out
-}
-
-func TestWholeContentAgreesWithJSONValid(t *testing.T) {
-	for _, s := range wholeContentSamples() {
-		if got, want := wholeContent(s), json.Valid([]byte(`"`+s+`"`)); got != want {
-			t.Errorf("%q: %v, json.Valid %v", s, got, want)
-		}
-	}
 }
 
 func FuzzWholeContent(f *testing.F) {

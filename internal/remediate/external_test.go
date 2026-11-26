@@ -90,7 +90,7 @@ func TestExternalRemediationShowsConfirmsAndApplies(t *testing.T) {
 func TestExternalApplyRefusesAPlanThatChangedSinceShown(t *testing.T) {
 	changed := strings.Replace(goodPlan, "t1", "t2", 1)
 	e, applied := demoPlugin(t, goodPlan, changed)
-	r := External{Conn: e}
+	r := external{conn: e}
 	err := Execute(context.Background(), pluginFinding, r, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t))
 	if err == nil || !strings.Contains(err.Error(), "plan changed") {
 		t.Fatalf("want a refusal, got %v", err)
@@ -101,27 +101,31 @@ func TestExternalApplyRefusesAPlanThatChangedSinceShown(t *testing.T) {
 }
 
 func TestExternalPlansAreVetted(t *testing.T) {
-	refused := map[string]string{
-		"sudo step":       `{"action":"demo.token.revoke","summary":"x","commands":[{"argv":["/bin/rm","x"],"sudo":true}]}`,
-		"needs_sudo":      `{"action":"demo.token.revoke","summary":"x","needs_sudo":true}`,
-		"other action":    `{"action":"demo.other","summary":"x"}`,
-		"no summary":      `{"action":"demo.token.revoke","summary":" "}`,
-		"empty command":   `{"action":"demo.token.revoke","summary":"x","commands":[{"argv":[]}]}`,
-		"empty undo argv": `{"action":"demo.token.revoke","summary":"x","undo":[{"argv":[""]}]}`,
+	refused := []struct{ why, reply, err string }{
+		{"sudo step", `{"action":"demo.token.revoke","summary":"x","commands":[{"argv":["/bin/rm","x"],"sudo":true}]}`, errPluginSudo.Error()},
+		{"needs_sudo", `{"action":"demo.token.revoke","summary":"x","needs_sudo":true}`, errPluginSudo.Error()},
+		{"other action", `{"action":"demo.other","summary":"x"}`, `planned action "demo.other"`},
+		{"no summary", `{"action":"demo.token.revoke","summary":" "}`, "without a summary"},
+		{"empty command", `{"action":"demo.token.revoke","summary":"x","commands":[{"argv":[]}]}`, "empty command"},
+		{"empty undo argv", `{"action":"demo.token.revoke","summary":"x","undo":[{"argv":[""]}]}`, "empty command"},
 	}
-	for why, reply := range refused {
-		e, _ := demoPlugin(t, reply)
-		_, err := External{Conn: e}.Plan(context.Background(), pluginFinding)
-		if err == nil {
-			t.Errorf("%s: accepted", why)
+	replies := make([]string, len(refused))
+	for i, c := range refused {
+		replies[i] = c.reply
+	}
+	e, _ := demoPlugin(t, replies...) // answers each plan with the next reply
+	for _, c := range refused {
+		_, err := (external{conn: e}).Plan(context.Background(), pluginFinding)
+		if err == nil || !strings.Contains(err.Error(), c.err) {
+			t.Errorf("%s: want %q, got %v", c.why, c.err, err)
 		}
-		if strings.Contains(why, "sudo") && !errors.Is(err, ErrPluginSudo) {
-			t.Errorf("%s: want ErrPluginSudo, got %v", why, err)
+		if c.err == errPluginSudo.Error() && !errors.Is(err, errPluginSudo) {
+			t.Errorf("%s: want errPluginSudo wrapped, got %v", c.why, err)
 		}
 	}
 }
 
-func TestForExternalNeedsADeclaredActionAndProtocol2(t *testing.T) {
+func TestForExternalNeedsADeclaredAction(t *testing.T) {
 	e, _ := demoPlugin(t, goodPlan)
 	req := func(finding.Finding) (connector.Credentials, error) { return connector.Credentials{}, nil }
 	undeclared := pluginFinding
@@ -131,12 +135,12 @@ func TestForExternalNeedsADeclaredActionAndProtocol2(t *testing.T) {
 	}
 	if _, err := For(pluginFinding, []connector.Connector{e}, func(finding.Finding) (connector.Credentials, error) {
 		return connector.Credentials{}, errors.New("secret missing")
-	}); err == nil {
-		t.Fatal("a request that cannot be built must stop the remediation")
+	}); err == nil || !strings.Contains(err.Error(), "secret missing") {
+		t.Fatalf("a request that cannot be built must stop the remediation: %v", err)
 	}
 	v1 := connectortest.Plugin(t, "demo", `case "$1" in describe) echo '{"name":"demo","protocol":1}';; esac
 `)
-	if _, err := For(pluginFinding, []connector.Connector{v1}, req); err == nil {
-		t.Fatal("a protocol 1 connector cannot remediate")
+	if _, err := For(pluginFinding, []connector.Connector{v1}, req); err == nil || !strings.Contains(err.Error(), "remediates") {
+		t.Fatalf("a protocol 1 connector declares no remediation: %v", err)
 	}
 }

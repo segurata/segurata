@@ -80,45 +80,53 @@ func TestDryRunPrintsThePlanAndNeverApplies(t *testing.T) {
 	}
 }
 
-func TestApplyRefusesWithoutATerminalUnlessYes(t *testing.T) {
-	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
-	err := Execute(context.Background(), target, r, Options{Apply: true, TTY: false, IO: quietIO()}, neverReinventory(t))
-	if !errors.Is(err, prompt.ErrNotTTY) || r.applied != 0 {
-		t.Fatalf("err=%v applied=%d", err, r.applied)
+func TestApplyNeedsAConfirmation(t *testing.T) {
+	cases := []struct {
+		answer   string
+		yes, tty bool
+		applied  int
+		err      error
+	}{
+		{answer: "", tty: false, applied: 0, err: prompt.ErrNotTTY},
+		{answer: "", yes: true, applied: 1},
+		{answer: "y\n", tty: true, applied: 1},
+		{answer: "YES\n", tty: true, applied: 1},
+		{answer: "\n", tty: true},
+		{answer: "n\n", tty: true},
+		{answer: "", tty: true},
+		{answer: "sure\n", tty: true},
 	}
-	if err := Execute(context.Background(), target, r, Options{Apply: true, Yes: true, IO: quietIO()}, results()); err != nil || r.applied != 1 {
-		t.Fatalf("--yes: err=%v applied=%d", err, r.applied)
-	}
-}
-
-func TestApplyAsksAndOnlyAcceptsYes(t *testing.T) {
-	for answer, want := range map[string]int{"y\n": 1, "YES\n": 1, "\n": 0, "n\n": 0, "": 0, "sure\n": 0} {
+	for _, c := range cases {
 		r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
 		io := quietIO()
-		io.In = strings.NewReader(answer)
-		if err := Execute(context.Background(), target, r, Options{Apply: true, TTY: true, IO: io}, results()); err != nil {
-			t.Fatalf("%q: %v", answer, err)
+		io.In = strings.NewReader(c.answer)
+		check := results()
+		if c.applied == 0 {
+			check = neverReinventory(t)
 		}
-		if r.applied != want {
-			t.Errorf("answer %q applied %d times, want %d", answer, r.applied, want)
+		err := Execute(context.Background(), target, r, Options{Apply: true, Yes: c.yes, TTY: c.tty, IO: io}, check)
+		if !errors.Is(err, c.err) || r.applied != c.applied {
+			t.Errorf("answer %q yes=%v tty=%v: err=%v applied=%d, want %v and %d", c.answer, c.yes, c.tty, err, r.applied, c.err, c.applied)
 		}
 	}
 }
 
 func TestMain(m *testing.M) {
-	defaultSleep = func(time.Duration) {} // no real waiting in tests
+	sleep = func(time.Duration) {}
 	os.Exit(m.Run())
 }
 
 func TestVerifyAfterApply(t *testing.T) {
 	r := &fakeRemediator{plan: connector.Plan{Action: "macos.firewall.enable"}}
 	var slept []time.Duration
-	opt := Options{Apply: true, Yes: true, IO: quietIO(), Sleep: func(d time.Duration) { slept = append(slept, d) }}
+	sleep = func(d time.Duration) { slept = append(slept, d) }
+	t.Cleanup(func() { sleep = func(time.Duration) {} })
+	opt := Options{Apply: true, Yes: true, IO: quietIO()}
 	if err := Execute(context.Background(), target, r, opt, results("other")); err != nil {
 		t.Fatalf("finding gone should pass: %v", err)
 	}
-	if err := Execute(context.Background(), target, r, opt, results("other", target.ID)); !errors.Is(err, ErrStillPresent) {
-		t.Fatalf("finding still there: want ErrStillPresent, got %v", err)
+	if err := Execute(context.Background(), target, r, opt, results("other", target.ID)); !errors.Is(err, errStillPresent) {
+		t.Fatalf("finding still there: want errStillPresent, got %v", err)
 	}
 	if len(slept) == 0 || slept[0] < time.Second {
 		t.Fatalf("the check must wait for the fix to settle before looking, slept %v", slept)
@@ -132,13 +140,13 @@ func TestVerifyAfterApply(t *testing.T) {
 		}
 		return results("other", target.ID)(ctx)
 	}
-	if err := Execute(context.Background(), target, r, opt, flapping); !errors.Is(err, ErrStillPresent) {
+	if err := Execute(context.Background(), target, r, opt, flapping); !errors.Is(err, errStillPresent) {
 		t.Fatalf("a finding that comes back on a later check is not fixed: got %v", err)
 	}
 	failed := func(context.Context) ([]*run.Result, error) {
 		return []*run.Result{{Name: "macos", Err: errors.New("could not start")}}, nil
 	}
-	if err := Execute(context.Background(), target, r, opt, failed); err == nil || errors.Is(err, ErrStillPresent) {
+	if err := Execute(context.Background(), target, r, opt, failed); err == nil || errors.Is(err, errStillPresent) {
 		t.Fatalf("a check that could not run must not count as fixed: %v", err)
 	}
 }
@@ -148,12 +156,56 @@ func TestForPicksCoreFileActionsAndRefusesManualFindings(t *testing.T) {
 		t.Fatal("manual finding should not be remediable")
 	}
 	r, err := For(finding.Finding{Connector: "local-secrets", Remediation: finding.Remediation{Action: connector.ActionChmod600}}, nil, nil)
-	if _, ok := r.(Files); err != nil || !ok {
+	if _, ok := r.(files); err != nil || !ok {
 		t.Fatalf("file.chmod600 belongs to the core: %T %v", r, err)
 	}
 	if _, err := For(finding.Finding{Connector: "nope", Remediation: finding.Remediation{Action: "nope.fix"}}, nil, nil); err == nil {
 		t.Fatal("missing connector should fail")
 	}
+	builtin := &fakeConnector{fakeRemediator: &fakeRemediator{}}
+	if r, err := For(target, []connector.Connector{builtin}, nil); err != nil || r != builtin {
+		t.Fatalf("a built-in remediator remediates itself: %v %v", r, err)
+	}
+	if _, err := For(target, []connector.Connector{inventoryOnly{}}, nil); err == nil || !strings.Contains(err.Error(), "cannot remediate") {
+		t.Fatalf("a connector without remediation: %v", err)
+	}
+	cred := credentialed{}
+	if _, err := For(target, []connector.Connector{cred}, nil); err == nil || !strings.Contains(err.Error(), "no credentials") {
+		t.Fatalf("a credentialed remediator without credentials: %v", err)
+	}
+	r, err = For(target, []connector.Connector{cred}, func(finding.Finding) (connector.Credentials, error) {
+		return connector.Credentials{WriteRefs: map[string]string{"K": "env:K"}}, nil
+	})
+	if got, ok := r.(credentialed); err != nil || !ok || got.creds.WriteRefs["K"] != "env:K" {
+		t.Fatalf("the instance's credentials reach the remediator: %#v %v", r, err)
+	}
+}
+
+type inventoryOnly struct{}
+
+func (inventoryOnly) Describe() connector.Description { return connector.Description{Name: "macos"} }
+func (inventoryOnly) Inventory(context.Context, connector.Request, connector.Emitter) error {
+	return nil
+}
+
+type fakeConnector struct {
+	inventoryOnly
+	*fakeRemediator
+}
+
+type credentialed struct {
+	inventoryOnly
+	creds connector.Credentials
+}
+
+func (c credentialed) WithCredentials(cs connector.Credentials) connector.Remediator {
+	return credentialed{creds: cs}
+}
+func (credentialed) Plan(context.Context, finding.Finding) (connector.Plan, error) {
+	return connector.Plan{}, nil
+}
+func (credentialed) Apply(context.Context, finding.Finding, connector.Plan, connector.IO) error {
+	return nil
 }
 
 func TestChmod600PlansExactlyAndApplies(t *testing.T) {
@@ -167,7 +219,7 @@ func TestChmod600PlansExactlyAndApplies(t *testing.T) {
 	}
 	f := finding.Finding{Kind: finding.KindExposure, Evidence: map[string]any{"path": "~/.env"},
 		Remediation: finding.Remediation{Action: connector.ActionChmod600}}
-	fs := Files{Home: func() (string, error) { return dir, nil }}
+	fs := files{home: func() (string, error) { return dir, nil }}
 	p, err := fs.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +250,7 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 	_ = os.WriteFile(path, nil, 0o600)
 	_ = os.Chmod(path, 0o640)
 	f := finding.Finding{Evidence: map[string]any{"path": path}, Remediation: finding.Remediation{Action: connector.ActionChmod600}}
-	p, err := Files{}.Plan(context.Background(), f)
+	p, err := files{}.Plan(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +258,7 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 	_ = os.WriteFile(other, nil, 0o600)
 	_ = os.Chmod(other, 0o640)
 	p.Files[0].Path = other
-	altered := &connectortest.ShownOnce{Remediator: Files{}, Shown: &p}
+	altered := &connectortest.ShownOnce{Remediator: files{}, Shown: &p}
 	if err := Execute(context.Background(), f, altered, Options{Apply: true, Yes: true, IO: quietIO()}, neverReinventory(t)); err == nil {
 		t.Fatal("applied an altered plan")
 	}
@@ -217,7 +269,7 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 	_ = os.Symlink(path, link)
 	for _, bad := range []string{link, "relative/key", ""} {
 		g := finding.Finding{Evidence: map[string]any{"path": bad}, Remediation: finding.Remediation{Action: connector.ActionChmod600}}
-		if _, err := (Files{}).Plan(context.Background(), g); err == nil {
+		if _, err := (files{}).Plan(context.Background(), g); err == nil {
 			t.Errorf("planned chmod on %q", bad)
 		}
 	}
@@ -234,7 +286,7 @@ func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
 		Undo:        []connector.Step{{Argv: []string{"/bin/echo", "off"}}},
 	}
 	var out bytes.Buffer
-	Print(&out, f, p)
+	printPlan(&out, f, p)
 	want := "Finding  abc123 [" + string(finding.SevMedium) + "] macos · mac · Firewall off\n" +
 		"Action   macos.firewall.enable\n" +
 		"Plan     Turn on the firewall.\n" +
@@ -251,7 +303,7 @@ func TestPrintShowsEverySectionOfThePlan(t *testing.T) {
 	}
 
 	out.Reset()
-	Print(&out, f, connector.Plan{Action: "a", Summary: "s", Commands: []connector.Step{{Argv: []string{"/bin/true"}}}})
+	printPlan(&out, f, connector.Plan{Action: "a", Summary: "s", Commands: []connector.Step{{Argv: []string{"/bin/true"}}}})
 	if !strings.Contains(out.String(), "\nRuns, as you:\n  /bin/true\n") || strings.Contains(out.String(), "Undo") {
 		t.Fatalf("plan without sudo or undo printed:\n%s", out.String())
 	}
@@ -261,7 +313,7 @@ func TestPrintEscapesControlCharactersInPlan(t *testing.T) {
 	path := "/tmp/line\nwith\x1b-control\u202e"
 	plan := connector.Plan{Summary: "Restrict " + path, Files: []connector.FileChange{{Path: path, Mode: 0o600, Was: 0o644}}}
 	var out bytes.Buffer
-	Print(&out, finding.Finding{Title: path}, plan)
+	printPlan(&out, finding.Finding{Title: path}, plan)
 	if strings.ContainsAny(out.String(), "\x1b\u202e") || !strings.Contains(out.String(), `line\nwith\x1b-control\u202e`) {
 		t.Fatalf("unsafe plan rendering: %q", out.String())
 	}

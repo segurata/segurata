@@ -10,12 +10,10 @@ import (
 	"github.com/segurata/segurata/connectors/localsecrets"
 )
 
-// finder returns the secrets to replace in a piece of text: local-secrets' hits, already filtered
-// by the command's scope.
+// finder returns the secrets in scope in a piece of text.
 type finder func(text string) []localsecrets.Hit
 
-// memo remembers what find returned for each text: rewriting a line asks again about texts it
-// already searched (the line itself when nothing in it was replaced, unchanged strings).
+// memo caches find per text: rewriting a line searches unchanged texts again.
 func (find finder) memo() finder {
 	seen := map[string][]localsecrets.Hit{}
 	return func(text string) []localsecrets.Hit {
@@ -28,9 +26,9 @@ func (find finder) memo() finder {
 	}
 }
 
-// Tag is what replaces a secret: its type and the first eight characters of its fingerprint, so
-// the redacted copy still points at its rotation item.
-func Tag(h localsecrets.Hit) string {
+// tag names the secret's type and fingerprint prefix, so the redacted copy points at its rotation
+// item.
+func tag(h localsecrets.Hit) string {
 	fp := h.Fingerprint
 	if len(fp) > 8 {
 		fp = fp[:8]
@@ -38,7 +36,6 @@ func Tag(h localsecrets.Hit) string {
 	return "[REDACTED:" + h.Type + ":" + fp + "]"
 }
 
-// result is one file rewritten in memory.
 type result struct {
 	out     []byte
 	applied []localsecrets.Hit // the secrets replaced; their offsets refer to the text they were found in
@@ -46,11 +43,10 @@ type result struct {
 	residue int                // secrets found that could not be replaced without breaking JSON
 }
 
-// errBrokeJSON means a replacement would turn valid JSON into invalid JSON; the file is left alone.
 var errBrokeJSON = errors.New("the replacement would break its JSON")
 
-// rewrite replaces the secrets on the given lines (1-based, ascending) of raw. Every other byte is
-// kept. A line that is valid JSON stays valid JSON, and so does a whole file that was.
+// rewrite replaces the secrets on the given lines (1-based, ascending) of raw, keeping every other
+// byte. Valid JSON, a line or the whole file, stays valid.
 func rewrite(raw []byte, lines []int, find finder) (result, error) {
 	var res result
 	var b bytes.Buffer
@@ -88,12 +84,9 @@ func rewrite(raw []byte, lines []int, find finder) (result, error) {
 	return res, nil
 }
 
-// rewriteLine replaces the secrets of one line. A plain line (shell history, a log) has each
-// secret replaced where it stands, which keeps zsh's `: <ts>:<d>;cmd` prefix and every other
-// byte. A JSON line is edited inside its string values: first where the secret stands in the raw
-// line (most secrets need no JSON escaping, so the raw bytes are the value), then inside the
-// decoded value of every string that holds escapes, re-encoding only that string, so field order
-// and the rest of the line are kept.
+// rewriteLine replaces the secrets of one line. A plain line is spliced where each secret stands.
+// A JSON line is edited inside its strings, first in the raw bytes, then in the decoded value of
+// each string holding escapes, re-encoding only that string so field order is kept.
 func rewriteLine(line string, find finder, res *result) (string, error) {
 	find = find.memo()
 	t := strings.TrimSpace(line)
@@ -115,8 +108,7 @@ func rewriteLine(line string, find finder, res *result) (string, error) {
 	if !json.Valid([]byte(out)) {
 		return "", errBrokeJSON
 	}
-	// A second pass over the escaped strings finds what the first left. When the first replaced
-	// nothing it returned its input unchanged, and the same pass over the same text finds nothing.
+	// A second escaped pass counts what the first left; it finds more only if the first changed the line.
 	var probe result
 	if len(res.applied) > applied {
 		if _, err := rewriteEscaped(out, find, &probe); err != nil {
@@ -127,10 +119,8 @@ func rewriteLine(line string, find finder, res *result) (string, error) {
 	return out, nil
 }
 
-// rewriteRaw replaces the secrets that stand, byte for byte, inside one JSON string of the raw
-// line. A match is taken only when the bytes before it, the match and the bytes after it are each
-// whole JSON string content (no escape cut in two), so the string still decodes to the same text
-// with the tag in place of the secret. A match that crosses a quote is left alone.
+// rewriteRaw replaces the secrets that stand byte for byte inside one JSON string of the line, when
+// the text before, the match and the text after are each whole string content (no escape cut).
 func rewriteRaw(line string, find finder, res *result) (string, error) {
 	hs := find(line)
 	if len(hs) == 0 {
@@ -157,8 +147,7 @@ func rewriteRaw(line string, find finder, res *result) (string, error) {
 	return splice(line, ok, res), nil
 }
 
-// wholeContent reports whether s is complete JSON string content: no bare quote, no control
-// character, no cut escape. It is json.Valid of s between quotes, without copying s.
+// wholeContent is json.Valid of s between quotes, without copying s.
 func wholeContent(s string) bool {
 	for i := 0; i < len(s); i++ {
 		switch c := s[i]; {
@@ -186,9 +175,8 @@ func wholeContent(s string) bool {
 
 func isHex(c byte) bool { return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F' }
 
-// rewriteEscaped replaces secrets inside the decoded value of each JSON string that holds an
-// escape (a string without one decodes to its raw bytes, already handled), re-encoding only
-// those strings.
+// rewriteEscaped replaces secrets in the decoded value of each JSON string holding an escape; a
+// string without one is its raw bytes, which rewriteRaw handled.
 func rewriteEscaped(line string, find finder, res *result) (string, error) {
 	spans, err := stringSpans(line)
 	if err != nil {
@@ -216,10 +204,8 @@ func rewriteEscaped(line string, find finder, res *result) (string, error) {
 	return line, nil
 }
 
-// stringSpans returns the byte span of every string token (keys and values) of a JSON text, which
-// must be valid JSON (every caller has checked it, or built it from valid JSON by replacing whole
-// string content): outside strings no quote appears, so each quote opens a token that runs to
-// the next unescaped quote.
+// stringSpans returns the span of every string token of valid JSON: outside strings no quote
+// appears, so each quote opens a token that runs to the next unescaped quote.
 func stringSpans(line string) ([][2]int, error) {
 	var spans [][2]int
 	for i := 0; i < len(line); i++ {
@@ -240,7 +226,6 @@ func stringSpans(line string) ([][2]int, error) {
 	return spans, nil
 }
 
-// encodeString is the JSON form of s, without HTML escaping.
 func encodeString(s string) (string, error) {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
@@ -251,7 +236,7 @@ func encodeString(s string) (string, error) {
 	return strings.TrimSuffix(b.String(), "\n"), nil
 }
 
-// splice replaces each hit (ascending, not overlapping) with its tag and records it.
+// splice replaces each hit (ascending, not overlapping) with its tag.
 func splice(text string, hs []localsecrets.Hit, res *result) string {
 	if len(hs) == 0 {
 		return text
@@ -260,7 +245,7 @@ func splice(text string, hs []localsecrets.Hit, res *result) string {
 	last := 0
 	for _, h := range hs {
 		b.WriteString(text[last:h.Start])
-		b.WriteString(Tag(h))
+		b.WriteString(tag(h))
 		last = h.End
 		res.applied = append(res.applied, h)
 		res.bytes += h.End - h.Start

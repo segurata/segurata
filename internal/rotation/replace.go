@@ -2,6 +2,7 @@ package rotation
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -50,20 +51,26 @@ Plaintext replacements require an untracked file whose POSIX permissions keep it
   --backup                 keep a 0600 copy of each file as it was, next to it. Off by default: a
                            backup holds the OLD value in plaintext, one more copy to delete.`
 
-// A new value must survive being pasted unquoted into a shell line, a .env file or a JSON string.
-// Provider keys, base64, base64url and webhook URLs fit; anything else is edited by hand.
+const (
+	pbpaste     = "/usr/bin/pbpaste"
+	pbcopy      = "/usr/bin/pbcopy"
+	minValueLen = 8
+)
+
 var (
+	// safeValue survives being pasted unquoted into a shell line, a .env file or a JSON string.
 	safeValue   = regexp.MustCompile(`^[A-Za-z0-9._~+/=:@%-]+$`)
 	safeService = regexp.MustCompile(`^[A-Za-z0-9._/@:-]+$`)
 	safeAccount = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	aclDeny     = regexp.MustCompile(`^\s+[0-9]+: \S+( inherited)? deny [a-z_,]+$`)
-	// assignLine is `[export ]NAME=value`, the only shape --to-keychain rewrites.
-	assignLine = regexp.MustCompile(`^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$`)
+	assignLine  = regexp.MustCompile(`^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$`)
 )
 
-const minValueLen = 8
+// lookupLine reads the value back from the Keychain, as docs/secrets.md recommends.
+func lookupLine(service string) string {
+	return fmt.Sprintf(`"$(security find-generic-password -a "$USER" -s %s -w)"`, service)
+}
 
-// lineEdit is one line that holds the old value.
 type lineEdit struct {
 	n        int    // 1-based
 	keychain bool   // rewritten to a Keychain lookup instead of the new value
@@ -85,7 +92,6 @@ type fileEdit struct {
 	next    []byte // the content to write
 }
 
-// replacement is a whole replace run: the item, the old value located in its files, and the edits.
 type replacement struct {
 	item    *tracker.Item
 	hint    secretrisk.Hint
@@ -98,9 +104,8 @@ type replacement struct {
 	warn    []string
 }
 
-// locate finds the old value in every used_in file: on the line the scan recorded, and on any
-// other line of the same file. It refuses when the recorded line no longer holds it. used_in names
-// that resolve to one file (a symlink and its target) make one edit.
+// locate finds the old value on every line of every used_in file, and refuses when a line the
+// scan recorded no longer holds it. Names of one file (a symlink and its target) make one edit.
 func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, error) {
 	if it.Closed() {
 		return nil, fmt.Errorf("%s is %s; `segurata rotations reopen %s` first if it still needs replacing", it.Secret.ID, it.RotationStatus(), it.Secret.ID)
@@ -132,7 +137,6 @@ func locate(it *tracker.Item, key fingerprint.Key, home string) (*replacement, e
 	return r, nil
 }
 
-// names are the used_in names of the file.
 func (f *fileEdit) names() []string { return append([]string{f.path}, f.also...) }
 
 func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
@@ -148,8 +152,8 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 		return nil, fmt.Errorf("%s: the ledger records no line for it; edit it by hand", p)
 	}
 	base, rest := filepath.Dir(p), filepath.Base(p)
-	if r, ok := strings.CutPrefix(p, "~/"); ok {
-		base, rest = home, r
+	if below, ok := strings.CutPrefix(p, "~/"); ok {
+		base, rest = home, below
 	}
 	if !filepath.IsAbs(base) {
 		return nil, fmt.Errorf("%q is not an absolute file path", p)
@@ -159,8 +163,7 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Only links in the part the name spells out (below ~, or the file itself) are worth showing:
-	// the directories above it, like macOS /var -> /private/var, say nothing about this file.
+	// Only links in the part the name spells out are shown, not ones above it like /var -> /private/var.
 	resolvedBase, err := filepath.EvalSymlinks(base)
 	if err != nil {
 		return nil, err
@@ -204,14 +207,14 @@ func (f *fileEdit) has(n int) bool {
 	return false
 }
 
-// find returns the substring of line whose fingerprint is the item's, or "". The hint gives the
-// value's length, prefix and last characters, so only windows that fit it are fingerprinted.
+// find returns the substring of line whose fingerprint is the item's, or "". Only windows that fit
+// the hint are fingerprinted.
 func (r *replacement) find(line string) string {
 	return r.key.Find(line, r.hint.Len, r.item.Fingerprint, r.hint.Fits)
 }
 
-// checkNew validates the new value and fixes the edits. The value is never part of an error.
-func (r *replacement) checkNew(raw []byte, service string) (string, error) {
+// newValue validates the new value. The value is never part of an error.
+func newValue(raw []byte) (string, error) {
 	v := strings.TrimSpace(string(raw))
 	switch {
 	case v == "":
@@ -223,9 +226,14 @@ func (r *replacement) checkNew(raw []byte, service string) (string, error) {
 	case !safeValue.MatchString(v):
 		return "", errors.New("the new value has characters other than letters, digits and . _ ~ + / = : @ % - (quotes, spaces, $, # would need escaping in a shell or .env line); replace it by hand")
 	}
+	return v, nil
+}
+
+// plan fixes the edits that put v in place, or a Keychain lookup of service in shell rc files.
+func (r *replacement) plan(v, service string) error {
 	r.newFP = r.key.Of(v)
 	if r.newFP == r.item.Fingerprint {
-		return "", errors.New("the new value is the old one (same fingerprint): rotate it at the provider and copy the new value")
+		return errors.New("the new value is the old one (same fingerprint): rotate it at the provider and copy the new value")
 	}
 	if p := r.hint.Prefix; p != "" && !strings.HasPrefix(v, p) {
 		r.warn = append(r.warn, fmt.Sprintf("the new value does not start with %q like the old one: check that the clipboard holds the right key", p))
@@ -233,23 +241,23 @@ func (r *replacement) checkNew(raw []byte, service string) (string, error) {
 	r.service = service
 	if service != "" {
 		if !safeService.MatchString(service) {
-			return "", fmt.Errorf("--to-keychain %q: use letters, digits and . _ / @ : -", service)
+			return fmt.Errorf("--to-keychain %q: use letters, digits and . _ / @ : -", service)
 		}
 		if !safeAccount.MatchString(r.account) {
-			return "", fmt.Errorf("user name %q cannot be a Keychain account", r.account)
+			return fmt.Errorf("user name %q cannot be a Keychain account", r.account)
 		}
 		if err := r.planKeychain(); err != nil {
-			return "", err
+			return err
 		}
 	}
 	for _, f := range r.files {
 		f.next = []byte(r.rewrite(f, v))
 	}
-	return v, nil
+	return nil
 }
 
 // planKeychain marks the lines of shell rc files that become Keychain lookups. Each must be a
-// plain `[export ]NAME=old` (quoted or not), so rewriting the whole line loses nothing.
+// plain `[export ]NAME=old`, quoted or not, so rewriting the whole line loses nothing.
 func (r *replacement) planKeychain() error {
 	rc := false
 	for _, f := range r.files {
@@ -280,7 +288,6 @@ func unquote(s string) string {
 	return s
 }
 
-// rewrite returns the file with every planned line edited.
 func (r *replacement) rewrite(f *fileEdit, v string) string {
 	lines := strings.Split(string(f.orig), "\n")
 	for _, le := range f.lines {
@@ -293,8 +300,8 @@ func (r *replacement) rewrite(f *fileEdit, v string) string {
 	return strings.Join(lines, "\n")
 }
 
-// print shows the plan. It never prints a line of a file: the rest of the line may hold another
-// secret. Values appear only as redacted hints.
+// print shows the plan with values as redacted hints, never a line of a file: the rest of the
+// line may hold another secret.
 func (r *replacement) print(w io.Writer, v string, backup bool) {
 	it := r.item
 	before, after := it.Secret.Redacted, secretrisk.Redact(it.Secret.Type, r.hint.Prefix, v)
@@ -390,8 +397,8 @@ func (f *fileEdit) validate(ctx context.Context) error {
 	}
 	if runtime.GOOS == "darwin" {
 		paths := append(dirs, f.abs)
-		// macOS ACLs can grant access beyond the mode bits or propagate to the temporary file.
-		// ls -e emits an extra line per entry. -bn keeps filenames on one line and IDs numeric.
+		// ACLs can grant access beyond the mode bits or reach the temporary file. ls -e prints a line
+		// per entry; -bn keeps names on one line and IDs numeric.
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		cmd := proc.Command(ctx, "/bin/ls", append([]string{"-ldenb", "--"}, paths...)...)
@@ -416,9 +423,9 @@ func safeACLReport(report []byte, paths int) bool {
 	return listed == paths
 }
 
-// Untrusted accounts must not be able to change the path between validation and the rename.
-// A sticky directory owned by root or by the caller protects entries with trusted owners.
-// A private parent owned by the caller also keeps group and other users from reading the file.
+// parentPrivacy refuses a directory another account could change between validation and the
+// rename (a sticky one owned by root or the caller protects its entries), and reports whether a
+// parent owned by the caller keeps others from reaching the file.
 func parentPrivacy(path string) (dirs []string, private bool, err error) {
 	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
 		st, err := os.Stat(dir)
@@ -438,9 +445,8 @@ func parentPrivacy(path string) (dirs []string, private bool, err error) {
 	}
 }
 
-// write applies the edits: every file must still be as planned, checked before any is written,
-// then each is replaced atomically with its mode kept, after an optional backup. It returns the
-// names of the files written so far.
+// write checks every file before writing any, then checks each again right before replacing it
+// atomically. It returns the names written so far.
 func (r *replacement) write(ctx context.Context, backup bool, now time.Time) ([]string, error) {
 	if err := r.preflight(ctx); err != nil {
 		return nil, err
@@ -463,8 +469,8 @@ func (r *replacement) write(ctx context.Context, backup bool, now time.Time) ([]
 	return done, nil
 }
 
-// verify re-reads every file: the old fingerprint must be gone from all of it, each edited line
-// must hold the new value (or the Keychain lookup) and the mode must be unchanged.
+// verify re-reads every file: the old fingerprint gone, each edited line holding the new value or
+// the Keychain lookup, the mode unchanged.
 func (r *replacement) verify(v string) error {
 	for _, f := range r.files {
 		st, err := os.Stat(f.abs)
@@ -501,13 +507,61 @@ func (r *replacement) verify(v string) error {
 	return nil
 }
 
-// note is the history entry of a successful replace.
 func (r *replacement) note(written []string) string {
 	n := "replaced in " + strings.Join(written, ", ")
 	if r.service != "" {
 		n += "; new value in the Keychain as " + r.service
 	}
 	return n
+}
+
+// storeInKeychain checks the files again, stores v and reads it back before any file changes.
+func (r *replacement) storeInKeychain(ctx context.Context, run keychain.Runner, v string) error {
+	if err := r.preflight(ctx); err != nil {
+		return err
+	}
+	kc := keychain.Keychain{Run: run, Account: r.account}
+	if err := kc.Store(ctx, r.service, v); err != nil {
+		return err
+	}
+	got, err := kc.Read(ctx, r.service)
+	if err != nil {
+		return err
+	}
+	if r.key.Of(got) != r.newFP {
+		return fmt.Errorf("the Keychain item %s does not hold the new value after storing it; no file was changed", r.service)
+	}
+	return nil
+}
+
+// readNewValue takes the value from a pipe, never a terminal (it would echo), or the clipboard.
+func (c CLI) readNewValue(ctx context.Context, fromStdin bool) ([]byte, error) {
+	if fromStdin && c.TTY {
+		return nil, errors.New("--stdin reads a piped value; typed on a terminal it would be echoed. Copy it and drop --stdin to read the clipboard")
+	}
+	var raw []byte
+	var err error
+	if fromStdin {
+		raw, err = io.ReadAll(io.LimitReader(c.In, 64<<10))
+	} else {
+		raw, err = c.Exec(ctx, nil, pbpaste)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading the new value: %w", err)
+	}
+	return raw, nil
+}
+
+// recordOn changes the item in the tracker as it is now: the copy replace loaded is stale after
+// the clipboard, the confirmation and the writes.
+func recordOn(path string, now time.Time, fingerprint string, change func(*tracker.Item)) error {
+	return tracker.Update(path, now, func(fresh *tracker.Tracker) error {
+		cur, err := fresh.FindRotate(fingerprint)
+		if err == nil {
+			change(cur)
+		}
+		return err
+	})
 }
 
 func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Time) int {
@@ -534,11 +588,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	if err != nil {
 		return c.fail(err)
 	}
-	keyPath := c.KeyPath
-	if keyPath == "" {
-		keyPath = fingerprint.DefaultPath(home)
-	}
-	key, err := fingerprint.Open(keyPath)
+	key, err := fingerprint.Open(cmp.Or(c.KeyPath, fingerprint.DefaultPath(home)))
 	if err != nil {
 		return c.fail(fmt.Errorf("fingerprint key (the one the scan used): %w", err))
 	}
@@ -549,39 +599,23 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	r.account = c.User
 
 	ctx := context.Background()
-	clip := clipboard{run: c.Exec}
-	var raw []byte
-	if *fromStdin {
-		if c.TTY {
-			return c.fail(errors.New("--stdin reads a piped value; typed on a terminal it would be echoed. Copy it and drop --stdin to read the clipboard"))
-		}
-		raw, err = io.ReadAll(io.LimitReader(c.In, 64<<10))
-	} else {
-		raw, err = clip.paste(ctx)
+	raw, err := c.readNewValue(ctx, *fromStdin)
+	var v string
+	if err == nil {
+		v, err = newValue(raw)
+	}
+	if err == nil {
+		err = r.plan(v, *service)
+	}
+	if err == nil {
+		err = r.preflight(ctx)
 	}
 	if err != nil {
-		return c.fail(fmt.Errorf("reading the new value: %w", err))
-	}
-	v, err := r.checkNew(raw, *service)
-	if err != nil {
-		return c.fail(err)
-	}
-	if err := r.preflight(ctx); err != nil {
 		return c.fail(err)
 	}
 	r.print(c.Out, v, *backup)
 
-	// The copy loaded at the start is stale by now (the clipboard, the confirmation, the writes):
-	// each outcome is recorded into the tracker as it is when recording.
-	record := func(change func(*tracker.Item)) error {
-		return tracker.Update(path, now, func(fresh *tracker.Tracker) error {
-			cur, err := fresh.FindRotate(it.Fingerprint)
-			if err == nil {
-				change(cur)
-			}
-			return err
-		})
-	}
+	record := func(change func(*tracker.Item)) error { return recordOn(path, now, it.Fingerprint, change) }
 	if !*apply {
 		plan := fmt.Sprintf("planned for %s", textfmt.Count(len(r.files), "file", "files"))
 		if err := record(func(it *tracker.Item) { it.Log(now, tracker.EvNote, tracker.ActReplacePlan, plan) }); err != nil {
@@ -590,7 +624,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		fmt.Fprintln(c.Out, "\nDry run recorded in the tracker. Run again with --apply to read the new value and replace the credential.")
 		return 0
 	}
-	// Confirmation needs a terminal on stdin; a value piped in with --stdin leaves --yes as the only way.
+	// A value piped in with --stdin leaves no terminal to confirm on, only --yes.
 	ok, err := prompt.Confirm(c.In, c.Out, *yes, c.TTY && !*fromStdin)
 	if err != nil {
 		return c.fail(err)
@@ -610,19 +644,8 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 		return c.fail(errors.New(note))
 	}
 	if r.service != "" {
-		if err := r.preflight(ctx); err != nil {
+		if err := r.storeInKeychain(ctx, c.Exec, v); err != nil {
 			return failed(err, nil)
-		}
-		kc := keychain.Keychain{Run: c.Exec, Account: r.account}
-		if err := kc.Store(ctx, r.service, v); err != nil {
-			return failed(err, nil)
-		}
-		got, err := kc.Read(ctx, r.service)
-		if err != nil {
-			return failed(err, nil)
-		}
-		if key.Of(got) != r.newFP {
-			return failed(fmt.Errorf("the Keychain item %s does not hold the new value after storing it; no file was changed", r.service), nil)
 		}
 	}
 	written, err := r.write(ctx, *backup, now)
@@ -640,7 +663,7 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	}
 	fmt.Fprintf(c.Out, "\nReplaced in %s and checked. %s is now rotated.\n", textfmt.Count(len(r.files), "file", "files"), it.Secret.ID)
 	if !*fromStdin {
-		if err := clip.clear(ctx); err != nil {
+		if _, err := c.Exec(ctx, nil, pbcopy); err != nil {
 			fmt.Fprintln(c.Err, "rotations: could not clear the clipboard, clear it yourself:", err)
 		} else {
 			fmt.Fprintln(c.Out, "Clipboard cleared.")

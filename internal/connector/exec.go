@@ -25,7 +25,7 @@ func (a Allowlist) Check(action string, s Step) error {
 }
 
 // ActionChmod600 makes one file readable and writable by its owner only (700 when the owner could
-// execute it, so a script keeps running). It is a generic action the core applies (remediate.Files):
+// execute it, so a script keeps running). It is a generic action the core applies (remediate.files):
 // any connector can attach it to a finding by setting Remediation.Action and putting the file's
 // path in evidence.path (absolute, or starting with ~/). With Remediation.Group, one plan closes
 // every file of the group.
