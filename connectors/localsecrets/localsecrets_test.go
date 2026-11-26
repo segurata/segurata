@@ -351,7 +351,7 @@ func (fx *fixture) connector(t *testing.T, gitleaksReport string) *Connector {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 		Home:     func() (string, error) { return fx.home, nil },
 		KeyPath:  func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") },
-		CacheDir: DefaultCacheDir,
+		CacheDir: defaultCacheDir,
 		Now:      func() time.Time { return time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC) },
 	}
 }
@@ -706,7 +706,7 @@ func TestTrailsFindAgreesWithInventory(t *testing.T) {
 	}
 	want := map[string]bool{}
 	for _, f := range rec.findings {
-		if IsTrail(evidence(f, "kind")) && evidence(f, "source") == "scan" {
+		if isTrail(evidence(f, "kind")) && evidence(f, "source") == "scan" {
 			want[evidence(f, "path")+" "+evidence(f, "type")+" "+evidence(f, "fingerprint")] = true
 		}
 	}

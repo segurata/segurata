@@ -78,7 +78,7 @@ func New() *Connector {
 		LookPath:   exec.LookPath,
 		Home:       os.UserHomeDir,
 		KeyPath:    fingerprint.DefaultPath,
-		CacheDir:   DefaultCacheDir,
+		CacheDir:   defaultCacheDir,
 		Now:        time.Now,
 	}
 }
@@ -208,31 +208,15 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	s := newScan(ctx, c, home, cfg, fp, emit)
 	var wg sync.WaitGroup
 	for _, pass := range s.passes(history) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.rg(pass)
-		}()
+		wg.Go(func() { s.rg(pass) })
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		s.byName()
-	}()
+	wg.Go(s.byName)
 	if cfg.dumps == dumpsOn {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.dumpsAll()
-		}()
+		wg.Go(s.dumpsAll)
 	}
 	var repos, failed int
 	if history {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			repos, failed = s.gitleaksAll()
-		}()
+		wg.Go(func() { repos, failed = s.gitleaksAll() })
 	}
 	wg.Wait()
 	s.sshKeys()
@@ -276,9 +260,6 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return s.emitDumps(finding.Status{Account: localAccount, State: finding.StateOK, Detail: detail})
 }
 
-// row is one secret at one location, aggregated over repeated matches.
-type row struct{ ev secretrisk.Evidence }
-
 // scan holds the state of one inventory run.
 type scan struct {
 	ctx  context.Context
@@ -291,7 +272,7 @@ type scan struct {
 	emit connector.Emitter
 
 	mu         sync.Mutex
-	rows       map[string]*row
+	rows       map[string]*secretrisk.Evidence // one secret at one location
 	omitted    int
 	unreadable map[string]bool // paths ripgrep was not allowed to read
 
@@ -301,13 +282,19 @@ type scan struct {
 	own   ownership
 	nb    notebooks
 	stats historyStats
-	historyOnce
 	dumps dumpState
+
+	repoOnce sync.Once
+	repoList []string
+
+	glOnce    sync.Once // the gitleaks version, shared by every repository
+	glVersion string
+	glErr     error
 }
 
 func newScan(ctx context.Context, c *Connector, home string, cfg settings, fp fingerprint.Key, emit connector.Emitter) *scan {
 	return &scan{ctx: ctx, c: c, home: home, src: cfg.reposRoot, cfg: cfg, fp: fp, now: c.Now(), emit: emit,
-		rows: map[string]*row{}, git: gitCache{roots: map[string]string{}, files: map[string]map[string]bool{}, remote: map[string]bool{}}}
+		rows: map[string]*secretrisk.Evidence{}, git: gitCache{roots: map[string]string{}, files: map[string]map[string]bool{}, remote: map[string]bool{}}}
 }
 
 func (s *scan) h(p string) string { return filepath.Join(s.home, p) }
@@ -384,9 +371,9 @@ func bucketOf(ev secretrisk.Evidence) string {
 		return "ok"
 	case ev.Tracked:
 		return "0-git"
-	case IsTrail(ev.Kind):
+	case isTrail(ev.Kind):
 		return "2-trail"
-	case secretrisk.Where("", "", ev.Mode, false, false).Level == secretrisk.Shared:
+	case othersCanRead(ev.Mode):
 		return "1-readable"
 	}
 	return "3-local"
@@ -505,11 +492,11 @@ func (s *scan) store(ev secretrisk.Evidence) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.rows[key]; ok {
-		r.ev.Count++
+		r.Count++
 		return
 	}
 	ev.Count = 1
-	s.rows[key] = &row{ev: ev}
+	s.rows[key] = &ev
 }
 
 // findings turns the aggregated rows into findings, sorted by path, after the steps that need
@@ -522,17 +509,17 @@ func (s *scan) findings() ([]finding.Finding, noiseCounts) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sa := map[string]bool{}
-	for _, r := range s.rows {
-		if r.ev.Type == "gcp-service-account" {
-			sa[fileValueKey(r.ev)] = true
+	for _, ev := range s.rows {
+		if ev.Type == "gcp-service-account" {
+			sa[fileValueKey(*ev)] = true
 		}
 	}
 	var evs []secretrisk.Evidence
-	for _, r := range s.rows {
-		if r.ev.Type == privateKeyType && sa[fileValueKey(r.ev)] {
+	for _, ev := range s.rows {
+		if ev.Type == privateKeyType && sa[fileValueKey(*ev)] {
 			continue
 		}
-		evs = append(evs, r.ev)
+		evs = append(evs, *ev)
 	}
 	evs, folded := collapseTemporaryAWS(markReused(inheritForkUpstream(evs)))
 	// A noise copy of a value that has a real copy elsewhere is emitted all the same: it is one more

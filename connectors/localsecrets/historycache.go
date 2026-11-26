@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,8 +39,8 @@ var maxLogOpts = 256 << 10
 // cacheRoot holds the connector's caches: the gitleaks history caches' parent, ~/.cache/segurata.
 func (c *Connector) cacheRoot(home string) string { return filepath.Dir(c.CacheDir(home)) }
 
-// DefaultCacheDir is ~/.cache/segurata/gitleaks.
-func DefaultCacheDir(home string) string {
+// defaultCacheDir is ~/.cache/segurata/gitleaks.
+func defaultCacheDir(home string) string {
 	return filepath.Join(home, ".cache", "segurata", "gitleaks")
 }
 
@@ -302,22 +301,4 @@ func without(a, b []string) []string {
 	return out
 }
 
-func sortedUnique(xs []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, x := range xs {
-		if !seen[x] {
-			seen[x] = true
-			out = append(out, x)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// historyOnce guards the gitleaks version lookup shared by every repository of a run.
-type historyOnce struct {
-	glOnce    sync.Once
-	glVersion string
-	glErr     error
-}
+func sortedUnique(xs []string) []string { return slices.Compact(slices.Sorted(slices.Values(xs))) }

@@ -291,7 +291,7 @@ func anchorOf(src string) anchor {
 		for i, l := range a.lits {
 			a.lits[i] = asciiLower(l)
 		}
-		a.lits = dedupe(a.lits)
+		a.lits = slices.Compact(slices.Sorted(slices.Values(a.lits)))
 	}
 	rest := body
 	if strings.HasPrefix(rest, `\b`) {
@@ -321,11 +321,6 @@ func asciiLower(s string) string {
 		b[i] = lower[b[i]]
 	}
 	return string(b)
-}
-
-func dedupe(ss []string) []string {
-	slices.Sort(ss)
-	return slices.Compact(ss)
 }
 
 // looksBehind reports whether an assertion that reads the byte before the match (\b, \B, ^) can be

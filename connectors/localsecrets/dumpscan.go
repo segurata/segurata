@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -145,30 +146,13 @@ func (s *scan) dumpsIn(repo string) *dumpRepo {
 	return d
 }
 
-// dumpsAll runs the check over every repository, a few at a time. A repository that fails is a
-// status, as with gitleaks.
+// dumpsAll runs the check over every repository; one that fails is a status, as with gitleaks.
 func (s *scan) dumpsAll() {
-	jobs := make(chan string)
-	var wg sync.WaitGroup
-	for range s.cfg.workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for repo := range jobs {
-				if d := s.dumpsIn(repo); d.err != nil {
-					s.emit.Status(finding.Status{Account: s.tilde(repo), Scope: dumpsScope(s.tilde(repo)), State: finding.StateError, Detail: "data dumps: " + d.err.Error()})
-				}
-			}
-		}()
-	}
-	for _, r := range s.repos() {
-		if s.ctx.Err() != nil {
-			break
+	s.eachRepo(func(repo string) {
+		if d := s.dumpsIn(repo); d.err != nil {
+			s.emit.Status(finding.Status{Account: s.tilde(repo), Scope: dumpsScope(s.tilde(repo)), State: finding.StateError, Detail: "data dumps: " + d.err.Error()})
 		}
-		jobs <- r
-	}
-	close(jobs)
-	wg.Wait()
+	})
 }
 
 // markDump flags a gitleaks match inside a detected dump (in_data_dump): the dump finding covers
@@ -244,7 +228,7 @@ func (s *scan) findDumps(repo string) ([]dumpHit, error) {
 	}
 	remote := s.hasRemote(repo)
 	var hits []dumpHit
-	for _, p := range sortedKeys(paths) {
+	for _, p := range slices.Sorted(maps.Keys(paths)) {
 		name := classifyDumpName(p)
 		h := hist[p] // zero when the path is tracked but not in the cached history
 		blobs := h.Blobs
@@ -515,15 +499,6 @@ func (s *scan) visibility(repo string, c *dumpCache) string {
 }
 
 var githubSlugRe = regexp.MustCompile(`\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z`)
-
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
 
 // headExec runs a command and returns at most Limit bytes of its standard output, then stops it:
 // enough of a blob to recognise a dump without reading the rest into memory.

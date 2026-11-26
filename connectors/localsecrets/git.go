@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/gitlocal"
@@ -155,9 +156,14 @@ func configHasRemote(path string) bool {
 	return false
 }
 
-// repos finds git repositories under repos_root (a .git directory at most six levels down, as
-// `find -maxdepth 6`), skipping dependency folders, plus ~/.claude when it is one.
+// repos are the git repositories under repos_root (a .git directory at most six levels down),
+// skipping dependency folders, plus ~/.claude when it is one. The tree is walked once per run.
 func (s *scan) repos() []string {
+	s.repoOnce.Do(func() { s.repoList = s.findRepos() })
+	return s.repoList
+}
+
+func (s *scan) findRepos() []string {
 	var out []string
 	_ = filepath.WalkDir(s.src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
@@ -226,28 +232,18 @@ var gitleaksRules = map[string]string{
 	"jwt":                     "jwt",
 }
 
-// gitleaksAll scans every repository's history, a few at a time, each with its own timeout.
-func (s *scan) gitleaksAll() (repos, failed int) {
-	list := s.repos()
-	s.emit.Log(fmt.Sprintf("gitleaks: %d repositories, %d at a time", len(list), s.cfg.workers))
+// eachRepo runs fn on every repository, gitleaks_workers at a time, until the run is cancelled.
+func (s *scan) eachRepo(fn func(repo string)) {
 	jobs := make(chan string)
 	var wg sync.WaitGroup
-	var mu sync.Mutex
 	for range s.cfg.workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for repo := range jobs {
-				if err := s.gitleaks(repo); err != nil {
-					mu.Lock()
-					failed++
-					mu.Unlock()
-					s.emit.Status(finding.Status{Account: s.tilde(repo), Scope: historyScope(s.tilde(repo)), State: finding.StateError, Detail: "gitleaks: " + err.Error()})
-				}
+				fn(repo)
 			}
-		}()
+		})
 	}
-	for _, r := range list {
+	for _, r := range s.repos() {
 		if s.ctx.Err() != nil {
 			break
 		}
@@ -255,7 +251,19 @@ func (s *scan) gitleaksAll() (repos, failed int) {
 	}
 	close(jobs)
 	wg.Wait()
-	return len(list), failed
+}
+
+// gitleaksAll scans every repository's history, each with its own timeout.
+func (s *scan) gitleaksAll() (repos, failed int) {
+	s.emit.Log(fmt.Sprintf("gitleaks: %d repositories, %d at a time", len(s.repos()), s.cfg.workers))
+	var n atomic.Int64
+	s.eachRepo(func(repo string) {
+		if err := s.gitleaks(repo); err != nil {
+			n.Add(1)
+			s.emit.Status(finding.Status{Account: s.tilde(repo), Scope: historyScope(s.tilde(repo)), State: finding.StateError, Detail: "gitleaks: " + err.Error()})
+		}
+	})
+	return len(s.repos()), int(n.Load())
 }
 
 // runGitleaks scans one repository's history with the JSON report on stdout, so raw values only

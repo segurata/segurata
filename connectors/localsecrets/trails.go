@@ -67,11 +67,8 @@ func (t *Trails) Home() string { return t.s.home }
 // Tilde writes a path under the home folder as ~/…, as findings do.
 func (t *Trails) Tilde(p string) string { return t.s.tilde(p) }
 
-// Kind classifies a path as an inventory does: transcript, history, log, repo or config.
-func (t *Trails) Kind(p string) string { return t.s.kindOf(p) }
-
-// IsTrail reports whether a path is a trail: a transcript, a shell history or a log.
-func IsTrail(kind string) bool { return kind == "transcript" || kind == "history" || kind == "log" }
+// isTrail reports whether a path is a trail: a transcript, a shell history or a log.
+func isTrail(kind string) bool { return kind == "transcript" || kind == "history" || kind == "log" }
 
 // Lines runs ripgrep with the inventory's patterns and returns every trail file holding a
 // candidate match, with the candidate line numbers in ascending order. Without files it covers
@@ -104,7 +101,7 @@ func (t *Trails) Lines(files []string) (map[string][]int, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			eachRGMatch(out, func(path string, line int, _ string) {
-				if !IsTrail(t.s.kindOf(path)) {
+				if !isTrail(t.s.kindOf(path)) {
 					return
 				}
 				if seen[path] == nil {

@@ -70,7 +70,8 @@ func (s *scan) hs(rels []string) []string {
 func (s *scan) passes(history bool) []pass {
 	// gcloud's own logs record its API calls (segurata's gcp connector among them): ~70 info
 	// matches a run, none a secret.
-	noCode := []string{"--max-filesize", "50M", "-g", "!**/gcloud/logs"}
+	limit := []string{"--max-filesize", strconv.Itoa(maxFileSize)}
+	noCode := append(slices.Clone(limit), "-g", "!**/gcloud/logs")
 	for _, e := range codeExts {
 		noCode = append(noCode, "-g", "!*."+e)
 	}
@@ -80,8 +81,8 @@ func (s *scan) passes(history bool) []pass {
 	}
 	return append([]pass{
 		{withAssignment, s.hs(credFiles), noCode},
-		{withAssignment, []string{s.h(".claude")}, append([]string{"--max-filesize", "50M"}, globs("*.json", "!projects", "!plugins/cache")...)},
-		{withAssignment, []string{s.src}, append([]string{"--max-filesize", "50M"}, srcExtra...)},
+		{withAssignment, []string{s.h(".claude")}, slices.Concat(limit, globs("*.json", "!projects", "!plugins/cache"))},
+		{withAssignment, []string{s.src}, slices.Concat(limit, srcExtra)},
 	}, s.trailPasses()...)
 }
 
@@ -289,7 +290,7 @@ func linesAt(path string, want map[int]bool) map[int]string {
 		return out
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil || st.Size() > 50<<20 {
+	if st, err := f.Stat(); err != nil || st.Size() > maxFileSize {
 		return out
 	}
 	r := bufio.NewReader(f)
@@ -393,7 +394,7 @@ func (s *scan) match(path string, line int, text, context string, patterns []pat
 		s.serviceAccount(path, line, kind)
 	default:
 		p, m := c.p, c.subs(text)
-		if p.typ == assignment.typ && !IsTrail(kind) && nearKeyID(keyIDs, line) && awsSecretNearKeyID(c.varName, m[p.group]) {
+		if p.typ == assignment.typ && !isTrail(kind) && nearKeyID(keyIDs, line) && awsSecretNearKeyID(c.varName, m[p.group]) {
 			p, m = awsSecretKey, []string{m[0], m[p.group]}
 		}
 		s.value(path, line, kind, p, m, c.varName, context)
@@ -498,7 +499,7 @@ func privateKeyEvidence(text string) (secretrisk.Evidence, string, bool) {
 // serviceAccount reads a service-account key file and fingerprints its private key, so the same key
 // matches wherever else it appears. In a transcript the private-key match covers it.
 func (s *scan) serviceAccount(path string, line int, kind string) {
-	if IsTrail(kind) {
+	if isTrail(kind) {
 		return
 	}
 	raw, err := readSmall(path)

@@ -263,7 +263,7 @@ func newOwnersFixture(t *testing.T) (*ownersFixture, *Connector) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 		Home:      func() (string, error) { return fx.home, nil },
 		KeyPath:   func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") },
-		CacheDir:  DefaultCacheDir,
+		CacheDir:  defaultCacheDir,
 		Now:       func() time.Time { return time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC) },
 	}
 	return o, c
@@ -614,10 +614,9 @@ func TestThirdPartyCopyNamingAnAccountIsEmitted(t *testing.T) {
 		return secretrisk.Evidence{Fingerprint: fp, Type: "aws-access-key-id", Redacted: "AKIA…(20)", Path: "~/src/lms/k.py", Repo: "~/src/lms",
 			Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Origin: secretrisk.OriginThirdParty, Claims: c}
 	}
-	sc := &scan{rows: map[string]*row{
-		"a": {ev: copyOf("aaaaaaaaaaaaaaaa", attribution.Claims{AWSAccount: "171436882533"})},
-		"b": {ev: copyOf("bbbbbbbbbbbbbbbb", attribution.Claims{AuthorEmail: "me@x.com"})},
-	}}
+	a := copyOf("aaaaaaaaaaaaaaaa", attribution.Claims{AWSAccount: "171436882533"})
+	b := copyOf("bbbbbbbbbbbbbbbb", attribution.Claims{AuthorEmail: "me@x.com"})
+	sc := &scan{rows: map[string]*secretrisk.Evidence{"a": &a, "b": &b}}
 	got, noise := sc.findings()
 	if len(got) != 1 || evidence(got[0], "fingerprint") != "aaaaaaaaaaaaaaaa" || got[0].Severity != finding.SevInfo {
 		t.Fatalf("want only the copy naming an account, as noise: %+v", got)

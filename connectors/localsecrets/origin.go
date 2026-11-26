@@ -124,19 +124,17 @@ func errString(err error) string {
 
 // originOf is whose the repository at root is.
 func (s *scan) originOf(root string) repoOrigin {
+	names := s.ownerNames()
 	s.own.mu.Lock()
+	defer s.own.mu.Unlock()
 	if o, ok := s.own.origins[root]; ok {
-		s.own.mu.Unlock()
 		return o
 	}
-	s.own.mu.Unlock()
-	o := classifyOrigin(githubRemotes(gitConfigPath(root)), s.ownerNames())
-	s.own.mu.Lock()
 	if s.own.origins == nil {
 		s.own.origins = map[string]repoOrigin{}
 	}
+	o := classifyOrigin(githubRemotes(gitConfigPath(root)), names)
 	s.own.origins[root] = o
-	s.own.mu.Unlock()
 	return o
 }
 

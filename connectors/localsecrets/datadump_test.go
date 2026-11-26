@@ -280,7 +280,7 @@ func (r *historyRepo) dumpScan(git, head, gh cli.Runner) (*scan, *recorder) {
 	c := &Connector{
 		Git: git, GitHead: head, GH: gh,
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
-		CacheDir: DefaultCacheDir,
+		CacheDir: defaultCacheDir,
 		Now:      func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
 	}
 	cfg := settings{reposRoot: filepath.Join(r.home, "src"), workers: 2, timeout: time.Minute, gitCache: true}
@@ -433,7 +433,7 @@ func TestDataDumpsOnlyRunsNothingElse(t *testing.T) {
 		LookPath: func(string) (string, error) { return "", errors.New("RG, gitleaks and ssh-keygen must not be needed") },
 		Home:     func() (string, error) { return r.home, nil },
 		KeyPath:  func(home string) string { return filepath.Join(home, ".config", "segurata", "fingerprint.key") },
-		CacheDir: DefaultCacheDir,
+		CacheDir: defaultCacheDir,
 		Now:      time.Now,
 	}
 	rec := &recorder{}

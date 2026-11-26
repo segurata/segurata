@@ -7,6 +7,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/segurata/segurata/internal/finding"
@@ -51,12 +52,7 @@ var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
 func words(s string) []string { return nonWord.Split(s, -1) }
 
 func anyWord(ws []string, set map[string]bool) bool {
-	for _, w := range ws {
-		if set[w] {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(ws, func(w string) bool { return set[w] })
 }
 
 // classifyDumpName judges a repository-relative path by its name alone. Schema, structure and
@@ -98,12 +94,7 @@ func classifyDumpName(rel string) dumpName {
 }
 
 func hasAnySuffix(s string, suffixes []string) bool {
-	for _, x := range suffixes {
-		if strings.HasSuffix(s, x) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(suffixes, func(x string) bool { return strings.HasSuffix(s, x) })
 }
 
 // Content classes found in a dump's first bytes.

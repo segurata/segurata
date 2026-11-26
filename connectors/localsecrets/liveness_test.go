@@ -227,7 +227,7 @@ func TestLivenessRecoversCachedHistoryValues(t *testing.T) {
 	f := newFakeProviders(t)
 	known := &attribution.Known{}
 	check := func() (string, map[string]*secretrisk.Liveness) {
-		c := &Connector{Gitleaks: r.gitleaks(), Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+		c := &Connector{Gitleaks: r.gitleaks(), Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: defaultCacheDir,
 			Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
 			NewChecker: func(home string, cfg liveness.Config) *liveness.Checker {
 				return &liveness.Checker{Config: cfg, Bases: map[string][]string{"stripe": {f.URL}}, Interval: time.Millisecond}
@@ -455,7 +455,7 @@ func newLeakHistory(t *testing.T, file, content, date string, leaks ...map[strin
 // findings or the status line.
 func (h pairHistory) check(t *testing.T, f *fakeProviders, known *attribution.Known, values ...string) (line string, replayed bool, fs []finding.Finding) {
 	t.Helper()
-	c := &Connector{Gitleaks: h.gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: DefaultCacheDir,
+	c := &Connector{Gitleaks: h.gl, Git: cli.Exec{Path: "git", Timeout: time.Minute}, CacheDir: defaultCacheDir,
 		Now: func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) },
 		NewChecker: func(home string, cfg liveness.Config) *liveness.Checker {
 			return &liveness.Checker{Config: cfg, Bases: map[string][]string{"aws": {f.URL}}, Interval: time.Millisecond}

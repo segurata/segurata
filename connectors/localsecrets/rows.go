@@ -1,7 +1,10 @@
 package localsecrets
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -170,16 +173,7 @@ func (n noiseCounts) String() string {
 // topCounts lists "key n" pairs, largest first, at most limit of them (0 for all) and the rest
 // summed.
 func topCounts(m map[string]int, limit int) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if m[keys[i]] != m[keys[j]] {
-			return m[keys[i]] > m[keys[j]]
-		}
-		return keys[i] < keys[j]
-	})
+	keys := slices.SortedFunc(maps.Keys(m), func(a, b string) int { return cmp.Or(cmp.Compare(m[b], m[a]), cmp.Compare(a, b)) })
 	var parts []string
 	rest, restN := 0, 0
 	for i, k := range keys {
