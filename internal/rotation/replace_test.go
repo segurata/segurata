@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -66,7 +67,7 @@ func (f *fakeOS) run(_ context.Context, stdin []byte, name string, args ...strin
 	case name == pbcopy:
 		f.clip = string(stdin)
 		return nil, nil
-	case name == security && len(args) == 1 && args[0] == "-i":
+	case name == keychain.Security && len(args) == 1 && args[0] == "-i":
 		fields := strings.Fields(string(stdin))
 		if len(fields) != 8 || fields[0] != "add-generic-password" || fields[1] != "-U" || fields[2] != "-a" || fields[4] != "-s" || fields[6] != "-w" {
 			return nil, errors.New("unexpected security -i input")
@@ -75,7 +76,7 @@ func (f *fakeOS) run(_ context.Context, stdin []byte, name string, args ...strin
 			f.items[fields[5]] = fields[7]
 		}
 		return []byte("security> "), nil
-	case name == security && len(args) == 6 && args[0] == "find-generic-password":
+	case name == keychain.Security && len(args) == 6 && args[0] == "find-generic-password":
 		v, ok := f.items[args[4]]
 		if !ok {
 			return nil, errors.New("security: The specified item could not be found in the keychain.")
@@ -148,6 +149,20 @@ func read(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// linkZshrc moves ~/.zshrc to ~/dotfiles/zshrc with mode and links it back, as dotfiles setups do.
+func (fx *fixture) linkZshrc(t *testing.T, mode os.FileMode) string {
+	t.Helper()
+	dot := filepath.Join(fx.home, "dotfiles", "zshrc")
+	write(t, dot, read(t, fx.zshrc), mode)
+	if err := os.Remove(fx.zshrc); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dot, fx.zshrc); err != nil {
+		t.Fatal(err)
+	}
+	return dot
 }
 
 func (fx *fixture) id() string { return fx.key.Of(fx.old)[:8] }
@@ -248,7 +263,7 @@ func (fx *fixture) noLeak(t *testing.T, output string) {
 			if strings.Contains(strings.Join(c.args, " "), v) {
 				t.Fatalf("a secret value reached the arguments of %s", c.name)
 			}
-			if strings.Contains(c.stdin, v) && !(c.name == security && c.args[0] == "-i" && v == fx.new) {
+			if strings.Contains(c.stdin, v) && !(c.name == keychain.Security && c.args[0] == "-i" && v == fx.new) {
 				t.Fatalf("a secret value reached the stdin of %s %v", c.name, c.args)
 			}
 		}
@@ -358,14 +373,7 @@ func TestReplaceApply(t *testing.T) {
 
 func TestReplaceFollowsSymlinks(t *testing.T) {
 	fx := newReplaceFixture(t)
-	dot := filepath.Join(fx.home, "dotfiles", "zshrc")
-	write(t, dot, read(t, fx.zshrc), 0o600)
-	if err := os.Remove(fx.zshrc); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(dot, fx.zshrc); err != nil {
-		t.Fatal(err)
-	}
+	dot := fx.linkZshrc(t, 0o600)
 	o, e, code := fx.run(t, "", false, "replace", fx.id(), "--apply", "--yes")
 	if code != 0 {
 		t.Fatalf("apply: %d %s", code, e)
@@ -441,14 +449,7 @@ func TestReplaceAfterAUsedInFileWasDeletedAndRescanned(t *testing.T) {
 // names. The file is planned, written and checked once, under both names, and the item is rotated.
 func TestReplaceWritesAFileUsedUnderTwoNamesOnce(t *testing.T) {
 	fx := newReplaceFixture(t)
-	dot := filepath.Join(fx.home, "dotfiles", "zshrc")
-	write(t, dot, read(t, fx.zshrc), 0o640)
-	if err := os.Remove(fx.zshrc); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(dot, fx.zshrc); err != nil {
-		t.Fatal(err)
-	}
+	dot := fx.linkZshrc(t, 0o640)
 	l, _ := tracker.Load(fx.state)
 	redacted := fx.item(t).Secret.Redacted
 	l.SyncSecrets([]tracker.Sighting{{Evidence: secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted,
@@ -534,6 +535,7 @@ func TestReplaceRefusals(t *testing.T) {
 		{"new value is the old one", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.old }, "y\n", true, []string{"--apply"}, "is the old one"},
 		{"empty clipboard", func(_ *testing.T, fx *fixture) { fx.os.clip = "" }, "y\n", true, []string{"--apply"}, "empty"},
 		{"value with a quote", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.new[:20] + `"` + fx.new[20:] }, "y\n", true, []string{"--apply"}, "by hand"},
+		{"value too short for a key", func(_ *testing.T, fx *fixture) { fx.os.clip = "abc1234" }, "y\n", true, []string{"--apply"}, "too short"},
 		{"value on two lines", func(_ *testing.T, fx *fixture) { fx.os.clip = fx.new + "\n" + fx.new }, "y\n", true, []string{"--apply"}, "several lines"},
 		{"old value moved off the recorded line", func(t *testing.T, fx *fixture) {
 			write(t, fx.env, "# new first line\n"+read(t, fx.env), 0o600)
@@ -610,7 +612,7 @@ func TestReplaceToKeychain(t *testing.T) {
 	}
 	var stored bool
 	for _, c := range fx.os.calls {
-		if c.name == security && c.args[0] == "-i" {
+		if c.name == keychain.Security && c.args[0] == "-i" {
 			stored = strings.Contains(c.stdin, " -a tester -s ANTHROPIC_API_KEY -w ")
 		}
 	}
@@ -647,7 +649,7 @@ func TestReplaceWriteRefusesAFileChangedAfterThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.checkNew([]byte(fx.new), ""); err != nil {
+	if err := r.plan(fx.new, ""); err != nil {
 		t.Fatal(err)
 	}
 	write(t, fx.env, read(t, fx.env)+"LATER=1\n", 0o600)
