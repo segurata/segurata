@@ -74,13 +74,14 @@ func NoRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 
 // StatusError is a non-2xx answer. Message is the provider's error message, never a header value.
 type StatusError struct {
+	Method  string // "" for GET
 	Path    string
 	Code    int
 	Message string
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("GET %s: HTTP %d: %s", e.Path, e.Code, e.Message)
+	return fmt.Sprintf("%s %s: HTTP %d: %s", cmp.Or(e.Method, http.MethodGet), e.Path, e.Code, e.Message)
 }
 
 // IsStatus reports whether err is a StatusError with the given HTTP code.
