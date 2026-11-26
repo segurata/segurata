@@ -71,9 +71,12 @@ func TestInventoryOffersDeletionOnlyForUnusedKeys(t *testing.T) {
 			t.Errorf("last %v expires %v: %q, want %q", c.last, c.exp, got, c.want)
 		}
 	}
-	f := projectKeyFinding(projectKey{ID: "k", Name: "n"}, project{ID: "proj_x"}, limitCover{}, now)
+	f := projectKeyFinding(projectKey{ID: "k", Name: "n"}, project{ID: "proj_x"}, limitCover{}, true, now)
 	if f.Evidence["project_id"] != "proj_x" || f.Remediation.Action != ActionDeleteUnusedKey {
 		t.Fatalf("project key finding: %v %+v", f.Evidence, f.Remediation)
+	}
+	if f := projectKeyFinding(projectKey{ID: "k", Name: "n"}, project{ID: "proj_x"}, limitCover{}, false, now); f.Remediation.Action != "" || f.Severity != finding.SevInfo {
+		t.Fatalf("a key whose last use is unknown is offered for deletion: %s %+v", f.Severity, f.Remediation)
 	}
 }
 

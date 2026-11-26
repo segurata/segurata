@@ -156,6 +156,31 @@ func TestInventoryFindsUncappedIdleAndOrphanKeysAndBudgets(t *testing.T) {
 	}
 }
 
+func TestUnreadableAdminListingLeavesLastUseUnknown(t *testing.T) {
+	srv := httpxtest.NewServer(t, http.Header{"Authorization": {"Bearer " + testKey}}, map[string]httpxtest.Route{
+		"/organization/projects":                       httpxtest.Static(listOf(map[string]any{"id": "proj_lab", "name": "lab"})),
+		"/organization/admin_api_keys":                 httpxtest.Fail(http.StatusForbidden, "insufficient permissions"),
+		"/organization/spend_limit":                    httpxtest.Fail(http.StatusNotFound, "no spend limit"),
+		"/organization/spend_alerts":                   httpxtest.Static(listOf()),
+		"/organization/costs":                          httpxtest.Static(map[string]any{"data": []any{}, "has_more": false}),
+		"/organization/projects/proj_lab/spend_limit":  httpxtest.Fail(http.StatusNotFound, "no spend limit"),
+		"/organization/projects/proj_lab/spend_alerts": httpxtest.Static(listOf()),
+		"/organization/projects/proj_lab/api_keys":     httpxtest.Static(listOf(key("key_quiet", "quiet", nil, "active"))),
+	})
+	rec := &httpxtest.Recorder{}
+	c := &Connector{BaseURL: srv.URL, Now: func() time.Time { return now }}
+	if err := c.Inventory(context.Background(), connector.Request{Secrets: map[string]string{secretName: testKey}}, rec); err != nil {
+		t.Fatal(err)
+	}
+	k := rec.ByResource(t, "api_key", "key_quiet")
+	if k.Severity != finding.SevInfo || k.Remediation.Action != "" || strings.Contains(k.Title, "never used") {
+		t.Fatalf("a key whose last use could not be read: %s %q %+v", k.Severity, k.Title, k.Remediation)
+	}
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State == finding.StateOK || !strings.Contains(rec.Statuses[0].Detail, "admin_api_keys") {
+		t.Fatalf("statuses: %+v", rec.Statuses)
+	}
+}
+
 func TestMissingSecretReportsHowToConfigure(t *testing.T) {
 	rec := &httpxtest.Recorder{}
 	c := &Connector{BaseURL: "http://127.0.0.1:1"} // any request would fail loudly
@@ -224,9 +249,12 @@ func TestKeyAssessment(t *testing.T) {
 		{"expired", nil, at(1), true, open, finding.SevInfo},
 	}
 	for _, tc := range cases {
-		if got := keyAssessment(tc.lastUsed, tc.expires, tc.ownerGone, tc.cover, now); got.Severity != tc.want {
+		if got := keyAssessment(tc.lastUsed, tc.expires, true, tc.ownerGone, tc.cover, now); got.Severity != tc.want {
 			t.Errorf("%s: got %s %v, want %s", tc.name, got.Severity, got.Reasons, tc.want)
 		}
+	}
+	if got := keyAssessment(nil, nil, false, false, capped, now); got.Severity != finding.SevInfo || got.Reasons[0] != "last use unknown and capped by a hard spend limit" {
+		t.Errorf("no recorded use while the admin listing is unreadable: got %s %v", got.Severity, got.Reasons)
 	}
 }
 
