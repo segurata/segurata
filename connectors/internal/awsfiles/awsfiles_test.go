@@ -3,6 +3,8 @@ package awsfiles
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +28,21 @@ func TestProviderOf(t *testing.T) {
 		if got := ProviderOf(Profile{Name: "p", KeyID: tc.key}, tc.cfg); got != tc.want {
 			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
 		}
+	}
+	if AWS.String() != "AWS" || R2.String() != "a Cloudflare R2 token" || S3Compatible.String() != "an S3-compatible key" {
+		t.Error("provider names")
+	}
+}
+
+func TestParseKeepsNoSecret(t *testing.T) {
+	creds := ParseCredentials(strings.NewReader("[sts]\naws_access_key_id = ASIAIOSFODNN7EXAMPLE\naws_secret_access_key = s3cr3t\nAWS_SESSION_TOKEN = t0ken\n[plain]\naws_access_key_id=AKIAIOSFODNN7EXAMPLE\n"))
+	want := []Profile{{Name: "sts", KeyID: "ASIAIOSFODNN7EXAMPLE", Temporary: true}, {Name: "plain", KeyID: "AKIAIOSFODNN7EXAMPLE"}}
+	if !slices.Equal(creds, want) {
+		t.Errorf("credentials %+v", creds)
+	}
+	cfg := parseConfig(strings.NewReader("; comment\n[profile r2]\nendpoint_url = https://0123.r2.cloudflarestorage.com\noutput = json\n[orphan]\nregion = x\n"))
+	if len(cfg) != 1 || cfg["r2"].Endpoint != "https://0123.r2.cloudflarestorage.com" {
+		t.Errorf("config %+v", cfg)
 	}
 }
 
