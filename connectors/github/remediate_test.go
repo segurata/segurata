@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -92,10 +93,18 @@ func TestSecretScanningPlanReadsEachRepositoryNow(t *testing.T) {
 		"gh api --method PATCH --silent /repos/octo-tester/forked -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'",
 		"gh api --method PATCH --silent /repos/octo-tester/site -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'",
 	}
+	undo := "/repos/octo-tester/site -f 'security_and_analysis[secret_scanning][status]=disabled'"
+	// PowerShell takes brackets in a bare argument literally, so they need no quotes there.
+	if runtime.GOOS == "windows" {
+		for i := range want {
+			want[i] = strings.ReplaceAll(want[i], "'", "")
+		}
+		undo = strings.ReplaceAll(undo, "'", "")
+	}
 	if got := strs(p.Commands); !reflect.DeepEqual(got, want) {
 		t.Errorf("commands\n got %v\nwant %v", got, want)
 	}
-	if got := strs(p.Undo); len(got) != 2 || !strings.Contains(got[1], "/repos/octo-tester/site -f 'security_and_analysis[secret_scanning][status]=disabled'") {
+	if got := strs(p.Undo); len(got) != 2 || !strings.Contains(got[1], undo) {
 		t.Errorf("undo: %v", got)
 	}
 	effects := strings.Join(p.SideEffects, "\n")

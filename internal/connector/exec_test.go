@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -59,9 +60,14 @@ func TestRunChecksEveryStepBeforeRunningAny(t *testing.T) {
 	}
 }
 
+// The step is written for the platform's shell: POSIX sh, or PowerShell on Windows.
 func TestStepStringQuotesLikeAShell(t *testing.T) {
 	s := connector.Step{Argv: []string{"/bin/chmod", "644", "/tmp/my file's"}, Sudo: true}
-	if got, want := s.String(), `sudo /bin/chmod 644 '/tmp/my file'\''s'`; got != want {
+	want := `sudo /bin/chmod 644 '/tmp/my file'\''s'`
+	if runtime.GOOS == "windows" {
+		want = `sudo /bin/chmod 644 '/tmp/my file''s'`
+	}
+	if got := s.String(); got != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
 }

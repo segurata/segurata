@@ -2,6 +2,7 @@ package connector_test
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -65,7 +66,11 @@ func TestPlanAndDescriptionHelpers(t *testing.T) {
 	if got := (connector.Call{Method: "DELETE", URL: "https://api.example.com/keys/1", Secret: "ADMIN_WRITE_KEY"}).String(); got != "DELETE https://api.example.com/keys/1 (with ADMIN_WRITE_KEY)" {
 		t.Errorf("call %q", got)
 	}
-	if got := (connector.FileChange{Path: "/tmp/a b", Mode: 0o600, Was: 0o644}).String(); got != "chmod 600 '/tmp/a b' (now 644)" {
+	want := "chmod 600 '/tmp/a b' (now 644)"
+	if runtime.GOOS == "windows" {
+		want = "make '/tmp/a b' private: protected access list, full control for you and SYSTEM only (now readable by other accounts)"
+	}
+	if got := (connector.FileChange{Path: "/tmp/a b", Mode: 0o600, Was: 0o644}).String(); got != want {
 		t.Errorf("file change %q", got)
 	}
 	for timeout, want := range map[string]string{"6h": "6h0m0s", "": "0s", "-1h": "0s", "soon": "0s"} {

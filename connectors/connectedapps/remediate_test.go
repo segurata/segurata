@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -51,10 +52,15 @@ func TestDropScopesPlansFromTheLiveTokenInTheTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Commands) != 1 || p.Commands[0].String() != "gh auth refresh -h github.com -r delete_repo,admin:org" || !p.Commands[0].Terminal {
+	// PowerShell reads a bare comma as an array, so on Windows the scope list is quoted.
+	scopes := "delete_repo,admin:org"
+	if runtime.GOOS == "windows" {
+		scopes = "'" + scopes + "'"
+	}
+	if len(p.Commands) != 1 || p.Commands[0].String() != "gh auth refresh -h github.com -r "+scopes || !p.Commands[0].Terminal {
 		t.Fatalf("commands %+v", p.Commands)
 	}
-	if len(p.Undo) != 1 || p.Undo[0].String() != "gh auth refresh -h github.com -s delete_repo,admin:org" {
+	if len(p.Undo) != 1 || p.Undo[0].String() != "gh auth refresh -h github.com -s "+scopes {
 		t.Fatalf("undo %+v", p.Undo)
 	}
 	if !p.NeedsTerminal() || !strings.Contains(strings.Join(p.SideEffects, " "), "noscope") {
