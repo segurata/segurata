@@ -145,6 +145,14 @@ func TestCoverageCompleteAsConfigured(t *testing.T) {
 	if _, unchecked := c.Unchecked("me", "sys-1"); !unchecked {
 		t.Error("a scope left out on purpose was taken as checked")
 	}
+	for reason, want := range map[string]bool{
+		"expected": true, "expected: in the config's skip list": true,
+		"expected a 200 from the API, got 403": false, "expectedly empty": false, "not expected": false,
+	} {
+		if got := (Skipped{Scope: "s", Reason: reason}).Expected(); got != want {
+			t.Errorf("Skipped with reason %q: expected %v, want %v", reason, got, want)
+		}
+	}
 	tally.Declare("b", false, "denied")
 	end = tally.End("prowler", "", time.Time{}, time.Time{}, nil)
 	if c := CoverageOf(&end); c.CompleteAsConfigured() || len(c.Missed()) != 1 || c.Missed()[0].Scope != "b" {

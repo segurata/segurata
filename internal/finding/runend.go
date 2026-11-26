@@ -177,8 +177,12 @@ func (c Coverage) Complete() bool { return c.Known && c.all == "" && len(c.skipp
 
 func (c Coverage) Skipped() []Skipped { return c.skipped }
 
-// Expected reports a scope the owner's config left out; it still proves nothing there gone.
-func (s Skipped) Expected() bool { return strings.HasPrefix(s.Reason, string(StateExpected)) }
+// Expected reports a scope the owner's config left out, its reason "expected" or "expected: …"; it
+// still proves nothing there gone.
+func (s Skipped) Expected() bool {
+	why, ok := strings.CutPrefix(s.Reason, string(StateExpected))
+	return ok && (why == "" || strings.HasPrefix(why, ":"))
+}
 
 // Missed is what the run did not inspect and the config did not leave out.
 func (c Coverage) Missed() []Skipped {
