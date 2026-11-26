@@ -159,7 +159,7 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 		return nil, fmt.Errorf("%s: the ledger records no line for it; edit it by hand", p)
 	}
 	base, rest := filepath.Dir(p), filepath.Base(p)
-	if below, ok := strings.CutPrefix(p, "~/"); ok {
+	if below, ok := strings.CutPrefix(filepath.ToSlash(p), "~/"); ok {
 		base, rest = home, below
 	}
 	if !filepath.IsAbs(base) {
@@ -182,11 +182,24 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", p)
 	}
+	file, err := statefile.Open(abs)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	// On Windows a path stat can resolve the file ID lazily. Capture it from the open file.
+	st, err = file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", p)
+	}
 	access, err := fileacl.Fingerprint(abs)
 	if err != nil {
 		return nil, fmt.Errorf("%q: file permissions could not be verified: %w", p, err)
 	}
-	raw, err := os.ReadFile(abs)
+	raw, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/testcorpus"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -317,6 +318,26 @@ func TestReplaceRefusesTrackedDestinationBeforeReadingValue(t *testing.T) {
 	}
 }
 
+func TestReplaceRefusesAFileSwappedDuringConfirmation(t *testing.T) {
+	fx := newReplaceFixture(t)
+	before := read(t, fx.env)
+	st, err := os.Stat(fx.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code := fx.runInput(t, confirmInput(func() {
+		if err := statefile.Replace(fx.env, []byte(before), st.Mode().Perm()); err != nil {
+			t.Fatal(err)
+		}
+	}), true, "replace", fx.id(), "--apply")
+	if code != 1 || !strings.Contains(stderr, "changed since the plan") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if got := read(t, fx.env); got != before {
+		t.Fatal("the replacement overwrote the newer file")
+	}
+}
+
 // noLeak checks that neither value reached the output nor any Keychain argument. Only a Store may
 // carry the new value.
 func (fx *fixture) noLeak(t *testing.T, output string) {
@@ -407,7 +428,12 @@ func TestReplaceApply(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	envBefore, err := os.Stat(fx.env)
+	env, err := statefile.Open(fx.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	envBefore, err := env.Stat()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +455,7 @@ func TestReplaceApply(t *testing.T) {
 			t.Errorf("%s permissions %q, want %q (%v)", path, got, want, err)
 		}
 	}
-	if envAfter, _ := os.Stat(fx.env); os.SameFile(envBefore, envAfter) {
+	if envAfter, err := os.Stat(fx.env); err != nil || os.SameFile(envBefore, envAfter) {
 		t.Error("file rewritten in place, not replaced atomically")
 	}
 	if backups, _ := filepath.Glob(filepath.Join(fx.home, "src", "app", ".env.segurata-bak-*")); len(backups) != 0 {

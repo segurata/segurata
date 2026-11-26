@@ -593,8 +593,8 @@ func (c CLI) openFiles(ctx context.Context) (map[string]bool, error) {
 	}
 	open := map[string]bool{}
 	for _, l := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(l, "n/") {
-			open[l[1:]] = true
+		if path, ok := strings.CutPrefix(l, "n"); ok && filepath.IsAbs(path) {
+			open[filepath.Clean(path)] = true
 		}
 	}
 	return open, nil
