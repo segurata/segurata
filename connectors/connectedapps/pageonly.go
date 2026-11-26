@@ -46,7 +46,7 @@ var (
 		loaded:    regexp.MustCompile(`(?i)No has autorizado|authorized any|Estos son los sitios web|These are (the )?(apps|websites)`),
 	}
 
-	// checked 2026-11-24 with none granted
+	// /mypreferences/d/permitted-services redirects here; checked 2026-11-24 with none granted
 	linkedinPage = pageOnly{
 		title:     "LinkedIn",
 		url:       "https://www.linkedin.com/mypreferences/d/data-sharing-for-permitted-services",

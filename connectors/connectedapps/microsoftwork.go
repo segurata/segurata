@@ -15,8 +15,9 @@ import (
 
 // Microsoft work and school accounts, checked 2026-11-24. My Apps fills its tiles from one call,
 // api/v2/me/tiles; AzureADThirdParty tiles are the tenant's enterprise apps, without permissions.
-// No user page lists delegated consents. Security info asks for a fresh MFA sign-in first, so its
-// reauth carries its own scope and leaves the apps inspected.
+// No user page lists delegated consents: only an admin reads them, in the Entra admin center.
+// Security info asks for a fresh MFA sign-in first, so its reauth carries its own scope and leaves
+// the apps inspected; the page past the prompt has not been seen, so it is reported unverified.
 const (
 	msWorkAppsURL       = "https://myapplications.microsoft.com/"
 	msWorkSecurityURL   = "https://mysignins.microsoft.com/security-info"

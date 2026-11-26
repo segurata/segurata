@@ -76,7 +76,8 @@ func adminArgv(u string) []string {
 }
 func lastArgv(u string) []string { return []string{lastBin, "-1", u} }
 
-// accountChecks reports every human account other than the one running segurata.
+// accountChecks reports every human account other than the one running segurata. The guest
+// account and a deleted account's share point have checks of their own.
 func (c *Connector) accountChecks(ctx context.Context, users []localUser) []check {
 	me := c.UID()
 	var others []localUser

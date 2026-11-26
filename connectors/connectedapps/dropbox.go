@@ -15,7 +15,8 @@ import (
 
 // The connected apps page fills its collapsed rows from one call, account/get_linked_apps, which
 // carries each app's access, permissions, publisher and link date (checked 2026-11-24). That
-// response is read, since expanding the rows would mean clicking.
+// response is read, since expanding the rows would mean clicking. "Launch from Dropbox" (apps
+// Dropbox opens files in) is a different list, not read.
 const (
 	dropboxURL    = "https://www.dropbox.com/account/connected_apps"
 	dropboxRevoke = `Open the page, expand the app under "View Dropbox content" and choose "Disconnect".`

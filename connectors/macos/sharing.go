@@ -131,7 +131,8 @@ func sharingStep(args ...string) connector.Step {
 	return connector.Step{Argv: append([]string{sharingBin}, args...), Sudo: true}
 }
 
-// sharePlan takes every argument from the record that exists now; the finding only names it.
+// sharePlan takes every argument from the record that exists now; the finding only names it, and
+// a name that does not match a record exactly is refused.
 func (c *Connector) sharePlan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
 	name, _ := f.Evidence["name"].(string)
 	shares, err := c.sharePoints(ctx)
@@ -178,7 +179,8 @@ func (c *Connector) sharePlan(ctx context.Context, f finding.Finding) (connector
 	return connector.Plan{}, fmt.Errorf("macos has no share point remediation %q", f.Remediation.Action)
 }
 
-// shareAllowlist comes from its own fresh read, never from the finding.
+// shareAllowlist comes from its own fresh read, never from the finding, so a plan naming any other
+// share is refused.
 func (c *Connector) shareAllowlist(ctx context.Context) (connector.Allowlist, error) {
 	shares, err := c.sharePoints(ctx)
 	if err != nil {

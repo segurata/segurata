@@ -11,6 +11,7 @@ import (
 
 // Settings › Apps and websites (checked 2026-11-24) shows the first apps and a "See more" button
 // that fetches the rest: segurata does not click it, and the status says the list was cut.
+// Accounts Center's "App connections" is a different list (Meta AI links to other services).
 const (
 	fbURL    = "https://www.facebook.com/settings/?tab=applications"
 	fbRevoke = `Open the page and choose "Remove". Facebook offers to delete the posts the app made; the app keeps data it already received.`

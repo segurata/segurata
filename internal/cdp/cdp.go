@@ -424,7 +424,9 @@ func (c *Client) Capture(ctx context.Context, url, expr string, ready func(json.
 }
 
 // scanTarget creates the blank target a scan page loads in: hidden (in no window, never taking
-// focus) unless the browser refuses that, then a background tab.
+// focus; checked on Brave 156, 2026-11-24) unless the browser refuses that, then a background tab.
+// A dedicated scan window does not work: Target.createTarget cannot name a window, and window.open
+// from that window's tab brings it to the front each time.
 func (c *Client) scanTarget(ctx context.Context) (string, error) {
 	if !c.visibleScan.Load() {
 		id, err := c.createTarget(ctx, map[string]any{"url": "about:blank", "background": true, "hidden": true})
