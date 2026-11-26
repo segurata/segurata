@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,9 +71,19 @@ func closeAndUndo(t *testing.T, name string) {
 	if err := (connector.System{}).Run(context.Background(), p.Undo[0], connectortest.QuietIO()); err != nil {
 		t.Fatalf("undo: %v", err)
 	}
-	if after, err := fileacl.Fingerprint(path); err != nil || after != before {
+	if after, err := fileacl.Fingerprint(path); err != nil || sortedEntries(after) != sortedEntries(before) {
 		t.Fatalf("undo left %q, want %q (%v)", after, before, err)
 	}
+}
+
+// sortedEntries is SDDL with its access entries sorted. Set-Acl writes an access list in .NET's
+// canonical order, which sorts the explicit entries by SID; the fixture's are all allow entries,
+// whose order never changes an access check.
+func sortedEntries(sddl string) string {
+	head, aces, _ := strings.Cut(sddl, "(")
+	entries := strings.Split(strings.TrimSuffix(aces, ")"), ")(")
+	slices.Sort(entries)
+	return head + "(" + strings.Join(entries, ")(") + ")"
 }
 
 // A plan confirmed for another access list than the file has now never runs.
