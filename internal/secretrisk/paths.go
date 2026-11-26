@@ -29,8 +29,8 @@ var (
 	lockFiles    = set("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
 		"gemfile.lock", "poetry.lock", "pipfile.lock", "uv.lock", "cargo.lock", "composer.lock", "mix.lock",
 		"podfile.lock", "package.resolved", "pubspec.lock", "flake.lock", "go.sum", "gradle.lockfile", "packages.lock.json")
-	testNames    = []string{"_test.", ".test.", ".spec.", "_spec."} // foo_test.go, Register.test.tsx, user_spec.rb
-	exampleNames = set("example", "examples", "sample", "samples", "template", "templates", "dist") // .env.example, config.yml.dist
+	testNames    = []string{"_test.", ".test.", ".spec.", "_spec."}
+	exampleNames = set("example", "examples", "sample", "samples", "template", "templates", "dist")
 	docExts      = []string{".md", ".markdown", ".rst", ".adoc"}
 )
 
