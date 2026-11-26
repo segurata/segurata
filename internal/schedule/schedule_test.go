@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -175,8 +176,14 @@ func TestInstallApplyWritesLoadsAndReplaces(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), "<integer>21600</integer>") {
 		t.Fatalf("plist %s, %v", raw, err)
 	}
-	if st, _ := os.Stat(p.Plist); st.Mode().Perm() != 0o644 {
-		t.Fatalf("plist mode %v", st.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		st, err := os.Stat(p.Plist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode().Perm() != 0o644 {
+			t.Fatalf("plist mode %v", st.Mode().Perm())
+		}
 	}
 	for _, dir := range []string{p.Logs, p.State} {
 		fileacltest.AssertPrivateDir(t, dir)

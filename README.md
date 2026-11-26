@@ -55,6 +55,12 @@ Unix runs use mode 0600 for those files in a 0700 directory because they contain
 service details. Set `SEGURATA_OUT` or pass `--out` to choose another directory. Each inventory
 ends with `segurata track sync`, which folds the latest runs into the tracker.
 
+## Agent skills
+
+From a checkout, use [segurata-audit](.agents/skills/segurata-audit/SKILL.md) for a first run,
+inventories and tracker reports. Use [segurata-remediate](.agents/skills/segurata-remediate/SKILL.md)
+to preview a specific fix, apply it with authorization and verify the result.
+
 ## Safety model
 
 Every connector **inventories first, read-only**. Changing anything is a separate step, by hand or

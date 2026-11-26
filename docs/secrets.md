@@ -180,9 +180,10 @@ never shows in a process listing) and rewrites the line to
 `export ANTHROPIC_API_KEY="$(security find-generic-password -a "$USER" -s ANTHROPIC_API_KEY -w)"`,
 the same lookup as `kc` written out, so the line works without the function.
 
-The command checks each destination before applying the plan. Any file that would receive
-plaintext must be untracked by Git and private under POSIX permissions. It refuses the plan if
-an index cannot be read or if a destination's mode, identity or contents changed after preview.
+The command checks each destination before reading the new value and again before writing. Any
+file that would receive plaintext must be untracked by Git and private under the platform's file
+permissions. It refuses the plan if an index cannot be read or if a destination's permissions,
+identity or contents changed after preview.
 On macOS, it also requires ACLs on the file and its parent directories to contain only deny
 entries.
 
@@ -198,9 +199,11 @@ segurata reads that item for a `keychain:ANTHROPIC_API_KEY` reference in its con
 stored per user on this machine and does not roam. Delete the plaintext line from your PowerShell
 profile or other scripts by hand. A scheduled task that resolves `keychain:` references must run
 as the logged-on user: Credential Manager is not available in other logon sessions.
-`segurata rotations replace` reads the new value from the clipboard there too; Windows may keep a
-copy in Clipboard history (Win+V) or sync it with cloud clipboard, so clear it there afterwards,
-or pipe the value in with `--stdin`. On Linux use `env:` or `op://` references and `--stdin`.
+`segurata rotations replace` checks the Windows access lists of the target and its parent folders.
+It can read the value from the clipboard. Windows may keep a copy in Clipboard history (Win+V)
+or sync it with cloud clipboard, so clear it there afterwards. To avoid the clipboard, pipe the
+value from another program with `--stdin`. Typing the value into a console is refused. On Linux
+use `env:` or `op://` references and `--stdin`.
 
 Better still, do not export it to every shell; fetch it where it is used:
 `ANTHROPIC_API_KEY="$(kc ANTHROPIC_API_KEY)" command`. With 1Password, the same with

@@ -91,6 +91,11 @@ func MakePrivate(path string) error {
 // CreatePrivate is os.CreateTemp, which already creates with mode 0600.
 func CreatePrivate(dir, pattern string) (*os.File, error) { return os.CreateTemp(dir, pattern) }
 
+// CreatePrivateAt exclusively creates path with mode 0600.
+func CreatePrivateAt(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, Private)
+}
+
 // MkdirPrivate creates dir and any missing parents with mode 0700, leaving existing ones as they
 // are.
 func MkdirPrivate(dir string) error { return os.MkdirAll(dir, 0o700) }

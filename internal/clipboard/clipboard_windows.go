@@ -22,7 +22,7 @@ type Windows struct{}
 // Read returns no text, not an error, when the clipboard holds none.
 func (Windows) Read(ctx context.Context) ([]byte, error) {
 	var out []byte
-	err := withClipboard(ctx, func() error {
+	err := withClipboard(ctx, 0, func() error {
 		if !winsys.IsClipboardFormatAvailable(winsys.CFUnicodeText) {
 			return nil
 		}
@@ -56,7 +56,7 @@ func (Windows) Read(ctx context.Context) ([]byte, error) {
 }
 
 func (Windows) Clear(ctx context.Context) error {
-	err := withClipboard(ctx, func() error {
+	err := withClipboard(ctx, 0, func() error {
 		return winsys.EmptyClipboard()
 	})
 	if err != nil {
@@ -71,11 +71,11 @@ func (Windows) Caveat() string {
 
 // withClipboard runs f with the clipboard open on this OS thread, retrying while another
 // application holds it.
-func withClipboard(ctx context.Context, f func() error) error {
+func withClipboard(ctx context.Context, owner uintptr, f func() error) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	for try := 0; ; try++ {
-		e := winsys.OpenClipboard()
+		e := winsys.OpenClipboard(owner)
 		if e == nil {
 			break
 		}

@@ -42,7 +42,7 @@ is still on the line where the scan found it in every used_in file, then plans t
 with redacted values. With --apply it asks for confirmation (stdin must be a terminal, or pass
 --yes), writes each file atomically keeping its mode, re-reads it to check that the old value is
 gone and the new one is in place, marks the item rotated and clears the clipboard.
-Plaintext replacements require an untracked file whose POSIX permissions keep it private.
+Plaintext replacements require an untracked file whose permissions keep it private.
 
   --to-keychain <service>  macOS only. For shell rc files (~/.zshrc, ~/.zprofile, ~/.bashrc…),
                            store the new value in the login Keychain under <service> (fed to
@@ -93,6 +93,7 @@ type fileEdit struct {
 	info    fs.FileInfo
 	tracked bool // tracked when the ledger last saw any of its names
 	mode    fs.FileMode
+	access  string
 	orig    []byte
 	lines   []lineEdit
 	next    []byte // the content to write
@@ -181,12 +182,16 @@ func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", p)
 	}
+	access, err := fileacl.Fingerprint(abs)
+	if err != nil {
+		return nil, fmt.Errorf("%q: file permissions could not be verified: %w", p, err)
+	}
 	raw, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, err
 	}
 	f := &fileEdit{path: p, abs: abs, paths: []string{original}, link: filepath.Join(resolvedBase, rest) != abs, info: st, tracked: tracked,
-		mode: st.Mode().Perm(), orig: raw}
+		mode: st.Mode().Perm(), access: access, orig: raw}
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
 		if v := r.find(line); v != "" {
@@ -235,29 +240,32 @@ func newValue(raw []byte) (string, error) {
 	return v, nil
 }
 
-// plan fixes the edits that put v in place, or a Keychain lookup of service in shell rc files.
-func (r *replacement) plan(v, service string) error {
+// setService identifies which lines will receive a Keychain lookup instead of plaintext.
+func (r *replacement) setService(service string) error {
+	if service == "" {
+		return nil
+	}
+	if refuseToKeychain {
+		return errors.New(toKeychainOnWindows)
+	}
+	if !safeService.MatchString(service) {
+		return fmt.Errorf("--to-keychain %q: use letters, digits and . _ / @ : -", service)
+	}
+	if !safeAccount.MatchString(r.account) {
+		return fmt.Errorf("user name %q cannot be a Keychain account", r.account)
+	}
+	r.service = service
+	return r.planKeychain()
+}
+
+// plan fills the edits after the destinations have been checked and the value read.
+func (r *replacement) plan(v string) error {
 	r.newFP = r.key.Of(v)
 	if r.newFP == r.item.Fingerprint {
 		return errors.New("the new value is the old one (same fingerprint): rotate it at the provider and copy the new value")
 	}
 	if p := r.hint.Prefix; p != "" && !strings.HasPrefix(v, p) {
 		r.warn = append(r.warn, fmt.Sprintf("the new value does not start with %q like the old one: check that the clipboard holds the right key", p))
-	}
-	r.service = service
-	if service != "" {
-		if refuseToKeychain {
-			return errors.New(toKeychainOnWindows)
-		}
-		if !safeService.MatchString(service) {
-			return fmt.Errorf("--to-keychain %q: use letters, digits and . _ / @ : -", service)
-		}
-		if !safeAccount.MatchString(r.account) {
-			return fmt.Errorf("user name %q cannot be a Keychain account", r.account)
-		}
-		if err := r.planKeychain(); err != nil {
-			return err
-		}
 	}
 	for _, f := range r.files {
 		f.next = []byte(r.rewrite(f, v))
@@ -368,10 +376,13 @@ func (f *fileEdit) validate(ctx context.Context) error {
 	if err != nil || !os.SameFile(f.info, st) || st.Mode() != f.info.Mode() {
 		return changed
 	}
+	if access, err := fileacl.Fingerprint(f.abs); err != nil || access != f.access {
+		return changed
+	}
 	if mine, err := fileacl.OwnedByMe(f.abs, st); err != nil || !mine {
 		return fmt.Errorf("%q: file ownership could not be verified; edit it by hand", f.path)
 	}
-	dirs, private, err := parentPrivacy(f.abs)
+	dirs, err := safeParents(f.abs)
 	if err != nil {
 		return fmt.Errorf("%q: %w", f.path, err)
 	}
@@ -401,7 +412,11 @@ func (f *fileEdit) validate(ctx context.Context) error {
 			return fmt.Errorf("%q is tracked by Git; replace the secret by hand outside the index", f.path)
 		}
 	}
-	if st.Mode().Perm()&0o077 != 0 && !private {
+	exposure, err := fileacl.Effective(f.abs, "")
+	if err != nil {
+		return fmt.Errorf("%q: file permissions could not be verified: %w", f.path, err)
+	}
+	if fileacl.Exposed(exposure) {
 		return fmt.Errorf("%q can be accessed by other users; restrict its permissions before replacing the secret", f.path)
 	}
 	if runtime.GOOS == "darwin" {
@@ -432,23 +447,18 @@ func safeACLReport(report []byte, paths int) bool {
 	return listed == paths
 }
 
-// parentPrivacy refuses a directory another account could change between validation and the
+// safeParents refuses a directory another account could change between validation and the
 // rename (a sticky one owned by root or the caller protects its entries), and reports whether a
 // parent owned by the caller keeps others from reaching the file.
-func parentPrivacy(path string) (dirs []string, private bool, err error) {
+func safeParents(path string) ([]string, error) {
+	var dirs []string
 	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
-		st, err := os.Stat(dir)
-		if err != nil {
-			return nil, false, err
-		}
 		if changeable, err := fileacl.ChangeableByOthers(dir); err != nil || changeable {
-			return nil, false, fmt.Errorf("directory %q can be changed by another account; edit it by hand", dir)
+			return nil, fmt.Errorf("directory %q ownership and write access could not be verified as safe; edit it by hand", dir)
 		}
 		dirs = append(dirs, dir)
-		mine, err := fileacl.OwnedByMe(dir, st)
-		private = private || err == nil && mine && st.Mode().Perm()&0o011 == 0
 		if filepath.Dir(dir) == dir {
-			return dirs, private, nil
+			return dirs, nil
 		}
 	}
 }
@@ -477,8 +487,7 @@ func (r *replacement) write(ctx context.Context, backup bool, now time.Time) ([]
 	return done, nil
 }
 
-// verify re-reads every file: the old fingerprint gone, each edited line holding the new value or
-// the Keychain lookup, the mode unchanged.
+// verify re-reads every file to check its permissions and the value on each edited line.
 func (r *replacement) verify(v string) error {
 	for _, f := range r.files {
 		st, err := os.Stat(f.abs)
@@ -487,6 +496,9 @@ func (r *replacement) verify(v string) error {
 		}
 		if st.Mode().Perm() != f.mode {
 			return fmt.Errorf("%s: mode is %o, was %o", f.path, st.Mode().Perm(), f.mode)
+		}
+		if access, err := fileacl.Fingerprint(f.abs); err != nil || access != f.access {
+			return fmt.Errorf("%q: file permissions differ after the replacement", f.path)
 		}
 		raw, err := os.ReadFile(f.abs)
 		if err != nil {
@@ -606,13 +618,19 @@ func (c CLI) replace(t *tracker.Tracker, path string, args []string, now time.Ti
 	r.account = c.User
 
 	ctx := context.Background()
+	if err := r.setService(*service); err != nil {
+		return c.fail(err)
+	}
+	if err := r.preflight(ctx); err != nil {
+		return c.fail(err)
+	}
 	raw, err := c.readNewValue(ctx, *fromStdin)
 	var v string
 	if err == nil {
 		v, err = newValue(raw)
 	}
 	if err == nil {
-		err = r.plan(v, *service)
+		err = r.plan(v)
 	}
 	if caveat := c.Clipboard.Caveat(); err == nil && !*fromStdin && caveat != "" {
 		r.warn = append(r.warn, caveat)

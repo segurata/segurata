@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/segurata/segurata/internal/fileacl"
 )
 
 type Key struct{ key []byte }
@@ -69,10 +71,10 @@ func create(path string) (Key, error) {
 		return Key{}, err
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fileacl.MkdirPrivate(dir); err != nil {
 		return Key{}, err
 	}
-	tmp, err := os.CreateTemp(dir, ".fingerprint-*")
+	tmp, err := fileacl.CreatePrivate(dir, ".fingerprint-*")
 	if err != nil {
 		return Key{}, err
 	}

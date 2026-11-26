@@ -75,6 +75,8 @@ func newProc(d *systemDLL, name string) *proc {
 
 // call returns the procedure's result and the thread's last error, which means something only when
 // the result says the call failed.
+//
+//go:uintptrescapes
 func (p *proc) call(args ...uintptr) (uintptr, error) {
 	f, err := p.find()
 	if err != nil {
@@ -85,6 +87,8 @@ func (p *proc) call(args ...uintptr) (uintptr, error) {
 }
 
 // bool calls a procedure returning BOOL.
+//
+//go:uintptrescapes
 func (p *proc) bool(args ...uintptr) error {
 	if r, err := p.call(args...); r == 0 {
 		return err
@@ -93,6 +97,8 @@ func (p *proc) bool(args ...uintptr) error {
 }
 
 // status calls a procedure that returns its Win32 error code.
+//
+//go:uintptrescapes
 func (p *proc) status(args ...uintptr) error {
 	f, err := p.find()
 	if err != nil {

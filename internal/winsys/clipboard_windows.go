@@ -16,6 +16,7 @@ var (
 	procSetClipboardData           = newProc(user32, "SetClipboardData")
 	procIsClipboardFormatAvailable = newProc(user32, "IsClipboardFormatAvailable")
 	procGlobalAlloc                = newProc(kernel32, "GlobalAlloc")
+	procGlobalFree                 = newProc(kernel32, "GlobalFree")
 	procGlobalLock                 = newProc(kernel32, "GlobalLock")
 	procGlobalUnlock               = newProc(kernel32, "GlobalUnlock")
 	procGlobalSize                 = newProc(kernel32, "GlobalSize")
@@ -23,9 +24,9 @@ var (
 
 // The clipboard calls work on the calling OS thread; callers lock it.
 
-func OpenClipboard() error  { return procOpenClipboard.bool(0) }
-func CloseClipboard() error { return procCloseClipboard.bool() }
-func EmptyClipboard() error { return procEmptyClipboard.bool() }
+func OpenClipboard(owner uintptr) error { return procOpenClipboard.bool(owner) }
+func CloseClipboard() error             { return procCloseClipboard.bool() }
+func EmptyClipboard() error             { return procEmptyClipboard.bool() }
 
 func IsClipboardFormatAvailable(format uint32) bool {
 	r, _ := procIsClipboardFormatAvailable.call(uintptr(format))
@@ -55,6 +56,8 @@ func GlobalAlloc(flags uint32, size uintptr) (uintptr, error) {
 	}
 	return h, nil
 }
+
+func GlobalFree(h uintptr) { procGlobalFree.call(h) }
 
 func GlobalLock(h uintptr) (uintptr, error) {
 	p, err := procGlobalLock.call(h)

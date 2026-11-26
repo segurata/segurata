@@ -3,6 +3,7 @@ package statefile
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -15,13 +16,23 @@ func TestReplaceKeepsTheGivenModeAndLeavesNoTemporaryFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.Stat(path)
-	if err := Replace(path, []byte("new\n"), 0o640); err != nil {
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMode := os.FileMode(0o640)
+	if runtime.GOOS == "windows" {
+		wantMode = before.Mode().Perm()
+	}
+	if err := Replace(path, []byte("new\n"), wantMode); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.Stat(path)
-	if err != nil || after.Mode().Perm() != 0o640 {
-		t.Fatalf("mode %v err %v", after.Mode().Perm(), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Mode().Perm() != wantMode {
+		t.Fatalf("mode %o, want %o", after.Mode().Perm(), wantMode)
 	}
 	if os.SameFile(before, after) {
 		t.Error("written in place instead of renamed over")

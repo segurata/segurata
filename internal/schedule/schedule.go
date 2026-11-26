@@ -20,6 +20,7 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -267,12 +268,11 @@ func (e Env) Install(ctx context.Context, o Options) error {
 	if err != nil || !ok {
 		return err
 	}
-	for _, dir := range []string{filepath.Dir(p.Plist), p.Logs, p.State} {
-		mode := os.FileMode(0o700)
-		if dir == filepath.Dir(p.Plist) {
-			mode = 0o755
-		}
-		if err := os.MkdirAll(dir, mode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p.Plist), 0o755); err != nil {
+		return err
+	}
+	for _, dir := range []string{p.Logs, p.State} {
+		if err := fileacl.MkdirPrivate(dir); err != nil {
 			return err
 		}
 	}

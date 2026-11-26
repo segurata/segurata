@@ -20,6 +20,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fanout"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/runfile"
@@ -213,7 +214,7 @@ func BrowserProblem(ctx context.Context, cdpURL string, check func(context.Conte
 // they prove neither a finding nor a status gone.
 func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer, lent Lent) ([]*Result, error) {
 	dir := filepath.Join(outDir, time.Now().Format("2006-01-02"))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fileacl.MkdirPrivate(dir); err != nil {
 		return nil, err
 	}
 	var noBrowser error
@@ -244,7 +245,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	// A partial file of its own, renamed over the run file once run_end is written, so a killed or
 	// concurrent run never tears a finished one; readers skip it, and CreateTemp makes it 0600: the
 	// output names accounts, apps and services.
-	f, err := os.CreateTemp(dir, filepath.Base(res.File)+".*.partial")
+	f, err := fileacl.CreatePrivate(dir, filepath.Base(res.File)+".*.partial")
 	if err != nil {
 		res.Err = err
 		return res

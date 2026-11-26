@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/keychain"
@@ -156,6 +158,20 @@ func write(t *testing.T, path, content string, mode os.FileMode) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if runtime.GOOS == "windows" {
+		f, err := fileacl.CreatePrivateAt(path)
+		if os.IsExist(err) {
+			f, err = os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, writeErr := f.WriteString(content)
+		if err := f.Close(); writeErr != nil || err != nil {
+			t.Fatalf("write %s: %v; close: %v", path, writeErr, err)
+		}
+		return
+	}
 	if err := os.WriteFile(path, []byte(content), mode); err != nil {
 		t.Fatal(err)
 	}
@@ -257,8 +273,13 @@ func TestReplaceChecksGitBeforeChangingTheKeychain(t *testing.T) {
 
 func TestReplaceKeepsAFileModeChangedDuringConfirmation(t *testing.T) {
 	fixture := newReplaceFixture(t)
+	mode := os.FileMode(0o600)
+	if runtime.GOOS == "windows" {
+		mode = 0o444 // Windows maps chmod to the read-only attribute.
+		t.Cleanup(func() { _ = os.Chmod(fixture.zshrc, 0o600) })
+	}
 	_, stderr, code := fixture.runInput(t, confirmInput(func() {
-		if err := os.Chmod(fixture.zshrc, 0o600); err != nil {
+		if err := os.Chmod(fixture.zshrc, mode); err != nil {
 			t.Fatal(err)
 		}
 	}), true, "replace", fixture.id(), "--apply")
@@ -266,8 +287,33 @@ func TestReplaceKeepsAFileModeChangedDuringConfirmation(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	st, err := os.Stat(fixture.zshrc)
-	if err != nil || st.Mode().Perm() != 0o600 || !strings.Contains(read(t, fixture.zshrc), fixture.old) {
+	if err != nil || st.Mode().Perm() != mode || !strings.Contains(read(t, fixture.zshrc), fixture.old) {
 		t.Fatal("the confirmed plan overwrote a newer mode or credential")
+	}
+}
+
+func TestReplaceRefusesTrackedDestinationBeforeReadingValue(t *testing.T) {
+	fx := newReplaceFixture(t)
+	id := fx.id()
+	if err := tracker.Update(fx.state, t0, func(l *tracker.Tracker) error {
+		item, err := l.FindRotate(id)
+		if err != nil {
+			return err
+		}
+		for i := range item.Secret.Locations {
+			item.Secret.Locations[i].Tracked = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fx.os.onPaste = func() { t.Fatal("read the clipboard before refusing a tracked destination") }
+	stdin := confirmInput(func() { t.Fatal("read stdin before refusing a tracked destination") })
+	for _, flags := range [][]string{nil, {"--stdin"}} {
+		_, stderr, code := fx.runInput(t, stdin, false, append([]string{"replace", id}, flags...)...)
+		if code != 1 || !strings.Contains(stderr, "tracked by Git") {
+			t.Fatalf("flags %v: exit %d: %s", flags, code, stderr)
+		}
 	}
 }
 
@@ -347,6 +393,14 @@ func TestReplaceDryRunChangesNothing(t *testing.T) {
 
 func TestReplaceApply(t *testing.T) {
 	fx := newReplaceFixture(t)
+	access := map[string]string{}
+	for _, path := range []string{fx.zshrc, fx.env} {
+		var err error
+		access[path], err = fileacl.Fingerprint(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	envBefore, err := os.Stat(fx.env)
 	if err != nil {
 		t.Fatal(err)
@@ -364,9 +418,9 @@ func TestReplaceApply(t *testing.T) {
 	if got := read(t, fx.env); got != "ANTHROPIC_API_KEY="+fx.new+"\nOTHER=1\n# copy: "+fx.new+"\n" {
 		t.Error(".env not rewritten on both lines")
 	}
-	for path, mode := range map[string]os.FileMode{fx.zshrc: 0o640, fx.env: 0o600} {
-		if st, _ := os.Stat(path); st.Mode().Perm() != mode {
-			t.Errorf("%s mode %o, want %o", path, st.Mode().Perm(), mode)
+	for path, want := range access {
+		if got, err := fileacl.Fingerprint(path); err != nil || got != want {
+			t.Errorf("%s permissions %q, want %q (%v)", path, got, want, err)
 		}
 	}
 	if envAfter, _ := os.Stat(fx.env); os.SameFile(envBefore, envAfter) {
@@ -678,7 +732,7 @@ func TestReplaceWriteRefusesAFileChangedAfterThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.plan(fx.new, ""); err != nil {
+	if err := r.plan(fx.new); err != nil {
 		t.Fatal(err)
 	}
 	write(t, fx.env, read(t, fx.env)+"LATER=1\n", 0o600)
@@ -775,10 +829,8 @@ func TestReplaceRefusesToKeychainWhereNoShellReadsIt(t *testing.T) {
 		if code != 1 || !strings.Contains(e, "on Windows store the value with cmdkey and reference it as keychain:<service>") {
 			t.Fatalf("%v: %d %q", args, code, e)
 		}
-		for _, c := range fx.os.calls {
-			if c.name == "store" || c.name == "clear" {
-				t.Errorf("%v: refused, yet ran %s", args, c.name)
-			}
+		if len(fx.os.calls) != 0 {
+			t.Errorf("%v: consulted the clipboard or Keychain before refusing", args)
 		}
 		if read(t, fx.zshrc) != zBefore || read(t, fx.env) != eBefore || fx.item(t).Status != tracker.Open {
 			t.Errorf("%v: a refused replace changed a file or the item", args)
