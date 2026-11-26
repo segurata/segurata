@@ -339,7 +339,7 @@ func TestLivenessLookupsAtScanTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyPEM, body := fakePEM("", der)
+	keyPEM, body := testcorpus.PEM("", der)
 	pub, _, err := sshkey.FromPrivate(body)
 	if err != nil {
 		t.Fatal(err)

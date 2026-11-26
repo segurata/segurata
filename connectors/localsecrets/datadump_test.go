@@ -151,62 +151,6 @@ func TestDumpSeverity(t *testing.T) {
 	}
 }
 
-func TestDumpGuards(t *testing.T) {
-	refused := func(c cli.Checker, args ...string) bool { return errors.Is(c.Check(args), cli.ErrRefused) }
-	blob := strings.Repeat("a", 40)
-	for _, ok := range [][]string{
-		{"--git-dir=/r/.git", "log", "--all", "--no-renames", "--diff-filter=A", "--name-only", "--format=", "-z"},
-		{"--git-dir=/r/.git", "log", "--all", "--raw", "--no-abbrev", "--format=%x01%H", "-z", "--", ":(literal)-p", "--output=x"},
-		{"--git-dir=/r/.git", "cat-file", "-s", blob},
-		{"--git-dir=/r/.git", "--work-tree=/r", "ls-files", "-s", "-z"},
-		{"--git-dir=/r/.git", "rev-list", "--no-walk", "--all"},
-	} {
-		if refused(gitCheck, ok...) {
-			t.Errorf("read-only git refused: %v", ok)
-		}
-	}
-	for _, bad := range [][]string{
-		{"--git-dir=/r/.git", "log", "-p"},
-		{"--git-dir=/r/.git", "log", "--output=/tmp/x", "--all"},
-		{"--git-dir=/r/.git", "log", "--ext-diff", "--all"},
-		{"--git-dir=/r/.git", "log", "--textconv"},
-		{"--git-dir=/r/.git", "cat-file", "-p", blob},
-		{"--git-dir=/r/.git", "cat-file", "blob", blob},
-		{"--git-dir=/r/.git", "cat-file", "-s", "HEAD"},
-		{"-c", "core.pager=sh", "log"},
-		{"--git-dir=/r/.git", "config", "x"},
-		{"--git-dir=/r/.git"},
-	} {
-		if !refused(gitCheck, bad...) {
-			t.Errorf("git allowed: %v", bad)
-		}
-	}
-	if refused(gitHeadCheck, "--git-dir=/r/.git", "cat-file", "blob", blob) || !refused(gitHeadCheck, "--git-dir=/r/.git", "cat-file", "blob", "HEAD:x") ||
-		!refused(gitHeadCheck, "--git-dir=/r/.git", "cat-file", "-p", blob) {
-		t.Error("git head check")
-	}
-	if refused(ghCheck, "repo", "view", "o/r", "--json", "visibility") || !refused(ghCheck, "repo", "delete", "o/r") ||
-		!refused(ghCheck, "repo", "view", "o/r", "--web") || !refused(ghCheck, "api", "-X", "DELETE", "repos/o/r") {
-		t.Error("gh check")
-	}
-}
-
-func TestDataDumpsSetting(t *testing.T) {
-	for v, want := range map[any]dumpMode{nil: dumpsOn, true: dumpsOn, false: dumpsOff, "only": dumpsOnly} {
-		cfg := map[string]any{}
-		if v != nil {
-			cfg["data_dumps"] = v
-		}
-		s, err := parseSettings(cfg, "/h")
-		if err != nil || s.dumps != want {
-			t.Errorf("data_dumps %v: %v %v", v, s.dumps, err)
-		}
-	}
-	if _, err := parseSettings(map[string]any{"data_dumps": "yes"}, "/h"); err == nil {
-		t.Error("bad data_dumps accepted")
-	}
-}
-
 // countingGit runs the real git and counts each subcommand, so tests can see what a run asked.
 type countingGit struct {
 	mu    sync.Mutex

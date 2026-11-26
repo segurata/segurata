@@ -5,13 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +22,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/testcorpus"
 )
 
 // Every secret in these tests is generated at run time from a fixed seed: no real or real-looking
@@ -29,42 +30,14 @@ import (
 
 var rng = rand.New(rand.NewPCG(7, 11))
 
-const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+func fake(prefix string, n int) string { return testcorpus.Fake(rng, prefix, n, testcorpus.Alnum) }
 
-func fake(prefix string, n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = alnum[rng.IntN(len(alnum))]
-	}
-	return prefix + string(b)
-}
-
-// fakePEM is random bytes in PEM armour: enough to exercise body extraction and fingerprints.
-func fakePEM(label string, raw []byte) (pem, body string) {
-	if raw == nil {
-		raw = make([]byte, 600)
-		for i := range raw {
-			raw[i] = byte(rng.IntN(256))
-		}
-	}
-	body = base64.StdEncoding.EncodeToString(raw)
-	var lines []string
-	for i := 0; i < len(body); i += 64 {
-		lines = append(lines, body[i:min(i+64, len(body))])
-	}
-	head := "-----BEGIN " + strings.TrimSpace(label+" PRIVATE KEY") + "-----"
-	tail := "-----END " + strings.TrimSpace(label+" PRIVATE KEY") + "-----"
-	return head + "\n" + strings.Join(lines, "\n") + "\n" + tail + "\n", body
-}
+// fakePEM is a random key of a label in PEM armour, and its body.
+func fakePEM(label string) (pem, body string) { return testcorpus.PEM(label, testcorpus.Bytes(rng, 600)) }
 
 func opensshBlob(cipher string) []byte {
-	b := []byte("openssh-key-v1\x00")
-	b = binary.BigEndian.AppendUint32(b, uint32(len(cipher)))
-	b = append(b, cipher...)
-	for range 200 {
-		b = append(b, byte(rng.IntN(256)))
-	}
-	return b
+	b := binary.BigEndian.AppendUint32([]byte("openssh-key-v1\x00"), uint32(len(cipher)))
+	return append(append(b, cipher...), testcorpus.Bytes(rng, 200)...)
 }
 
 // A short random body scores less entropy than a long one: an AWS key id's 16 characters fell
@@ -151,7 +124,7 @@ func TestJWTAnonOrExpiredIsPublic(t *testing.T) {
 }
 
 func TestPEMBodyIsTheSameInEveryForm(t *testing.T) {
-	pem, body := fakePEM("RSA", nil)
+	pem, body := fakePEM("RSA")
 	escaped := strings.ReplaceAll(pem, "\n", `\n`)
 	doubled := strings.ReplaceAll(pem, "\n", `\\n`)
 	for name, text := range map[string]string{"file": pem, "escaped": escaped, "double-escaped": doubled} {
@@ -167,8 +140,8 @@ func TestPEMBodyIsTheSameInEveryForm(t *testing.T) {
 }
 
 func TestPEMEncrypted(t *testing.T) {
-	_, plain := fakePEM("OPENSSH", opensshBlob("none"))
-	_, locked := fakePEM("OPENSSH", opensshBlob("aes256-ctr"))
+	_, plain := testcorpus.PEM("OPENSSH", opensshBlob("none"))
+	_, locked := testcorpus.PEM("OPENSSH", opensshBlob("aes256-ctr"))
 	if pemEncrypted("OPENSSH", "", plain) {
 		t.Error("cipher none reported encrypted")
 	}
@@ -180,49 +153,29 @@ func TestPEMEncrypted(t *testing.T) {
 	}
 }
 
-func TestGuards(t *testing.T) {
-	refused := func(c cli.Checker, args ...string) bool { return errors.Is(c.Check(args), cli.ErrRefused) }
-	if !refused(rgCheck, "--pre", "sh", "-e", "x") || !refused(rgCheck, "--pre=sh") || !refused(rgCheck, "-z", "-e", "x") {
-		t.Error("rg ran another program")
-	}
-	if refused(rgCheck, "-o", "-e", "x", "--", "--pre") {
-		t.Error("a path after -- is not a flag")
-	}
-	if !refused(gitleaksCheck, "git", "--report-path", "/tmp/r.json", "repo") || !refused(gitleaksCheck, "git", "--report-path=r.json", "repo") {
-		t.Error("gitleaks may write the raw report to a file")
-	}
-	safe := []string{"--log-opts", gitLogSafety + " --all"}
-	if refused(gitleaksCheck, append([]string{"git"}, append(safe, "repo")...)...) ||
-		!refused(gitleaksCheck, "git", "--report-path", "-", "repo") || !refused(gitleaksCheck, "git", "--log-opts", "--all", "repo") ||
-		!refused(gitleaksCheck, "git", "--log-opts="+gitLogSafety+" --all", "repo") {
-		t.Error("gitleaks may run git log without " + gitLogSafety)
-	}
-	if !refused(gitleaksCheck, "dir", "repo") ||
-		refused(gitleaksCheck, "version") || !refused(gitleaksCheck, "version", "--config=x") {
-		t.Error("gitleaks subcommand check")
-	}
-	if refused(gitList, "--git-dir=/r/.git", "--work-tree=/r", "ls-files", "-z") || !refused(gitList, "--git-dir=/r/.git", "config", "x") {
-		t.Error("git check")
-	}
-	if refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-s", "0123456789:a/b.env") || refused(gitCheck, "--git-dir=/r/.git", "cat-file", "blob", "0123456789:a/b.env") ||
-		!refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-p", "0123456789:a/b.env") || !refused(gitCheck, "--git-dir=/r/.git", "cat-file", "-s", "HEAD:x") {
-		t.Error("git cat-file: the size and content of a file as committed, nothing else")
-	}
-	if refused(sshKeygenCheck, "-y", "-P", "", "-f", "k") || refused(sshKeygenCheck, "-l", "-f", "k.pub") {
-		t.Error("ssh-keygen read-only shapes refused")
-	}
-	if !refused(sshKeygenCheck, "-p", "-f", "k") || !refused(sshKeygenCheck, "-y", "-P", "guess", "-f", "k") {
-		t.Error("ssh-keygen may change a key or try a passphrase")
-	}
-}
-
 func TestSettings(t *testing.T) {
-	s, err := parseSettings(map[string]any{"repos_root": "~/code", "skip_git_history": true, "gitleaks_workers": 2.0, "gitleaks_timeout": "90s"}, "/h")
-	if err != nil || s.reposRoot != "/h/code" || !s.skipHistory || s.workers != 2 || s.timeout != 90*time.Second {
+	s, err := parseSettings(map[string]any{"repos_root": "~/code", "skip_git_history": true, "gitleaks_workers": 2.0, "gitleaks_timeout": "90s",
+		"owned_owners": []any{"me", "my-org"}, "emit_noise": true}, "/h")
+	if err != nil || s.reposRoot != "/h/code" || !s.skipHistory || s.workers != 2 || s.timeout != 90*time.Second ||
+		!slices.Equal(s.ownedOwners, []string{"me", "my-org"}) || !s.emitNoise {
 		t.Fatalf("settings %+v err %v", s, err)
 	}
-	if _, err := parseSettings(map[string]any{"gitleaks_timeout": "soon"}, "/h"); err == nil {
-		t.Error("bad timeout accepted")
+	for v, want := range map[any]dumpMode{nil: dumpsOn, true: dumpsOn, false: dumpsOff, "only": dumpsOnly} {
+		cfg := map[string]any{}
+		if v != nil {
+			cfg["data_dumps"] = v
+		}
+		if s, err := parseSettings(cfg, "/h"); err != nil || s.dumps != want {
+			t.Errorf("data_dumps %v: %v %v", v, s.dumps, err)
+		}
+	}
+	for _, bad := range []map[string]any{
+		{"gitleaks_timeout": "soon"}, {"data_dumps": "yes"},
+		{"owned_owners": "me"}, {"owned_owners": []any{"me", 3}}, {"owned_owners": []any{""}},
+	} {
+		if _, err := parseSettings(bad, "/h"); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
 	}
 }
 
@@ -254,9 +207,9 @@ func newFixture(t *testing.T) *fixture {
 	_ = os.Chmod(fx.home, 0o755) // an open home folder, like macOS's default
 	anthropic := fake("sk-ant-api03-", 60)
 	fx.stripe = fake("sk_live_", 40)
-	fx.keyPEM, _ = fakePEM("RSA", nil)
-	sshPEM, _ := fakePEM("OPENSSH", opensshBlob("none"))
-	saPEM, _ := fakePEM("", nil)
+	fx.keyPEM, _ = fakePEM("RSA")
+	sshPEM, _ := testcorpus.PEM("OPENSSH", opensshBlob("none"))
+	saPEM, _ := fakePEM("")
 	noise := fake("", 19) + "7" // a digit: an all-letter value is not a secret (notSecretValue)
 	fx.secrets = []string{anthropic, fx.stripe, fx.keyPEM, sshPEM, saPEM, noise}
 

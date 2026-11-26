@@ -30,7 +30,7 @@ const (
 func Secrets(r *rand.Rand) []string {
 	f := func(prefix string, n int) string { return Fake(r, prefix, n, Alnum) }
 	h := func(prefix string, n int) string { return Fake(r, prefix, n, Hex) }
-	pem, _ := PEM(r)
+	pem, _ := PEM("RSA", Bytes(r, 400))
 	jwtPart := func(v any) string {
 		raw, _ := json.Marshal(v)
 		return base64.RawURLEncoding.EncodeToString(raw)
@@ -60,18 +60,24 @@ func Secrets(r *rand.Rand) []string {
 	}
 }
 
-// PEM is random bytes in PEM armour, and its base64 body.
-func PEM(r *rand.Rand) (pem, body string) {
-	raw := make([]byte, 400)
-	for i := range raw {
-		raw[i] = byte(r.IntN(256))
+// Bytes is n random bytes.
+func Bytes(r *rand.Rand, n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(r.IntN(256))
 	}
+	return b
+}
+
+// PEM is raw in the armour of a label's private key ("" for PKCS#8), and its base64 body.
+func PEM(label string, raw []byte) (pem, body string) {
 	body = base64.StdEncoding.EncodeToString(raw)
 	var lines []string
 	for i := 0; i < len(body); i += 64 {
 		lines = append(lines, body[i:min(i+64, len(body))])
 	}
-	return "-----BEGIN RSA PRIVATE KEY-----\n" + strings.Join(lines, "\n") + "\n-----END RSA PRIVATE KEY-----\n", body
+	kind := strings.TrimSpace(label + " PRIVATE KEY")
+	return "-----BEGIN " + kind + "-----\n" + strings.Join(lines, "\n") + "\n-----END " + kind + "-----\n", body
 }
 
 // Filler is text of the kinds a transcript holds: source code, prose, URLs, shell output and
@@ -92,11 +98,7 @@ func Filler(r *rand.Rand, n int) string {
 	for b.Len() < n {
 		switch r.IntN(12) {
 		case 0:
-			blob := make([]byte, 3000+r.IntN(30000))
-			for i := range blob {
-				blob[i] = byte(r.IntN(256))
-			}
-			b.WriteString(base64.StdEncoding.EncodeToString(blob))
+			b.WriteString(base64.StdEncoding.EncodeToString(Bytes(r, 3000+r.IntN(30000))))
 			b.WriteByte('\n')
 		case 1:
 			b.WriteString(Fake(r, "", 200+r.IntN(2000), Alnum+"     \n\t.,;:-_/"))
