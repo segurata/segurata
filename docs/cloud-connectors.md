@@ -18,7 +18,7 @@ core resolves from the config (`env:`, `keychain:` or `op://`, see [secrets.md](
 reads a token from another tool's config files: the `vercel` CLI's stored login and `wrangler`'s
 are never touched. The one write is `azure.app-secret.delete-expired`, a remediation that runs
 `az ad app credential delete` for already expired client secrets after a confirmed plan, through
-its own allowlist (README, "Remediation").
+its own allowlist (docs/user-guide.md, "Remediation").
 
 Whatever fails turns into a `status` record, never a crash: a missing CLI is `unsupported`, an
 expired session `reauth`, `az` without a login `signedout`, a missing token `missing_credentials`

@@ -1,6 +1,6 @@
 // Package accounts is `segurata accounts`: which accounts each connector saw and whether the
 // config watches them (list), adding or removing one from connectors.<x>.config.accounts (watch,
-// unwatch), and the owner's accounts attribution compares secrets with (owned). See README,
+// unwatch), and the owner's accounts attribution compares secrets with (owned). See docs/user-guide.md,
 // "Accounts", and docs/architecture.md, "Attribution".
 package accounts
 

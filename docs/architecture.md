@@ -495,7 +495,7 @@ would cover it:
 | Stripe API keys | always | restricted keys, delete unused ones |
 | breaches of your addresses (HIBP) | no hibp run has read the addresses | install examples/hibp and run it |
 | the password manager's password report | always | 1Password Watchtower or Bitwarden Reports |
-| Google Workspace administration | a workspace tenant ran and none reported ok | README, "Google Workspace administration" |
+| Google Workspace administration | a workspace tenant ran and none reported ok | docs/inventory.md, "Google Workspace administration" |
 
 The connectors that audit an area declare it in `describe` (`covers`, see connectors.md,
 "Theme and grouping"): github `github-owner-2fa` under its `user:` scope, workspace `workspace`,
@@ -838,7 +838,7 @@ records (part of the finding id). On the command line, `name` selects every inst
 | `cloudflare` | API, read-only user token | User API tokens (no expiry, idle, edit without an IP filter, edit on all zones or accounts), Global API Key reminder, account 2FA enforcement, members without 2FA, super administrators, per zone SSL mode, Always Use HTTPS, minimum TLS and DNSSEC. One instance per login |
 | `macos` | macOS tools, read-only and without sudo | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, local accounts other than yours (admin, home folder, last login), items owned by deleted accounts' UIDs in shared folders and launchd folders, Time Machine (no destination, unencrypted destination, latest backup age), endpoint agents and their leftovers, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
 | `workspace` | Admin SDK, token from a per-tenant gcloud config | One instance per tenant: accounts without 2SV enrolled or enforced, admins (super admins used day to day), suspended or inactive accounts, third-party apps with OAuth grants ranked by scope and users, token authorizations and revocations over 30 days |
-| `browser-extensions` | Brave and Chrome profile files, read-only, no network | Every extension in every profile: capabilities, source, install and update dates, category hint, and a `remove`/`review`/`keep` verdict with reasons (README, "Browser extensions"). Not automatable; each finding links the extension's page in the browser. Web Store lookups (pulled extensions, new owners) are a future enhancement |
+| `browser-extensions` | Brave and Chrome profile files, read-only, no network | Every extension in every profile: capabilities, source, install and update dates, category hint, and a `remove`/`review`/`keep` verdict with reasons (docs/inventory.md, "Browser extensions"). Not automatable; each finding links the extension's page in the browser. Web Store lookups (pulled extensions, new owners) are a future enhancement |
 
 `browser-extensions` is its own connector rather than part of `macos`: it reads browser data, not
 OS settings, the same files exist on Linux, and the triage compares extensions across all profiles

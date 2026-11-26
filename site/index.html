@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Segurata is an open-source CLI that audits accounts and computers you manage and tracks what needs fixing.">
+  <meta name="theme-color" content="#141312">
+  <title>Segurata — Security audits from your terminal</title>
+  <link rel="icon" href="assets/segurata.webp" type="image/webp">
+  <link rel="stylesheet" href="styles.css">
+  <script src="copy.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="header">
+    <nav class="frame nav" aria-label="Main">
+      <a class="wordmark" href="./">
+        <img src="assets/segurata.webp" width="36" height="36" alt="">
+        <span>segurata</span>
+      </a>
+      <div class="nav-links">
+        <a href="#first-scan">Quickstart</a>
+        <a href="https://github.com/segurata/segurata#readme">Docs</a>
+        <a class="outline" href="https://github.com/segurata/segurata">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="frame hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">Open-source security CLI</p>
+        <h1 id="hero-title">Know what still<br class="wide-break"> has access<span class="period">.</span></h1>
+        <p class="lede">Audit the accounts and computers you manage. Find connected apps, browser extensions, and secrets on disk, then track what needs fixing between scans.</p>
+        <a class="button" href="#install">Get Segurata</a>
+        <p class="platforms">macOS, Linux, Windows preview · Go 1.26+</p>
+      </div>
+      <div class="hero-art">
+        <img src="assets/segurata.webp" alt="Illustrated security guard with a charcoal cap and a lime-lit optic" width="900" height="900" fetchpriority="high">
+      </div>
+    </section>
+
+    <section class="install" id="install" aria-labelledby="install-title">
+      <div class="frame install-inner">
+        <h2 id="install-title">Install</h2>
+        <div class="command">
+          <code id="install-command">go install github.com/segurata/segurata/cmd/segurata@latest</code>
+          <button class="copy" type="button" data-copy="install-command" aria-label="Copy install command" hidden>Copy</button>
+        </div>
+        <span class="sr-only" id="copy-status" role="status"></span>
+        <a class="text-link" href="https://github.com/segurata/segurata/blob/main/docs/releasing.md#installing">Other install options</a>
+      </div>
+    </section>
+
+    <section class="guide" id="first-scan" aria-labelledby="scan-title">
+      <div class="frame scan-grid">
+        <div class="scan-copy">
+          <h2 id="scan-title">Start with one scan.</h2>
+          <p>On macOS or Linux, check the extensions in a local Brave or Chrome profile without signing in to a provider. Then open the tracker to see what needs attention.</p>
+          <a class="text-link" href="https://github.com/segurata/segurata#quickstart">Read the quickstart</a>
+        </div>
+        <div class="terminal">
+          <div class="terminal-head">
+            <span>Terminal</span>
+            <button class="copy" type="button" data-copy="scan-command" aria-label="Copy first scan commands" hidden>Copy</button>
+          </div>
+          <pre><code id="scan-command">segurata doctor --connector browser-extensions
+segurata inventory browser-extensions
+segurata status</code></pre>
+        </div>
+      </div>
+
+      <div class="frame features">
+        <article>
+          <h3>Pick what to audit</h3>
+          <p>Inspect connected apps, browser extensions, cloud and AI accounts, or secrets on disk.</p>
+          <a class="text-link" href="https://github.com/segurata/segurata/blob/main/docs/inventory.md">Explore the connectors</a>
+        </article>
+        <article>
+          <h3>Keep a record</h3>
+          <p>Findings stay on your computer. The tracker records decisions, items to revisit, and credentials still due for rotation.</p>
+          <a class="text-link" href="https://github.com/segurata/segurata/blob/main/docs/architecture.md#tracker">About the tracker</a>
+        </article>
+        <article>
+          <h3>Preview a fix</h3>
+          <p>Inventories read from your systems. Supported repairs show a plan before you decide to apply it.</p>
+          <a class="text-link" href="https://github.com/segurata/segurata/blob/main/SECURITY.md">Security policy</a>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="frame footer-inner">
+      <p>Proudly brought to you by <a href="https://github.com/DjinnFoundry">DjinnFoundry</a>.</p>
+      <a href="https://github.com/segurata/segurata/blob/main/LICENSE">Apache License 2.0</a>
+    </div>
+  </footer>
+</body>
+</html>

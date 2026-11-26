@@ -151,7 +151,7 @@
       "Priority": "",
       "Status": "open",
       "Who": "you",
-      "Action": "Set up read-only Admin SDK credentials for each tenant (README.md, \"Google Workspace administration\"), then run the connector.",
+      "Action": "Set up read-only Admin SDK credentials for each tenant (docs/inventory.md, \"Google Workspace administration\"), then run the connector.",
       "Command": "segurata inventory workspace",
       "URL": "",
       "Findings": null

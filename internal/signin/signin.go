@@ -1,6 +1,6 @@
 // Package signin is `segurata signin`: it opens the pages where the owner signs in again for a
 // browser connector, waits while they do, reading but never typing or clicking, then runs those
-// connectors again. Terminal commands are listed, never run. See README, "Signing in".
+// connectors again. Terminal commands are listed, never run. See docs/user-guide.md, "Signing in".
 package signin
 
 import (

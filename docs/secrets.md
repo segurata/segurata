@@ -11,7 +11,7 @@ secret, its locations, the files where the new value goes and the provider page 
 rotated; `segurata rotations done <id>` once it is rotated. `segurata rotations next` walks
 that list one item at a time with the provider's rotation steps, and `segurata rotations
 replace <id>` puts the new value in every file that held the old one, or in the Keychain
-([README](../README.md#rotation-ledger), [architecture](architecture.md#guided-rotation-next-and-replace)).
+([inventory guide](inventory.md#rotation-ledger), [architecture](architecture.md#guided-rotation-next-and-replace)).
 
 Tools on this machine (2026-11-23): macOS Keychain (`security`), 1Password CLI (`op` 2.41, signed
 in), `age`, `gitleaks`, `git-credential-osxkeychain` already configured, `gh` with its token in the

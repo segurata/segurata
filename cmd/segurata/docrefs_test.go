@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// docCite is a citation of a document section by heading: `README, "Signing in"`,
+// docCite is a citation of a document section by heading: `README, "Quickstart"`,
 // `docs/architecture.md, "Verbs"`. Comment markers between its lines are joined first.
 var (
 	docCite      = regexp.MustCompile(`\b((?:[\w-]+/)*[\w-]+\.md|README),\s+"([^"]+)"`)

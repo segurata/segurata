@@ -129,6 +129,12 @@ install -m 0755 segurata ~/.local/bin/
 While the repository is private, release downloads (and so the cask) need a GitHub token with read
 access to it, for example `gh release download v0.1.0 --repo segurata/segurata`.
 
+## Project website
+
+The GitHub Pages source is the root of the public repository's `gh-pages` branch. To update it,
+copy the contents of `site/` from a reviewed public commit, including `.nojekyll`, into a checkout
+of that branch. Commit the changed files, push the branch, and check the Pages deployment.
+
 ## Going public
 
 Publish a sanitized copy into an empty private destination at `github.com/segurata/segurata`.

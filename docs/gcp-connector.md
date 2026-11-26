@@ -24,7 +24,7 @@ Optional, in `~/.config/segurata/config.json`:
 ```
 
 Every key is optional. A malformed value stops the run with an error naming the key, as the
-[README](../README.md#quickstart) says; `accounts` and `projects` cannot be empty lists, while an
+[configuration guide](user-guide.md#configuration-and-output) says; `accounts` and `projects` cannot be empty lists, while an
 empty `skip_projects` skips nothing.
 
 | Key | Default | Meaning |

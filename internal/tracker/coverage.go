@@ -175,7 +175,7 @@ var gaps = []gap{
 		step: "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (docs/plan.md, section 2). Mark this done when checked."},
 	{slug: "workspace", title: "Google Workspace administration is not audited: no workspace tenant could be read",
 		audited: true,
-		step:    "Set up read-only Admin SDK credentials for each tenant (README.md, \"Google Workspace administration\"), then run the connector.",
+		step:    "Set up read-only Admin SDK credentials for each tenant (docs/inventory.md, \"Google Workspace administration\"), then run the connector.",
 		command: "segurata inventory workspace"},
 }
 

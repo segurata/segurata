@@ -18,8 +18,8 @@ Treat skipped or failed scopes as uninspected. Summarize findings with IDs, prio
 
 Use the corresponding command's `--help` for flag syntax if the source documentation is unavailable.
 
-- For connector selection, sign-in, Windows preview limits or data sent off the machine, read the relevant section of the [README](../../../README.md).
-- Before running `local-secrets`, read [its configuration and liveness options](../../../README.md#plaintext-secrets-on-disk-local-secrets). Check which network checks the selected instance has enabled. Run those checks only for accounts or machines the user controls and has authorized for this run. Keep credential checks disabled if ownership is unknown.
+- For connector selection, see [inventory](../../../docs/inventory.md). For sign-in or data sent off the machine, see the [user guide](../../../docs/user-guide.md). For Windows availability, see [release binaries](../../../docs/releasing.md#release-binaries).
+- Before running `local-secrets`, read [its configuration and liveness options](../../../docs/inventory.md#plaintext-secrets-on-disk-local-secrets). Check which network checks the selected instance has enabled. Run those checks only for accounts or machines the user controls and has authorized for this run. Keep credential checks disabled if ownership is unknown.
 - For incomplete inventories, read [run completeness](../../../docs/architecture.md#run-completeness).
-- For report formats and output paths, read [reports](../../../README.md#report).
+- For report formats and output paths, read [reports](../../../docs/user-guide.md#report).
 - For a plan or a change, use [segurata-remediate](../segurata-remediate/SKILL.md).
