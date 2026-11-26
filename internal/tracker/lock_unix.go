@@ -11,13 +11,13 @@ import (
 	"time"
 )
 
-// lockWait is how long Lock waits for another segurata command to finish with the tracker.
+// lockWait is how long lock waits for another segurata command to finish with the tracker.
 var lockWait = 2 * time.Minute
 
-// Lock takes the tracker lock: an exclusive flock on <path>.lock, which the system releases if the
+// lock takes the tracker lock: an exclusive flock on <path>.lock, which the system releases if the
 // process dies. It waits up to lockWait for another command holding it. Commands that change
 // tracker.json hold it from load to save; read-only views do not take it.
-func Lock(path string) (unlock func(), err error) {
+func lock(path string) (unlock func(), err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}

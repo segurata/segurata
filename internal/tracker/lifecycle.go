@@ -59,8 +59,8 @@ func (t *Tracker) newItem(kind Kind, key, theme, title string, now time.Time) *I
 	return it
 }
 
-// ByKey returns the item with that grouping key, or nil.
-func (t *Tracker) ByKey(key string) *Item {
+// itemByKey returns the item with that grouping key, or nil.
+func (t *Tracker) itemByKey(key string) *Item {
 	for _, it := range t.Items {
 		if it.Key == key {
 			return it
@@ -94,8 +94,8 @@ func (it *Item) setStatus(at time.Time, st Status, event, action, detail string)
 // leaveAccepted drops an acceptance when the owner moves the item on by hand.
 func (it *Item) leaveAccepted() { it.Accepted = nil }
 
-// Start marks the item in progress.
-func (it *Item) Start(at time.Time, note string) error {
+// start marks the item in progress.
+func (it *Item) start(at time.Time, note string) error {
 	if it.Closed() {
 		return fmt.Errorf("%s is %s: reopen it first", it.ID, it.Status)
 	}
@@ -119,8 +119,8 @@ func (it *Item) Done(at time.Time, note string) {
 	it.derive()
 }
 
-// Snooze hides the item until a date (YYYY-MM-DD, a day in at's zone, as Accept reads it) after at.
-func (it *Item) Snooze(at time.Time, until, note string) error {
+// snooze hides the item until a date (YYYY-MM-DD, a day in at's zone, as Accept reads it) after at.
+func (it *Item) snooze(at time.Time, until, note string) error {
 	d, err := time.ParseInLocation(time.DateOnly, until, at.Location())
 	if err != nil {
 		return fmt.Errorf("--until %q is not a date (YYYY-MM-DD)", until)
@@ -134,8 +134,8 @@ func (it *Item) Snooze(at time.Time, until, note string) error {
 	return nil
 }
 
-// Ignore closes the item as not a real problem.
-func (it *Item) Ignore(at time.Time, reason string) error {
+// ignore closes the item as not a real problem.
+func (it *Item) ignore(at time.Time, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return errors.New("ignore needs --reason (why this is not a real problem)")
 	}
@@ -144,8 +144,8 @@ func (it *Item) Ignore(at time.Time, reason string) error {
 	return nil
 }
 
-// Reopen puts the item back on the open list.
-func (it *Item) Reopen(at time.Time, note string) {
+// reopen puts the item back on the open list.
+func (it *Item) reopen(at time.Time, note string) {
 	it.leaveAccepted()
 	it.setStatus(at, Open, EvReopened, actReopen, note)
 	if it.Secret != nil {
@@ -166,8 +166,8 @@ func (it *Item) Note(at time.Time, text string) error {
 	return nil
 }
 
-// Decide answers a decide item and closes it.
-func (it *Item) Decide(at time.Time, answer string) error {
+// decide answers a decide item and closes it.
+func (it *Item) decide(at time.Time, answer string) error {
 	answer = strings.TrimSpace(answer)
 	switch {
 	case it.Decision == nil:
@@ -182,8 +182,8 @@ func (it *Item) Decide(at time.Time, answer string) error {
 	return nil
 }
 
-// Prioritize sets a priority by hand, or with p "" goes back to the computed one.
-func (it *Item) Prioritize(at time.Time, p secretrisk.Priority, reason string) error {
+// prioritize sets a priority by hand, or with p "" goes back to the computed one.
+func (it *Item) prioritize(at time.Time, p secretrisk.Priority, reason string) error {
 	if p == "" {
 		it.PriorityOverride = nil
 		it.Log(at, EvPriority, actPrioritize, "back to the computed priority "+textfmt.OrDash(string(it.Priority)))
@@ -200,8 +200,8 @@ func (it *Item) Prioritize(at time.Time, p secretrisk.Priority, reason string) e
 	return nil
 }
 
-// ParsePriority reads P0..P3 (any case), or "auto" / "" for the computed priority.
-func ParsePriority(s string) (secretrisk.Priority, error) {
+// parsePriority reads P0..P3 (any case), or "auto" / "" for the computed priority.
+func parsePriority(s string) (secretrisk.Priority, error) {
 	s = strings.ToUpper(strings.TrimSpace(s))
 	switch s {
 	case "", "AUTO":
@@ -212,8 +212,8 @@ func ParsePriority(s string) (secretrisk.Priority, error) {
 	return "", fmt.Errorf("priority %q: use P0, P1, P2, P3 or auto", s)
 }
 
-// Accept keeps the item's risk on purpose, until a date or for good.
-func (it *Item) Accept(at time.Time, reason, until string) error {
+// accept keeps the item's risk on purpose, until a date or for good.
+func (it *Item) accept(at time.Time, reason, until string) error {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return errors.New("accept needs --reason (why this risk is kept on purpose)")
@@ -246,7 +246,7 @@ func acceptedNext() *Next {
 }
 
 // Unaccept stops keeping the risk: the item is open again.
-func (it *Item) Unaccept(at time.Time) {
+func (it *Item) unaccept(at time.Time) {
 	it.Accepted = nil
 	it.setStatus(at, Open, EvStatus, actUnaccept, "")
 }
@@ -342,16 +342,16 @@ func priorityOf(s finding.Severity) secretrisk.Priority {
 
 // Find resolves an item id (T-0012 or T-12), a rotate item's short id, or a unique prefix of a
 // short id or fingerprint.
-func (t *Tracker) Find(ref string) (*Item, error) {
-	return t.find(ref, func(*Item) bool { return true }, "segurata track list --all")
+func (t *Tracker) find(ref string) (*Item, error) {
+	return t.findWhere(ref, func(*Item) bool { return true }, "segurata track list --all")
 }
 
 // FindRotate is Find among rotate items only.
 func (t *Tracker) FindRotate(ref string) (*Item, error) {
-	return t.find(ref, func(it *Item) bool { return it.Kind == KindRotate }, "segurata rotations list --all")
+	return t.findWhere(ref, func(it *Item) bool { return it.Kind == KindRotate }, "segurata rotations list --all")
 }
 
-func (t *Tracker) find(ref string, keep func(*Item) bool, hint string) (*Item, error) {
+func (t *Tracker) findWhere(ref string, keep func(*Item) bool, hint string) (*Item, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, errors.New("missing item id")
@@ -399,7 +399,7 @@ func Sort(items []*Item) {
 			return pa < pb
 		}
 		if a.Secret != nil && b.Secret != nil {
-			if la, lb := a.LiveAndLeaked(), b.LiveAndLeaked(); la != lb {
+			if la, lb := a.liveAndLeaked(), b.liveAndLeaked(); la != lb {
 				return la
 			}
 			if ea, eb := a.worst().Level, b.worst().Level; ea != eb {

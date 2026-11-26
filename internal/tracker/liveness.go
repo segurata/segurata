@@ -134,7 +134,7 @@ func (it *Item) closeDead(now time.Time) {
 
 // inWorkingFile reports whether a current location of the secret is a working file.
 func (it *Item) inWorkingFile() bool {
-	return slices.ContainsFunc(it.Secret.Locations, func(l Location) bool { return l.Working() && !l.Gone })
+	return slices.ContainsFunc(it.Secret.Locations, func(l Location) bool { return l.working() && !l.Gone })
 }
 
 // reopenUndead opens an item a dead check closed when the item no longer holds a dead verdict: the

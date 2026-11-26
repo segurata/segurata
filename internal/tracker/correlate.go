@@ -2,7 +2,6 @@ package tracker
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -179,17 +178,6 @@ func mostUrgent(items []*Item) *Item {
 	items = slices.Clone(items)
 	Sort(items)
 	return items[0]
-}
-
-// homePath writes an absolute path under the home directory as ~/…, the way locations are kept.
-func homePath(p string) string {
-	if p == "" || strings.HasPrefix(p, "~/") {
-		return p
-	}
-	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(p, home+"/") {
-		return "~/" + strings.TrimPrefix(p, home+"/")
-	}
-	return p
 }
 
 // correlate finds, in the folded runs, every credential finding that stands for a rotate item's
@@ -439,9 +427,9 @@ func (it *Item) live() []FindingRef {
 	return out
 }
 
-// LiveAndLeaked reports whether a connector or the liveness check shows the secret is live and a
+// liveAndLeaked reports whether a connector or the liveness check shows the secret is live and a
 // copy of it left the machine (pushed git history, an agent transcript): the most urgent kind of
 // secret.
-func (it *Item) LiveAndLeaked() bool {
+func (it *Item) liveAndLeaked() bool {
 	return it.provenLive() && it.worst().Level == secretrisk.Remote
 }

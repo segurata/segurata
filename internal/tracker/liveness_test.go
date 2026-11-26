@@ -57,14 +57,14 @@ func TestLiveSecretIsP0WhenLeaked(t *testing.T) {
 	writeSecrets(t, out, t0, append(ghLeak(t0, checked(secretrisk.Live, t0, "github:octocat")), localLeak("d8d8d8d8d8d8d8d8", checked(secretrisk.Live, t0, "")))...)
 	syncOrDie(t, tr, out, t0.Add(time.Minute))
 	gh := mustRotate(t, tr, ghFP[:8])
-	if gh.Priority != secretrisk.P0 || !gh.LiveAndLeaked() || gh.Secret.Liveness == nil || gh.Secret.Liveness.State != secretrisk.Live {
+	if gh.Priority != secretrisk.P0 || !gh.liveAndLeaked() || gh.Secret.Liveness == nil || gh.Secret.Liveness.State != secretrisk.Live {
 		t.Fatalf("live leaked token: %s %+v", gh.Priority, gh.Secret.Liveness)
 	}
 	if r := strings.Join(gh.Secret.Reasons, "; "); !strings.HasPrefix(r, "live key, leaked in shop:deploy.sh") || !strings.Contains(r, "live: GET api.github.com/user accepted it on 2026-") || !strings.Contains(r, "as github:octocat") {
 		t.Errorf("reasons %q", gh.Secret.Reasons)
 	}
 	local := mustRotate(t, tr, "d8d8d8d8")
-	if local.Priority != secretrisk.P3 || local.LiveAndLeaked() {
+	if local.Priority != secretrisk.P3 || local.liveAndLeaked() {
 		t.Errorf("a live key that never left the machine keeps its priority: %s", local.Priority)
 	}
 	if f := livenessFactor(local); f.Value != 1.5 {
@@ -160,7 +160,7 @@ func TestDeadSecretClosesAsDone(t *testing.T) {
 	if gh.Status != Done {
 		t.Fatalf("dead again: %s", gh.Status)
 	}
-	gh.Reopen(day7.Add(time.Hour), "I do not trust that check")
+	gh.reopen(day7.Add(time.Hour), "I do not trust that check")
 	syncOrDie(t, tr, out, day7.Add(2*time.Hour))
 	if gh.Status != Open {
 		t.Errorf("reopened by hand after the check: %s", gh.Status)
@@ -239,10 +239,10 @@ func TestDeadLeavesOthersAlone(t *testing.T) {
 		t.Fatalf("unknown: %s %s %s", gh.Status, gh.Priority, gh.LivenessLabel())
 	}
 	ign, acc := mustRotate(t, tr, "e9e9e9e9"), mustRotate(t, tr, "f0f0f0f0")
-	if err := ign.Ignore(t0.Add(time.Hour), "test key"); err != nil {
+	if err := ign.ignore(t0.Add(time.Hour), "test key"); err != nil {
 		t.Fatal(err)
 	}
-	if err := acc.Accept(t0.Add(time.Hour), "kept", ""); err != nil {
+	if err := acc.accept(t0.Add(time.Hour), "kept", ""); err != nil {
 		t.Fatal(err)
 	}
 	day2 := t0.Add(24 * time.Hour)
@@ -292,7 +292,7 @@ func TestLivenessCoverage(t *testing.T) {
 		t.Errorf("line %q, want %q", got, want)
 	}
 	var b strings.Builder
-	_ = doc.Render(&b, tr.Status("tracker.json", t0.Add(time.Hour), View{}), doc.Text)
+	_ = doc.Render(&b, tr.status("tracker.json", t0.Add(time.Hour), View{}), doc.Text)
 	if !strings.Contains(b.String(), want) {
 		t.Errorf("status lacks the line:\n%s", b.String())
 	}
@@ -340,7 +340,7 @@ func TestLookupByOwner(t *testing.T) {
 	day3 := day2.Add(24 * time.Hour)
 	writeSecrets(t, out, day3, sshLeak(day3, sshLookup(secretrisk.Live, day3)))
 	syncOrDie(t, tr, out, day3.Add(time.Minute))
-	if key.Priority != secretrisk.P0 || !key.LiveAndLeaked() {
+	if key.Priority != secretrisk.P0 || !key.liveAndLeaked() {
 		t.Fatalf("registered: %s", key.Priority)
 	}
 	if r := strings.Join(key.Secret.Reasons, "; "); !strings.Contains(r, "live: GitHub SSH key 'laptop' (GET api.github.com/user/keys) on 2026-11-25") {

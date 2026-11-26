@@ -92,15 +92,15 @@ func (t *Tracker) seed(now time.Time) {
 		}
 	}
 	for _, d := range seedDecisions {
-		if t.ByKey("decide:"+d.slug) == nil {
-			it := t.AddDecision("decide:"+d.slug, d.question, d.options, now)
+		if t.itemByKey("decide:"+d.slug) == nil {
+			it := t.addDecision("decide:"+d.slug, d.question, d.options, now)
 			it.Priority = d.priority
 		}
 	}
 }
 
-// AddDecision creates a decide item.
-func (t *Tracker) AddDecision(key, question string, options []string, now time.Time) *Item {
+// addDecision creates a decide item.
+func (t *Tracker) addDecision(key, question string, options []string, now time.Time) *Item {
 	it := t.newItem(KindDecide, key, "decisions", question, now)
 	it.Decision = &Decision{Question: question, Options: options}
 	it.Priority, it.Severity = secretrisk.P2, "medium"
@@ -109,8 +109,8 @@ func (t *Tracker) AddDecision(key, question string, options []string, now time.T
 	return it
 }
 
-// ThemeTitle is the title of a theme id, or the id itself.
-func (t *Tracker) ThemeTitle(id string) string {
+// themeTitle is the title of a theme id, or the id itself.
+func (t *Tracker) themeTitle(id string) string {
 	for _, th := range t.Themes {
 		if th.ID == id {
 			return th.Title

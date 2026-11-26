@@ -28,7 +28,7 @@ const SecretsConnector = "local-secrets"
 const StillPresent = "still present after rotation (old value still in a working file)"
 
 // HistoryOnly is noted once when a rotated secret is seen again only where nothing reads it.
-const HistoryOnly = "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
+const historyOnly = "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
 
 // Location is one place the secret was found.
 type Location struct {
@@ -56,10 +56,10 @@ func (l Location) key() string { return l.Source + "\x00" + l.Path }
 // ref names the location in rotated_locations: source and path, as key does.
 func (l Location) ref() string { return l.Source + ":" + l.Path }
 
-// Working reports whether a consumer reads the secret from here: a config, .env, rc or repo
+// working reports whether a consumer reads the secret from here: a config, .env, rc or repo
 // working-tree file. Git history (gitleaks), transcripts, logs and shell history are records of
 // the past; once the value is revoked their copies are dead.
-func (l Location) Working() bool {
+func (l Location) working() bool {
 	return l.Source != "gitleaks" && (l.Kind == "config" || l.Kind == "repo")
 }
 
@@ -113,9 +113,9 @@ type Sighting struct {
 	Seen     time.Time
 }
 
-// Sightings returns the secret findings of a local-secrets run: those whose evidence carries a
+// sightingsOf returns the secret findings of a local-secrets run: those whose evidence carries a
 // fingerprint.
-func Sightings(fs []finding.Finding) []Sighting {
+func sightingsOf(fs []finding.Finding) []Sighting {
 	var out []Sighting
 	for _, f := range fs {
 		if ev, ok := secretEvidence(f); ok {
@@ -157,7 +157,7 @@ type SecretReport struct {
 // in full wherever it sits: copies in third-party repositories and in history a fork inherited are
 // the owner's leaked secret, not the upstream's (see mineAfterAll).
 func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise bool) SecretReport {
-	return t.syncSecrets(sightings, now, includeNoise, t.OwnedAll(attribution.Owned{}))
+	return t.syncSecrets(sightings, now, includeNoise, t.ownedAll(attribution.Owned{}))
 }
 
 func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise bool, owned attribution.Owned) SecretReport {
@@ -303,10 +303,10 @@ func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 	}
 }
 
-// NoiseOnly reads the noise summary of a local-secrets run: every fingerprint whose copies are all
+// noiseOnly reads the noise summary of a local-secrets run: every fingerprint whose copies are all
 // noise, with its type. The connector emits it instead of the noise findings themselves (unless
 // emit_noise), so a secret a corrected rule made noise still reaches its item.
-func NoiseOnly(fs []finding.Finding) map[string]string {
+func noiseOnly(fs []finding.Finding) map[string]string {
 	for _, f := range fs {
 		if f.Connector != SecretsConnector || f.Resource.Type != noiseSummaryType {
 			continue
@@ -328,7 +328,7 @@ const noiseSummaryType = "noise_summary"
 // reclassified. Fingerprints without an item are left alone: noise never creates one. An item
 // attributed mine with a copy in someone else's repository is left alone too: that copy is noise
 // for the connector only because of where it sits, and attribution makes it the owner's.
-func (t *Tracker) SyncNoise(noise map[string]string, now time.Time) SecretReport {
+func (t *Tracker) syncNoise(noise map[string]string, now time.Time) SecretReport {
 	var rep SecretReport
 	if len(noise) == 0 {
 		return rep
@@ -406,7 +406,7 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	for _, s := range g {
 		loc := locationOf(s.Evidence, now)
 		switch {
-		case !loc.Working():
+		case !loc.working():
 		case known[loc.ref()]:
 			still = append(still, loc.Path)
 		default:
@@ -415,7 +415,7 @@ func (it *Item) rotatedSeen(g []Sighting, now time.Time, rep *SecretReport) {
 	}
 	if len(still)+len(fresh) == 0 {
 		if !it.notedHistoryOnly() {
-			it.Log(now, EvNote, actHistory, HistoryOnly)
+			it.Log(now, EvNote, actHistory, historyOnly)
 			rep.HistoryOnly++
 		}
 		return
@@ -445,17 +445,17 @@ func (t *Tracker) markGoneLocations(r *run) {
 		return
 	}
 	seen := map[string]bool{}
-	for _, s := range Sightings(r.findings) {
+	for _, s := range sightingsOf(r.findings) {
 		seen[s.Evidence.Fingerprint+"\x00"+locationOf(s.Evidence, time.Time{}).key()] = true
 	}
-	noise := NoiseOnly(r.findings)
+	noise := noiseOnly(r.findings)
 	for fp, it := range t.byFingerprint() {
 		if _, isNoise := noise[fp]; isNoise {
 			continue
 		}
 		for i := range it.Secret.Locations {
 			l := &it.Secret.Locations[i]
-			if _, unchecked := r.cov.UncheckedPath("", secretsFilesScope, l.Path); l.Working() && !unchecked && !seen[fp+"\x00"+l.key()] {
+			if _, unchecked := r.cov.UncheckedPath("", secretsFilesScope, l.Path); l.working() && !unchecked && !seen[fp+"\x00"+l.key()] {
 				l.Gone = true
 			}
 		}
@@ -639,10 +639,10 @@ func (it *Item) refreshSecret() {
 		it.Priority = it.Priority.Lower()
 	}
 	var reasons []string
-	if it.LiveAndLeaked() {
+	if it.liveAndLeaked() {
 		it.Priority = secretrisk.P0
 		if primary, ok := it.primaryLocation(); ok {
-			reasons = append(reasons, "live key, leaked in "+primary.Name())
+			reasons = append(reasons, "live key, leaked in "+primary.name())
 		}
 	}
 	it.Severity = secretrisk.SeverityOf(it.Priority) // info for noise
@@ -689,7 +689,7 @@ func (it *Item) refreshSecret() {
 	seen := map[string]bool{}
 	s.UsedIn = []string{}
 	for _, l := range s.Locations {
-		if l.Working() && !l.Gone && !seen[l.Path] {
+		if l.working() && !l.Gone && !seen[l.Path] {
 			seen[l.Path] = true
 			s.UsedIn = append(s.UsedIn, l.Path)
 		}
@@ -738,7 +738,7 @@ func (it *Item) secretTitle() string {
 	if !ok {
 		return title
 	}
-	title += " in " + primary.Name()
+	title += " in " + primary.name()
 	if n := len(it.current()) - 1; n > 0 {
 		title += fmt.Sprintf(" (+%d %s)", n, textfmt.Plural(n, "place", "places"))
 	}
@@ -813,9 +813,9 @@ func (it *Item) primaryLocation() (Location, bool) {
 	return best, true
 }
 
-// Name is the location as a title shows it: <repo>:<file> for git history (the repository
+// name is the location as a title shows it: <repo>:<file> for git history (the repository
 // without its ~/src/ prefix), else the path.
-func (l Location) Name() string {
+func (l Location) name() string {
 	if l.Repo != "" && strings.HasPrefix(l.Path, l.Repo+"/") {
 		return strings.TrimPrefix(l.Repo, "~/src/") + ":" + strings.TrimPrefix(l.Path, l.Repo+"/")
 	}

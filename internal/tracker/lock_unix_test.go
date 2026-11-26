@@ -15,7 +15,7 @@ func TestChangingCommandsTakeTheTrackerLock(t *testing.T) {
 	if _, e, code := x.run(t, "sync", "--out", x.out); code != 0 {
 		t.Fatal(e)
 	}
-	unlock, err := Lock(x.path)
+	unlock, err := lock(x.path)
 	if err != nil {
 		t.Fatal(err)
 	}

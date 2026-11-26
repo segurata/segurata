@@ -21,7 +21,7 @@ func (t *Tracker) CloseSetup(lbl, account, reason string, now time.Time) []*Item
 	for _, it := range t.Items {
 		if it.Kind == KindSetup && strings.HasPrefix(strings.ToLower(it.Key), setupPrefix(lbl, account)) &&
 			(it.Status == Open || it.Status == InProgress || it.Status == Snoozed) {
-			_ = it.Ignore(now, reason)
+			_ = it.ignore(now, reason)
 			out = append(out, it)
 		}
 	}

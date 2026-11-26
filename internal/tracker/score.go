@@ -38,9 +38,9 @@ type Score struct {
 	Factors []Factor
 }
 
-// Explain is the score as a formula: "27.0 = impact 6 (P1) × blast 3 (…) ÷ effort 1 (…)".
+// explain is the score as a formula: "27.0 = impact 6 (P1) × blast 3 (…) ÷ effort 1 (…)".
 // Factors of 1 other than impact and effort are left out.
-func (s Score) Explain() string {
+func (s Score) explain() string {
 	parts := []string{strconv.FormatFloat(s.Total, 'f', 1, 64) + " ="}
 	for i, f := range s.Factors {
 		if f.Value == 1 && f.Name != "impact" && f.Name != "effort" {
@@ -132,7 +132,7 @@ const quickWinMin = 3
 
 // Score rates an item for "Do next" (see the tables above). A decision is rated by what it
 // unblocks: half the worth of those items, as a quick win.
-func (t *Tracker) Score(it *Item, now time.Time) Score {
+func (t *Tracker) score(it *Item, now time.Time) Score {
 	if it.Kind == KindDecide {
 		return t.decisionScore(it, now)
 	}
@@ -181,7 +181,7 @@ func exposureFactor(it *Item) Factor {
 
 func livenessFactor(it *Item) Factor {
 	switch {
-	case it.LiveAndLeaked():
+	case it.liveAndLeaked():
 		return Factor{"liveness", 2, "a connector or the provider shows it works, and it left the machine"}
 	case it.provenLive():
 		return Factor{"liveness", 1.5, "a connector or the provider shows it works"}
@@ -213,7 +213,7 @@ func (t *Tracker) effortFactor(it *Item, now time.Time) Factor {
 			break
 		}
 	}
-	if d := t.BlockedBy(it, now); d != nil {
+	if d := t.blockedBy(it, now); d != nil {
 		f.Value *= 2
 		f.Why += "; waits on decision " + d.ID
 	}
@@ -233,9 +233,9 @@ func quickWin(it *Item) Factor {
 // decisionScore is worth half of what answering unblocks, as a quick win.
 func (t *Tracker) decisionScore(d *Item, now time.Time) Score {
 	sum := 0.0
-	blocked := t.Unblocks(d, now)
+	blocked := t.unblocks(d, now)
 	for _, it := range blocked {
-		sum += t.Score(it, now).Total
+		sum += t.score(it, now).Total
 	}
 	if len(blocked) == 0 {
 		return newScore(Factor{"impact", impactOf(d.EffectivePriority()), prioLabel(d.EffectivePriority())}, Factor{"effort", 1, "one answer"})

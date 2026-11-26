@@ -117,7 +117,7 @@ func TestDoneSeenOnlyInHistoryStaysDone(t *testing.T) {
 	for _, e := range it.History {
 		if e.Action == actHistory {
 			notes++
-			if e.Detail != HistoryOnly {
+			if e.Detail != historyOnly {
 				t.Errorf("note %q", e.Detail)
 			}
 		}
@@ -127,7 +127,7 @@ func TestDoneSeenOnlyInHistoryStaysDone(t *testing.T) {
 	}
 
 	// A second rotation gets its own note.
-	it.Reopen(t0.Add(5*24*time.Hour), "")
+	it.reopen(t0.Add(5*24*time.Hour), "")
 	it.Done(t0.Add(5*24*time.Hour), "rotated again")
 	if rep := l.SyncSecrets([]Sighting{transcript}, t0.Add(6*24*time.Hour), false); rep.HistoryOnly != 1 || it.Status != Done {
 		t.Errorf("after a new rotation: %+v %s", rep, it.Status)
@@ -184,13 +184,13 @@ func TestSnoozeExpires(t *testing.T) {
 	l := &Tracker{NextID: 1}
 	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, t0, false)
 	it, _ := l.FindRotate("aaaa")
-	if err := it.Snooze(t0, "2026-11-20", ""); err == nil {
+	if err := it.snooze(t0, "2026-11-20", ""); err == nil {
 		t.Error("snooze into the past accepted")
 	}
-	if err := it.Snooze(t0, "next week", ""); err == nil {
+	if err := it.snooze(t0, "next week", ""); err == nil {
 		t.Error("bad date accepted")
 	}
-	if err := it.Snooze(t0, "2026-12-01", "after the release"); err != nil {
+	if err := it.snooze(t0, "2026-12-01", "after the release"); err != nil {
 		t.Fatal(err)
 	}
 	if it.Active(t0) || !it.Active(time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)) {
@@ -201,7 +201,7 @@ func TestSnoozeExpires(t *testing.T) {
 	if rep.Woken != 1 || it.Status != Open {
 		t.Errorf("snooze did not expire: %+v %s", rep, it.Status)
 	}
-	if err := it.Ignore(t0, " "); err == nil {
+	if err := it.ignore(t0, " "); err == nil {
 		t.Error("ignore without a reason")
 	}
 }
@@ -214,7 +214,7 @@ func TestSnoozeUntilIsALocalDate(t *testing.T) {
 	l := &Tracker{NextID: 1}
 	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, evening, false)
 	it, _ := l.FindRotate("aaaa")
-	if err := it.Snooze(evening, "2026-11-25", ""); err != nil {
+	if err := it.snooze(evening, "2026-11-25", ""); err != nil {
 		t.Fatalf("snooze until tomorrow refused: %v", err)
 	}
 	if it.Active(time.Date(2026, 11, 24, 23, 0, 0, 0, la)) {
@@ -415,7 +415,7 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 	l.SyncSecrets(real, t0, false)
 	open, _ := l.FindRotate("aaaa")
 	ignored, _ := l.FindRotate("bbbb")
-	if err := ignored.Ignore(t0, "test suite fixtures in a gitignored Rails test log"); err != nil {
+	if err := ignored.ignore(t0, "test suite fixtures in a gitignored Rails test log"); err != nil {
 		t.Fatal(err)
 	}
 	noise := []Sighting{
@@ -437,7 +437,7 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 		t.Errorf("ignore reason lost: %q", d)
 	}
 	var b strings.Builder
-	if err := doc.Render(&b, l.Status("tracker.json", t0.Add(time.Hour), View{}), doc.Text); err != nil {
+	if err := doc.Render(&b, l.status("tracker.json", t0.Add(time.Hour), View{}), doc.Text); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "ignored 0, reclassified as noise 2") {
@@ -478,17 +478,17 @@ func TestNoiseSummaryReclassifies(t *testing.T) {
 	}, t0, false)
 	summary := finding.Finding{Connector: SecretsConnector, Resource: finding.Resource{Type: noiseSummaryType},
 		Evidence: map[string]any{"noise_fingerprints": map[string]any{"aaaaaaaaaaaaaaaa": "aws-access-key-id", "ffffffffffffffff": "assignment"}}}
-	noise := NoiseOnly([]finding.Finding{{Connector: SecretsConnector, Resource: finding.Resource{Type: "secret"}}, summary})
+	noise := noiseOnly([]finding.Finding{{Connector: SecretsConnector, Resource: finding.Resource{Type: "secret"}}, summary})
 	if len(noise) != 2 {
 		t.Fatalf("NoiseOnly %v", noise)
 	}
-	rep := l.SyncNoise(noise, t0.Add(time.Hour))
+	rep := l.syncNoise(noise, t0.Add(time.Hour))
 	a, _ := l.FindRotate("aaaa")
 	b, _ := l.FindRotate("bbbb")
 	if rep.Reclassified != 1 || a.Status != Reclassified || a.Priority != "" || b.Status != Open || len(l.Items) != 2 {
 		t.Errorf("report %+v, a %s %q, b %s, %d items", rep, a.Status, a.Priority, b.Status, len(l.Items))
 	}
-	if rep := l.SyncNoise(noise, t0.Add(2*time.Hour)); rep.Reclassified != 0 {
+	if rep := l.syncNoise(noise, t0.Add(2*time.Hour)); rep.Reclassified != 0 {
 		t.Errorf("reclassified twice: %+v", rep)
 	}
 }
@@ -518,7 +518,7 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 	if got := strings.Join(it.Secret.UsedIn, " "); got != "~/src/old/.env ~/src/shop/.env" {
 		t.Fatalf("day 0 used_in %q", got)
 	}
-	if it.Under("~/src/old") {
+	if it.liesUnder("~/src/old") {
 		t.Fatal("under ~/src/old while ~/src/shop/.env holds it")
 	}
 	if it.worst().Label != "git+remote" {
@@ -533,7 +533,7 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 	if len(it.Secret.Locations) != 3 {
 		t.Errorf("locations dropped: %+v", it.Secret.Locations)
 	}
-	if !it.Under("~/src/old") {
+	if !it.liesUnder("~/src/old") {
 		t.Error("a path rule over ~/src/old does not cover it")
 	}
 	if it.worst().Label == "git+remote" {

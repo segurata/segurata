@@ -38,9 +38,9 @@ func ConfiguredSync(path string, opt SyncOptions) (SyncOptions, error) {
 	return opt, nil
 }
 
-// OwnedAll is what attribution compares with: the accounts discovered so far merged with extra
+// ownedAll is what attribution compares with: the accounts discovered so far merged with extra
 // (config `owned`, the git email).
-func (t *Tracker) OwnedAll(extra attribution.Owned) attribution.Owned {
+func (t *Tracker) ownedAll(extra attribution.Owned) attribution.Owned {
 	if t.Owned == nil {
 		return attribution.Owned{}.Merge(extra)
 	}
@@ -50,7 +50,7 @@ func (t *Tracker) OwnedAll(extra attribution.Owned) attribution.Owned {
 // Known is what attribution knows now, for a scan to ask before it acts on a secret: the
 // accounts discovered so far merged with extra (config owned), and the facts of every rotate item.
 func (t *Tracker) Known(extra attribution.Owned) *attribution.Known {
-	k := &attribution.Known{Owned: t.OwnedAll(extra), Facts: map[string]attribution.Facts{}}
+	k := &attribution.Known{Owned: t.ownedAll(extra), Facts: map[string]attribution.Facts{}}
 	for _, it := range t.Items {
 		if it.Kind == KindRotate && it.Secret != nil && it.Secret.Attribution != nil {
 			k.Facts[it.Fingerprint] = it.Secret.Attribution.Facts
@@ -68,7 +68,7 @@ func (t *Tracker) discover(runs []*run) {
 		sts = append(sts, r.statuses...)
 	}
 	found := attribution.Discover(fs, sts)
-	merged := t.OwnedAll(found)
+	merged := t.ownedAll(found)
 	t.Owned = &merged
 }
 
@@ -80,7 +80,7 @@ func (t *Tracker) collectClaims(folded map[string]*run) {
 		if !r.isSecrets() {
 			continue
 		}
-		for _, s := range Sightings(r.findings) {
+		for _, s := range sightingsOf(r.findings) {
 			if it := by[s.Evidence.Fingerprint]; it != nil && !s.Evidence.Claims.Empty() {
 				it.attributionResult().Facts.Add(s.Evidence.Claims)
 			}
@@ -101,9 +101,9 @@ func (it *Item) attributionResult() *attribution.Result {
 	return it.Secret.Attribution
 }
 
-// Attribute recomputes every rotate item's attribution against owned, after adding the GitHub
+// attribute recomputes every rotate item's attribution against owned, after adding the GitHub
 // owners of the repositories its working-tree and history locations lie in.
-func (t *Tracker) Attribute(owned attribution.Owned) {
+func (t *Tracker) attribute(owned attribution.Owned) {
 	owners := repoOwners{}
 	for _, it := range t.Items {
 		if it.Kind != KindRotate || it.Secret == nil {
@@ -143,8 +143,8 @@ func expandHome(p string) string {
 	return p
 }
 
-// OwnerCounts counts rotate items by attribution ("" for none yet), for the items keep accepts.
-func (t *Tracker) OwnerCounts(keep func(*Item) bool) map[attribution.Owner]int {
+// ownerCounts counts rotate items by attribution ("" for none yet), for the items keep accepts.
+func (t *Tracker) ownerCounts(keep func(*Item) bool) map[attribution.Owner]int {
 	m := map[attribution.Owner]int{}
 	for _, it := range t.Items {
 		if it.Kind == KindRotate && keep(it) {

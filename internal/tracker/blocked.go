@@ -11,8 +11,8 @@ import (
 // the data-dump items. Status shows the decision first, with how many items it unblocks, and the
 // blocked item's next step names it.
 
-// BlockedBy is the first pending decision that blocks the item, or nil.
-func (t *Tracker) BlockedBy(it *Item, now time.Time) *Item {
+// blockedBy is the first pending decision that blocks the item, or nil.
+func (t *Tracker) blockedBy(it *Item, now time.Time) *Item {
 	if it.Kind == KindDecide || it.Kind == KindSetup {
 		return nil
 	}
@@ -24,8 +24,8 @@ func (t *Tracker) BlockedBy(it *Item, now time.Time) *Item {
 	return nil
 }
 
-// Unblocks are the active items a pending decision blocks.
-func (t *Tracker) Unblocks(d *Item, now time.Time) []*Item {
+// unblocks are the active items a pending decision blocks.
+func (t *Tracker) unblocks(d *Item, now time.Time) []*Item {
 	if d.Kind != KindDecide || d.Decision == nil || !d.Active(now) {
 		return nil
 	}
@@ -40,7 +40,7 @@ func (t *Tracker) Unblocks(d *Item, now time.Time) []*Item {
 
 func blocks(d, it *Item) bool {
 	for _, e := range d.Decision.Effects {
-		if (Rule{Effect: e.Effect, Scope: e.Scope}).InScope(it) {
+		if (Rule{Effect: e.Effect, Scope: e.Scope}).inScope(it) {
 			return true
 		}
 	}
@@ -63,7 +63,7 @@ func (t *Tracker) noteBlocked(now time.Time) {
 				action = rest
 			}
 		}
-		if d := t.BlockedBy(it, now); d != nil && it.Active(now) {
+		if d := t.blockedBy(it, now); d != nil && it.Active(now) {
 			action = blockedPrefix + d.ID + " (" + d.Decision.Question + "): answer it first. " + action
 		}
 		it.Next.Action = action

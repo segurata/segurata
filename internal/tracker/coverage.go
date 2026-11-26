@@ -206,7 +206,7 @@ func (t *Tracker) syncCoverage(now time.Time) CoverageReport {
 		if g.audited {
 			covered, how, known = t.audited(g)
 		}
-		it := t.ByKey("coverage:" + g.slug)
+		it := t.itemByKey("coverage:" + g.slug)
 		switch {
 		case !known:
 		case covered && it != nil && it.Active(now):

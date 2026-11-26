@@ -261,7 +261,7 @@ func TestAnUnreadableRunIsSkippedAndClosesNothing(t *testing.T) {
 	if !tr.Sources["macos"].Equal(t0) {
 		t.Errorf("an unreadable run moved its source to %v", tr.Sources["macos"])
 	}
-	if line := SyncLine(rep); !strings.Contains(line, "macos.jsonl") {
+	if line := syncLine(rep); !strings.Contains(line, "macos.jsonl") {
 		t.Errorf("sync line does not name the unreadable run:\n%s", line)
 	}
 }

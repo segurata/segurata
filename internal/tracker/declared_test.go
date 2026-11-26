@@ -26,15 +26,15 @@ func TestDeclaredGroupingThemeAndTitles(t *testing.T) {
 		mk("c2", "p1", "a", finding.SevMedium), mk("c2", "p1", "b", finding.SevMedium), theme)
 	tr := New(now)
 	syncOrDie(t, tr, out, now)
-	many, one := tr.ByKey("group:scanner|scan_check|check:c1"), tr.ByKey("group:scanner|scan_check|check:c2")
+	many, one := tr.itemByKey("group:scanner|scan_check|check:c1"), tr.itemByKey("group:scanner|scan_check|check:c2")
 	if many == nil || one == nil {
 		t.Fatalf("items: %+v", tr.Items)
 	}
 	if many.Title != "c1 fails in 2 projects (1 high, 1 low)" || one.Title != "c2 fails in p1" {
 		t.Fatalf("titles %q, %q", many.Title, one.Title)
 	}
-	if many.Kind != KindReview || many.Theme != "scans" || tr.ThemeTitle("scans") != "Scans" {
-		t.Fatalf("kind %s theme %s (%q)", many.Kind, many.Theme, tr.ThemeTitle("scans"))
+	if many.Kind != KindReview || many.Theme != "scans" || tr.themeTitle("scans") != "Scans" {
+		t.Fatalf("kind %s theme %s (%q)", many.Kind, many.Theme, tr.themeTitle("scans"))
 	}
 	// A finding accepted apart from its group keeps the group's theme.
 	it, err := tr.AcceptFinding(mk("c1", "p1", "a", finding.SevHigh), "sandbox", "", now)

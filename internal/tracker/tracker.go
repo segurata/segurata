@@ -20,8 +20,8 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// SchemaVersion is the tracker.json format this binary writes.
-const SchemaVersion = 6
+// schemaVersion is the tracker.json format this binary writes.
+const schemaVersion = 6
 
 // Kind says what sort of action an item asks for.
 type Kind string
@@ -229,7 +229,7 @@ type Tracker struct {
 	Runs map[string]RunInfo `json:"runs,omitempty"`
 
 	// read is the digest of the file this tracker was loaded from or last saved; nil for a tracker
-	// not read from a file. Save compares it with the file it would replace (see ErrChanged).
+	// not read from a file. Save compares it with the file it would replace (see errChanged).
 	read *[sha256.Size]byte
 }
 

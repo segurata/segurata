@@ -19,8 +19,8 @@ import (
 
 // Effects a rule can have.
 const (
-	EffectIgnore = "ignore"
-	EffectAccept = "accept"
+	effectIgnore = "ignore"
+	effectAccept = "accept"
 )
 
 // Scope kinds a rule can name.
@@ -47,12 +47,12 @@ type OptionEffect struct {
 	Owners []attribution.Owner `json:"owners,omitempty"`
 }
 
-// ParseEffect reads "ignore:path:~/src/legacyco", or "ignore@not-mine:path:~/src/legacyco" for a rule that
+// parseEffect reads "ignore:path:~/src/legacyco", or "ignore@not-mine:path:~/src/legacyco" for a rule that
 // closes only rotate items attributed to those owners, into its effect, scope and owners.
-func ParseEffect(spec string) (effect, scope string, owners []attribution.Owner, err error) {
+func parseEffect(spec string) (effect, scope string, owners []attribution.Owner, err error) {
 	effect, scope, _ = strings.Cut(strings.TrimSpace(spec), ":")
 	effect, who, narrowed := strings.Cut(effect, "@")
-	if effect != EffectIgnore && effect != EffectAccept {
+	if effect != effectIgnore && effect != effectAccept {
 		return "", "", nil, fmt.Errorf("effect %q: use ignore:<scope> or accept:<scope>, optionally ignore@<owners>:<scope>", spec)
 	}
 	if narrowed {
@@ -79,8 +79,8 @@ func checkScope(scope string) error {
 	return nil
 }
 
-// ParseOption reads a decision option: "label" or "label=effect:kind:value".
-func ParseOption(s string) (label string, eff *OptionEffect, err error) {
+// parseOption reads a decision option: "label" or "label=effect:kind:value".
+func parseOption(s string) (label string, eff *OptionEffect, err error) {
 	label, spec, ok := strings.Cut(s, "=")
 	label = strings.TrimSpace(label)
 	if label == "" {
@@ -89,7 +89,7 @@ func ParseOption(s string) (label string, eff *OptionEffect, err error) {
 	if !ok {
 		return label, nil, nil
 	}
-	effect, scope, owners, err := ParseEffect(spec)
+	effect, scope, owners, err := parseEffect(spec)
 	if err != nil {
 		return "", nil, fmt.Errorf("option %q: %w", s, err)
 	}
@@ -97,7 +97,7 @@ func ParseOption(s string) (label string, eff *OptionEffect, err error) {
 }
 
 func (r Rule) validate() error {
-	if r.Effect != EffectIgnore && r.Effect != EffectAccept {
+	if r.Effect != effectIgnore && r.Effect != effectAccept {
 		return fmt.Errorf("rule effect %q", r.Effect)
 	}
 	for _, o := range r.Owners {
@@ -108,9 +108,9 @@ func (r Rule) validate() error {
 	return checkScope(r.Scope)
 }
 
-// Spec is the rule as the command line writes it: "ignore path:~/src/legacyco", "ignore@not-mine
+// spec is the rule as the command line writes it: "ignore path:~/src/legacyco", "ignore@not-mine
 // path:~/src/legacyco".
-func (r Rule) Spec() string {
+func (r Rule) spec() string {
 	return r.Effect + ownersSuffix(r.Owners) + " " + r.Scope
 }
 
@@ -125,8 +125,8 @@ func ownersSuffix(owners []attribution.Owner) string {
 	return "@" + strings.Join(parts, ",")
 }
 
-// HomePath writes a path inside the home directory as ~/…, as findings report paths.
-func HomePath(p string) string {
+// homePath writes a path inside the home directory as ~/…, as findings report paths.
+func homePath(p string) string {
 	if home, err := os.UserHomeDir(); err == nil && (p == home || strings.HasPrefix(p, home+"/")) {
 		return "~" + p[len(home):]
 	}
@@ -135,14 +135,14 @@ func HomePath(p string) string {
 
 // under reports whether p is prefix or inside it; both are compared as HomePath writes them.
 func under(p, prefix string) bool {
-	p, prefix = HomePath(p), strings.TrimSuffix(HomePath(prefix), "/")
+	p, prefix = homePath(p), strings.TrimSuffix(homePath(prefix), "/")
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
-// Under reports whether the item lies entirely under a path: every current location of a rotate
+// liesUnder reports whether the item lies entirely under a path: every current location of a rotate
 // item, or every finding still reported of another item, has a path inside prefix. An item with
 // none does not.
-func (it *Item) Under(prefix string) bool {
+func (it *Item) liesUnder(prefix string) bool {
 	return it.allIn(func(p string) bool { return under(p, prefix) }, func(r FindingRef) string { return r.Path })
 }
 
@@ -173,10 +173,10 @@ func (it *Item) allIn(in func(string) bool, field func(FindingRef) string) bool 
 	return true
 }
 
-// Matches reports whether a rule covers the whole item: its scope does and, for a rule narrowed
+// matches reports whether a rule covers the whole item: its scope does and, for a rule narrowed
 // to owners, the item is a rotate item attributed to one of them.
-func (r Rule) Matches(it *Item) bool {
-	return r.InScope(it) && r.ownerMatches(it)
+func (r Rule) matches(it *Item) bool {
+	return r.inScope(it) && r.ownerMatches(it)
 }
 
 // ownerMatches reports whether the item's attribution is one of the rule's owners; true for a rule
@@ -193,16 +193,16 @@ func (it *Item) Owner() attribution.Owner {
 	return it.Secret.Attribution.Owner
 }
 
-// InScope reports whether a rule's scope covers the whole item, whoever owns it. Decisions and
+// inScope reports whether a rule's scope covers the whole item, whoever owns it. Decisions and
 // setup items are never in scope; path scopes cover rotate items by their locations.
-func (r Rule) InScope(it *Item) bool {
+func (r Rule) inScope(it *Item) bool {
 	if it.Kind == KindDecide || it.Kind == KindSetup {
 		return false
 	}
 	kind, value, _ := strings.Cut(r.Scope, ":")
 	switch kind {
 	case "path":
-		return it.Under(value)
+		return it.liesUnder(value)
 	case "repo":
 		return it.Secret == nil && it.allIn(func(v string) bool { return strings.EqualFold(v, value) }, func(f FindingRef) string { return f.Repo })
 	case "account":
@@ -230,7 +230,7 @@ func (t *Tracker) applyRules(now time.Time) int {
 			continue
 		}
 		for _, r := range t.Rules {
-			if !r.Matches(it) || it.reopenedSince(r.At) {
+			if !r.matches(it) || it.reopenedSince(r.At) {
 				continue
 			}
 			reason := r.closing()
@@ -240,11 +240,11 @@ func (t *Tracker) applyRules(now time.Time) int {
 					reason += ": " + a.Attribution.Reasons[0]
 				}
 			}
-			if r.Effect == EffectAccept {
-				_ = it.Accept(now, reason, "")
+			if r.Effect == effectAccept {
+				_ = it.accept(now, reason, "")
 				it.Next = acceptedNext()
 			} else {
-				_ = it.Ignore(now, reason)
+				_ = it.ignore(now, reason)
 			}
 			n++
 			break
@@ -274,11 +274,11 @@ func (t *Tracker) reopenReattributed(it *Item, now time.Time) {
 		return
 	}
 	for _, r := range t.Rules {
-		if len(r.Owners) == 0 || !strings.HasPrefix(detail, r.closing()+"; attributed ") || !r.InScope(it) || r.ownerMatches(it) {
+		if len(r.Owners) == 0 || !strings.HasPrefix(detail, r.closing()+"; attributed ") || !r.inScope(it) || r.ownerMatches(it) {
 			continue
 		}
 		it.leaveAccepted()
-		it.setStatus(now, Open, EvReopened, actAutoReopen, "now attributed "+string(it.Owner())+", which "+r.Spec()+" leaves open")
+		it.setStatus(now, Open, EvReopened, actAutoReopen, "now attributed "+string(it.Owner())+", which "+r.spec()+" leaves open")
 		return
 	}
 }
@@ -291,7 +291,7 @@ func (it *Item) reopenedSince(at time.Time) bool {
 	})
 }
 
-// DecideWithEffects answers a decision, adds the rules its answer carries (the matching option's
+// decideWithEffects answers a decision, adds the rules its answer carries (the matching option's
 // effect, and every --ignore-scope and --accept-scope given) and applies them at once; it returns
 // the rules added and how many items they closed.
 //
@@ -300,23 +300,23 @@ func (it *Item) reopenedSince(at time.Time) bool {
 //
 // A decision answered before is answered again: the new answer replaces the old one and its rules,
 // as reopening and answering would; the items the old rules closed stay as they are.
-func (t *Tracker) DecideWithEffects(it *Item, at time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]Rule, int, error) {
+func (t *Tracker) decideWithEffects(it *Item, at time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]Rule, int, error) {
 	add, err := t.decisionRules(it, at, answer, ignore, accept, owners)
 	if err != nil {
 		return nil, 0, err
 	}
 	prev := it.Decision.Answer
-	if err := it.Decide(at, answer); err != nil {
+	if err := it.decide(at, answer); err != nil {
 		return nil, 0, err
 	}
 	if prev != "" {
-		n := t.DropRules(it.ID)
+		n := t.dropRules(it.ID)
 		it.Log(at, EvDecided, actReanswer, fmt.Sprintf("replaces the answer %q; %s of it removed, the items they closed stay as they are",
 			prev, textfmt.Count(n, "rule", "rules")))
 	}
 	t.Rules = append(t.Rules, add...)
 	for _, r := range add {
-		it.Log(at, EvDecided, actRule, r.Spec())
+		it.Log(at, EvDecided, actRule, r.spec())
 	}
 	return add, t.applyRules(at), nil
 }
@@ -343,28 +343,28 @@ func (t *Tracker) decisionRules(it *Item, at time.Time, answer string, ignore, a
 		}
 	}
 	for _, s := range ignore {
-		if err := newRule(EffectIgnore, s, owners); err != nil {
+		if err := newRule(effectIgnore, s, owners); err != nil {
 			return nil, err
 		}
 	}
 	for _, s := range accept {
-		if err := newRule(EffectAccept, s, owners); err != nil {
+		if err := newRule(effectAccept, s, owners); err != nil {
 			return nil, err
 		}
 	}
 	return add, nil
 }
 
-// PreviewDecision says what answering would do, without changing anything: one leverage line per
+// previewDecision says what answering would do, without changing anything: one leverage line per
 // rule the answer adds.
-func (t *Tracker) PreviewDecision(it *Item, now time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]string, error) {
+func (t *Tracker) previewDecision(it *Item, now time.Time, answer string, ignore, accept []string, owners []attribution.Owner) ([]string, error) {
 	rules, err := t.decisionRules(it, now, answer, ignore, accept, owners)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]string, 0, len(rules))
 	for _, r := range rules {
-		out = append(out, t.leverage(r, now)+" by "+r.Spec())
+		out = append(out, t.leverage(r, now)+" by "+r.spec())
 	}
 	return out, nil
 }
@@ -376,24 +376,24 @@ func answers(answer, option string) bool {
 	return a == o || strings.HasPrefix(a, o+":") || strings.HasPrefix(a, o+" ")
 }
 
-// DropRules removes the rules a decision added, when it is reopened; the items they closed stay
+// dropRules removes the rules a decision added, when it is reopened; the items they closed stay
 // as they are.
-func (t *Tracker) DropRules(decision string) int {
+func (t *Tracker) dropRules(decision string) int {
 	n := len(t.Rules)
 	t.Rules = slices.DeleteFunc(t.Rules, func(r Rule) bool { return r.Decision == decision })
 	return n - len(t.Rules)
 }
 
-// Leverage says, per option with an effect, how many open items answering it would close:
+// optionLeverage says, per option with an effect, how many open items answering it would close:
 // `answering "yes" closes 128 items (P0 120, P1 8)`.
-func (t *Tracker) Leverage(it *Item, now time.Time) []string {
+func (t *Tracker) optionLeverage(it *Item, now time.Time) []string {
 	if it.Decision == nil {
 		return nil
 	}
 	var out []string
 	for _, e := range it.Decision.Effects {
 		r := Rule{Effect: e.Effect, Scope: e.Scope, Owners: e.Owners}
-		out = append(out, fmt.Sprintf("answering %q %s by %s", e.Option, t.leverage(r, now), r.Spec()))
+		out = append(out, fmt.Sprintf("answering %q %s by %s", e.Option, t.leverage(r, now), r.spec()))
 	}
 	return out
 }
@@ -407,7 +407,7 @@ func (t *Tracker) leverage(r Rule, now time.Time) string {
 	n, k := 0, 0
 	for _, x := range t.Items {
 		switch {
-		case !x.Active(now) || !r.InScope(x):
+		case !x.Active(now) || !r.inScope(x):
 		case r.ownerMatches(x):
 			by[x.EffectivePriority()]++
 			n++

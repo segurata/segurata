@@ -77,7 +77,7 @@ func (p *proposal) finishSetup(itemID string) {
 			cmds = append(cmds, c)
 		}
 	}
-	p.next = &Next{Who: You, Action: strings.Join(actions, " "), Command: strings.Join(cmds, " && "), URL: StatusURL(reported(st))}
+	p.next = &Next{Who: You, Action: strings.Join(actions, " "), Command: strings.Join(cmds, " && "), URL: statusURL(reported(st))}
 }
 
 var statePhrase = map[finding.State]string{
@@ -139,10 +139,10 @@ var (
 	denied      = regexp.MustCompile(`(?i)accessdenied|access denied|permission denied|not authorized|permission_denied|forbidden`)
 )
 
-// StatusCommand is the command a status detail gives as the fix, or "": a backquoted command, or
+// statusCommand is the command a status detail gives as the fix, or "": a backquoted command, or
 // the one after "run" ("run: gh auth refresh -h github.com -s read:user"). "for this account" is
 // replaced by the account.
-func StatusCommand(st finding.Status) string {
+func statusCommand(st finding.Status) string {
 	cmd := ""
 	if m := backtickCmd.FindStringSubmatch(st.Detail); m != nil {
 		cmd = m[1]
@@ -172,7 +172,7 @@ func statusAction(st finding.Status, lbl, itemID string) (string, string) {
 		itemID = "<item>"
 	}
 	expect := "On purpose? segurata track expect " + itemID + ` --reason "…"`
-	cmd := StatusCommand(st)
+	cmd := statusCommand(st)
 	var action string
 	switch st.State {
 	case finding.StateReauth:
@@ -230,8 +230,8 @@ func statusAction(st finding.Status, lbl, itemID string) (string, string) {
 
 var openURL = regexp.MustCompile(`\bopen (https?://[^\s,;]+[^\s,;.)])`)
 
-// StatusURL is the page a status detail says to open, or "".
-func StatusURL(st finding.Status) string {
+// statusURL is the page a status detail says to open, or "".
+func statusURL(st finding.Status) string {
 	if m := openURL.FindStringSubmatch(st.Detail); m != nil {
 		return m[1]
 	}
@@ -260,7 +260,7 @@ func (it *Item) SetupStatuses() []finding.Status {
 func (it *Item) StatusCommands() []string {
 	var out []string
 	for _, st := range it.SetupStatuses() {
-		if c := StatusCommand(st); c != "" && !slices.Contains(out, c) {
+		if c := statusCommand(st); c != "" && !slices.Contains(out, c) {
 			out = append(out, c)
 		}
 	}

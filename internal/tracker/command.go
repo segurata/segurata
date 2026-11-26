@@ -100,7 +100,7 @@ func (c CLI) find(t *Tracker, ref string) (*Item, error) {
 	if c.rotations != "" {
 		return t.FindRotate(ref)
 	}
-	return t.Find(ref)
+	return t.find(ref)
 }
 
 func (c CLI) fail(err error) int {
@@ -176,7 +176,7 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	var require func(SyncReport) error
 	if c.rotations != "" {
 		require = func(rep SyncReport) error {
-			if !rep.FoldedSecrets() {
+			if !rep.foldedSecrets() {
 				return fmt.Errorf("no %s output under %s: run `segurata inventory %s` first", SecretsConnector, *out, SecretsConnector)
 			}
 			return nil
@@ -186,10 +186,10 @@ func (c CLI) sync(t *Tracker, path string, args []string, now time.Time) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	if rep.FoldedSecrets() {
+	if rep.foldedSecrets() {
 		t.secretsSynced(c.Out, rep, path, now)
 	}
-	fmt.Fprint(c.Out, SyncLine(rep))
+	fmt.Fprint(c.Out, syncLine(rep))
 	return 0
 }
 
@@ -200,7 +200,7 @@ func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now ti
 		r.Secrets, r.Created, r.Updated, r.Reopened, rep.Woken, r.Reclassified, r.Skipped, r.Paired)
 	if r.HistoryOnly > 0 {
 		fmt.Fprintf(w, "%d rotated %s seen again only in history, transcripts or logs: left rotated (%s).\n",
-			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), HistoryOnly)
+			r.HistoryOnly, textfmt.Plural(r.HistoryOnly, "secret", "secrets"), historyOnly)
 	}
 	counts := map[secretrisk.Priority]int{}
 	for _, it := range t.Items {
@@ -209,7 +209,7 @@ func (t *Tracker) secretsSynced(w io.Writer, rep SyncReport, path string, now ti
 		}
 	}
 	fmt.Fprintf(w, "Open: P0 %d, P1 %d, P2 %d, P3 %d. Tracker: %s\n", counts[secretrisk.P0], counts[secretrisk.P1], counts[secretrisk.P2], counts[secretrisk.P3], path)
-	owners := t.OwnerCounts(func(it *Item) bool { return it.Active(now) })
+	owners := t.ownerCounts(func(it *Item) bool { return it.Active(now) })
 	fmt.Fprintf(w, "Open by owner: mine %d, not-mine %d, unknown %d (segurata rotations list --owner not-mine).\n",
 		owners[attribution.Mine], owners[attribution.NotMine], owners[attribution.Unknown])
 }
@@ -227,7 +227,7 @@ func syncAndSave(t *Tracker, path string, opt SyncOptions, now time.Time, requir
 		if err != nil {
 			return t, rep, err
 		}
-		if err = t.Save(path); again || !errors.Is(err, ErrChanged) {
+		if err = t.Save(path); again || !errors.Is(err, errChanged) {
 			return t, rep, err
 		}
 		if t, err = Load(path); err != nil {
@@ -248,11 +248,11 @@ func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, "usage: segurata track expect <setup-item-id> --reason text [--detail text] [--dry-run]")
 		return 2
 	}
-	it, err := t.Find(pos[0])
+	it, err := t.find(pos[0])
 	if err != nil {
 		return c.fail(err)
 	}
-	key, rule, err := it.ExpectRule(*reason, *detail)
+	key, rule, err := it.expectRule(*reason, *detail)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -277,7 +277,7 @@ func (c CLI) expect(t *Tracker, path string, args []string, now time.Time) int {
 	} else {
 		fmt.Fprintf(c.Out, "connectors.%q.expected in %s already has this rule.\n", key, c.Config)
 	}
-	it.Expect(now, rule, c.Config)
+	it.expect(now, rule, c.Config)
 	if err := t.Save(path); err != nil {
 		return c.fail(err)
 	}
@@ -331,7 +331,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, "usage: segurata track show <id>")
 		return 2
 	}
-	it, err := t.Find(args[0])
+	it, err := t.find(args[0])
 	if err != nil {
 		return c.fail(err)
 	}
@@ -347,7 +347,7 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 	if it.MergedInto != "" {
 		fmt.Fprintf(w, " into %s", it.MergedInto)
 	}
-	fmt.Fprintf(w, "\nkind:      %s\ntheme:     %s\nseverity:  %s\nkey:       %s\ncreated:   %s\n", it.Kind, t.ThemeTitle(it.Theme),
+	fmt.Fprintf(w, "\nkind:      %s\ntheme:     %s\nseverity:  %s\nkey:       %s\ncreated:   %s\n", it.Kind, t.themeTitle(it.Theme),
 		textfmt.OrDash(string(it.Severity)), it.Key, it.CreatedAt.Format(time.DateOnly))
 	if o := it.PriorityOverride; o != nil {
 		fmt.Fprintf(w, "priority:  %s set by hand (%s), computed %s\n", o.Priority, o.Reason, textfmt.OrDash(string(it.Priority)))
@@ -364,13 +364,13 @@ func (c CLI) show(t *Tracker, args []string, now time.Time) int {
 			fmt.Fprintf(w, "answer:    %s\n", d.Answer)
 		}
 		if it.Active(now) {
-			for _, l := range t.Leverage(it, now) {
+			for _, l := range t.optionLeverage(it, now) {
 				fmt.Fprintf(w, "  if:      %s\n", l)
 			}
 		}
 		for _, r := range t.Rules {
 			if r.Decision == it.ID {
-				fmt.Fprintf(w, "rule:      %s at every sync (since %s)\n", r.Spec(), r.At.Format(time.DateOnly))
+				fmt.Fprintf(w, "rule:      %s at every sync (since %s)\n", r.spec(), r.At.Format(time.DateOnly))
 			}
 		}
 	}
@@ -453,7 +453,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	for _, it := range items {
 		switch cmd {
 		case "start":
-			err = it.Start(now, *note)
+			err = it.start(now, *note)
 		case "done":
 			it.Done(now, *note)
 		case "note":
@@ -464,22 +464,22 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 			}
 			err = c.decide(t, it, now, *answer, ignoreScopes, acceptScopes, *owner)
 		case "snooze":
-			err = it.Snooze(now, *until, *note)
+			err = it.snooze(now, *until, *note)
 		case "ignore":
 			r := strings.TrimSpace(*reason)
 			if r != "" && *note != "" {
 				r += "; " + *note
 			}
-			err = it.Ignore(now, r)
+			err = it.ignore(now, r)
 		case "reopen":
-			it.Reopen(now, *note)
-			if n := t.DropRules(it.ID); n > 0 {
+			it.reopen(now, *note)
+			if n := t.dropRules(it.ID); n > 0 {
 				fmt.Fprintf(c.Out, "%s of this decision removed; the items they closed stay as they are.\n", textfmt.Count(n, "rule", "rules"))
 			}
 		case "prioritize":
 			var p secretrisk.Priority
-			if p, err = ParsePriority(pos[1]); err == nil {
-				err = it.Prioritize(now, p, *reason)
+			if p, err = parsePriority(pos[1]); err == nil {
+				err = it.prioritize(now, p, *reason)
 			}
 		}
 		if err != nil {
@@ -508,7 +508,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 func (c CLI) itemsUnder(t *Tracker, prefix string, closed bool, now time.Time) []*Item {
 	var out []*Item
 	for _, it := range t.Items {
-		if (c.rotations == "" || it.Kind == KindRotate) && it.Active(now) != closed && it.Under(prefix) {
+		if (c.rotations == "" || it.Kind == KindRotate) && it.Active(now) != closed && it.liesUnder(prefix) {
 			out = append(out, it)
 		}
 	}
@@ -529,7 +529,7 @@ func (c CLI) previewDecision(t *Tracker, it *Item, now time.Time, answer string,
 	if err != nil {
 		return c.fail(err)
 	}
-	lines, err := t.PreviewDecision(it, now, answer, ignore, accept, owners)
+	lines, err := t.previewDecision(it, now, answer, ignore, accept, owners)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -550,7 +550,7 @@ func (c CLI) decide(t *Tracker, it *Item, now time.Time, answer string, ignore, 
 		return err
 	}
 	again := it.Decision != nil && it.Decision.Answer != ""
-	added, closed, err := t.DecideWithEffects(it, now, answer, ignore, accept, owners)
+	added, closed, err := t.decideWithEffects(it, now, answer, ignore, accept, owners)
 	if err != nil {
 		return err
 	}
@@ -559,7 +559,7 @@ func (c CLI) decide(t *Tracker, it *Item, now time.Time, answer string, ignore, 
 	}
 	if len(added) > 0 {
 		for _, r := range added {
-			fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.Spec())
+			fmt.Fprintf(c.Out, "Rule: %s, at every sync.\n", r.spec())
 		}
 		fmt.Fprintf(c.Out, "%s closed now by this decision.\n", textfmt.Count(closed, "item", "items"))
 	}
@@ -580,7 +580,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 		fmt.Fprintln(c.Err, trackUsage)
 		return 2
 	}
-	p, err := ParsePriority(*prio)
+	p, err := parsePriority(*prio)
 	if err != nil || p == "" {
 		return c.fail(fmt.Errorf("--priority %q: use P0, P1, P2 or P3", *prio))
 	}
@@ -594,7 +594,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 		var labels []string
 		var effects []OptionEffect
 		for _, o := range options {
-			label, eff, err := ParseOption(o)
+			label, eff, err := parseOption(o)
 			if err != nil {
 				return c.fail(err)
 			}
@@ -603,7 +603,7 @@ func (c CLI) add(t *Tracker, path string, args []string, now time.Time) int {
 				effects = append(effects, *eff)
 			}
 		}
-		it = t.AddDecision(fmt.Sprintf("manual:%d", t.NextID), *question, labels, now)
+		it = t.addDecision(fmt.Sprintf("manual:%d", t.NextID), *question, labels, now)
 		it.Decision.Effects = effects
 	case k == KindRotate || !slices.Contains(kinds, k):
 		return c.fail(fmt.Errorf("--kind %q: use fix, decide, setup or review (secrets come from local-secrets)", *kind))
@@ -655,7 +655,7 @@ func (c CLI) Status(args []string) int {
 	if c.Instances != nil {
 		v.Instances = c.Instances()
 	}
-	d := t.Status(path, now, v)
+	d := t.status(path, now, v)
 	if err := doc.Render(c.Out, d, doc.Format(*format)); err != nil {
 		return c.fail(err)
 	}

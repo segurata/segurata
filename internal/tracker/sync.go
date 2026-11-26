@@ -146,11 +146,11 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	// The owner's accounts are known before secrets are folded, so a secret attributed mine counts in
 	// full from its first sync (see SyncSecrets).
 	t.discover(runs)
-	owned := t.OwnedAll(opt.Owned)
+	owned := t.ownedAll(opt.Owned)
 	for _, l := range rep.Runs {
 		if r := folded[l]; r.isSecrets() {
-			rep.Secrets.add(t.syncSecrets(Sightings(r.findings), now, opt.IncludeNoise, owned))
-			rep.Secrets.add(t.SyncNoise(NoiseOnly(r.findings), now))
+			rep.Secrets.add(t.syncSecrets(sightingsOf(r.findings), now, opt.IncludeNoise, owned))
+			rep.Secrets.add(t.syncNoise(noiseOnly(r.findings), now))
 			t.markGoneLocations(r)
 		}
 	}
@@ -181,7 +181,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	}
 	t.expireAll(now, &rep)
 	t.collectClaims(folded)
-	t.Attribute(owned)
+	t.attribute(owned)
 	rep.Ruled = t.applyRules(now)
 	t.noteBlocked(now)
 	t.seed(now)
@@ -339,8 +339,8 @@ func noteRaised(was map[*Item]secretrisk.Priority, now time.Time) {
 	}
 }
 
-// FoldedSecrets reports whether a local-secrets run was folded in.
-func (r SyncReport) FoldedSecrets() bool {
+// foldedSecrets reports whether a local-secrets run was folded in.
+func (r SyncReport) foldedSecrets() bool {
 	for _, l := range r.Runs {
 		if isSecretsLabel(l) {
 			return true
@@ -349,8 +349,8 @@ func (r SyncReport) FoldedSecrets() bool {
 	return false
 }
 
-// SyncLine is the one-line summary of what a sync did to items other than secrets.
-func SyncLine(r SyncReport) string {
+// syncLine is the one-line summary of what a sync did to items other than secrets.
+func syncLine(r SyncReport) string {
 	s := fmt.Sprintf("Tracker: %s folded; %d new items, %d verified done, %d reopened, %d expected by your config, %d closed by decisions, %d merged into the secret they hold; %d snoozes and %d acceptances expired.\n",
 		textfmt.Count(len(r.Runs), "run", "runs"), r.Created, r.Verified, r.Reopened, r.Expected, r.Ruled, r.Merged, r.Woken, r.Lapsed)
 	if len(r.Stale) > 0 {
@@ -713,7 +713,7 @@ func (t *Tracker) AcceptFinding(f finding.Finding, reason, until string, now tim
 		it.Severity, it.Priority = f.Severity, priorityOf(f.Severity)
 		it.Log(now, EvFound, actFound, "accepted on its own")
 	}
-	if err := it.Accept(now, reason, until); err != nil {
+	if err := it.accept(now, reason, until); err != nil {
 		return nil, err
 	}
 	it.Next = acceptedNext()
@@ -760,7 +760,7 @@ func (t *Tracker) Unaccept(ref string, now time.Time) (*Item, error) {
 	if hit == nil {
 		return nil, fmt.Errorf("no accepted finding %q (see segurata accept --list)", ref)
 	}
-	hit.Unaccept(now)
+	hit.unaccept(now)
 	return hit, nil
 }
 

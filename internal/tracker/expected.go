@@ -68,9 +68,9 @@ func expectedByReason(items []*Item) map[string]int {
 	return out
 }
 
-// ExpectRule is the config rule that expects a setup item's statuses: its connector instance
+// expectRule is the config rule that expects a setup item's statuses: its connector instance
 // (the config key), the state the connector reported and the account, plus an optional detail.
-func (it *Item) ExpectRule(reason, detail string) (key string, rule config.Expected, err error) {
+func (it *Item) expectRule(reason, detail string) (key string, rule config.Expected, err error) {
 	if it.Kind != KindSetup || len(it.Findings) == 0 {
 		return "", rule, fmt.Errorf("%s is not a setup item: only a connector status can be expected", it.ID)
 	}
@@ -95,8 +95,8 @@ func globEscape(s string) string {
 	return b.String()
 }
 
-// Expect closes a setup item as expected by a config rule just written.
-func (it *Item) Expect(at time.Time, rule config.Expected, where string) {
+// expect closes a setup item as expected by a config rule just written.
+func (it *Item) expect(at time.Time, rule config.Expected, where string) {
 	for i := range it.Findings {
 		if !it.Findings[i].Gone && rule.Matches(finding.Status{Account: it.Findings[i].Account, Detail: it.Findings[i].Title}, rule.State) {
 			it.Findings[i].Expected = rule.Reason

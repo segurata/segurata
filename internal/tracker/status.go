@@ -62,7 +62,7 @@ type View struct {
 // Status lays the briefing out: headline, what to do next, pending decisions, setup blockers,
 // what changed since the last status, and the accepted risks. It never shows a secret value:
 // rotate items are named by their redacted hint.
-func (t *Tracker) Status(path string, now time.Time, v View) *doc.Doc {
+func (t *Tracker) status(path string, now time.Time, v View) *doc.Doc {
 	var items []*Item
 	for _, it := range t.Items {
 		if v.keep(it) {
@@ -172,7 +172,7 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool)
 			di.Meta += " · quick win: " + quick.Why
 		}
 		if explain {
-			di.Details = append(di.Details, doc.Detail{Label: "Score", Text: s.Explain()})
+			di.Details = append(di.Details, doc.Detail{Label: "Score", Text: s.explain()})
 		}
 		entries = append(entries, entry{s, p, di})
 	}
@@ -185,17 +185,17 @@ func (t *Tracker) doNext(d *doc.Doc, items []*Item, now time.Time, explain bool)
 				secrets[p] = append(secrets[p], it)
 			}
 		case it.Kind == KindDecide:
-			if n := len(t.Unblocks(it, now)); n > 0 {
-				add(t.Score(it, now), it.EffectivePriority(), t.decisionDoc(it, now))
+			if n := len(t.unblocks(it, now)); n > 0 {
+				add(t.score(it, now), it.EffectivePriority(), t.decisionDoc(it, now))
 			}
 		default:
-			add(t.Score(it, now), it.EffectivePriority(), itemDoc(it, t))
+			add(t.score(it, now), it.EffectivePriority(), itemDoc(it, t))
 		}
 	}
 	for _, p := range prios {
 		if q := secrets[p]; len(q) > 0 {
 			Sort(q)
-			add(t.Score(q[0], now), p, secretsDoc(p, q))
+			add(t.score(q[0], now), p, secretsDoc(p, q))
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -252,7 +252,7 @@ func secretsDoc(p secretrisk.Priority, queue []*Item) doc.Item {
 // or closes, and the command.
 func (t *Tracker) decisionDoc(it *Item, now time.Time) doc.Item {
 	out := doc.Item{Badge: textfmt.OrDash(string(it.EffectivePriority())), Text: "Decide: " + it.Decision.Question,
-		Meta: it.ID + " · " + t.ThemeTitle(it.Theme) + " · decide"}
+		Meta: it.ID + " · " + t.themeTitle(it.Theme) + " · decide"}
 	out.Details = append(out.Details, t.decisionDetails(it, now)...)
 	return out
 }
@@ -263,10 +263,10 @@ func (t *Tracker) decisionDetails(it *Item, now time.Time) []doc.Detail {
 	if len(it.Decision.Options) > 0 {
 		out = append(out, doc.Detail{Label: "Options", Text: strings.Join(it.Decision.Options, " | ")})
 	}
-	if u := t.Unblocks(it, now); len(u) > 0 {
+	if u := t.unblocks(it, now); len(u) > 0 {
 		out = append(out, doc.Detail{Label: "Unblocks", Text: textfmt.Count(len(u), "item", "items") + " " + byPriority(u)})
 	}
-	for _, l := range t.Leverage(it, now) {
+	for _, l := range t.optionLeverage(it, now) {
 		out = append(out, doc.Detail{Label: "Leverage", Text: l})
 	}
 	return append(out, doc.Detail{Label: "Answer", Text: "segurata track decide " + it.ID + ` --answer "…"`, Kind: doc.DCode})
@@ -289,7 +289,7 @@ func byPriority(items []*Item) string {
 
 // itemDoc is one item in a list: priority, title, what it is, and its next step.
 func itemDoc(it *Item, t *Tracker) doc.Item {
-	meta := []string{it.ID, t.ThemeTitle(it.Theme), string(it.Kind)}
+	meta := []string{it.ID, t.themeTitle(it.Theme), string(it.Kind)}
 	if it.Severity != "" {
 		meta = append(meta, string(it.Severity))
 	}

@@ -78,10 +78,10 @@ func TestSetupTitleCountsStatusesSharingAKey(t *testing.T) {
 
 func TestStatusURLIsThePageTheDetailSaysToOpen(t *testing.T) {
 	st := finding.Status{State: finding.StateReauth, Detail: "authorized GitHub Apps need sudo mode: open https://github.com/settings/apps/authorizations, confirm your identity, and run again"}
-	if got := StatusURL(st); got != "https://github.com/settings/apps/authorizations" {
+	if got := statusURL(st); got != "https://github.com/settings/apps/authorizations" {
 		t.Errorf("%q", got)
 	}
-	if got := StatusURL(finding.Status{Detail: "not signed in in the browser: https://example.com"}); got != "" {
+	if got := statusURL(finding.Status{Detail: "not signed in in the browser: https://example.com"}); got != "" {
 		t.Errorf("%q", got)
 	}
 }

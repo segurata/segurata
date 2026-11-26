@@ -302,11 +302,11 @@ func TestAFindingIsNotGoneWhenItsAccountCouldNotBeInspected(t *testing.T) {
 func TestSnoozeAndAcceptanceExpiryAndStaleRuns(t *testing.T) {
 	tr, out, fw, port := lifecycleFixture(t)
 	smb := byTitle(t, tr, "SMB listens")
-	if err := smb.Snooze(t0, "2026-11-25", "after the trip"); err != nil {
+	if err := smb.snooze(t0, "2026-11-25", "after the trip"); err != nil {
 		t.Fatal(err)
 	}
 	firewall := byTitle(t, tr, "The firewall is off")
-	if err := firewall.Accept(t0, "lab machine", "2026-11-24"); err != nil {
+	if err := firewall.accept(t0, "lab machine", "2026-11-24"); err != nil {
 		t.Fatal(err)
 	}
 	rep := syncOrDie(t, tr, out, t0.AddDate(0, 0, 1))
@@ -378,14 +378,14 @@ func TestSeedDecisionsAreCreatedOnce(t *testing.T) {
 		t.Fatalf("%d decisions", n)
 	}
 	d := byTitle(t, tr, "Install the daily scheduled inventory?")
-	if err := d.Decide(t0, "yes"); err != nil || d.Status != Done || d.Decision.Answer != "yes" {
+	if err := d.decide(t0, "yes"); err != nil || d.Status != Done || d.Decision.Answer != "yes" {
 		t.Fatalf("decide: %v %+v", err, d)
 	}
 	tr.seed(t0.Add(time.Hour))
 	if countKind(tr, KindDecide) != n {
 		t.Error("an answered decision came back")
 	}
-	if err := tr.newItem(KindFix, "manual:x", "other", "Fix it", t0).Decide(t0, "x"); err == nil {
+	if err := tr.newItem(KindFix, "manual:x", "other", "Fix it", t0).decide(t0, "x"); err == nil {
 		t.Error("a fix item took an answer")
 	}
 }
@@ -400,10 +400,10 @@ func TestSeedRenamesKnownThemes(t *testing.T) {
 	}
 	tr.Themes = append(tr.Themes, Theme{ID: "mine", Title: "Mine"})
 	tr.seed(t0.Add(time.Hour))
-	if got := tr.ThemeTitle("transcripts"); got != "Trail files to redact" {
+	if got := tr.themeTitle("transcripts"); got != "Trail files to redact" {
 		t.Errorf("transcripts theme %q", got)
 	}
-	if got := tr.ThemeTitle("mine"); got != "Mine" {
+	if got := tr.themeTitle("mine"); got != "Mine" {
 		t.Errorf("a theme segurata does not define changed: %q", got)
 	}
 }
@@ -483,10 +483,10 @@ func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
 		it.Findings = []FindingRef{refOf(f)}
 		old[f.ID] = it
 	}
-	if err := old[c.ID].Ignore(t0, "a fixture"); err != nil {
+	if err := old[c.ID].ignore(t0, "a fixture"); err != nil {
 		t.Fatal(err)
 	}
-	d := tr.AddDecision("decide:purge-data-dumps", "Purge the data dumps from git history?", []string{"yes", "no"}, t0)
+	d := tr.addDecision("decide:purge-data-dumps", "Purge the data dumps from git history?", []string{"yes", "no"}, t0)
 	rep := syncOrDie(t, tr, out, t0.Add(time.Hour))
 	repo := byTitle(t, tr, "2 database dumps in the git history of ~/src/api (3.0 MB)")
 	for _, f := range []finding.Finding{a, b} {
@@ -503,7 +503,7 @@ func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
 	if !strings.HasPrefix(repo.Next.Action, "Blocked by decision "+d.ID+" (Purge the data dumps from git history?): answer it first. ") {
 		t.Errorf("next step: %s", repo.Next.Action)
 	}
-	if got := tr.Unblocks(d, t0.Add(time.Hour)); len(got) != 1 || got[0] != repo {
+	if got := tr.unblocks(d, t0.Add(time.Hour)); len(got) != 1 || got[0] != repo {
 		t.Errorf("unblocks %v", got)
 	}
 	// Answered: the note goes away at the next sync, and is never doubled meanwhile.
@@ -511,11 +511,11 @@ func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
 	if strings.Count(repo.Next.Action, "Blocked by decision") != 1 {
 		t.Errorf("note doubled: %s", repo.Next.Action)
 	}
-	if err := d.Decide(t0.Add(3*time.Hour), "yes"); err != nil {
+	if err := d.decide(t0.Add(3*time.Hour), "yes"); err != nil {
 		t.Fatal(err)
 	}
 	syncOrDie(t, tr, out, t0.Add(4*time.Hour))
-	if strings.Contains(repo.Next.Action, "Blocked by decision") || tr.BlockedBy(repo, t0.Add(4*time.Hour)) != nil {
+	if strings.Contains(repo.Next.Action, "Blocked by decision") || tr.blockedBy(repo, t0.Add(4*time.Hour)) != nil {
 		t.Errorf("still blocked after the answer: %s", repo.Next.Action)
 	}
 }
@@ -583,7 +583,7 @@ func TestSyncAndSaveFoldsAgainIntoATrackerChangedMeanwhile(t *testing.T) {
 	before, _ := os.ReadFile(path)
 	noSecrets := errors.New("no local-secrets run")
 	require := func(rep SyncReport) error {
-		if !rep.FoldedSecrets() {
+		if !rep.foldedSecrets() {
 			return noSecrets
 		}
 		return nil
