@@ -1,8 +1,6 @@
-// Package fingerprint turns a raw secret into a stable identifier that is useless outside this
-// machine: HMAC-SHA256 under a random per-machine key, truncated to 16 hex characters. A plain hash
-// of a short or structured secret could be brute-forced from the output; an HMAC cannot without the
-// key. The local-secrets connector fingerprints what it finds; `segurata rotations replace`
-// fingerprints the old and new values to tell them apart without ever storing either.
+// Package fingerprint turns a secret into an identifier useless outside this machine: HMAC-SHA256
+// under a random per-machine key, truncated to 16 hex characters. A plain hash of a short or
+// structured secret could be brute-forced from the output.
 package fingerprint
 
 import (
@@ -18,22 +16,18 @@ import (
 	"strings"
 )
 
-// Key is the per-machine HMAC key.
 type Key struct{ key []byte }
 
 const keyBytes = 32
 
-// FromBytes builds a key from raw bytes, for tests and callers that hold the key already.
 func FromBytes(b []byte) Key { return Key{key: append([]byte(nil), b...)} }
 
-// DefaultPath is ~/.config/segurata/fingerprint.key.
 func DefaultPath(home string) string {
 	return filepath.Join(home, ".config", "segurata", "fingerprint.key")
 }
 
-// OpenDefault opens the key at DefaultPath of the user's home, never creating it: for readers
-// that match fingerprints local-secrets recorded (a connector naming the key it found, the core
-// naming the secrets it resolved). ok is false when there is no key yet.
+// OpenDefault opens the key at DefaultPath, never creating it, for readers of fingerprints
+// local-secrets recorded.
 func OpenDefault() (k Key, ok bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -44,7 +38,7 @@ func OpenDefault() (k Key, ok bool) {
 }
 
 // Load reads the key, creating it with mode 0600 on first use. Losing the key changes every
-// fingerprint, so the rotation ledger would see every secret as new.
+// fingerprint: the rotation ledger would see every secret as new.
 func Load(path string) (Key, error) {
 	k, err := Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -53,8 +47,8 @@ func Load(path string) (Key, error) {
 	return k, err
 }
 
-// Open reads an existing key. Commands that compare against fingerprints already in the ledger
-// use it: a new key would match nothing.
+// Open reads an existing key, for commands that compare against fingerprints in the ledger, which
+// a new key would match none of.
 func Open(path string) (Key, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -67,29 +61,38 @@ func Open(path string) (Key, error) {
 	return Key{key: key}, nil
 }
 
+// create writes the key under a temporary name and links it into place, so a run that starts
+// meanwhile finds either no key or the whole of it.
 func create(path string) (Key, error) {
 	key := make([]byte, keyBytes)
 	if _, err := rand.Read(key); err != nil {
 		return Key{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Key{}, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) { // another run created it first
-		return Load(path)
+	tmp, err := os.CreateTemp(dir, ".fingerprint-*")
+	if err != nil {
+		return Key{}, err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(hex.EncodeToString(key) + "\n")
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
 	}
 	if err != nil {
 		return Key{}, err
 	}
-	if _, err := f.WriteString(hex.EncodeToString(key) + "\n"); err != nil {
-		f.Close()
+	if err := os.Link(tmp.Name(), path); errors.Is(err, fs.ErrExist) {
+		return Open(path)
+	} else if err != nil {
 		return Key{}, err
 	}
-	return Key{key: key}, f.Close()
+	return Key{key: key}, nil
 }
 
-// Of returns the fingerprint of secret, "" for an empty one.
+// Of is "" for an empty secret.
 func (k Key) Of(secret string) string {
 	if secret == "" {
 		return ""
@@ -99,10 +102,8 @@ func (k Key) Of(secret string) string {
 	return hex.EncodeToString(m.Sum(nil))[:16]
 }
 
-// Find returns the substring of line, n bytes long, whose fingerprint is fp, or "". Only the windows
-// fits accepts (those matching a redacted hint's prefix and tail) are fingerprinted, so a value can
-// be located again without ever having been stored: `rotations replace` finds the old value in a
-// file, the liveness check finds a value in a line of git history.
+// Find returns the substring of line, n bytes long, whose fingerprint is fp, or "": a value located
+// again without ever having been stored. Only the windows fits accepts are fingerprinted.
 func (k Key) Find(line string, n int, fp string, fits func(string) bool) string {
 	if n <= 0 {
 		return ""

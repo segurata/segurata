@@ -14,10 +14,9 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// AWS: sts:GetCallerIdentity, which needs no IAM permission and cannot be denied, through the
-// Query API as a GET signed with Signature Version 4 by hand (standard library only). Only 200
-// tells: 403 InvalidClientTokenId is also the global endpoint's answer to a key of the GovCloud or
-// China partitions, and SignatureDoesNotMatch says the pair found in the file is not a pair.
+// sts:GetCallerIdentity needs no permission and cannot be denied. Only 200 tells: 403
+// InvalidClientTokenId is also the answer to a GovCloud or China key, and SignatureDoesNotMatch
+// says the pair found is not a pair.
 
 const (
 	stsQuery   = "Action=GetCallerIdentity&Version=2011-06-15"
@@ -51,7 +50,6 @@ func askAWS(ctx context.Context, base string, p Probe) secretrisk.Liveness {
 	return call(ctx, base, "/?"+stsQuery, h, j, acct)
 }
 
-// firstGroup is the first non-empty group of re's first match in body, through providerText.
 func firstGroup(re *regexp.Regexp, body []byte) string {
 	m := re.FindSubmatch(body)
 	for i := 1; i < len(m); i++ {
@@ -62,9 +60,8 @@ func firstGroup(re *regexp.Regexp, body []byte) string {
 	return ""
 }
 
-// sigV4 signs GET /?<query> (query already in canonical order) for host, region and service at t,
-// and returns the headers to send. See AWS's "Create a signed AWS API request" (Signature Version
-// 4), https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html.
+// sigV4 signs GET /?<query>, query in canonical order, as
+// https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html describes.
 func sigV4(query, host, region, service, keyID, secret string, t time.Time) http.Header {
 	amzDate := t.Format("20060102T150405Z")
 	day := t.Format("20060102")

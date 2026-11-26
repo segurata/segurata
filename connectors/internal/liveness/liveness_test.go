@@ -458,6 +458,20 @@ func TestCache(t *testing.T) {
 	if _, ok := bc.fresh([]string{"x"}, now); !ok {
 		t.Error("a cache file without results is an empty cache")
 	}
+	// A cache written under older verdict rules is discarded: its dead results may be a bare 401.
+	older := filepath.Join(t.TempDir(), "liveness.json")
+	v1 := `{"version":1,"results":{"x":{"state":"dead","checked_at":"2026-11-25T00:00:00Z","provider":"github","reason":"HTTP 401"}}}`
+	if err := os.WriteFile(older, []byte(v1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := LoadCache(older).fresh([]string{"x"}, now); ok {
+		t.Error("a dead result of the old rules answered from the cache")
+	}
+	// A result dated after now (a clock that jumped forward) would stand for any later check.
+	bc.put([]string{"future"}, secretrisk.Liveness{State: secretrisk.Dead, CheckedAt: now.Add(time.Hour)})
+	if _, ok := bc.fresh([]string{"future"}, now); ok {
+		t.Error("a result from the future answered")
+	}
 }
 
 func TestInterruptedAndRateLimited(t *testing.T) {
@@ -652,19 +666,6 @@ func TestResultsCarryTheRules(t *testing.T) {
 	}
 }
 
-// A cache written under older verdict rules is discarded: its dead results may be a bare 401.
-func TestOlderCacheIsDiscarded(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "liveness.json")
-	old := `{"version":1,"results":{"x":{"state":"dead","checked_at":"2026-11-25T00:00:00Z","provider":"github","reason":"HTTP 401"}}}`
-	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Date(2026, 11, 25, 1, 0, 0, 0, time.UTC)
-	if _, ok := LoadCache(path).fresh([]string{"x"}, now); ok {
-		t.Error("a dead result of the old rules answered from the cache")
-	}
-}
-
 // The owner and provider gates apply to every fingerprint of a probe, inside Check, before the
 // cache and before a value is recovered: a pair whose key id is someone else's is never sent, nor
 // answered from the cache; a lookup (it sends nothing) runs for unknown whatever owners says, never
@@ -708,22 +709,10 @@ func TestGatesEveryFingerprint(t *testing.T) {
 		t.Errorf("stats %+v", st)
 	}
 	noLeak(t, got, st, theirSecret, liveKey)
-	if c.Attribution = nil; true {
-		got, st = c.Check(context.Background(), []Probe{{Fingerprints: []string{"mine"}, Type: "github", Value: "ghp_" + liveKey}})
-		if len(got) != 0 || st.NotAllowed != 1 || len(f.paths) != 0 {
-			t.Errorf("a checker without attribution tried a key: %+v %+v", got, st)
-		}
-	}
-}
-
-// A result dated after now (a clock that jumped forward) is never fresh: its age would be
-// negative, and it would stand for any later check.
-func TestFutureResultIsNotFresh(t *testing.T) {
-	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
-	c := LoadCache(filepath.Join(t.TempDir(), "l.json"))
-	c.put([]string{"x"}, secretrisk.Liveness{State: secretrisk.Dead, CheckedAt: now.Add(time.Hour)})
-	if _, ok := c.fresh([]string{"x"}, now); ok {
-		t.Error("a result from the future answered")
+	c.Attribution = nil
+	got, st = c.Check(context.Background(), []Probe{{Fingerprints: []string{"mine"}, Type: "github", Value: "ghp_" + liveKey}})
+	if len(got) != 0 || st.NotAllowed != 1 || len(f.paths) != 0 {
+		t.Errorf("a checker without attribution tried a key: %+v %+v", got, st)
 	}
 }
 

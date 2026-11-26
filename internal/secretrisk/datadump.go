@@ -2,11 +2,9 @@ package secretrisk
 
 import "fmt"
 
-// DumpFixDoc is where docs/secrets.md says what to do about a dump in git.
 const DumpFixDoc = "docs/secrets.md#data-dumps-in-git"
 
-// Breach notification guidance for dumps holding personal data: the Spanish authority's page and
-// the EDPB guidelines, checked on 2026-11-24.
+// Breach notification guidance for dumps of personal data, checked on 2026-11-24.
 const (
 	URLAEPDBreaches = "https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales"
 	URLEDPBBreaches = "https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en"
@@ -30,11 +28,8 @@ func HumanSize(n int64) string {
 	return fmt.Sprintf("%.0f %cB", v, "KMGTPE"[exp])
 }
 
-// A database dump committed to git yields thousands of gitleaks matches: hash columns, API keys of
-// the application's users, random ids. The local-secrets connector reports the dump itself as one
-// data_dump finding and marks those matches InDataDump. They are noise for rotation, except the
-// types with a recognisable shape (AWS AKIA key ids, Stripe live keys, GitHub and GitLab tokens,
-// private keys), which are this owner's credentials as often as not and keep their own impact.
+// A database dump in git yields thousands of matches (hash columns, the application's users' keys)
+// that are noise for rotation, except the shapes that are this owner's credentials as often as not.
 var keptInDump = map[string]bool{
 	"aws-access-key-id": true,
 	"stripe-live":       true,

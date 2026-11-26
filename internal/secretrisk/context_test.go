@@ -20,6 +20,12 @@ func TestRoleOf(t *testing.T) {
 		"~/src/tcpdf/examples/data/cert/tcpdf.crt":      RoleExample,
 		"~/src/app/.env.example":                        RoleExample,
 		"~/src/app/config/database.yml.sample":          RoleExample,
+		"~/src/app/config.example.yml":                  RoleExample,
+		"~/src/app/phpunit.xml.dist":                    RoleExample,
+		"~/src/app/settings.templates.py":               RoleExample,
+		"~/src/cdn/app.distribution.yml":                RoleNone, // a name that merely starts with an example marker
+		"~/src/audio/mixer.samplerate.conf":             RoleNone,
+		"~/src/shop/stripe.templated.yml":               RoleNone,
 		"~/src/php-jwt/README.md":                       RoleDoc,
 		"~/src/site/docs/setup.html":                    RoleDoc,
 		"~/src/app/vendor/firebase/php-jwt/src/JWT.php": RoleVendor,
@@ -88,16 +94,16 @@ func TestURLNoteAndHost(t *testing.T) {
 	}
 	for _, c := range cases {
 		n := URLNote(c.scheme, c.host, c.param)
-		if n != c.note || URLHost(n) != c.back {
-			t.Errorf("URLNote(%q,%q,%q) = %q (host %q)", c.scheme, c.host, c.param, n, URLHost(n))
+		if n != c.note || urlHost(n) != c.back {
+			t.Errorf("URLNote(%q,%q,%q) = %q (host %q)", c.scheme, c.host, c.param, n, urlHost(n))
 		}
 	}
 	for note, host := range map[string]string{
 		"postgresql://…@127.0.0.1": "127.0.0.1", "redis://…@Cache.Prod.Acme.IO:6379": "cache.prod.acme.io",
 		"mysql://…@[::1]": "::1", "https://h.example.net/…?key=…": "h.example.net", "ANTHROPIC_KEY": "",
 	} {
-		if got := URLHost(note); got != host {
-			t.Errorf("URLHost(%q) = %q, want %q", note, got, host)
+		if got := urlHost(note); got != host {
+			t.Errorf("urlHost(%q) = %q, want %q", note, got, host)
 		}
 	}
 }
@@ -109,7 +115,8 @@ func TestURLCredentialImpactByHost(t *testing.T) {
 		"app.test": Noise, "x.invalid": Noise, "web.localhost": Noise,
 		"10.1.2.3": Low, "172.20.0.4": Low, "192.168.23.12": Low, "100.80.1.1": Low, "169.254.1.1": Low,
 		"fe80::1": Low, "fd00::5": Low, "postgres": Low, "db.internal": Low, "nas.lan": Low,
-		"api.acme.io": Medium, "8.8.8.8": Medium,
+		"pg.prod.svc.cluster.local": Low, // Kubernetes' cluster domain, not mDNS
+		"api.acme.io":               Medium, "8.8.8.8": Medium,
 		"ep-cool-1.eu-central-1.aws.neon.tech": High, "db.abcdefgh.supabase.co": High,
 		"aws-0-eu-west-1.pooler.supabase.com": High, "shop.cluster-x.eu-west-1.rds.amazonaws.com": High,
 		"cluster0.ab1cd.mongodb.net": High, "prod-db.acme.io": High, "db.production.acme.io": High,

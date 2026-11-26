@@ -1,5 +1,5 @@
-// Package httpx is the small read-only HTTP client the provider-API connectors share, plus the
-// timestamp helpers their payloads need. Standard library only.
+// Package httpx is the read-only HTTP client the provider-API connectors share, with the helpers
+// their payloads need.
 package httpx
 
 import (
@@ -20,21 +20,19 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// IdleAfter is how long a credential can go unused before it is worth a look.
 const IdleAfter = finding.IdleAfter
 
-// Client issues GET requests against one API base URL with fixed headers.
 type Client struct {
 	BaseURL string
 	Header  http.Header
 	HTTP    *http.Client
 }
 
-// Base is the API base URL without a trailing slash: configured, or def when configured is empty.
+// Base is configured, or def when it is empty, without a trailing slash.
 func Base(configured, def string) string { return strings.TrimRight(cmp.Or(configured, def), "/") }
 
-// New returns a client with a sane timeout. Header values are sent on every request, and they
-// are the credential: a redirect to another host gets none of them.
+// New returns a client that sends header, the credential, on every request but a redirect to
+// another host.
 func New(baseURL string, header http.Header) *Client {
 	h := header.Clone()
 	h.Set("Accept", "application/json")
@@ -45,11 +43,10 @@ func New(baseURL string, header http.Header) *Client {
 	}}
 }
 
-// keepOnSameHost follows up to 10 redirects, as Go does, and drops the credential headers from any
-// hop to a host (or port) other than the first request's. Go strips only Authorization and
-// cookies, and keeps them on another port of the same host. No hop carries a Referer: Go sets it
-// to the previous URL, path included, and a credential can ride in the path (Telegram's
-// /bot<token>/). A hop from https to anything else is refused before it is sent.
+// keepOnSameHost drops every credential header on a hop to another host or port: Go strips only
+// Authorization and cookies, and keeps them on another port. No hop carries a Referer, which Go
+// sets to the previous URL and a credential can ride in (Telegram's /bot<token>/). Downgrades
+// from https are refused.
 func keepOnSameHost(credential http.Header) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
@@ -68,29 +65,27 @@ func keepOnSameHost(credential http.Header) func(*http.Request, []*http.Request)
 	}
 }
 
-// NoRedirect is a CheckRedirect for a client that follows none: the answer is the 3xx itself, so
-// a request and its credential go nowhere but the URL it was sent to.
+// NoRedirect is a CheckRedirect that follows none: the answer is the 3xx itself.
 func NoRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // StatusError is a non-2xx answer. Message is the provider's error message, never a header value.
 type StatusError struct {
+	Method  string // "" for GET
 	Path    string
 	Code    int
 	Message string
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("GET %s: HTTP %d: %s", e.Path, e.Code, e.Message)
+	return fmt.Sprintf("%s %s: HTTP %d: %s", cmp.Or(e.Method, http.MethodGet), e.Path, e.Code, e.Message)
 }
 
-// IsStatus reports whether err is a StatusError with the given HTTP code.
 func IsStatus(err error, code int) bool {
 	var se *StatusError
 	return errors.As(err, &se) && se.Code == code
 }
 
-// State is the status state of a failed call: reauth when the provider rejected the credential
-// (HTTP 401), error otherwise.
+// State is the status state of a failed call: reauth on a rejected credential (401).
 func State(err error) finding.State {
 	if IsStatus(err, http.StatusUnauthorized) {
 		return finding.StateReauth
@@ -98,7 +93,7 @@ func State(err error) finding.State {
 	return finding.StateError
 }
 
-// Get fetches path (relative to BaseURL) with the query q and decodes the JSON body into out.
+// Get decodes the JSON body of a 2xx answer into out.
 func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) error {
 	code, body, err := c.Fetch(ctx, http.MethodGet, path, q, nil)
 	if err != nil {
@@ -113,10 +108,8 @@ func (c *Client) Get(ctx context.Context, path string, q url.Values, out any) er
 	return nil
 }
 
-// Fetch sends a request to path (relative to BaseURL) with the query q and returns the HTTP status
-// and the body, whatever the status, for callers that judge the answer themselves. method is GET,
-// or POST for an API that documents only POST for a read-only call: Slack's auth.test without a
-// body, a GraphQL query with body as JSON.
+// Fetch returns the status and body whatever the status, for callers that judge the answer. method
+// is GET, or POST for a read-only call an API documents only as POST (Slack's auth.test, GraphQL).
 func (c *Client) Fetch(ctx context.Context, method, path string, q url.Values, body []byte) (int, []byte, error) {
 	u := c.BaseURL + path
 	if len(q) > 0 {
@@ -136,8 +129,7 @@ func (c *Client) Fetch(ctx context.Context, method, path string, q url.Values, b
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		// url.Error carries the URL, and a credential may ride in its path or query: it names the
-		// scheme, host and ShownPath, without the query.
+		// url.Error carries the URL, and a credential may ride in its path or query.
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			p, _, _ := strings.Cut(path, "?")
@@ -153,9 +145,8 @@ func (c *Client) Fetch(ctx context.Context, method, path string, q url.Values, b
 	return resp.StatusCode, answer, nil
 }
 
-// ErrorMessage pulls the message out of the JSON error envelope OpenAI, Anthropic and
-// OpenRouter use (error.message) or Cloudflare's (errors[].message), falling back to a short
-// prefix of the body.
+// ErrorMessage is the message of an error.message (OpenAI, Anthropic, OpenRouter) or
+// errors[].message (Cloudflare) envelope, else a short prefix of the body.
 func ErrorMessage(body []byte) string {
 	type message struct {
 		Message string `json:"message"`
@@ -183,15 +174,12 @@ func ErrorMessage(body []byte) string {
 	return truncate(strings.TrimSpace(string(body)))
 }
 
-// maxMessage is how many characters of a provider's error message an error keeps.
 const maxMessage = 300
 
 func truncate(s string) string { return textfmt.Truncate(s, maxMessage+1) }
 
-// MatchesRedacted reports whether secret is the key a provider shows as redacted, a visible
-// prefix and suffix around a mask ("sk-proj-****dYwA", "sk-or-v1-27e...d4d") or a hint in
-// secretrisk.Redact's format. Both parts must be visible and match, and the length when the hint
-// gives it; a redacted form without a mask matches nothing.
+// MatchesRedacted reports whether secret is the key a provider shows masked ("sk-proj-****dYwA")
+// or a hint in Redact's format describes. Prefix and tail must both be visible.
 func MatchesRedacted(redacted, secret string) bool {
 	h, ok := secretrisk.ReadHint(redacted)
 	if !ok || h.Prefix == "" || h.Tail == "" || secret == "" || h.Len > 0 && h.Len != len(secret) {
@@ -200,7 +188,7 @@ func MatchesRedacted(redacted, secret string) bool {
 	return len(secret) >= len(h.Prefix)+len(h.Tail) && strings.HasPrefix(secret, h.Prefix) && strings.HasSuffix(secret, h.Tail)
 }
 
-// Unix converts Unix seconds to a time; 0 or nil means the provider did not say.
+// Unix is nil for 0 or nil: the provider did not say.
 func Unix(sec *int64) *time.Time {
 	if sec == nil || *sec == 0 {
 		return nil
@@ -209,7 +197,7 @@ func Unix(sec *int64) *time.Time {
 	return &t
 }
 
-// ParseTime reads an ISO 8601 timestamp; empty or unparseable input gives nil, never a guess.
+// ParseTime reads an ISO 8601 timestamp; nil, never a guess, for anything else.
 func ParseTime(s *string) *time.Time {
 	if s == nil || *s == "" {
 		return nil
@@ -223,19 +211,16 @@ func ParseTime(s *string) *time.Time {
 	return nil
 }
 
-// Days is the whole number of days between t and now.
 func Days(now, t time.Time) int { return int(now.Sub(t).Hours() / 24) }
 
-// USD formats a dollar amount for titles.
 func USD(v float64) string { return textfmt.USD(v) }
 
-// Assessment accumulates why something is risky; Severity is the worst reason seen.
+// Assessment accumulates why something is risky; Severity is the worst reason's.
 type Assessment struct {
 	Severity finding.Severity
 	Reasons  []string
 }
 
-// Raise records a reason and lifts the severity when sev is worse.
 func (a *Assessment) Raise(sev finding.Severity, why string) {
 	if a.Severity == "" || sev.Rank() > a.Severity.Rank() {
 		a.Severity = sev
@@ -243,7 +228,7 @@ func (a *Assessment) Raise(sev finding.Severity, why string) {
 	a.Reasons = append(a.Reasons, why)
 }
 
-// Done fills in an info-level reason when nothing was raised and returns the assessment.
+// Done is an info-level assessment with reason fine when nothing was raised.
 func (a Assessment) Done(fine string) Assessment {
 	if len(a.Reasons) == 0 {
 		return Assessment{Severity: finding.SevInfo, Reasons: []string{fine}}
@@ -251,8 +236,7 @@ func (a Assessment) Done(fine string) Assessment {
 	return a
 }
 
-// ShownPath is a request path as segurata shows it: a token in the path (Telegram's
-// /bot<token>/) is replaced by a placeholder.
+// ShownPath replaces a token in the path (Telegram's /bot<token>/) by a placeholder.
 func ShownPath(path string) string {
 	if rest, ok := strings.CutPrefix(path, "/bot"); ok {
 		if _, after, ok := strings.Cut(rest, "/"); ok {

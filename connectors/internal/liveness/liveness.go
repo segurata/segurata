@@ -1,16 +1,11 @@
-// Package liveness asks a provider, once per leaked secret, whether the secret still works: one
-// call with it to the provider's cheapest read-only identity endpoint (providers.go). The answer
-// is live (accepted), dead (rejected as invalid, revoked or expired) or unknown (no answer that
-// tells). local-secrets runs it at scan time, the only moment segurata holds the value, and only
-// when the owner turned it on for secrets attributed to owners they chose: see
-// docs/architecture.md, "Liveness".
+// Package liveness asks a provider, once per leaked secret, whether it still works: one call with
+// it to a read-only identity endpoint, or a lookup with the owner's own credentials for a secret
+// that cannot be tried alone. local-secrets runs it at scan time, the only moment segurata holds
+// the value. See docs/architecture.md, "Liveness".
 //
-// Safety: every endpoint reads who the caller is, or lists something; none changes state, costs
-// money or sends anything. Every call is a GET except two POSTs: Slack's auth.test, without a body,
-// and Linear's GraphQL endpoint, with one fixed query. Calls go one at a time per provider, with a pause between
-// any two, through httpx, following no redirect (a 3xx is unknown). Results hold
-// no value and no provider message (which may echo part of the key), and are cached by
-// fingerprint so a secret is not tried again for a while.
+// Safety: no endpoint changes state, costs money or sends anything; every call is a GET but
+// Slack's bodiless auth.test and Linear's one fixed GraphQL query. Calls are spaced, follow no
+// redirect, and keep no value nor provider message, which may echo part of the key.
 package liveness
 
 import (
@@ -26,17 +21,13 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// Config is local-secrets' `liveness` block. Off unless enabled; owners default to mine only, and
-// not-mine can never be named: someone else's key is never tried.
+// Config is local-secrets' `liveness` block. Owners default to mine; not-mine is never allowed.
 type Config struct {
-	Enabled   bool
-	Owners    []attribution.Owner
-	Providers []string // nil: every provider the package knows
-	// AWSProfiles are the owner's aws CLI profiles lone key ids are looked up with; nil: every
-	// profile `aws configure list-profiles` names.
-	AWSProfiles []string
-	// SSHHosts are hosts whose ~/.ssh/authorized_keys private keys are looked up in (opt-in).
-	SSHHosts []string
+	Enabled     bool
+	Owners      []attribution.Owner
+	Providers   []string // nil: every provider
+	AWSProfiles []string // nil: every profile `aws configure list-profiles` names
+	SSHHosts    []string // whose ~/.ssh/authorized_keys private keys are looked up in
 }
 
 // ParseConfig reads `{"enabled": true, "owners": ["mine", "unknown"], "providers": ["github"],
@@ -119,9 +110,8 @@ func stringList(v any, key string) ([]string, error) {
 	return out, nil
 }
 
-// Allows reports whether the owner lets the check try a secret of the type attributed to owner. A
-// lookup with the owner's credentials (a lone AWS key id, a private key) never sends the secret,
-// so it runs for mine and unknown whatever owners says; someone else's secret is never looked at.
+// Allows reports whether the check may try a secret of the type attributed to owner. A lookup
+// never sends the secret, so it runs for mine and unknown whatever Owners says.
 func (c Config) Allows(owner attribution.Owner, typ string) bool {
 	if owner == attribution.NotMine {
 		return false
@@ -132,24 +122,18 @@ func (c Config) Allows(owner attribution.Owner, typ string) bool {
 	return slices.Contains(c.Owners, owner)
 }
 
-// allowsProvider reports whether the config's provider allowlist names the provider.
 func (c Config) allowsProvider(name string) bool {
 	return c.Providers == nil || slices.Contains(c.Providers, name)
 }
 
-// Probe is one secret to try. Value never leaves this package except in the request to its
-// provider. A probe without a value (a secret replayed from the git history cache, whose value the
-// run never read) only looks in the cache.
+// Probe is one secret to try. Value leaves this package only in the request to its provider.
 type Probe struct {
-	// Fingerprints get the result: the secret's own, and for an AWS key pair the key id's too.
-	Fingerprints []string
-	Type         string // a secretrisk catalog type
+	Fingerprints []string // the secret's own, and for an AWS key pair the key id's too
+	Type         string   // a secretrisk catalog type
 	Value        string
 	KeyID        string // aws-secret-key: the access key id found with it
-	// Recover reads Value (and KeyID) again when the probe has none, and is called only when the
-	// cache has no fresh answer and the run still has time: for git history replayed from the
-	// cache, whose values the scan never read. ok is false when it could not. It runs on its
-	// provider's goroutine, concurrently with other providers' probes.
+	// Recover reads Value and KeyID again for git history replayed from the cache, whose values the
+	// scan never read; only when the cache has no fresh answer. It runs on its provider's goroutine.
 	Recover func(ctx context.Context) (value, keyID string, ok bool)
 }
 
@@ -157,13 +141,12 @@ type Probe struct {
 type Stats struct {
 	Asked, Cached, Live, Dead, Unknown int
 	Unsupported                        int // no provider endpoint for the type, or a key without its pair
-	NotAllowed                         int // attributed to an owner the config leaves out, or a provider it leaves out
-	Interrupted                        int // not asked: the run's time ran out
-	NoValue                            int // not asked: no value, read or recovered (cached git history)
-	Recovered                          int // values read again from git history at check time
-	Unregistered                       int // SSH keys registered nowhere the lookup can see
-	// Hints say what the owner can set up for the lookups to classify more: a permission, a scope.
-	Hints []string
+	NotAllowed                         int // an owner or provider the config leaves out
+	Interrupted                        int // the run's time ran out
+	NoValue                            int // no value read or recovered
+	Recovered                          int // values read again from git history
+	Unregistered                       int
+	Hints                              []string // what the owner can set up for lookups to classify more
 }
 
 func (s Stats) String() string {
@@ -175,26 +158,35 @@ func (s Stats) String() string {
 	return line
 }
 
+func (s *Stats) asked(state secretrisk.LiveState) {
+	s.Asked++
+	switch state {
+	case secretrisk.Live:
+		s.Live++
+	case secretrisk.Dead:
+		s.Dead++
+	case secretrisk.Unregistered:
+		s.Unregistered++
+	default:
+		s.Unknown++
+	}
+}
+
 // Checker runs the check. Zero values are the defaults: real endpoints, no cache, the real clock,
-// DefaultInterval.
+// defaultInterval, lookups without sources.
 type Checker struct {
-	Config Config
-	// Bases replaces a provider's base URLs (tests point them at a fake server).
-	Bases map[string][]string
-	Cache *Cache
-	Now   func() time.Time
-	// Interval is the least time between two calls, across providers.
-	Interval time.Duration
-	// Owner runs the lookups (lookup.go); its zero value leaves them without sources.
-	Owner Owner
-	// Attribution is the owner of a fingerprint, false when the run has none for it. Check tries a
-	// probe only when Config.Allows every one of its fingerprints; nil allows nothing.
+	Config   Config
+	Bases    map[string][]string // replaces a provider's base URLs
+	Cache    *Cache
+	Now      func() time.Time
+	Interval time.Duration // the least time between two calls, across providers
+	Owner    Owner
+	// Attribution is the owner of a fingerprint; nil allows nothing.
 	Attribution func(fingerprint string) (attribution.Owner, bool)
 }
 
-// allows reports whether the owner and provider gates let the probe through: every fingerprint
-// attributed to an owner the config allows (someone else's key never rides along with the owner's),
-// and the provider in the allowlist.
+// allows requires every fingerprint attributed to an allowed owner, so someone else's key never
+// rides along with the owner's.
 func (c *Checker) allows(p Probe, pv *provider) bool {
 	if c.Attribution == nil || len(p.Fingerprints) == 0 || pv != nil && !c.Config.allowsProvider(pv.name) {
 		return false
@@ -207,13 +199,10 @@ func (c *Checker) allows(p Probe, pv *provider) bool {
 	return true
 }
 
-// DefaultInterval keeps the whole check under four calls a second.
-const DefaultInterval = 250 * time.Millisecond
+const defaultInterval = 250 * time.Millisecond
 
-// Check tries each probe the config allows, one call per probe, and returns the result by
-// fingerprint. The gates come first: a probe they refuse is neither answered from the cache nor
-// recovered. A probe whose fingerprints all have a fresh cached result is not asked again.
-// Results of probes asked are cached; ctx ending stops the calls that have not started.
+// Check tries each probe the gates allow, unless the cache answers, and returns the results by
+// fingerprint. A refused probe is neither answered from the cache nor recovered.
 func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretrisk.Liveness, Stats) {
 	now := c.now()
 	out := map[string]secretrisk.Liveness{}
@@ -279,17 +268,7 @@ func (c *Checker) Check(ctx context.Context, probes []Probe) (map[string]secretr
 				r := withoutValue(c.ask(ctx, lk, pv, p), p)
 				r.CheckedAt, r.Rules = c.now().UTC(), secretrisk.LivenessRules
 				mu.Lock()
-				st.Asked++
-				switch r.State {
-				case secretrisk.Live:
-					st.Live++
-				case secretrisk.Dead:
-					st.Dead++
-				case secretrisk.Unregistered:
-					st.Unregistered++
-				default:
-					st.Unknown++
-				}
+				st.asked(r.State)
 				for _, fp := range p.Fingerprints {
 					out[fp] = r
 				}
@@ -312,13 +291,13 @@ func (c *Checker) now() time.Time {
 
 func (c *Checker) interval() time.Duration {
 	if c.Interval == 0 {
-		return DefaultInterval
+		return defaultInterval
 	}
 	return c.Interval
 }
 
-// ask tries the probe on each of the provider's hosts until one accepts it: dead only when every
-// host says dead, else the first other answer. A lookup runs once, with the owner's credentials.
+// ask tries each of the provider's hosts until one accepts the probe: dead only when every host
+// says dead, else the first other answer.
 func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) secretrisk.Liveness {
 	if pv.lookup != nil {
 		r := pv.lookup(ctx, lk, p)
@@ -347,10 +326,8 @@ func (c *Checker) ask(ctx context.Context, lk *lookups, pv *provider, p Probe) s
 // valueWindow is the shortest run of a value that counts as holding it.
 const valueWindow = 8
 
-// withoutValue is r with every field that holds a part of the probe's value or key id (any
-// valueWindow characters of it) dropped: the reason becomes "error", the account and the endpoint's
-// path go. The judges keep no provider message, and providerText keeps only short codes; this is
-// the last guard, whatever a provider echoes.
+// withoutValue drops every field holding a part of the probe's value or key id: the last guard,
+// whatever a provider echoes.
 func withoutValue(r secretrisk.Liveness, p Probe) secretrisk.Liveness {
 	holds := func(s string) bool {
 		for _, v := range []string{p.Value, p.KeyID} {
@@ -376,7 +353,6 @@ func withoutValue(r secretrisk.Liveness, p Probe) secretrisk.Liveness {
 	return r
 }
 
-// limiter spaces calls at least every apart, across goroutines.
 type limiter struct {
 	mu    sync.Mutex
 	every time.Duration
@@ -405,7 +381,6 @@ func (l *limiter) wait(ctx context.Context) error {
 	}
 }
 
-// Providers names every provider the check knows, sorted.
 func Providers() []string {
 	out := make([]string, len(providers))
 	for i, p := range providers {

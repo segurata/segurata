@@ -1,5 +1,4 @@
-// Package pagetext holds the helpers CDP connectors share to read the innerText of account
-// pages: line splitting and dates in English and Spanish. Standard library only.
+// Package pagetext reads the innerText of account pages for CDP connectors.
 package pagetext
 
 import (
@@ -9,7 +8,6 @@ import (
 	"time"
 )
 
-// Lines splits innerText into trimmed, non-empty lines.
 func Lines(text string) []string {
 	var out []string
 	for _, l := range strings.Split(text, "\n") {
@@ -38,10 +36,9 @@ var (
 	esDateRE = regexp.MustCompile(`^(\d{1,2})(?: de)? ([a-zñ]+)\.?(?:(?: de)? (\d{4}))?\b`)
 )
 
-// Date turns a date as account pages print it into a UTC date, in English or Spanish. Pages omit
-// the year for dates in the current year ("May 15, 7:37 PM") and say "Yesterday" or "Today" for
-// the last two days; now supplies what is missing. The time of day is dropped:
-// the page shows it in the browser's zone, which is not recorded. Unparseable → nil, never a guess.
+// Date reads an English or Spanish page date as a UTC day; now supplies an omitted year and
+// "Today" or "Yesterday". The time of day is dropped: it is in the browser's zone, which is not
+// recorded. Nil, never a guess, for anything else.
 func Date(s string, now time.Time) *time.Time {
 	s = strings.TrimSpace(s)
 	if m := relativeDayRE.FindStringSubmatch(s); m != nil {

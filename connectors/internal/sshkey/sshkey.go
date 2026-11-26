@@ -1,9 +1,7 @@
-// Package sshkey reads the public half of a private key and fingerprints it the way ssh-keygen
-// does (SHA256, unpadded base64), standard library only: the SSH public key wire format for RSA,
-// ECDSA and Ed25519 (RFC 4253 section 6.6, RFC 5656 section 3.1, RFC 8709 section 4) and the
-// OpenSSH private key container (PROTOCOL.key in OpenSSH's source), which stores the public key in
-// clear even when the private part is encrypted. The private key is decoded in memory only, and
-// nothing here keeps or returns any part of it.
+// Package sshkey reads the public half of a private key and fingerprints it as ssh-keygen does:
+// the wire format of RFC 4253 6.6, RFC 5656 3.1 and RFC 8709 4, and OpenSSH's PROTOCOL.key
+// container, which stores the public key in clear even when the private part is encrypted. Nothing
+// here keeps or returns any part of the private key.
 package sshkey
 
 import (
@@ -23,20 +21,16 @@ import (
 )
 
 var (
-	// ErrEncrypted is a key whose public half cannot be read without its passphrase (an encrypted
-	// PKCS#8 or PKCS#1 PEM; an OpenSSH key stores it in clear).
-	ErrEncrypted = errors.New("encrypted")
-	// ErrUnreadable is a body that is not a whole private key of a kind this package reads.
+	ErrEncrypted  = errors.New("encrypted") // an encrypted PEM, whose public half needs the passphrase
 	ErrUnreadable = errors.New("unreadable")
 )
 
-// Public is an SSH public key in wire format.
 type Public struct {
 	Type string // "ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", …
 	Blob []byte
 }
 
-// Fingerprint is ssh-keygen's default, "SHA256:<unpadded base64 of the blob's SHA-256>".
+// Fingerprint is ssh-keygen's default, "SHA256:<unpadded base64>".
 func (p Public) Fingerprint() string {
 	sum := sha256.Sum256(p.Blob)
 	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
@@ -44,9 +38,9 @@ func (p Public) Fingerprint() string {
 
 const opensshMagic = "openssh-key-v1\x00"
 
-// FromPrivate reads the public key of a private key given as its PEM body (the base64 between the
-// BEGIN and END lines, headers dropped). openssh reports the OpenSSH container, which only SSH uses;
-// a PKCS#1, PKCS#8 or SEC 1 key may as well sign TLS certificates or JWTs.
+// FromPrivate reads the public key of a PEM body, headers dropped. openssh reports the OpenSSH
+// container, which only SSH uses; a PKCS#1, PKCS#8 or SEC 1 key may as well sign TLS certificates
+// or JWTs.
 func FromPrivate(body string) (pub Public, openssh bool, err error) {
 	der, err := base64.StdEncoding.DecodeString(strings.TrimSpace(body))
 	if err != nil {
@@ -74,8 +68,7 @@ func FromPrivate(body string) (pub Public, openssh bool, err error) {
 	return pub, false, err
 }
 
-// fromOpenSSH reads the first public key of an OpenSSH private key container, after its magic:
-// cipher name, KDF name, KDF options, number of keys, then each public key blob.
+// fromOpenSSH reads the first public key after the magic: cipher, KDF, KDF options, key count.
 func fromOpenSSH(b []byte) (Public, error) {
 	r := reader{b: b}
 	r.str() // cipher
@@ -89,10 +82,9 @@ func fromOpenSSH(b []byte) (Public, error) {
 	return parseBlob(blob)
 }
 
-// explicitEC reads an EC key that names its curve by explicit parameters rather than by OID, which
-// crypto/x509 refuses: the ssh-keygen of macOS (LibreSSL) writes P-256 keys so in its PEM and
-// PKCS#8 output. The SEC 1 ECPrivateKey (RFC 5915 section 3) carries its public point, and the
-// curve is the NIST one whose field prime the parameters give.
+// explicitEC reads an EC key naming its curve by explicit parameters, which crypto/x509 refuses and
+// macOS's ssh-keygen (LibreSSL) writes. The ECPrivateKey (RFC 5915 3) carries its public point; the
+// curve is the NIST one with the parameters' field prime.
 func explicitEC(der []byte) (Public, bool) {
 	var p8 struct {
 		Version int
@@ -146,7 +138,7 @@ func explicitECWith(der, params []byte) (Public, bool) {
 	return Public{}, false
 }
 
-// encryptedPKCS8 reports whether der is an EncryptedPrivateKeyInfo (RFC 5208 section 6).
+// encryptedPKCS8 reports whether der is an EncryptedPrivateKeyInfo (RFC 5208 6).
 func encryptedPKCS8(der []byte) bool {
 	var info struct {
 		Algo pkix.AlgorithmIdentifier
@@ -156,7 +148,6 @@ func encryptedPKCS8(der []byte) bool {
 	return err == nil && len(rest) == 0 && len(info.Data) > 0
 }
 
-// fromKey is the SSH public key of a parsed private or public key.
 func fromKey(key any) (Public, error) {
 	switch k := key.(type) {
 	case *rsa.PrivateKey:
@@ -185,7 +176,6 @@ func fromKey(key any) (Public, error) {
 
 var curves = map[elliptic.Curve]string{elliptic.P256(): "nistp256", elliptic.P384(): "nistp384", elliptic.P521(): "nistp521"}
 
-// build is string(typ) followed by the already encoded fields.
 func build(typ string, fields ...[]byte) Public {
 	blob := str([]byte(typ))
 	for _, f := range fields {
@@ -194,13 +184,11 @@ func build(typ string, fields ...[]byte) Public {
 	return Public{Type: typ, Blob: blob}
 }
 
-// str is an SSH string: a uint32 length, then the bytes.
 func str(b []byte) []byte {
 	return append(binary.BigEndian.AppendUint32(nil, uint32(len(b))), b...)
 }
 
-// mpint is a non-negative SSH mpint: big-endian, a leading zero byte when the top bit is set, and
-// no bytes at all for zero.
+// mpint is a non-negative SSH mpint: a leading zero byte when the top bit is set, none for zero.
 func mpint(n *big.Int) []byte {
 	b := n.Bytes()
 	if len(b) > 0 && b[0]&0x80 != 0 {
@@ -209,9 +197,8 @@ func mpint(n *big.Int) []byte {
 	return str(b)
 }
 
-// ParseAuthorized reads the key of one line of an authorized_keys or .pub file, or of GitHub's
-// key listings: "[options] <type> <base64> [comment]". ok is false for comments, blank lines and
-// anything that does not hold a well-formed key blob of the type it names.
+// ParseAuthorized reads "[options] <type> <base64> [comment]", a line of authorized_keys, a .pub
+// file or GitHub's key listings; the blob must be well-formed and of the type named.
 func ParseAuthorized(line string) (Public, bool) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
@@ -239,8 +226,7 @@ func knownType(s string) bool {
 	return strings.HasPrefix(s, "ssh-") || strings.HasPrefix(s, "ecdsa-sha2-") || strings.HasPrefix(s, "sk-")
 }
 
-// parseBlob checks that blob starts with its type name and keeps it whole: the fingerprint is the
-// hash of the whole blob.
+// parseBlob keeps the blob whole: the fingerprint hashes all of it.
 func parseBlob(blob []byte) (Public, error) {
 	r := reader{b: blob}
 	typ := r.str()
@@ -250,7 +236,7 @@ func parseBlob(blob []byte) (Public, error) {
 	return Public{Type: string(typ), Blob: blob}, nil
 }
 
-// reader reads SSH wire fields; bad is set on the first short read.
+// reader sets bad on the first short read.
 type reader struct {
 	b   []byte
 	bad bool

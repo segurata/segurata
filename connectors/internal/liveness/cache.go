@@ -8,21 +8,17 @@ import (
 	"github.com/segurata/segurata/internal/statefile"
 )
 
-// How long a result holds before the secret is tried again. A dead key rarely comes back; a live
-// one can be revoked any day, and the owner wants to see that soon; an unregistered SSH key can be
-// added to an account any day too. Unknown is never cached: the
-// next run asks again.
+// A dead key rarely comes back; a live one can be revoked, and an unregistered SSH key registered,
+// any day. Unknown is never cached.
 const (
-	LiveTTL = 24 * time.Hour
-	DeadTTL = 7 * 24 * time.Hour
+	liveTTL = 24 * time.Hour
+	deadTTL = 7 * 24 * time.Hour
 )
 
-// cacheVersion 2 came with secretrisk.LivenessRules 2: a version-1 file's dead results may be a
-// bare 401, so it is discarded and every secret asked again.
+// cacheVersion 2 came with secretrisk.LivenessRules 2: a version-1 dead result may be a bare 401.
 const cacheVersion = 2
 
-// Cache keeps results by fingerprint in a 0600 file: fingerprint, state, when, provider and the
-// account, never a value.
+// Cache keeps results by fingerprint in a 0600 file, never a value.
 type Cache struct {
 	path    string
 	mu      sync.Mutex
@@ -30,7 +26,7 @@ type Cache struct {
 	Version int                            `json:"version"`
 }
 
-// LoadCache reads the cache at path; a missing, unreadable or older-format file is an empty cache.
+// LoadCache treats a missing, unreadable or older-format file as an empty cache.
 func LoadCache(path string) *Cache {
 	c := &Cache{path: path}
 	if found, err := statefile.ReadJSON(path, c); found && err == nil && c.Version == cacheVersion && c.Results != nil {
@@ -39,7 +35,7 @@ func LoadCache(path string) *Cache {
 	return &Cache{path: path, Results: map[string]secretrisk.Liveness{}}
 }
 
-// Save writes the cache, leaving out results past their TTL at now. A nil cache saves nothing.
+// Save leaves out results past their TTL. A nil cache saves nothing.
 func (c *Cache) Save(now time.Time) error {
 	if c == nil {
 		return nil
@@ -55,8 +51,7 @@ func (c *Cache) Save(now time.Time) error {
 	return statefile.WriteJSON(c.path, c)
 }
 
-// fresh returns the cached result when every fingerprint has one, all the same state and within
-// its TTL.
+// fresh needs every fingerprint cached, in one state and within its TTL.
 func (c *Cache) fresh(fps []string, now time.Time) (secretrisk.Liveness, bool) {
 	if c == nil || len(fps) == 0 {
 		return secretrisk.Liveness{}, false
@@ -86,17 +81,16 @@ func (c *Cache) put(fps []string, r secretrisk.Liveness) {
 	}
 }
 
-// withinTTL reports whether a live or dead result is still young enough to stand for a new check.
-// One dated after now (a clock that jumped forward) never is.
+// withinTTL is false for a result dated after now: a clock that jumped forward.
 func withinTTL(r secretrisk.Liveness, now time.Time) bool {
 	if r.CheckedAt.After(now) {
 		return false
 	}
 	switch r.State {
 	case secretrisk.Live, secretrisk.Unregistered:
-		return now.Sub(r.CheckedAt) < LiveTTL
+		return now.Sub(r.CheckedAt) < liveTTL
 	case secretrisk.Dead:
-		return now.Sub(r.CheckedAt) < DeadTTL
+		return now.Sub(r.CheckedAt) < deadTTL
 	}
 	return false
 }

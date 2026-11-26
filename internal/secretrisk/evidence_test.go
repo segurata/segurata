@@ -9,8 +9,6 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Evidence travels as a finding's map: Map writes it and EvidenceOf reads it back unchanged,
-// liveness included, and a map without a fingerprint is not secret evidence.
 func TestEvidenceRoundTripsThroughAFinding(t *testing.T) {
 	ev := Evidence{Source: "scan", Kind: "config", Type: "openai-project", Redacted: "sk-proj-…a1b2(164)",
 		Path: "~/.zshrc", Line: 3, Fingerprint: "0123456789abcdef", Count: 2,

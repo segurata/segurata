@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 )
 
-// FindGcloud resolves the gcloud CLI: the configured path, then PATH, then the SDK's standard
-// install folders. connector names the config section the error message points to.
+// FindGcloud tries the configured path, PATH, then the SDK's install folders, which
+// non-interactive shells often lack in PATH. connector names the config section an error points to.
 func FindGcloud(configured, home, connector string) (string, error) {
 	if configured != "" {
 		return configured, nil
@@ -24,8 +24,7 @@ func FindGcloud(configured, home, connector string) (string, error) {
 	return "", errors.New("gcloud CLI not found in PATH or the standard install folders: set gcloud_path in the " + connector + " connector config")
 }
 
-// gcloudInstallPaths are where the interactive installer, the Linux packages and Homebrew put
-// gcloud, for when PATH lacks it (non-interactive shells often do).
+// gcloudInstallPaths: the interactive installer, the Linux packages and Homebrew.
 func gcloudInstallPaths(home string) []string {
 	return []string{
 		filepath.Join(home, "google-cloud-sdk", "bin", "gcloud"),

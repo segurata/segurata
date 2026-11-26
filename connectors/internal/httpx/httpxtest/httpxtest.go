@@ -1,5 +1,4 @@
-// Package httpxtest holds the fakes the provider-API connector tests share: a recording emitter
-// and an httptest server that checks credentials and refuses anything but GET.
+// Package httpxtest holds the fakes provider-API connector tests share.
 package httpxtest
 
 import (
@@ -23,7 +22,6 @@ type Recorder struct {
 	Logs     []string
 }
 
-// Scope is one Emitter.Scope call.
 type Scope struct {
 	ID        string
 	Inspected bool
@@ -54,7 +52,7 @@ func (r *Recorder) Log(msg string) {
 	r.Logs = append(r.Logs, msg)
 }
 
-// ByResource returns the finding for a resource id, failing the test when there is none.
+// ByResource fails the test when there is no finding for the resource.
 func (r *Recorder) ByResource(t *testing.T, typ, id string) finding.Finding {
 	t.Helper()
 	for _, f := range r.Findings {
@@ -66,7 +64,6 @@ func (r *Recorder) ByResource(t *testing.T, typ, id string) finding.Finding {
 	return finding.Finding{}
 }
 
-// AssertNoSecret fails when the secret shows up in any record the connector emitted.
 func (r *Recorder) AssertNoSecret(t *testing.T, secret string) {
 	t.Helper()
 	raw, _ := json.Marshal([]any{r.Findings, r.Statuses, r.Logs})
@@ -75,16 +72,12 @@ func (r *Recorder) AssertNoSecret(t *testing.T, secret string) {
 	}
 }
 
-// Route answers one path. It returns the HTTP status and a value to encode as JSON.
+// Route answers one path with a status and a value to encode as JSON.
 type Route func(q url.Values) (int, any)
 
-// Server serves routes keyed by path, after checking every header in want on every request.
-// Unknown paths get 404 and are recorded in Misses so tests can assert full coverage; Hits
-// counts requests per path.
-//
-// A remediation test sets DeleteAuth: DELETE requests carrying exactly those headers are recorded
-// in Deleted and answered 200 (or DeleteStatus[path]); any other DELETE gets 403, as a read-only
-// key would. Without DeleteAuth only GET is allowed, which is what every inventory test asserts.
+// Server serves routes by path to requests carrying every header in want, and only GET: unknown
+// paths get 404 and land in Misses. A remediation test sets DeleteAuth: a DELETE carrying exactly
+// those headers lands in Deleted and gets 200 (or DeleteStatus[path]), any other a read-only 403.
 type Server struct {
 	*httptest.Server
 	mu           sync.Mutex
@@ -155,10 +148,8 @@ func NewServer(t *testing.T, want http.Header, routes map[string]Route) *Server 
 	return s
 }
 
-// Static answers with a fixed body and 200.
 func Static(body any) Route { return func(url.Values) (int, any) { return http.StatusOK, body } }
 
-// Fail answers with an error status and the common error envelope.
 func Fail(code int, msg string) Route {
 	return func(url.Values) (int, any) {
 		return code, map[string]any{"error": map[string]any{"message": msg}}

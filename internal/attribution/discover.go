@@ -7,9 +7,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Resource types of the info findings connectors emit so that attribution knows the owner's
-// accounts: the aws account id behind an alias, the gcp projects (id and number) each account
-// sees, the Slack workspace id of each workspace signed in to.
+// Resource types of the info findings connectors emit for Discover.
 const (
 	AWSAccountType     = "aws_account"     // evidence account_id
 	GCPProjectsType    = "gcp_projects"    // evidence projects: [{id, number}]
@@ -18,14 +16,8 @@ const (
 
 var awsAccountID = regexp.MustCompile(`^\d{12}$`)
 
-// Discover reads the owner's accounts from connector runs:
-//   - aws: accounts reported by id (12 digits), and evidence account_id;
-//   - gcp: every project id and number its accounts see; its accounts, except service accounts,
-//     are the owner's emails;
-//   - google-personal: accounts inspected (status ok) are the owner's emails (accounts of other
-//     people signed in to the same browser never get past reauth);
-//   - connected-apps: Slack workspace ids, and the GitHub login;
-//   - github: the user and every organization it reports.
+// Discover reads the owner's accounts from connector runs. Of google-personal only accounts
+// inspected count: other people signed in to the same browser never get past reauth.
 func Discover(fs []finding.Finding, sts []finding.Status) Owned {
 	var o Owned
 	for _, st := range sts {
