@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/proc"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 // A cancelled command takes its whole process group with it: a child the command started in the
@@ -21,20 +22,27 @@ import (
 // that ignores SIGTERM is killed once WaitDelay is up.
 func TestCancelKillsTheProcessGroup(t *testing.T) {
 	for name, child := range map[string]string{
-		"plain":         "sleep 30 &",
-		"ignoring TERM": "(trap '' TERM; exec sleep 30) &",
+		"plain":         "(: > ready; exec sleep 30) &",
+		"ignoring TERM": "(trap '' TERM; : > ready; exec sleep 30) &",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			pidFile := filepath.Join(dir, "pid")
 			script := filepath.Join(dir, "spawn")
-			body := "#!/bin/sh\n" + child + "\necho $! > '" + pidFile + "'\nwait\n"
+			body := "#!/bin/sh\ncd '" + dir + "'\n" + child + "\necho $! > pid.tmp && mv pid.tmp pid\nwait\n"
 			if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if err := proc.Command(ctx, script).Run(); err == nil {
+			cmd := proc.Command(ctx, script)
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			proctest.AwaitFile(t, filepath.Join(dir, "ready"))
+			proctest.AwaitFile(t, pidFile)
+			cancel()
+			if err := cmd.Wait(); err == nil {
 				t.Fatal("a cancelled command succeeded")
 			}
 			raw, err := os.ReadFile(pidFile)

@@ -93,17 +93,19 @@ func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
 // A plugin that hangs or floods its output must not hang or exhaust the core. The sleep runs in a
 // child that keeps the pipes open after the plugin itself is killed.
 func TestPluginSubprocessesAreBounded(t *testing.T) {
-	connector.SetDescribeTimeout(t, 200*time.Millisecond)
-	start := time.Now()
-	if _, err := connector.LoadExternal(connectortest.Script(t, "slow", `sleep 30; `+describing(`{"name":"slow","protocol":2}`))); err == nil {
-		t.Error("a describe that hangs loaded")
-	}
-	if took := time.Since(start); took > 10*time.Second {
-		t.Errorf("a hung describe held LoadExternal for %v", took)
-	}
+	t.Run("hung describe", func(t *testing.T) {
+		connector.SetDescribeTimeout(t, 200*time.Millisecond)
+		start := time.Now()
+		if _, err := connector.LoadExternal(connectortest.Script(t, "slow", `sleep 30; `+describing(`{"name":"slow","protocol":2}`))); err == nil || !strings.Contains(err.Error(), "no answer within") {
+			t.Errorf("a describe that hangs: %v", err)
+		}
+		if took := time.Since(start); took > 10*time.Second {
+			t.Errorf("a hung describe held LoadExternal for %v", took)
+		}
+	})
 	big := `{"name":"big","protocol":2,"summary":"` + strings.Repeat("x", 2<<20) + `"}`
-	if _, err := connector.LoadExternal(connectortest.Script(t, "big", describing(big))); err == nil {
-		t.Error("a 2 MiB describe loaded")
+	if _, err := connector.LoadExternal(connectortest.Script(t, "big", describing(big))); err == nil || strings.Contains(err.Error(), "no answer within") {
+		t.Errorf("a 2 MiB describe: %v", err)
 	}
 	noisy := connectortest.Plugin(t, "noisy", `case "$1" in
 describe) echo '{"name":"noisy","protocol":2}';;
