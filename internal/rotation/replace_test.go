@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -112,7 +113,7 @@ func newReplaceFixture(t *testing.T) *fixture {
 	for _, e := range evs {
 		s = append(s, tracker.Sighting{Evidence: e})
 	}
-	l.SyncSecrets(s, t0, false)
+	l.SyncSecrets(s, t0, false, attribution.Owned{})
 	if err := l.Save(fx.state); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +444,7 @@ func TestReplaceWritesAFileUsedUnderTwoNamesOnce(t *testing.T) {
 	l, _ := tracker.Load(fx.state)
 	redacted := fx.item(t).Secret.Redacted
 	l.SyncSecrets([]tracker.Sighting{{Evidence: secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Redacted: redacted,
-		Path: "~/dotfiles/zshrc", Line: 2, Mode: "640", Fingerprint: fx.key.Of(fx.old)}}}, t0, false)
+		Path: "~/dotfiles/zshrc", Line: 2, Mode: "640", Fingerprint: fx.key.Of(fx.old)}}}, t0, false, attribution.Owned{})
 	if err := l.Save(fx.state); err != nil {
 		t.Fatal(err)
 	}
@@ -662,7 +663,7 @@ func TestReplaceRefusesItemsItCannotLocate(t *testing.T) {
 	l.SyncSecrets([]tracker.Sighting{
 		{Evidence: secretrisk.Evidence{Source: "scan", Kind: "config", Type: "private-key", Redacted: "PEM", Path: "~/k.pem", Line: 1, Mode: "600", Fingerprint: "1111111111111111"}},
 		{Evidence: secretrisk.Evidence{Source: "scan", Kind: "transcript", Type: "anthropic", Redacted: "sk-ant-…abcd(60)", Path: "~/.claude/p.jsonl", Line: 1, Mode: "600", Fingerprint: "2222222222222222"}},
-	}, t0, false)
+	}, t0, false, attribution.Owned{})
 	for id, want := range map[string]string{"11111111": "not a single value on one line", "22222222": "no working file holds"} {
 		it, _ := l.FindRotate(id)
 		if _, err := locate(it, key, t.TempDir()); err == nil || !strings.Contains(err.Error(), want) {

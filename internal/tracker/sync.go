@@ -127,7 +127,7 @@ func (t *Tracker) Sync(opt SyncOptions, now time.Time) (SyncReport, error) {
 	owned := t.ownedAll(opt.Owned)
 	for _, l := range rep.Runs {
 		if r := folded[l]; r.isSecrets() {
-			rep.Secrets.add(t.syncSecrets(sightingsOf(r.findings), now, opt.IncludeNoise, owned))
+			rep.Secrets.add(t.SyncSecrets(sightingsOf(r.findings), now, opt.IncludeNoise, opt.Owned))
 			rep.Secrets.add(t.syncNoise(noiseOnly(r.findings), now))
 			t.markGoneLocations(r)
 		}

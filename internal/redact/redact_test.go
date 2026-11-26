@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/localsecrets"
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -440,7 +441,7 @@ func TestItemOnlyAndLedgerNote(t *testing.T) {
 	fp := fx.key.Of(fx.secrets["anthropic"])
 	l := tracker.New(time.Now())
 	l.SyncSecrets([]tracker.Sighting{{Evidence: secretrisk.Evidence{Fingerprint: fp, Type: "anthropic", Redacted: "sk-ant-…(73)",
-		Source: "scan", Kind: "transcript", Path: "~/.claude/projects/a/s.jsonl", Mode: "600"}}}, time.Now(), false)
+		Source: "scan", Kind: "transcript", Path: "~/.claude/projects/a/s.jsonl", Mode: "600"}}}, time.Now(), false, attribution.Owned{})
 	if err := l.Save(fx.state); err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -29,7 +30,7 @@ func TestSyncGroupsByFingerprintAndPrioritises(t *testing.T) {
 		sight(ev("cccccccccccccccc", "assignment", "~/.env", "scan", "config", "600", false, false)),
 		sight(ev("dddddddddddddddd", "private-key", "~/k.json", "scan", "config", "600", false, false)),
 		sight(ev("dddddddddddddddd", "gcp-service-account", "~/k.json", "scan", "config", "600", false, false)),
-	}, t0, false)
+	}, t0, false, attribution.Owned{})
 	if rep.Secrets != 3 || rep.Created != 3 || rep.Skipped != 1 {
 		t.Fatalf("report %+v", rep)
 	}
@@ -61,7 +62,7 @@ func TestSyncGroupsByFingerprintAndPrioritises(t *testing.T) {
 		t.Error("noise-only secret tracked by default")
 	}
 
-	l.SyncSecrets([]Sighting{sight(ev("cccccccccccccccc", "assignment", "~/.env", "scan", "config", "600", false, false))}, t0, true)
+	l.SyncSecrets([]Sighting{sight(ev("cccccccccccccccc", "assignment", "~/.env", "scan", "config", "600", false, false))}, t0, true, attribution.Owned{})
 	if c, err := l.FindRotate("cccc"); err != nil || c.Priority != "" {
 		t.Errorf("--include-noise item: %+v %v", c, err)
 	}
@@ -70,13 +71,13 @@ func TestSyncGroupsByFingerprintAndPrioritises(t *testing.T) {
 func TestDoneButStillPresentReopens(t *testing.T) {
 	l := &Tracker{NextID: 1}
 	in := []Sighting{sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.netrc", "scan", "config", "600", false, false))}
-	l.SyncSecrets(in, t0, false)
+	l.SyncSecrets(in, t0, false, attribution.Owned{})
 	it, _ := l.FindRotate("aaaa")
 	it.Done(t0.Add(time.Hour), "new token in the Keychain")
 	if it.Status != Done {
 		t.Fatal("not rotated")
 	}
-	rep := l.SyncSecrets(in, t0.Add(24*time.Hour), false)
+	rep := l.SyncSecrets(in, t0.Add(24*time.Hour), false, attribution.Owned{})
 	if rep.Reopened != 1 || it.Status != Open || it.Secret.Reasons[0] != StillPresent {
 		t.Fatalf("report %+v item %+v", rep, it)
 	}
@@ -94,7 +95,7 @@ func TestDoneSeenOnlyInHistoryStaysDone(t *testing.T) {
 	rc := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.zshrc", "scan", "config", "600", false, false))
 	transcript := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.claude/projects/p/s.jsonl", "scan", "transcript", "600", false, false))
 	gitHistory := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/src/app/config.yml", "gitleaks", "repo", "", true, true))
-	l.SyncSecrets([]Sighting{rc, transcript, gitHistory}, t0, false)
+	l.SyncSecrets([]Sighting{rc, transcript, gitHistory}, t0, false, attribution.Owned{})
 	it, _ := l.FindRotate("aaaa")
 	it.Done(t0.Add(time.Hour), "")
 	if strings.Join(it.Secret.RotatedLocations, ",") != "gitleaks:~/src/app/config.yml,scan:~/.claude/projects/p/s.jsonl,scan:~/.zshrc" {
@@ -105,7 +106,7 @@ func TestDoneSeenOnlyInHistoryStaysDone(t *testing.T) {
 	// log copy appeared.
 	log := sight(ev("aaaaaaaaaaaaaaaa", "github", "~/src/app/log/dev.log", "scan", "log", "600", false, false))
 	for day := 1; day <= 3; day++ {
-		rep := l.SyncSecrets([]Sighting{transcript, gitHistory, log}, t0.Add(time.Duration(day)*24*time.Hour), false)
+		rep := l.SyncSecrets([]Sighting{transcript, gitHistory, log}, t0.Add(time.Duration(day)*24*time.Hour), false, attribution.Owned{})
 		if it.Status != Done || rep.Reopened != 0 {
 			t.Fatalf("day %d: reopened on history-only copies: %+v %+v", day, rep, it)
 		}
@@ -129,7 +130,7 @@ func TestDoneSeenOnlyInHistoryStaysDone(t *testing.T) {
 	// A second rotation gets its own note.
 	it.reopen(t0.Add(5*24*time.Hour), "")
 	it.Done(t0.Add(5*24*time.Hour), "rotated again")
-	if rep := l.SyncSecrets([]Sighting{transcript}, t0.Add(6*24*time.Hour), false); rep.HistoryOnly != 1 || it.Status != Done {
+	if rep := l.SyncSecrets([]Sighting{transcript}, t0.Add(6*24*time.Hour), false, attribution.Owned{}); rep.HistoryOnly != 1 || it.Status != Done {
 		t.Errorf("after a new rotation: %+v %s", rep, it.Status)
 	}
 }
@@ -154,10 +155,10 @@ func TestDoneSeenInWorkingFileReopens(t *testing.T) {
 			l.SyncSecrets([]Sighting{
 				sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.zshrc", "scan", "config", "600", false, false)),
 				sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.claude/projects/p/s.jsonl", "scan", "transcript", "600", false, false)),
-			}, t0, false)
+			}, t0, false, attribution.Owned{})
 			it, _ := l.FindRotate("aaaa")
 			it.Done(t0.Add(time.Hour), "")
-			rep := l.SyncSecrets(tc.see, t0.Add(24*time.Hour), false)
+			rep := l.SyncSecrets(tc.see, t0.Add(24*time.Hour), false, attribution.Owned{})
 			if rep.Reopened != 1 || rep.HistoryOnly != 0 || it.Status != Open || it.Secret.Reasons[0] != StillPresent {
 				t.Fatalf("report %+v item %+v", rep, it)
 			}
@@ -171,8 +172,8 @@ func TestDoneSeenInWorkingFileReopens(t *testing.T) {
 
 func TestItemsNotSeenKeepLastSeen(t *testing.T) {
 	l := &Tracker{NextID: 1}
-	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "xai", "~/.zshrc", "scan", "config", "600", false, false))}, t0, false)
-	l.SyncSecrets([]Sighting{sight(ev("bbbbbbbbbbbbbbbb", "xai", "~/.zshrc", "scan", "config", "600", false, false))}, t0.Add(72*time.Hour), false)
+	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "xai", "~/.zshrc", "scan", "config", "600", false, false))}, t0, false, attribution.Owned{})
+	l.SyncSecrets([]Sighting{sight(ev("bbbbbbbbbbbbbbbb", "xai", "~/.zshrc", "scan", "config", "600", false, false))}, t0.Add(72*time.Hour), false, attribution.Owned{})
 	a, _ := l.FindRotate("aaaa")
 	b, _ := l.FindRotate("bbbb")
 	if !a.Secret.LastSeen.Equal(t0) || !b.Secret.LastSeen.Equal(t0.Add(72*time.Hour)) || len(l.Items) != 2 {
@@ -182,7 +183,7 @@ func TestItemsNotSeenKeepLastSeen(t *testing.T) {
 
 func TestSnoozeExpires(t *testing.T) {
 	l := &Tracker{NextID: 1}
-	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, t0, false)
+	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, t0, false, attribution.Owned{})
 	it, _ := l.FindRotate("aaaa")
 	if err := it.snooze(t0, "2026-11-20", ""); err == nil {
 		t.Error("snooze into the past accepted")
@@ -212,7 +213,7 @@ func TestSnoozeUntilIsALocalDate(t *testing.T) {
 	la := time.FixedZone("PST", -8*3600)
 	evening := time.Date(2026, 11, 24, 20, 0, 0, 0, la) // already 2026-11-25 in UTC
 	l := &Tracker{NextID: 1}
-	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, evening, false)
+	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "notion", "~/.mcp/x.json", "scan", "config", "600", false, false))}, evening, false, attribution.Owned{})
 	it, _ := l.FindRotate("aaaa")
 	if err := it.snooze(evening, "2026-11-25", ""); err != nil {
 		t.Fatalf("snooze until tomorrow refused: %v", err)
@@ -230,7 +231,7 @@ func TestIDsGrowOnCollision(t *testing.T) {
 	l.SyncSecrets([]Sighting{
 		sight(ev("abcdef0123456789", "github", "~/a", "scan", "config", "600", false, false)),
 		sight(ev("abcdef0199999999", "github", "~/b", "scan", "config", "600", false, false)),
-	}, t0, false)
+	}, t0, false, attribution.Owned{})
 	if l.Items[0].Secret.ID != "abcdef01" || l.Items[1].Secret.ID != "abcdef019" {
 		t.Errorf("ids %s %s", l.Items[0].Secret.ID, l.Items[1].Secret.ID)
 	}
@@ -247,7 +248,7 @@ func TestSortByPriorityExposureService(t *testing.T) {
 		sight(ev("3333333333333333", "aws-secret-key", "~/c", "gitleaks", "repo", "", true, true)),        // P0
 		sight(ev("4444444444444444", "openai-project", "~/d", "scan", "transcript", "600", false, false)), // P1 transcript
 		sight(ev("5555555555555555", "sentry-dsn", "~/e", "scan", "config", "600", false, false)),         // P3
-	}, t0, false)
+	}, t0, false, attribution.Owned{})
 	items := append([]*Item{}, l.Items...)
 	Sort(items)
 	var got []string
@@ -267,7 +268,7 @@ func TestAWSKeyIDAloneIsP2(t *testing.T) {
 	id := ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", "~/src/r/group_vars/all.yml", "gitleaks", "repo", "", true, true)
 	id.Redacted = "AKIA…(20)"
 	secret := ev("bbbbbbbbbbbbbbbb", "aws-secret-key", "~/src/r/group_vars/all.yml", "gitleaks", "repo", "", true, true)
-	l.SyncSecrets([]Sighting{sight(id), sight(secret)}, t0, false)
+	l.SyncSecrets([]Sighting{sight(id), sight(secret)}, t0, false, attribution.Owned{})
 	a, _ := l.FindRotate("aaaa")
 	b, _ := l.FindRotate("bbbb")
 	if a.Priority != secretrisk.P2 || b.Priority != secretrisk.P0 {
@@ -295,7 +296,7 @@ func TestKeyIDFoldsIntoItsSecretKey(t *testing.T) {
 	secret.Redacted, secret.Pair = "…abcd(40)", "aaaaaaaaaaaaaaaa"
 	lone := ev("cccccccccccccccc", "aws-access-key-id", path, "gitleaks", "repo", "", true, true)
 	lone.Redacted = "AKIA…LONE(20)"
-	rep := l.SyncSecrets([]Sighting{sight(id), sight(secret), sight(lone)}, t0, false)
+	rep := l.SyncSecrets([]Sighting{sight(id), sight(secret), sight(lone)}, t0, false, attribution.Owned{})
 	a, _ := l.FindRotate("aaaa")
 	b, _ := l.FindRotate("bbbb")
 	c, _ := l.FindRotate("cccc")
@@ -307,21 +308,21 @@ func TestKeyIDFoldsIntoItsSecretKey(t *testing.T) {
 	}
 	// The same pair again: nothing changes.
 	events := len(a.History)
-	if rep := l.SyncSecrets([]Sighting{sight(id), sight(secret)}, t0.Add(time.Hour), false); rep.Paired != 0 || len(a.History) != events {
+	if rep := l.SyncSecrets([]Sighting{sight(id), sight(secret)}, t0.Add(time.Hour), false, attribution.Owned{}); rep.Paired != 0 || len(a.History) != events {
 		t.Errorf("a second sync merged again: paired %d, %d events", rep.Paired, len(a.History)-events)
 	}
 	// Now paired with another secret key: it follows it.
 	other := ev("dddddddddddddddd", "aws-secret-key", path, "gitleaks", "repo", "", true, true)
 	other.Redacted, other.Pair = "…efgh(40)", "aaaaaaaaaaaaaaaa"
 	id.Pair = "dddddddddddddddd"
-	l.SyncSecrets([]Sighting{sight(id), sight(other)}, t0.Add(2*time.Hour), false)
+	l.SyncSecrets([]Sighting{sight(id), sight(other)}, t0.Add(2*time.Hour), false, attribution.Owned{})
 	d, _ := l.FindRotate("dddd")
 	if a.Status != Merged || a.MergedInto != d.ID || !strings.Contains(d.Title, "(key id AKIA…WXYZ(20))") || strings.Contains(b.Title, "key id") {
 		t.Errorf("key id %s into %q; titles %q and %q", a.Status, a.MergedInto, d.Title, b.Title)
 	}
 	// Its secret key turns out to be noise: the key id stands on its own again.
 	d.Status = Reclassified
-	l.SyncSecrets([]Sighting{sight(id)}, t0.Add(3*time.Hour), false)
+	l.SyncSecrets([]Sighting{sight(id)}, t0.Add(3*time.Hour), false, attribution.Owned{})
 	if a.Status != Open || a.MergedInto != "" {
 		t.Errorf("key id of a noise secret key: %s into %q", a.Status, a.MergedInto)
 	}
@@ -332,13 +333,13 @@ func TestSyncLowersImpactWhenTheCurrentSightingIsLess(t *testing.T) {
 	l := &Tracker{NextID: 1}
 	token := ev("aaaaaaaaaaaaaaaa", "sourcegraph-access-token", "~/src/r/data.json", "gitleaks", "repo", "", true, true)
 	token.Redacted = "sgp_…(49)"
-	l.SyncSecrets([]Sighting{sight(token)}, t0, false)
+	l.SyncSecrets([]Sighting{sight(token)}, t0, false, attribution.Owned{})
 	if p := l.Items[0].Priority; p != "P1" {
 		t.Fatalf("pushed Sourcegraph token should be P1, got %s", p)
 	}
 	hex := token
 	hex.Redacted = "…(40)" // the rule now knows a bare 40-character hex string is a hash more often
-	l.SyncSecrets([]Sighting{sight(hex)}, t0.Add(time.Hour), false)
+	l.SyncSecrets([]Sighting{sight(hex)}, t0.Add(time.Hour), false, attribution.Owned{})
 	if it := l.Items[0]; it.Secret.Impact != "noise" || it.Priority != "" {
 		t.Fatalf("the same item seen as a hex lookalike must drop: impact=%s priority=%s", it.Secret.Impact, it.Priority)
 	}
@@ -354,7 +355,7 @@ func TestSecretTitleNamesTheWorstPlaceAndTheCommitDate(t *testing.T) {
 	local.Redacted = hist.Redacted
 	pem := ev("bbbbbbbbbbbbbbbb", "private-key", "~/.ssh/deploy.pem", "scan", "config", "600", false, false)
 	pem.Redacted = "PEM"
-	l.SyncSecrets([]Sighting{sight(hist), sight(later), sight(local), sight(pem)}, t0, false)
+	l.SyncSecrets([]Sighting{sight(hist), sight(later), sight(local), sight(pem)}, t0, false, attribution.Owned{})
 	s, _ := l.FindRotate("aaaa")
 	if want := "Stripe live secret key sk_live_…a1b2(48) in acme/shop:config/new.env (+2 places), committed 2023-04"; s.Title != want {
 		t.Errorf("title %q, want %q", s.Title, want)
@@ -376,7 +377,7 @@ func TestSortPrefersOwnedRepositoriesAndRecentCommits(t *testing.T) {
 		leak("1111111111111111", "2025-01-01", ""),
 		leak("2222222222222222", "2019-01-01", secretrisk.OriginOwned),
 		leak("3333333333333333", "2024-01-01", secretrisk.OriginOwned),
-	}, t0, false)
+	}, t0, false, attribution.Owned{})
 	items := append([]*Item{}, l.Items...)
 	Sort(items)
 	var got []string
@@ -393,13 +394,13 @@ func TestUpstreamLocationsDoNotRaisePriority(t *testing.T) {
 	mine := ev("aaaaaaaaaaaaaaaa", "github", "~/.config/gh/hosts.yml", "scan", "config", "600", false, false)
 	theirs := ev("aaaaaaaaaaaaaaaa", "github", "~/src/lms/config/ci.yml", "gitleaks", "repo", "", true, true)
 	theirs.Origin = secretrisk.OriginThirdParty
-	l.SyncSecrets([]Sighting{sight(mine), sight(theirs)}, t0, true)
+	l.SyncSecrets([]Sighting{sight(mine), sight(theirs)}, t0, true, attribution.Owned{})
 	it := l.Items[0]
 	if it.Priority != secretrisk.P2 || it.WorstLabel() != "local" {
 		t.Errorf("a third-party copy not tied to the owner raised the item: %s %s", it.Priority, it.WorstLabel())
 	}
 	theirs.Reused = true
-	l.SyncSecrets([]Sighting{sight(mine), sight(theirs)}, t0, true)
+	l.SyncSecrets([]Sighting{sight(mine), sight(theirs)}, t0, true, attribution.Owned{})
 	if it.Priority != secretrisk.P0 {
 		t.Errorf("the owner's token pushed to a third-party repository: %s", it.Priority)
 	}
@@ -417,7 +418,7 @@ func TestAlsoReasonsHaveAStableOrder(t *testing.T) {
 		sight(ev("aaaaaaaaaaaaaaaa", "github", "~/.zshrc", "scan", "config", "644", false, false)),
 		upstream("~/src/a/ci.yml", secretrisk.OriginThirdParty),
 		upstream("~/src/b/ci.yml", secretrisk.OriginForkUpstream),
-	}, t0, true)
+	}, t0, true, attribution.Owned{})
 	it := l.Items[0]
 	want := strings.Join(it.Secret.Reasons, "\n")
 	if !strings.Contains(want, "fork inherited") || strings.Index(want, "fork inherited") > strings.Index(want, "third-party") {
@@ -437,7 +438,7 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 		sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false)),
 		sight(ev("bbbbbbbbbbbbbbbb", "anthropic", "~/src/log/test.log", "scan", "log", "644", false, false)),
 	}
-	l.SyncSecrets(real, t0, false)
+	l.SyncSecrets(real, t0, false, attribution.Owned{})
 	open, _ := l.FindRotate("aaaa")
 	ignored, _ := l.FindRotate("bbbb")
 	if err := ignored.ignore(t0, "test suite fixtures in a gitignored Rails test log"); err != nil {
@@ -447,7 +448,7 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 		sight(ev("aaaaaaaaaaaaaaaa", "assignment", "~/.zshrc", "scan", "config", "644", false, false)),
 		sight(ev("bbbbbbbbbbbbbbbb", "assignment", "~/src/log/test.log", "scan", "log", "644", false, false)),
 	}
-	rep := l.SyncSecrets(noise, t0.Add(time.Hour), false)
+	rep := l.SyncSecrets(noise, t0.Add(time.Hour), false, attribution.Owned{})
 	if rep.Reclassified != 2 || rep.Skipped != 0 || rep.Secrets != 0 {
 		t.Fatalf("report %+v", rep)
 	}
@@ -469,11 +470,11 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 		t.Errorf("headline:\n%s", b.String())
 	}
 	// Seen again as noise: nothing changes.
-	if rep := l.SyncSecrets(noise, t0.Add(2*time.Hour), false); rep.Reclassified != 0 || len(open.History) != 2 {
+	if rep := l.SyncSecrets(noise, t0.Add(2*time.Hour), false, attribution.Owned{}); rep.Reclassified != 0 || len(open.History) != 2 {
 		t.Errorf("second noise sync %+v, history %+v", rep, open.History)
 	}
 	// The rule changes back: the open one reopens, the ignored one is ignored again with its reason.
-	rep = l.SyncSecrets(real, t0.Add(3*time.Hour), false)
+	rep = l.SyncSecrets(real, t0.Add(3*time.Hour), false, attribution.Owned{})
 	if rep.Reopened != 1 || open.Status != Open || open.Priority == "" {
 		t.Errorf("open item back: %+v %s %q", rep, open.Status, open.Priority)
 	}
@@ -485,10 +486,10 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 // Done and accepted items stay as the owner left them.
 func TestReclassifyLeavesSettledItems(t *testing.T) {
 	l := &Tracker{NextID: 1}
-	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false))}, t0, false)
+	l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false))}, t0, false, attribution.Owned{})
 	it, _ := l.FindRotate("aaaa")
 	it.Done(t0, "rotated")
-	rep := l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "assignment", "~/.zshrc", "scan", "config", "644", false, false))}, t0.Add(time.Hour), false)
+	rep := l.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "assignment", "~/.zshrc", "scan", "config", "644", false, false))}, t0.Add(time.Hour), false, attribution.Owned{})
 	if rep.Reclassified != 0 || it.Status != Done || it.Secret.Impact != "noise" {
 		t.Errorf("%+v %s %s", rep, it.Status, it.Secret.Impact)
 	}
@@ -500,7 +501,7 @@ func TestNoiseSummaryReclassifies(t *testing.T) {
 	l.SyncSecrets([]Sighting{
 		sight(ev("aaaaaaaaaaaaaaaa", "aws-access-key-id", "~/src/lms/k.yml", "gitleaks", "repo", "", true, true)),
 		sight(ev("bbbbbbbbbbbbbbbb", "anthropic", "~/.zshrc", "scan", "config", "644", false, false)),
-	}, t0, false)
+	}, t0, false, attribution.Owned{})
 	summary := finding.Finding{Connector: secretrisk.ConnectorName, Resource: finding.Resource{Type: secretrisk.NoiseSummaryType},
 		Evidence: map[string]any{"noise_fingerprints": map[string]any{"aaaaaaaaaaaaaaaa": "aws-access-key-id", "ffffffffffffffff": "assignment"}}}
 	noise := noiseOnly([]finding.Finding{{Connector: secretrisk.ConnectorName, Resource: finding.Resource{Type: "secret"}}, summary})

@@ -122,14 +122,12 @@ type SecretReport struct {
 	Paired                                       int // AWS key ids folded into their secret key's item
 }
 
-// SyncSecrets folds sightings into rotate items. A noise-only secret is skipped unless
-// includeNoise, and its existing item reclassified. Items not seen keep their locations: git
-// history does not forget, and a transcript copy already reached the model provider.
-func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise bool) SecretReport {
-	return t.syncSecrets(sightings, now, includeNoise, t.ownedAll(attribution.Owned{}))
-}
-
-func (t *Tracker) syncSecrets(sightings []Sighting, now time.Time, includeNoise bool, owned attribution.Owned) SecretReport {
+// SyncSecrets folds sightings into rotate items, attributed with what the tracker knows of
+// ownership plus extra. A noise-only secret is skipped unless includeNoise, and its existing item
+// reclassified. Items not seen keep their locations: git history does not forget, and a transcript
+// copy already reached the model provider.
+func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise bool, extra attribution.Owned) SecretReport {
+	owned := t.ownedAll(extra)
 	groups := map[string][]Sighting{}
 	var order []string
 	for _, s := range sightings {

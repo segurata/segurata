@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/segurata/segurata/internal/attribution"
 )
 
 func TestSaveLoadRoundTripModesAndBackup(t *testing.T) {
@@ -214,7 +216,7 @@ func TestOlderSchemasUpgradeLosslessly(t *testing.T) {
 		t.Run(fmt.Sprintf("schema %d", v), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tracker.json")
 			tr := New(t0)
-			tr.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false))}, t0, false)
+			tr.SyncSecrets([]Sighting{sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false))}, t0, false, attribution.Owned{})
 			it, _ := tr.FindRotate("aaaa")
 			if err := it.ignore(t0, "a fixture"); err != nil {
 				t.Fatal(err)

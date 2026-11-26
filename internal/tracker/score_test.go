@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/doc"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -155,7 +156,7 @@ func TestSecretsEntryNamesTheNextSecret(t *testing.T) {
 	leaked.Redacted, leaked.Repo = "AKIA…(20)", "~/src/r"
 	other := ev("2222222222222222", "github", "~/src/s/t.py", "gitleaks", "repo", "", true, true)
 	other.Redacted, other.Repo = "ghp_…abcd(40)", "~/src/s"
-	tr.SyncSecrets([]Sighting{sight(leaked), sight(other)}, t0, false)
+	tr.SyncSecrets([]Sighting{sight(leaked), sight(other)}, t0, false, attribution.Owned{})
 	key := mustRotate(t, tr, "11111111")
 	key.Findings = []FindingRef{{ID: "aws1", Connector: "aws", Title: "Long-lived AWS access key; aws sts says it works for account 1"}}
 	key.derive()
@@ -184,7 +185,7 @@ func TestRotationOrder(t *testing.T) {
 				out = append(out, sight(x))
 			}
 			return out
-		}()...), t0, false)
+		}()...), t0, false, attribution.Owned{})
 	}
 	recent := ev("", "", "~/src/r/x.py", "gitleaks", "repo", "", true, true)
 	recent.Date = "2025-01-01"
