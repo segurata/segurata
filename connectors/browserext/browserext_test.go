@@ -179,9 +179,12 @@ func TestDuplicatePrimary(t *testing.T) {
 	}
 	// Named password managers are one too; a password tool is not.
 	named := []install{pm("aeblfdkhhhdcdjpifhhbdiojplfjncoa", "1Password", day), pm("lp", "LastPass: Free Password Manager", day.Add(48*time.Hour)),
-		pm("kp", "KeePassXC-Browser", day.Add(-48*time.Hour)), pm("gen", "Strong Password Generator", day), pm("show", "Mostrar contraseña", day)}
+		pm("kp", "KeePassXC-Browser", day.Add(-48*time.Hour)), pm("gen", "Strong Password Generator", day), pm("show", "Mostrar contraseña", day),
+		pm("1p", "1Password extension (desktop app required)", day.Add(-96*time.Hour)), pm("es", "Dashlane: administrador de contraseñas", day.Add(-96*time.Hour))}
 	got = verdicts(named, nil)
 	if !strings.HasPrefix(got["1Password"], "remove: second password manager in this profile; LastPass") || !strings.HasPrefix(got["KeePassXC-Browser"], "remove: second password manager") ||
+		!strings.HasPrefix(got["1Password extension (desktop app required)"], "remove: second password manager") ||
+		!strings.HasPrefix(got["Dashlane: administrador de contraseñas"], "remove: second password manager") ||
 		!strings.HasPrefix(got["Strong Password Generator"], "keep") || !strings.HasPrefix(got["Mostrar contraseña"], "keep") {
 		t.Errorf("named: %v", got)
 	}

@@ -59,7 +59,8 @@ var categoryByID = map[string]string{
 var categoryWords = []struct{ word, cat string }{
 	// "password" alone would make a password generator or a show-password toggle a duplicate
 	// password manager, and so a remove verdict.
-	{"password manager", catPasswords}, {"gestor de contraseñas", catPasswords}, {"keepass", catPasswords},
+	{"password manager", catPasswords}, {"1password", catPasswords}, {"keepass", catPasswords},
+	{"gestor de contraseñas", catPasswords}, {"administrador de contraseñas", catPasswords},
 	{"wallet", catWallet},
 	{"chatgpt", catAI}, {"claude", catAI}, {"gemini", catAI}, {"copilot", catAI},
 	{"price tracker", catShopping}, {"coupon", catShopping},
