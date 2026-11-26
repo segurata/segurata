@@ -57,7 +57,7 @@ func tokenFinding(t token, now time.Time) finding.Finding {
 			ev["leaked_url"] = t.LeakedURL
 		}
 		f.Remediation.Summary = "Revoke the token now and check the team's activity log since the leak date."
-	case active != nil && now.Sub(*active) > httpx.IdleAfter:
+	case active != nil && now.Sub(*active) > finding.IdleAfter:
 		f.Severity = finding.SevHigh
 		f.Title = fmt.Sprintf("Vercel token %q unused for %d days", t.Name, httpx.Days(now, *active))
 	case expires == nil:

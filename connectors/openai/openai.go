@@ -17,6 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const (
@@ -378,7 +379,7 @@ func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a al
 	spent := ""
 	if costKnown {
 		ev["cost_30d_usd"] = cost
-		spent = fmt.Sprintf(" (%s in the last 30 days)", httpx.USD(cost))
+		spent = fmt.Sprintf(" (%s in the last 30 days)", textfmt.USD(cost))
 	}
 	if keys >= 0 {
 		ev["api_keys"] = keys
@@ -396,7 +397,7 @@ func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a al
 	var title string
 	switch sev {
 	case finding.SevInfo:
-		title = fmt.Sprintf("%s has a hard spend limit of %s/month%s", label, httpx.USD(float64(l.cents)/100), spent)
+		title = fmt.Sprintf("%s has a hard spend limit of %s/month%s", label, textfmt.USD(float64(l.cents)/100), spent)
 	case finding.SevHigh:
 		title = fmt.Sprintf("%s has no hard spend limit and no spend alerts%s", label, spent)
 	case finding.SevMedium:
@@ -438,7 +439,7 @@ func keyAssessment(lastUsed, expires *time.Time, usageKnown, ownerGone bool, cov
 		use = "last use unknown"
 	case lastUsed == nil:
 		a.Raise(finding.SevMedium, "never used")
-	case now.Sub(*lastUsed) > httpx.IdleAfter:
+	case now.Sub(*lastUsed) > finding.IdleAfter:
 		a.Raise(finding.SevMedium, fmt.Sprintf("unused for %d days", httpx.Days(now, *lastUsed)))
 	}
 	switch {

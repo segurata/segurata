@@ -172,7 +172,7 @@ func saKeyFindings(account, project string, sa serviceAccount, keys []saKey, now
 		var ageDays int
 		if created != nil {
 			ageDays = httpx.Days(now, *created)
-			if now.Sub(*created) > httpx.IdleAfter {
+			if now.Sub(*created) > finding.IdleAfter {
 				sev, title = finding.SevHigh, fmt.Sprintf("Service account %s has a user-managed key %d days old", sa.Email, ageDays)
 			}
 		}

@@ -11,9 +11,10 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// ActionDeleteUnusedKey deletes an API key never used or idle past httpx.IdleAfter.
+// ActionDeleteUnusedKey deletes an API key never used or idle past finding.IdleAfter.
 const ActionDeleteUnusedKey = "openrouter.key.delete-unused"
 
 // writeSecret is a read/write management key: the inventory's is read-only, which gets 403 on any
@@ -38,7 +39,7 @@ func unusedAction(k apiKey, now time.Time) string {
 	if e := httpx.ParseTime(k.ExpiresAt); e != nil && e.Before(now) {
 		return ""
 	}
-	if last := httpx.ParseTime(k.LastUsedAt); last == nil || now.Sub(*last) > httpx.IdleAfter {
+	if last := httpx.ParseTime(k.LastUsedAt); last == nil || now.Sub(*last) > finding.IdleAfter {
 		return ActionDeleteUnusedKey
 	}
 	return ""
@@ -97,7 +98,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	case last != nil:
 		used = fmt.Sprintf("last used %s, %d days ago", last.Format(time.DateOnly), httpx.Days(now, *last))
 	case k.Usage > 0 || k.BYOKUsage > 0:
-		used = fmt.Sprintf("no recorded use since the end of 2025 (%s spent before)", httpx.USD(k.Usage))
+		used = fmt.Sprintf("no recorded use since the end of 2025 (%s spent before)", textfmt.USD(k.Usage))
 	}
 	p := connector.Plan{
 		Action:  ActionDeleteUnusedKey,

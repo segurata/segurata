@@ -13,7 +13,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// ActionDeleteUnusedKey deletes a project or admin key never used or idle past httpx.IdleAfter.
+// ActionDeleteUnusedKey deletes a project or admin key never used or idle past finding.IdleAfter.
 const ActionDeleteUnusedKey = "openai.key.delete-unused"
 
 // writeSecret lives under remediation_secrets, apart from the possibly read-only inventory key,
@@ -36,7 +36,7 @@ func unusedAction(lastUsed, expires *time.Time, now time.Time) string {
 	if expires != nil && expires.Before(now) {
 		return ""
 	}
-	if lastUsed == nil || now.Sub(*lastUsed) > httpx.IdleAfter {
+	if lastUsed == nil || now.Sub(*lastUsed) > finding.IdleAfter {
 		return ActionDeleteUnusedKey
 	}
 	return ""

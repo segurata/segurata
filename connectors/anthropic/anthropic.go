@@ -18,6 +18,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const (
@@ -240,7 +241,7 @@ type apiKey struct {
 }
 
 // usageWindow is the idle threshold plus a day of margin.
-func usageWindow() time.Duration { return httpx.IdleAfter + day }
+func usageWindow() time.Duration { return finding.IdleAfter + day }
 
 // lastUsePerKey keeps, per key, the start of the latest day with any tokens in the window.
 func (s *scan) lastUsePerKey() (map[string]time.Time, error) {
@@ -326,7 +327,7 @@ func keyAssessment(k apiKey, created *time.Time, members map[string]bool, lastUs
 	}
 	if lastUse != nil {
 		if last, ok := lastUse[k.ID]; ok {
-			if now.Sub(last) > httpx.IdleAfter {
+			if now.Sub(last) > finding.IdleAfter {
 				a.Raise(finding.SevMedium, fmt.Sprintf("unused for %d days", httpx.Days(now, last)))
 			}
 		} else if created != nil && now.Sub(*created) <= usageWindow() {
@@ -400,7 +401,7 @@ func (s *scan) emitSpend(workspaces []workspace, costs map[string]float64) {
 		Resource:    finding.Resource{Type: "organization", ID: "organization", Name: s.account},
 		Kind:        finding.KindSpend,
 		Severity:    finding.SevLow,
-		Title:       fmt.Sprintf("Anthropic organization spent %s in the last 30 days; %s", httpx.USD(total), note),
+		Title:       fmt.Sprintf("Anthropic organization spent %s in the last 30 days; %s", textfmt.USD(total), note),
 		Evidence:    map[string]any{"cost_30d_usd": total, "spend_limit": "not exposed by the API"},
 		Blast:       finding.BlastMoney,
 		Remediation: remediation,
@@ -425,7 +426,7 @@ func (s *scan) emitSpend(workspaces []workspace, costs map[string]float64) {
 			Resource:    finding.Resource{Type: "workspace", ID: id, Name: w.name},
 			Kind:        finding.KindSpend,
 			Severity:    sev,
-			Title:       fmt.Sprintf("Workspace %q spent %s in the last 30 days; %s", w.name, httpx.USD(cost), note),
+			Title:       fmt.Sprintf("Workspace %q spent %s in the last 30 days; %s", w.name, textfmt.USD(cost), note),
 			Evidence:    map[string]any{"cost_30d_usd": cost, "spend_limit": "not exposed by the API"},
 			Remediation: remediation,
 		})

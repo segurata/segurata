@@ -18,6 +18,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const (
@@ -193,7 +194,7 @@ func (s *scan) workspace(w workspace) {
 		Kind:     finding.KindSpend,
 		Severity: finding.SevInfo,
 		Title: fmt.Sprintf("Workspace %q: %s on OpenRouter credits this month across %d keys, %d without a limit",
-			acct, httpx.USD(monthly), active, uncapped),
+			acct, textfmt.USD(monthly), active, uncapped),
 		Evidence: map[string]any{
 			"usage_month_to_date_usd":      monthly,
 			"byok_usage_month_to_date_usd": byokMonthly,
@@ -232,7 +233,7 @@ func (s *scan) credits() {
 		Kind:     finding.KindSpend,
 		Severity: finding.SevInfo,
 		Title: fmt.Sprintf("OpenRouter balance %s (%s purchased, %s used)",
-			httpx.USD(balance), httpx.USD(c.Data.TotalCredits), httpx.USD(c.Data.TotalUsage)),
+			textfmt.USD(balance), textfmt.USD(c.Data.TotalCredits), textfmt.USD(c.Data.TotalUsage)),
 		Evidence: map[string]any{
 			"total_credits_usd": c.Data.TotalCredits,
 			"total_usage_usd":   c.Data.TotalUsage,
@@ -261,7 +262,7 @@ func keyAssessment(k apiKey, now time.Time) httpx.Assessment {
 		a.Raise(finding.SevMedium, "no recorded use since the end of 2025")
 	case last == nil:
 		a.Raise(finding.SevMedium, "never used")
-	case now.Sub(*last) > httpx.IdleAfter:
+	case now.Sub(*last) > finding.IdleAfter:
 		a.Raise(finding.SevMedium, fmt.Sprintf("unused for %d days", httpx.Days(now, *last)))
 	}
 	return a.Done("in use with a credit limit")

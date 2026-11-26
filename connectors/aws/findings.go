@@ -85,13 +85,13 @@ func keyFinding(user string, k accessKey, lastUsed *time.Time, now time.Time) fi
 	case k.Status != "Active":
 		f.Severity = finding.SevLow
 		f.Title = fmt.Sprintf("Inactive access key of IAM user %s still exists (%d days old)", user, age)
-	case lastUsed == nil && now.Sub(created) > httpx.IdleAfter:
+	case lastUsed == nil && now.Sub(created) > finding.IdleAfter:
 		f.Severity = finding.SevHigh
 		f.Title = fmt.Sprintf("Access key of IAM user %s has never been used (%d days old)", user, age)
-	case lastUsed != nil && now.Sub(*lastUsed) > httpx.IdleAfter:
+	case lastUsed != nil && now.Sub(*lastUsed) > finding.IdleAfter:
 		f.Severity = finding.SevHigh
 		f.Title = fmt.Sprintf("Access key of IAM user %s unused for %d days", user, httpx.Days(now, *lastUsed))
-	case now.Sub(created) > httpx.IdleAfter:
+	case now.Sub(created) > finding.IdleAfter:
 		f.Severity = finding.SevHigh
 		f.Title = fmt.Sprintf("Access key of IAM user %s is %d days old", user, age)
 	}

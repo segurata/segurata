@@ -20,8 +20,6 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-const IdleAfter = finding.IdleAfter
-
 type Client struct {
 	BaseURL string
 	Header  http.Header
@@ -212,8 +210,6 @@ func ParseTime(s *string) *time.Time {
 }
 
 func Days(now, t time.Time) int { return int(now.Sub(t).Hours() / 24) }
-
-func USD(v float64) string { return textfmt.USD(v) }
 
 // Assessment accumulates why something is risky; Severity is the worst reason's.
 type Assessment struct {

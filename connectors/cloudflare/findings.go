@@ -167,9 +167,9 @@ func tokenFinding(t apiToken, self bool, now time.Time) finding.Finding {
 			a.Raise(finding.SevMedium, "never expires")
 		}
 		switch {
-		case lastUsed != nil && now.Sub(*lastUsed) > httpx.IdleAfter:
+		case lastUsed != nil && now.Sub(*lastUsed) > finding.IdleAfter:
 			a.Raise(finding.SevMedium, fmt.Sprintf("unused for %d days", httpx.Days(now, *lastUsed)))
-		case lastUsed == nil && issued != nil && now.Sub(*issued) > httpx.IdleAfter:
+		case lastUsed == nil && issued != nil && now.Sub(*issued) > finding.IdleAfter:
 			a.Raise(finding.SevMedium, fmt.Sprintf("never used in the %d days since it was issued", httpx.Days(now, *issued)))
 		}
 		a = a.Done("expires, in use, and read-only or IP-restricted")
