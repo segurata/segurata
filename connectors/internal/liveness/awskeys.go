@@ -14,23 +14,16 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// A lone AWS access key id (no secret key found with it) cannot sign a request, so it is looked
-// up in the owner's IAM inventory: each profile's account (sts get-caller-identity), its users
-// (iam list-users) and their keys with status (iam list-access-keys), and whether the root user
-// has keys (iam get-account-summary). The key id is compared in memory and never passed to a
-// command, except to sts get-access-key-info for a key id of the older format, whose account
-// cannot be decoded offline (attribution.AWSAccountFromKeyID).
+// A lone AWS access key id is looked up in the owner's IAM inventory, compared in memory: only
+// sts get-access-key-info, for an id of the older format whose account cannot be decoded offline,
+// is given it.
 //
-//   - Active in one of the owner's accounts: live. Inactive: dead (it cannot sign while inactive).
-//   - In an account whose whole inventory was read, no root keys, and not among its keys: dead
-//     (deleted). GetAccessKeyInfo "does not indicate the state of the access key", so absence is
-//     read from the inventory, never from it.
-//   - Only long-term ids (AKIA): an ASIA id is a temporary credential, absent from every inventory,
-//     so it stays unknown (fail closed).
-//   - An account no profile reaches: unknown, with the account as a claim for attribution.
-//   - Any inventory call denied: unknown, and a hint names the permissions.
+//   - Active in one of the owner's accounts: live; inactive: dead.
+//   - Absent from an account whose whole inventory was read and whose root user has no keys: dead.
+//     GetAccessKeyInfo "does not indicate the state of the access key".
+//   - An ASIA id is temporary and in no inventory: unknown.
+//   - An account no profile reaches, or a denied inventory call: unknown.
 
-// awsReadOnly is every aws command the lookup runs.
 var awsReadOnly = cli.Allowlist{
 	"configure list-profiles",
 	"sts get-caller-identity",
@@ -40,10 +33,9 @@ var awsReadOnly = cli.Allowlist{
 	"iam get-account-summary",
 }
 
-// awsPermissions are what a profile needs, named in the setup hint.
 const awsPermissions = "iam:ListUsers, iam:ListAccessKeys and iam:GetAccountSummary (all in the AWS managed policy SecurityAudit), and sts:GetAccessKeyInfo for key ids of the older format"
 
-// maxIAMUsers bounds the users read per account; an account with more is read as incomplete.
+// maxIAMUsers bounds the users read per account; an account with more is incomplete.
 const maxIAMUsers = 1000
 
 const awsEndpoint = "aws iam list-access-keys"
@@ -58,9 +50,8 @@ type iamAccount struct {
 type awsKey struct{ user, status string }
 
 type awsInventory struct {
-	accounts []*iamAccount
-	// infoProfile is a profile that signs in, for sts get-access-key-info.
-	infoProfile string
+	accounts    []*iamAccount
+	infoProfile string // a profile that signs in, for sts get-access-key-info
 }
 
 func (l *lookups) awsInventory(ctx context.Context) *awsInventory {
@@ -79,7 +70,6 @@ func (l *lookups) awsRun(ctx context.Context, out any, args ...string) error {
 	return json.Unmarshal(raw, out)
 }
 
-// awsCall runs one command with a profile, in the global endpoints' region.
 func (l *lookups) awsCall(ctx context.Context, profile string, out any, args ...string) error {
 	return l.awsRun(ctx, out, append(args, "--profile", profile, "--region", "us-east-1", "--output", "json", "--no-cli-pager")...)
 }
@@ -133,7 +123,6 @@ func cliErrorOr(err error, otherwise string) string {
 	return otherwise
 }
 
-// readAccount reads every IAM user's keys of the account a profile reaches.
 func (l *lookups) readAccount(ctx context.Context, profile, account string) *iamAccount {
 	a := &iamAccount{id: account, profile: profile, keys: map[string]awsKey{}}
 	var denied []string
@@ -183,11 +172,9 @@ func (l *lookups) readAccount(ctx context.Context, profile, account string) *iam
 	return a
 }
 
-// lookupAWSKey classifies a lone access key id.
 func lookupAWSKey(ctx context.Context, l *lookups, p Probe) secretrisk.Liveness {
 	keyID := p.Value
 	if !strings.HasPrefix(keyID, "AKIA") {
-		// ASIA ids are temporary credentials, never in list-access-keys: absence proves nothing.
 		return unknown("", "temporary credentials, which no IAM inventory lists")
 	}
 	inv := l.awsInventory(ctx)
@@ -226,8 +213,7 @@ func lookupAWSKey(ctx context.Context, l *lookups, p Probe) secretrisk.Liveness 
 	return r
 }
 
-// awsKeyAccount asks STS which account a key id belongs to, with the owner's profile: the only
-// command that takes the key id. Its error is reduced to a code, since the CLI may echo the id.
+// awsKeyAccount is the only command given the key id; the CLI may echo it in an error.
 func (l *lookups) awsKeyAccount(ctx context.Context, inv *awsInventory, keyID string) (string, bool) {
 	if inv.infoProfile == "" {
 		return "", false

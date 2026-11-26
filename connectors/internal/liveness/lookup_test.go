@@ -494,7 +494,7 @@ func TestLookupCache(t *testing.T) {
 	if strings.Contains(string(raw), k.pem[len(k.pem)-24:]) || strings.Contains(string(raw), k.openssh[len(k.openssh)-24:]) || !strings.Contains(string(raw), `"by_owner": true`) {
 		t.Errorf("cache file: %s", raw)
 	}
-	c.Now = func() time.Time { return now.Add(LiveTTL + time.Minute) }
+	c.Now = func() time.Time { return now.Add(liveTTL + time.Minute) }
 	if _, st := c.Check(context.Background(), probe); st.Cached != 0 {
 		t.Errorf("an unregistered result outlived a day: %+v", st)
 	}

@@ -19,35 +19,27 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// A private key is looked up by the fingerprint of its public half, derived in memory
-// (connectors/internal/sshkey), among the keys the owner registered where segurata can read them:
-// GitHub's SSH authentication and signing keys of gh's login, the deploy keys of the owner's
-// maxDeployKeyRepos most recently pushed repositories, ~/.ssh/authorized_keys here and, opt-in,
-// on the hosts of config ssh_hosts. The private key is never sent anywhere.
+// A private key is looked up by the fingerprint of its public half among the keys the owner
+// registered: gh's GitHub SSH and signing keys, the deploy keys of the most recently pushed
+// repositories, ~/.ssh/authorized_keys here and on config ssh_hosts.
 //
-//   - Registered anywhere: live, with where.
-//   - Only the public half of a key in ~/.ssh on this machine (its .pub): unknown. It is the
-//     owner's key, used from here, registered somewhere segurata does not see.
-//   - Not an OpenSSH key and found nowhere: unknown, "not registered as an SSH key". A PKCS#1, PKCS#8 or SEC 1
-//     key may sign TLS certificates or JWTs, which no registry here holds. Keys from ~/.ssh count
-//     as SSH keys whatever their container.
-//   - Found nowhere, and GitHub's lists were read: unregistered (lower priority, not dead). When gh
-//     cannot list them, unknown, with a hint.
-//   - An encrypted key whose public half is not stored in clear, or a key cut short: unknown.
+//   - Registered anywhere: live.
+//   - Only a ~/.ssh/*.pub here: unknown, the owner's key registered somewhere unseen.
+//   - Not an OpenSSH key, found nowhere: unknown; a PEM key may sign TLS certificates or JWTs.
+//   - Found nowhere with GitHub's lists read: unregistered, which lowers priority and is not dead.
+//   - Encrypted with no clear public half, or cut short: unknown.
 
-// maxDeployKeyRepos bounds the repositories whose deploy keys are read: one call each.
-const maxDeployKeyRepos = 30
-
-// maxSSHHosts bounds config ssh_hosts.
-const maxSSHHosts = 20
+const (
+	maxDeployKeyRepos = 30 // one call each
+	maxSSHHosts       = 20
+)
 
 const ghKeysEndpoint = "GET api.github.com/user/keys"
 
-// ghPaths are the only GitHub API paths gh is asked for, each a GET (no method flag, no field).
+// ghPaths are the only paths gh is asked for, each a GET: no method flag, no field.
 var ghPaths = regexp.MustCompile(`^(user|user/keys|user/ssh_signing_keys|user/repos\?affiliation=owner&sort=pushed&per_page=` +
 	fmt.Sprint(maxDeployKeyRepos) + `|repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/keys)$`)
 
-// ghReadOnly allows `gh api [--paginate] <path>` for those paths only.
 var ghReadOnly = cli.CheckFunc(func(args []string) error {
 	if len(args) >= 2 && args[0] == "api" {
 		rest := args[1:]
@@ -64,8 +56,8 @@ var ghReadOnly = cli.CheckFunc(func(args []string) error {
 // sshHost is a host name or alias of ~/.ssh/config, optionally user@: never an option.
 var sshHost = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@-]*$`)
 
-// sshArgs are ssh's arguments to read a host's authorized_keys: no prompt (BatchMode), only a known
-// host key, a bounded connection, no terminal, and one read-only command.
+// sshArgs read a host's authorized_keys: no prompt, only a known host key, a bounded connection,
+// no terminal.
 func sshArgs(host string) []string {
 	return []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10", "-T", "--", host, "cat", ".ssh/authorized_keys"}
 }
@@ -77,7 +69,6 @@ var sshReadOnly = cli.CheckFunc(func(args []string) error {
 	return fmt.Errorf("%w: ssh", cli.ErrRefused)
 })
 
-// sshPlace is where a public key is registered.
 type sshPlace struct {
 	where, endpoint, account string
 }
@@ -85,7 +76,7 @@ type sshPlace struct {
 type sshRegistry struct {
 	registered         map[string][]sshPlace // by fingerprint
 	localPub           map[string]string     // fingerprint -> ~/.ssh/<name>.pub
-	githubRead         bool                  // the authentication and signing keys were both listed
+	githubRead         bool                  // both GitHub lists were read
 	deployRepos, hosts int                   // repositories and hosts read
 }
 
@@ -136,7 +127,6 @@ func (l *lookups) readSSH(ctx context.Context) *sshRegistry {
 	return r
 }
 
-// ghKey is an entry of GitHub's key listings; Title is the owner's name for it.
 type ghKey struct {
 	Key, Title string
 }
@@ -190,8 +180,7 @@ func (l *lookups) readGitHubKeys(ctx context.Context, r *sshRegistry, add func(s
 	}
 }
 
-// gh runs `gh api` and decodes its output; with --paginate gh prints one JSON array per page,
-// which are joined.
+// gh decodes `gh api`'s output; --paginate prints one JSON array per page.
 func (l *lookups) gh(ctx context.Context, out any, args ...string) error {
 	raw, err := cli.Guard(ghReadOnly, l.owner.GH).Run(ctx, append([]string{"api"}, args...)...)
 	if err != nil {
@@ -216,7 +205,7 @@ func (l *lookups) gh(ctx context.Context, out any, args ...string) error {
 	}
 }
 
-// eachLine calls fn with each line of a small regular file; a missing or unreadable one is none.
+// eachLine reads a small regular file; a missing or unreadable one has no lines.
 func eachLine(path string, fn func(string)) {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() || st.Size() > 1<<20 {
@@ -234,7 +223,6 @@ func eachLine(path string, fn func(string)) {
 	}
 }
 
-// lookupSSHKey classifies a private key by its public half.
 func lookupSSHKey(ctx context.Context, l *lookups, p Probe) secretrisk.Liveness {
 	pub, openssh, err := sshkey.FromPrivate(p.Value)
 	switch {
