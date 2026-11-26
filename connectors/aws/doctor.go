@@ -7,6 +7,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/awsfiles"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // Doctor asks STS who each profile is.
@@ -45,7 +46,7 @@ func failure(what, profile string, err error) connector.Check {
 		ch.Fix = "aws configure sso --profile " + profile
 	case finding.StateReauth:
 		ch.Fix = "aws sso login --profile " + profile
-		if !containsAny(err.Error(), "sso", "SSO") {
+		if !textfmt.ContainsAny(err.Error(), "sso", "SSO") {
 			ch.Fix = "the profile's access key is invalid or deactivated: put a working one in with aws configure --profile " + profile +
 				", or remove the profile from ~/.aws/credentials and ~/.aws/config"
 		}

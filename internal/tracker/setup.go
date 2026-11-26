@@ -149,7 +149,7 @@ func statusCommand(st finding.Status) string {
 // never uses.
 func adminOnly(detail string) bool {
 	d := strings.ToLower(detail)
-	return strings.Contains(d, "needs admin") || strings.Contains(d, "need sudo") || strings.Contains(d, "needs sudo") || strings.Contains(d, "requires root")
+	return textfmt.ContainsAny(d, "needs admin", "need sudo", "needs sudo", "requires root")
 }
 
 // statusAction is what to do about a status and the command: the fix the detail names, then a

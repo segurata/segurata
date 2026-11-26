@@ -65,7 +65,7 @@ func (g *gcloud) json(ctx context.Context, into any, args ...string) error {
 }
 
 func rateLimited(err error) bool {
-	return containsAny(errText(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
+	return textfmt.ContainsAny(errText(err), "'status': 429", "RESOURCE_EXHAUSTED", "Quota exceeded", "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
 }
 
 func errText(err error) string {
@@ -84,25 +84,16 @@ var http403 = regexp.MustCompile(`\b403\b`)
 func classify(err error) (finding.State, string) {
 	s := errText(err)
 	switch {
-	case containsAny(s, "Reauthentication failed", "gcloud auth login", "invalid_grant", "Please run:\n\n  $ gcloud auth"):
+	case textfmt.ContainsAny(s, "Reauthentication failed", "gcloud auth login", "invalid_grant", "Please run:\n\n  $ gcloud auth"):
 		return finding.StateReauth, "credentials expired: run gcloud auth login for this account"
-	case containsAny(s, "has not been used in project", "SERVICE_DISABLED", "it is disabled"):
+	case textfmt.ContainsAny(s, "has not been used in project", "SERVICE_DISABLED", "it is disabled"):
 		return finding.StateError, "API not enabled: " + summarize(s, err)
-	case containsAny(s, "PERMISSION_DENIED", "does not have permission", "USER_PROJECT_DENIED") || http403.MatchString(s):
+	case textfmt.ContainsAny(s, "PERMISSION_DENIED", "does not have permission", "USER_PROJECT_DENIED") || http403.MatchString(s):
 		return finding.StateError, deniedPrefix + summarize(s, err)
 	case rateLimited(err):
 		return finding.StateError, "rate limited: " + summarize(s, err)
 	}
 	return finding.StateError, summarize(s, err)
-}
-
-func containsAny(s string, subs ...string) bool {
-	for _, p := range subs {
-		if strings.Contains(s, p) {
-			return true
-		}
-	}
-	return false
 }
 
 func summarize(stderr string, err error) string {

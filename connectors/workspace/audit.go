@@ -16,6 +16,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const (
@@ -108,7 +109,7 @@ func (a *audit) apiFailure(err error) (finding.State, string) {
 		return finding.StateError, err.Error()
 	}
 	switch m := se.Message; {
-	case strings.Contains(m, "has not been used in project") || strings.Contains(m, "SERVICE_DISABLED") || strings.Contains(m, "it is disabled"):
+	case textfmt.ContainsAny(m, "has not been used in project", "SERVICE_DISABLED", "it is disabled"):
 		return finding.StateError, fmt.Sprintf("The Admin SDK API is not enabled in the quota project (%s). Enable it there or set quota_project to a project where it is.", m)
 	case se.Code == http.StatusUnauthorized:
 		return finding.StateReauth, fmt.Sprintf("Token rejected (401: %s).\n\n%s", m, loginHelp(a.cfg))

@@ -18,6 +18,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // readOnly is every az command the inventory runs, so a bug cannot change the tenant.
@@ -70,7 +71,7 @@ func classify(err error) finding.State {
 	switch {
 	case strings.Contains(msg, "az login"):
 		return finding.StateSignedOut
-	case strings.Contains(msg, "AADSTS") || strings.Contains(msg, "expired"):
+	case textfmt.ContainsAny(msg, "AADSTS", "expired"):
 		return finding.StateReauth
 	}
 	return finding.StateError

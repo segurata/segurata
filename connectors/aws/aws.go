@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 // readOnly is every aws command the connector runs, so a bug cannot change the account.
@@ -151,21 +152,12 @@ func classify(err error) finding.State {
 	}
 	msg := err.Error()
 	switch {
-	case containsAny(msg, "Unable to locate credentials", "could not be found", "NoCredentialProviders"):
+	case textfmt.ContainsAny(msg, "Unable to locate credentials", "could not be found", "NoCredentialProviders"):
 		return finding.StateMissingCredentials
-	case containsAny(msg, "xpired", "sso login", "SSO session", "InvalidClientTokenId", "UnrecognizedClientException", "SignatureDoesNotMatch"):
+	case textfmt.ContainsAny(msg, "xpired", "sso login", "SSO session", "InvalidClientTokenId", "UnrecognizedClientException", "SignatureDoesNotMatch"):
 		return finding.StateReauth
 	}
 	return finding.StateError
-}
-
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
 }
 
 type audit struct {
@@ -212,7 +204,7 @@ func (a *audit) check(name string, fn func() error) {
 	err := fn()
 	switch {
 	case err == nil:
-	case containsAny(err.Error(), "AccessDenied", "UnauthorizedOperation"):
+	case textfmt.ContainsAny(err.Error(), "AccessDenied", "UnauthorizedOperation"):
 		action := checkAction[name]
 		if m := deniedAction.FindStringSubmatch(err.Error()); m != nil {
 			action = m[1]

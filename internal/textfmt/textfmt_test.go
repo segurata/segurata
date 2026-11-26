@@ -104,3 +104,9 @@ func TestLineEscapesTheWholeLineOnce(t *testing.T) {
 		t.Errorf("Line wrote %q, want %q", got, want)
 	}
 }
+
+func TestContainsAny(t *testing.T) {
+	if !ContainsAny("token expired", "AADSTS", "expired") || ContainsAny("fine", "AADSTS", "expired") || ContainsAny("x") {
+		t.Error("ContainsAny")
+	}
+}

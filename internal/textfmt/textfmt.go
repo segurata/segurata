@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -57,6 +58,11 @@ func JoinAnd(items []string) string {
 		return strings.Join(items, "")
 	}
 	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+}
+
+// ContainsAny reports whether s contains any of subs.
+func ContainsAny(s string, subs ...string) bool {
+	return slices.ContainsFunc(subs, func(sub string) bool { return strings.Contains(s, sub) })
 }
 
 func USD(v float64) string { return fmt.Sprintf("$%.2f", v) }

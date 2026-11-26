@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/textfmt"
 )
 
 const (
@@ -44,7 +45,7 @@ func (c *Connector) destinationInfo(ctx context.Context) (map[string]any, error)
 		return map[string]any{}, nil
 	case err != nil || !strings.HasPrefix(out, "<"):
 		msg := "tmutil destinationinfo could not be read (" + orQ(firstLine(out)) + ")"
-		if strings.Contains(out, "Full Disk Access") || strings.Contains(out, "Operation not permitted") {
+		if textfmt.ContainsAny(out, "Full Disk Access", "Operation not permitted") {
 			msg += "; " + fullDiskAccessFix
 		}
 		return nil, errors.New(msg)

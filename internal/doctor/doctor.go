@@ -23,6 +23,7 @@ import (
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/secrets"
+	"github.com/segurata/segurata/internal/textfmt"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
@@ -288,7 +289,7 @@ func dirCheck(label, dir, creator string) connector.Check {
 
 // keychainService is the Keychain service the connectors' setup messages suggest.
 func keychainService(connector, secret string) string {
-	if strings.Contains(secret, "ADMIN") || strings.Contains(secret, "MANAGEMENT") {
+	if textfmt.ContainsAny(secret, "ADMIN", "MANAGEMENT") {
 		return "segurata-" + connector + "-admin"
 	}
 	return "segurata-" + connector
