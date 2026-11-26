@@ -1129,7 +1129,9 @@ every run without a new scan.
   closes as `reclassified`. Fingerprints without an item are ignored, so `sync --include-noise`
   needs `emit_noise: true` to track noise-only secrets.
 
-Hints. Every value hint the connector writes is `secretrisk.Redact`'s: the known prefix, `…`, the
+#### Hints
+
+Every value hint the connector writes is `secretrisk.Redact`'s: the known prefix, `…`, the
 last four characters when the value is long and random, and the length, `sk_live_…a1b2(107)`;
 `secretrisk.ParseHint` reads it back. Keys and whole files have no value hint (`PEM`, empty).
 Every other connector that reports a key writes its hint in the same format, from what the
