@@ -24,6 +24,7 @@ import (
 //   - An ASIA id is temporary and in no inventory: unknown.
 //   - An account no profile reaches, or a denied inventory call: unknown.
 
+// awsReadOnly is every aws command the lookups run.
 var awsReadOnly = cli.Allowlist{
 	"configure list-profiles",
 	"sts get-caller-identity",

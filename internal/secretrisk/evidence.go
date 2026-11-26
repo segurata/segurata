@@ -41,7 +41,8 @@ type Evidence struct {
 	// noise only in a test, example or documentation path.
 	Sample   bool      `json:"sample,omitempty"`
 	Liveness *Liveness `json:"liveness,omitempty"`
-	// Pair is the fingerprint of the other half of an AWS key pair, set only by the liveness check.
+	// Pair is the fingerprint of the other half of an AWS key pair, set by the liveness check even
+	// for pairs it may not send: a run with liveness off leaves it empty.
 	Pair string `json:"pair,omitempty"`
 }
 

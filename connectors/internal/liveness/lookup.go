@@ -20,7 +20,7 @@ import (
 // Owner is what the lookups run with; a nil runner leaves its lookup without that source.
 type Owner struct {
 	AWS        cli.Runner
-	AWSIssuers func() map[string]awsfiles.Provider // nil: every profile is AWS
+	AWSIssuers func() map[string]awsfiles.Provider // a profile named not AWS is never signed in with; nil: all are
 	GH         cli.Runner                          // logged in as the owner
 	SSH        cli.Runner                          // for config ssh_hosts
 	Home       string                              // ~/.ssh is read here

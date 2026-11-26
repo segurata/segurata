@@ -177,7 +177,7 @@ func send(ctx context.Context, method, base, path string, body []byte, header ht
 	}
 	r := secretrisk.Liveness{Endpoint: method + " " + host + httpx.ShownPath(path)}
 	client := httpx.New(base, header)
-	client.HTTP.CheckRedirect = httpx.NoRedirect
+	client.HTTP.CheckRedirect = httpx.NoRedirect // the key goes to the provider's URL only; a 3xx is unknown
 	code, answer, err := client.Fetch(ctx, method, path, nil, body)
 	if err != nil {
 		r.State, r.Reason = secretrisk.Unknown, "no answer"
@@ -350,6 +350,7 @@ func askCloudflare(ctx context.Context, base string, p Probe) secretrisk.Livenes
 	return call(ctx, base, "/client/v4/user/tokens/verify", bearerAuth(p.Value), j, nil)
 }
 
+// linearQuery is the only body sent to Linear: a query, which cannot change anything.
 var linearQuery = []byte(`{"query":"{ viewer { id } }"}`)
 
 // askLinear: a personal API key goes in Authorization without Bearer. Never dead: Linear

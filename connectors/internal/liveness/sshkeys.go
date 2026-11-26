@@ -57,7 +57,7 @@ var ghReadOnly = cli.CheckFunc(func(args []string) error {
 var sshHost = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@-]*$`)
 
 // sshArgs read a host's authorized_keys: no prompt, only a known host key, a bounded connection,
-// no terminal.
+// no terminal, one read-only command.
 func sshArgs(host string) []string {
 	return []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10", "-T", "--", host, "cat", ".ssh/authorized_keys"}
 }
