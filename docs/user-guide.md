@@ -63,27 +63,27 @@ confirmation. The full list of guarantees, each of which counts as a vulnerabili
 ## Tracker and status
 
 ```bash
-./segurata status                         # the briefing: what to do next, decisions, blockers, changes (read-only)
-./segurata status --explain               # same, with the score behind each "Do next" entry
-./segurata status --mark-seen             # same, and start "Since the last status" from now
-./segurata status --priority P0,P1 --theme github-orgs
-./segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600); implies --mark-seen
-./segurata track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
-./segurata track show T-0042
-./segurata track start|done|reopen T-0042 [--note "..."]
-./segurata track note T-0042 "ordered a backup disk"
-./segurata track snooze T-0042 --until 2027-01-15
-./segurata track ignore T-0042 --reason "test fixture"
-./segurata track ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
-./segurata track expect T-3153 --reason "ephemeral key on purpose" [--dry-run]   # a setup item kept on purpose: config rule
+segurata status                         # the briefing: what to do next, decisions, blockers, changes (read-only)
+segurata status --explain               # same, with the score behind each "Do next" entry
+segurata status --mark-seen             # same, and start "Since the last status" from now
+segurata status --priority P0,P1 --theme github-orgs
+segurata status --write                 # also ~/.segurata/status.md and status.html (mode 0600); implies --mark-seen
+segurata track list [--all] [--kind rotate] [--theme t] [--priority P0,P1] [--status s]
+segurata track show T-0042
+segurata track start|done|reopen T-0042 [--note "..."]
+segurata track note T-0042 "ordered a backup disk"
+segurata track snooze T-0042 --until 2027-01-15
+segurata track ignore T-0042 --reason "test fixture"
+segurata track ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
+segurata track expect T-3153 --reason "ephemeral key on purpose" [--dry-run]   # a setup item kept on purpose: config rule
 
-./segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
-./segurata track decide T-0003 --answer "yes" [--ignore-scope path:~/src/old] [--accept-scope repo:acme/site]
-./segurata track decide T-0002 --answer "rotate mine, ignore the rest" --ignore-scope path:~/src/legacyco --owner not-mine [--dry-run]
-./segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
-./segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
-./segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no
-./segurata track sync [--out out]         # also run by inventory; rotations sync is the same, needing a local-secrets run
+segurata track prioritize T-0042 P0 --reason "client data"   # `auto` goes back to the computed one
+segurata track decide T-0003 --answer "yes" [--ignore-scope path:~/src/old] [--accept-scope repo:acme/site]
+segurata track decide T-0002 --answer "rotate mine, ignore the rest" --ignore-scope path:~/src/legacyco --owner not-mine [--dry-run]
+segurata track add --title "Buy a hardware key" [--kind fix|setup|review] [--priority P1]
+segurata track add --kind decide --question "Keep the old VPS?" --option yes --option no
+segurata track add --kind decide --question "Are the legacy repos dead?" --option "yes=ignore:path:~/src/legacy" --option no
+segurata track sync [--out out]         # also run by inventory; rotations sync is the same, needing a local-secrets run
 ```
 
 `~/.segurata/tracker.json` (mode 0600 in a 0700 folder; `SEGURATA_HOME` names another folder)
@@ -130,10 +130,10 @@ never a secret value, so the backup holds none either.
 ## Accounts
 
 ```bash
-./segurata accounts list [gcp|google-personal] [--out out]   # accounts each connector saw: watched or not, last state, last seen
-./segurata accounts unwatch google-personal colleague@example.com  # take it out of connectors."google-personal".config.accounts
-./segurata accounts watch google-personal colleague@example.com    # put it back
-./segurata accounts owned [--out out]                         # the owner's accounts attribution compares secrets with
+segurata accounts list [gcp|google-personal] [--out out]   # accounts each connector saw: watched or not, last state, last seen
+segurata accounts unwatch google-personal colleague@example.com  # take it out of connectors."google-personal".config.accounts
+segurata accounts watch google-personal colleague@example.com    # put it back
+segurata accounts owned [--out out]                         # the owner's accounts attribution compares secrets with
 ```
 
 `unwatch` writes the connector's `accounts` list (from the accounts the runs saw, when there is no
@@ -146,10 +146,10 @@ scope at each run, so its earlier findings are never taken as resolved. `gcp` an
 ## Signing in
 
 ```bash
-./segurata signin --list                 # what it would open and list; opens nothing
-./segurata signin                        # open the pages, wait, run those connectors again
-./segurata signin google-personal        # only this connector (or connector:label)
-./segurata signin --all --timeout 20m    # also the commands of other setup items; wait longer
+segurata signin --list                 # what it would open and list; opens nothing
+segurata signin                        # open the pages, wait, run those connectors again
+segurata signin google-personal        # only this connector (or connector:label)
+segurata signin --all --timeout 20m    # also the commands of other setup items; wait longer
 ```
 
 `signin` takes the open setup items where a browser connector reports `reauth` or `signedout`
@@ -178,9 +178,9 @@ open: they are yours.
 ## Report
 
 ```bash
-./segurata report                                   # terminal text
-./segurata report --format html --out report.html   # one self-contained page, mode 0600
-./segurata report --format md --out report.md
+segurata report                                   # terminal text
+segurata report --format html --out report.html   # one self-contained page, mode 0600
+segurata report --format md --out report.md
 ```
 
 One page from the latest run of every connector instance (`out/<date>/<name>.jsonl`, the same
@@ -210,9 +210,9 @@ because findings and the tracker never hold one.
 ## Remediation
 
 ```bash
-./segurata remediate --list                # automatable findings of the latest run, one line per group
-./segurata remediate <id>                  # the exact plan; changes nothing
-./segurata remediate <id> --apply          # asks "Apply? [y/N]", applies, re-checks
+segurata remediate --list                # automatable findings of the latest run, one line per group
+segurata remediate <id>                  # the exact plan; changes nothing
+segurata remediate <id> --apply          # asks "Apply? [y/N]", applies, re-checks
 ```
 
 One finding at a time, or one group: some actions fix every finding of a group in one plan (all
@@ -313,9 +313,9 @@ key issue is fixed as far as secret scanning goes, and then offers the next acti
 ## Accepted risks
 
 ```bash
-./segurata accept <id> --reason "AI agents drive Brave over CDP" [--until 2027-03-31]
-./segurata accept --list
-./segurata unaccept <id>
+segurata accept <id> --reason "AI agents drive Brave over CDP" [--until 2027-03-31]
+segurata accept --list
+segurata unaccept <id>
 ```
 
 A finding you keep on purpose stays in `out/<date>/*.jsonl` with an `accepted` field, but leaves
@@ -328,10 +328,10 @@ own first. `unaccept` takes the finding id or the item id. Details:
 ## Scheduled runs
 
 ```bash
-./segurata schedule install                         # print the launchd agent or Windows task; changes nothing
-./segurata schedule install --every 12h --apply     # write and load it, after "Apply? [y/N]"
-./segurata schedule status
-./segurata schedule uninstall --apply
+segurata schedule install                         # print the launchd agent or Windows task; changes nothing
+segurata schedule install --every 12h --apply     # write and load it, after "Apply? [y/N]"
+segurata schedule status
+segurata schedule uninstall --apply
 ```
 
 A launchd user agent (`~/Library/LaunchAgents/com.segurata.inventory.plist`) runs an inventory

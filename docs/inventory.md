@@ -18,7 +18,7 @@ For services without a connector, see [manual review](manual-review.md). The
 ## Google: linked apps (`google-personal`)
 
 ```bash
-./segurata inventory google-personal
+segurata inventory google-personal
 ```
 
 Walks every Google account signed in to the browser and reports each linked app with its scopes,
@@ -46,7 +46,7 @@ statuses.
 ## Connected apps outside Google (`connected-apps`)
 
 ```bash
-./segurata inventory connected-apps
+segurata inventory connected-apps
 ```
 
 Reads each service's settings pages in the browser's existing sessions and reports every app with
@@ -111,7 +111,7 @@ confirm, run again; `segurata signin` does both); `noscope` (`gh` lacks a scope;
 ## GitHub security settings (`github`)
 
 ```bash
-./segurata inventory github
+segurata inventory github
 ```
 
 Reads, through the signed-in `gh` CLI, the security settings of the account, of every
@@ -157,8 +157,8 @@ Config, optional, under `connectors.github.config`:
 ## Google Workspace administration (`workspace`)
 
 ```bash
-./segurata inventory workspace                    # every configured tenant
-./segurata inventory workspace:example.com      # one tenant
+segurata inventory workspace                    # every configured tenant
+segurata inventory workspace:example.com      # one tenant
 ```
 
 One instance per tenant, read-only through the Admin SDK (GET requests with read-only scopes):
@@ -227,7 +227,7 @@ Each of these has its own page with endpoints or commands, severities, config ke
 ## Plaintext secrets on disk (`local-secrets`)
 
 ```bash
-./segurata inventory local-secrets
+segurata inventory local-secrets
 ```
 
 Looks for tokens, API keys and private keys in plain files and reports, for each one, the path,
@@ -314,18 +314,18 @@ every secret as new.
 ### Rotation ledger
 
 ```bash
-./segurata rotations sync                    # from the latest local-secrets inventory
-./segurata rotations list --priority P0,P1   # what to rotate first
-./segurata rotations list --owner not-mine    # secrets that name someone else's account (mine, not-mine, unknown)
-./segurata rotations next --priority P0      # the most urgent item and exactly what to do (--log records it was shown)
-./segurata rotations show <id>               # locations, where the new value goes, rotate URL, whose it is and why
-./segurata rotations replace <id>            # after rotating: plan with the new value from the clipboard
-./segurata rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]
-./segurata rotations done <id> --note "rolled in the dashboard"
-./segurata rotations snooze <id> --until 2027-01-15
-./segurata rotations ignore <id> --reason "test fixture"
-./segurata rotations reopen <id>
-./segurata rotations ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
+segurata rotations sync                    # from the latest local-secrets inventory
+segurata rotations list --priority P0,P1   # what to rotate first
+segurata rotations list --owner not-mine    # secrets that name someone else's account (mine, not-mine, unknown)
+segurata rotations next --priority P0      # the most urgent item and exactly what to do (--log records it was shown)
+segurata rotations show <id>               # locations, where the new value goes, rotate URL, whose it is and why
+segurata rotations replace <id>            # after rotating: plan with the new value from the clipboard
+segurata rotations replace <id> --apply [--to-keychain ANTHROPIC_API_KEY]
+segurata rotations done <id> --note "rolled in the dashboard"
+segurata rotations snooze <id> --until 2027-01-15
+segurata rotations ignore <id> --reason "test fixture"
+segurata rotations reopen <id>
+segurata rotations ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
 ```
 
 `rotations sync`, `done`, `snooze`, `ignore` and `reopen` are `track`'s verbs on secrets only.
@@ -430,9 +430,9 @@ to Credential Manager and `$env:NAME = '…'` lines in PowerShell profiles read 
 ### Redacting trails
 
 ```bash
-./segurata redact --trails                      # dry run: files, matches per file and per type
-./segurata redact --item <id> --apply           # one secret, in every transcript, history and log
-./segurata redact --trails --min-priority P1 --apply
+segurata redact --trails                      # dry run: files, matches per file and per type
+segurata redact --item <id> --apply           # one secret, in every transcript, history and log
+segurata redact --trails --min-priority P1 --apply
 ```
 
 Agent transcripts, shell histories and logs keep pasted secrets in plaintext. Rotation is still
@@ -450,8 +450,8 @@ backup unless `--backup`. Details: [docs/architecture.md](architecture.md#redact
 ## macOS and Brave posture (`macos`)
 
 ```bash
-./segurata inventory macos
-./segurata inventory --verbose macos   # also logs the checks that pass
+segurata inventory macos
+segurata inventory --verbose macos   # also logs the checks that pass
 ```
 
 Read-only checks without `sudo`: FileVault, SIP, Gatekeeper, firewall and stealth mode, automatic
@@ -525,7 +525,7 @@ flagging those without a developer signature), and whether Brave runs with
 ## Browser extensions (`browser-extensions`)
 
 ```bash
-./segurata inventory browser-extensions
+segurata inventory browser-extensions
 ```
 
 Reads every Brave and Chrome profile on macOS, Linux and Windows (under
