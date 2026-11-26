@@ -335,7 +335,11 @@ func TestCloudsdkConfigSetting(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := onlyStatus(t, inventory(t, newTest(home, nil, nil, g), map[string]any{"domain": domain, "cloudsdk_config": "~/elsewhere"}, nil))
-	if !strings.Contains(st.Detail, `CLOUDSDK_CONFIG="`+custom+`"`) {
+	want := `CLOUDSDK_CONFIG="` + custom + `"`
+	if runtime.GOOS == "windows" {
+		want = "$env:CLOUDSDK_CONFIG = " + connector.PowerShellString(custom)
+	}
+	if !strings.Contains(st.Detail, want) {
 		t.Fatalf("~ must expand to the home folder: %s", st.Detail)
 	}
 }

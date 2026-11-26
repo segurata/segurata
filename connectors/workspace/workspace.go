@@ -25,6 +25,7 @@ import (
 	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/homepath"
 )
 
 const (
@@ -116,10 +117,7 @@ func parseSettings(m map[string]any, home string) (settings, error) {
 	if s.inactiveDays, err = cfgkey.PositiveInt(m, "workspace", "inactive_days", defaultInactiveDays); err != nil {
 		return s, err
 	}
-	switch {
-	case strings.HasPrefix(s.cloudsdkConfig, "~/"):
-		s.cloudsdkConfig = filepath.Join(home, s.cloudsdkConfig[2:])
-	case s.cloudsdkConfig == "" && s.domain != "":
+	if s.cloudsdkConfig = homepath.Expand(s.cloudsdkConfig, home); s.cloudsdkConfig == "" && s.domain != "" {
 		s.cloudsdkConfig = DefaultConfigDir(home, s.domain)
 	}
 	return s, nil
