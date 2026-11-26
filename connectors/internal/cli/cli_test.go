@@ -13,17 +13,8 @@ import (
 	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
-func shell(t *testing.T) string {
-	t.Helper()
-	p, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("no sh on this system")
-	}
-	return p
-}
-
 func TestExecReturnsStdout(t *testing.T) {
-	out, err := Exec{Path: shell(t), Timeout: 10 * time.Second}.Run(context.Background(), "-c", "printf hello")
+	out, err := Exec{Path: proctest.Shell(t), Timeout: 10 * time.Second}.Run(context.Background(), "-c", "printf hello")
 	if err != nil || string(out) != "hello" {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
@@ -31,7 +22,7 @@ func TestExecReturnsStdout(t *testing.T) {
 
 func TestExecAddsEnvToTheInheritedOne(t *testing.T) {
 	t.Setenv("CLI_TEST_INHERITED", "kept")
-	e := Exec{Path: shell(t), Timeout: 10 * time.Second, Env: []string{"CLI_TEST_EXTRA=1"}}
+	e := Exec{Path: proctest.Shell(t), Timeout: 10 * time.Second, Env: []string{"CLI_TEST_EXTRA=1"}}
 	out, err := e.Run(context.Background(), "-c", `printf "%s %s" "$CLI_TEST_INHERITED" "$CLI_TEST_EXTRA"`)
 	if err != nil || string(out) != "kept 1" {
 		t.Fatalf("out=%q err=%v", out, err)
@@ -39,7 +30,7 @@ func TestExecAddsEnvToTheInheritedOne(t *testing.T) {
 }
 
 func TestExecFailureKeepsStderr(t *testing.T) {
-	sh := shell(t)
+	sh := proctest.Shell(t)
 	_, err := Exec{Path: sh, Timeout: 10 * time.Second}.Run(context.Background(), "-c", "echo 'PERMISSION_DENIED: nope' >&2; exit 3")
 	var ce *Error
 	if !errors.As(err, &ce) {
@@ -59,7 +50,7 @@ func TestExecFailureKeepsStderr(t *testing.T) {
 
 func TestExecStderrCheckFailsARunThatExitedZero(t *testing.T) {
 	broken := errors.New("swallowed failure")
-	e := Exec{Path: shell(t), Timeout: 10 * time.Second, StderrCheck: func(stderr string) error {
+	e := Exec{Path: proctest.Shell(t), Timeout: 10 * time.Second, StderrCheck: func(stderr string) error {
 		if strings.Contains(stderr, "fatal") {
 			return broken
 		}
@@ -76,7 +67,7 @@ func TestExecStderrCheckFailsARunThatExitedZero(t *testing.T) {
 }
 
 func TestExecFailureKeepsPartialStdout(t *testing.T) {
-	out, err := Exec{Path: shell(t), Timeout: 10 * time.Second}.Run(context.Background(), "-c", "printf partial; exit 2")
+	out, err := Exec{Path: proctest.Shell(t), Timeout: 10 * time.Second}.Run(context.Background(), "-c", "printf partial; exit 2")
 	var ce *Error
 	if !errors.As(err, &ce) || string(out) != "partial" {
 		t.Fatalf("out=%q err=%v", out, err)
@@ -113,7 +104,7 @@ func TestErrorMessageNamesTheCommandPath(t *testing.T) {
 }
 
 func TestExecTimeout(t *testing.T) {
-	_, err := Exec{Path: shell(t), Timeout: 50 * time.Millisecond}.Run(context.Background(), "-c", "sleep 5")
+	_, err := Exec{Path: proctest.Shell(t), Timeout: 50 * time.Millisecond}.Run(context.Background(), "-c", "sleep 5")
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out after 50ms") {
 		t.Fatalf("want a timeout error, got %v", err)
 	}

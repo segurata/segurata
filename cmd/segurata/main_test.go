@@ -10,19 +10,16 @@ import (
 	"testing"
 
 	"github.com/segurata/segurata/internal/connector/connectortest"
+	"github.com/segurata/segurata/internal/proc/proctest"
 	"github.com/segurata/segurata/internal/tracker"
 )
 
 // Every verb asks for the connectors, some of them many times per command (status asks once per
 // setup item); plugins answer describe once per process.
 func TestConnectorsAreDiscoveredOncePerProcess(t *testing.T) {
-	connectortest.NeedShell(t)
 	dir := t.TempDir()
 	calls := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho x >> '" + calls + "'\necho '{\"name\":\"once\",\"protocol\":2}'\n"
-	if err := os.WriteFile(filepath.Join(dir, "segurata-once"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	proctest.Script(t, dir, "segurata-once", "echo x >> '"+calls+"'\necho '{\"name\":\"once\",\"protocol\":2}'\n")
 	t.Setenv("PATH", dir)
 	freshDiscovery(t)
 	for range 3 {

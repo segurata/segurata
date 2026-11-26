@@ -12,6 +12,7 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/proc/proctest"
 )
 
 func describing(js string) string { return "case \"$1\" in describe) echo '" + js + "';; esac\n" }
@@ -64,23 +65,19 @@ func TestDiscoverKeepsOneConnectorPerName(t *testing.T) {
 	connector.Register(builtin{"discoverbuiltin"})
 	ran := filepath.Join(t.TempDir(), "ran")
 	first, second := t.TempDir(), t.TempDir()
-	plugin := func(dir, file, name string) {
+	plugin := func(dir, file, name string) string {
 		t.Helper()
-		body := "echo " + file + " >> '" + ran + "'\n" + describing(`{"name":"`+name+`","protocol":2}`)
-		if err := os.WriteFile(filepath.Join(dir, "segurata-"+file), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		return proctest.Script(t, dir, "segurata-"+file, "echo "+file+" >> '"+ran+"'\n"+describing(`{"name":"`+name+`","protocol":2}`))
 	}
-	connectortest.NeedShell(t)
 	plugin(first, "discoverbuiltin", "discoverbuiltin")
 	plugin(first, "zzz", "discoverbuiltin")
-	plugin(first, "dup", "dup")
+	dup := plugin(first, "dup", "dup")
 	plugin(second, "dup", "dup")
 	plugin(second, "dup.orig", "dup")
 	t.Setenv("PATH", first+string(os.PathListSeparator)+second)
 
 	got := connector.Discover()
-	if len(got) != 1 || got[0].Path != filepath.Join(first, "segurata-dup") || got[0].Describe().Name != "dup" {
+	if len(got) != 1 || got[0].Path != dup || got[0].Describe().Name != "dup" {
 		t.Fatalf("discovered %+v", got)
 	}
 	raw, _ := os.ReadFile(ran)
@@ -118,14 +115,10 @@ esac
 // A relative PATH entry would load plugins from whatever directory segurata runs in.
 func TestDiscoverSkipsRelativePathEntries(t *testing.T) {
 	dir := t.TempDir()
-	connectortest.NeedShell(t)
 	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n" + describing(`{"name":"local","protocol":2}`)
-	if err := os.WriteFile(filepath.Join(dir, "bin", "segurata-local"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	proctest.Script(t, filepath.Join(dir, "bin"), "segurata-local", describing(`{"name":"local","protocol":2}`))
 	t.Chdir(dir)
 	t.Setenv("PATH", "bin")
 	if got := connector.Discover(); len(got) != 0 {

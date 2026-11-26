@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/internal/connector/connectortest"
 	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/proc/proctest"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
 )
@@ -110,7 +111,7 @@ func TestApplyNeedsAConfirmation(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	sleep = func(time.Duration) {}
-	os.Exit(m.Run())
+	proctest.Main(m)
 }
 
 func TestVerifyAfterApply(t *testing.T) {

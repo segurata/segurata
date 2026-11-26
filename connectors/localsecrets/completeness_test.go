@@ -16,20 +16,17 @@ import (
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/proc/proctest"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
 // A run that could not read part of the machine says so, so the findings it missed there are not
 // taken as resolved.
 
-// writeExe writes an executable shell script named name into a fresh directory and returns its path.
+// writeExe makes an executable shell script named name in a fresh directory and returns its path.
 func writeExe(t *testing.T, name, body string) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return proctest.Script(t, "", name, body+"\n")
 }
 
 func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {

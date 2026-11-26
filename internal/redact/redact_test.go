@@ -17,6 +17,7 @@ import (
 	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/proc/proctest"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/testcorpus"
@@ -401,11 +402,7 @@ func TestLsofExitOneIsNoMatch(t *testing.T) {
 
 func exitErr(t *testing.T, code int) error {
 	t.Helper()
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("no sh")
-	}
-	err = exec.Command(sh, "-c", "exit 1").Run()
+	err := exec.Command(proctest.Shell(t), "-c", "exit 1").Run()
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) || ee.ExitCode() != code {
 		t.Fatalf("could not make an exit error: %v", err)
