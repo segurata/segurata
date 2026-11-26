@@ -1,8 +1,12 @@
 package secretrisk
 
-import "fmt"
+import (
+	"fmt"
 
-const DumpFixDoc = "docs/secrets.md#data-dumps-in-git"
+	"github.com/segurata/segurata/internal/docref"
+)
+
+const DumpFixDoc = docref.Docs + "secrets.md#data-dumps-in-git"
 
 // Breach notification guidance for dumps of personal data, checked on 2026-11-24.
 const (

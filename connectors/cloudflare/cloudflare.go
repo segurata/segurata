@@ -19,6 +19,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -52,7 +53,7 @@ const setupHint = secretName + " is not configured. Create a user API token at "
 	` and reference it in ~/.config/segurata/config.json as` +
 	` {"connectors": {"cloudflare": {"secrets": {"` + secretName + `": "keychain:segurata-cloudflare"}}}}` +
 	` (one instance per login: "cloudflare:<label>" with keychain:segurata-cloudflare-<label>).` +
-	" See docs/cloud-connectors.md."
+	" See " + docref.Docs + "cloud-connectors.md#cloudflare-cloudflare."
 
 // Connector is the built-in Cloudflare connector. Zero values use the real API, clock and pacing.
 type Connector struct {

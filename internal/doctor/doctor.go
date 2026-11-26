@@ -19,6 +19,7 @@ import (
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/fanout"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/keychain"
@@ -48,6 +49,9 @@ type result struct {
 }
 
 const cdpTimeout = 5 * time.Second
+
+// secretsFormat is where the config file and its secret references are described.
+const secretsFormat = docref.Docs + "architecture.md#secrets-used-by-connectors"
 
 // Run checks the connectors the selectors pick (all when none) and prints the results. It returns
 // 1 when any check failed, 2 for an unknown selector, 0 otherwise.
@@ -111,12 +115,12 @@ func (e Env) config() (config.Config, []connector.Check, bool) {
 	cfg, err := config.Load(e.ConfigPath)
 	if err != nil {
 		return cfg, []connector.Check{{Level: connector.Fail, What: what, Detail: "invalid: " + err.Error(),
-			Fix: "fix the file; format: docs/architecture.md, \"Secrets used by connectors\""}}, false
+			Fix: "fix the file; format: " + secretsFormat}}, false
 	}
 	var checks []connector.Check
 	if errors.Is(statErr, fs.ErrNotExist) {
 		checks = append(checks, connector.Check{Level: connector.Warn, What: what, Detail: "not found: defaults apply and no connector has secrets",
-			Fix: "create it (mode 0600); format: docs/architecture.md, \"Secrets used by connectors\""})
+			Fix: "create it (mode 0600); format: " + secretsFormat})
 	} else {
 		checks = append(checks, connector.Check{Level: connector.OK, What: what, Detail: fmt.Sprintf("valid, %d connector instance(s)", len(cfg.Connectors))})
 	}

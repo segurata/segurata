@@ -25,6 +25,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/userdirs"
 	"github.com/segurata/segurata/internal/cfgkey"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
@@ -35,7 +36,7 @@ import (
 const (
 	name           = secretrisk.ConnectorName
 	localAccount   = "local"
-	fixDoc         = "docs/secrets.md"
+	fixDoc         = docref.Docs + "secrets.md"
 	defaultWorkers = 6
 	defaultTimeout = 10 * time.Minute
 )

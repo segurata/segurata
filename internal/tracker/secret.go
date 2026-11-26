@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -19,7 +20,7 @@ import (
 // StillPresent is why a rotated secret seen again in a working file reopens.
 const StillPresent = "still present after rotation (old value still in a working file)"
 
-const historyOnly = "old value still in history/transcripts; harmless after revocation — purge if you like: see docs/secrets.md#after-a-rotation"
+const historyOnly = "old value still in history/transcripts; harmless after revocation — purge if you like: see " + docref.Docs + "secrets.md#after-a-rotation"
 
 // Location is one place the secret was found.
 type Location struct {

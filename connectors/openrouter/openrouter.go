@@ -16,6 +16,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/connectors/internal/keytrack"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -35,7 +36,7 @@ const (
 
 const setupHint = "set " + secretName + ": create a read-only Management API key at " + managementURL +
 	`, store it with: security add-generic-password -s segurata-openrouter-admin -a "$USER" -w` +
-	` and reference it as "keychain:segurata-openrouter-admin" under connectors.openrouter.secrets in ~/.config/segurata/config.json (docs/ai-connectors.md)`
+	` and reference it as "keychain:segurata-openrouter-admin" under connectors.openrouter.secrets in ~/.config/segurata/config.json (` + docref.Docs + "ai-connectors.md#openrouter-openrouter)"
 
 // Connector is the built-in OpenRouter connector. Zero values use the real API and clock.
 type Connector struct {

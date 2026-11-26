@@ -15,6 +15,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/connectors/internal/keytrack"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -34,7 +35,7 @@ const (
 
 const setupHint = "set " + secretName + ": create an Admin API key at " + adminURL +
 	`, store it with: security add-generic-password -s segurata-openai-admin -a "$USER" -w` +
-	` and reference it as "keychain:segurata-openai-admin" under connectors.openai.secrets in ~/.config/segurata/config.json (docs/ai-connectors.md)`
+	` and reference it as "keychain:segurata-openai-admin" under connectors.openai.secrets in ~/.config/segurata/config.json (` + docref.Docs + "ai-connectors.md#openai-openai)"
 
 // Connector is the built-in OpenAI connector. Zero values use the real API and clock.
 type Connector struct {

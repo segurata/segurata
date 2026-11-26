@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/doc"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/textfmt"
@@ -34,7 +35,7 @@ func (r *Report) document() *doc.Doc {
 	r.rotations(d)
 	r.accepted(d)
 	d.H(2, "Manual review")
-	d.P("Services without a connector are reviewed by hand every quarter, and right after a breach of a service you sign in with: docs/manual-review.md.")
+	d.P("Services without a connector are reviewed by hand every quarter, and right after a breach of a service you sign in with: " + docref.Docs + "manual-review.md.")
 	return d
 }
 

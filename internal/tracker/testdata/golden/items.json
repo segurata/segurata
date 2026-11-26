@@ -81,7 +81,7 @@
       "Priority": "",
       "Status": "open",
       "Who": "you",
-      "Action": "Review the devices and the apps using Sign in with Apple, and remove the ones you no longer use (docs/manual-review.md). Mark this done when checked.",
+      "Action": "Review the devices and the apps using Sign in with Apple, and remove the ones you no longer use (https://github.com/segurata/segurata/blob/main/docs/manual-review.md). Mark this done when checked.",
       "Command": "",
       "URL": "https://account.apple.com/account/manage",
       "Findings": null
@@ -109,7 +109,7 @@
       "Priority": "",
       "Status": "open",
       "Who": "you",
-      "Action": "On every Google account, run Security Checkup (sessions, devices, recovery phone and email) and register a passkey or security key; remove SMS as a second factor (docs/plan.md, section 1). Mark this done when checked.",
+      "Action": "On every Google account, run Security Checkup (sessions, devices, recovery phone and email) and register a passkey or security key; remove SMS as a second factor (https://github.com/segurata/segurata/blob/main/docs/plan.md#1-google-accounts-and-workspace-administration). Mark this done when checked.",
       "Command": "",
       "URL": "https://myaccount.google.com/security-checkup",
       "Findings": null
@@ -123,7 +123,7 @@
       "Priority": "",
       "Status": "open",
       "Who": "you",
-      "Action": "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (docs/plan.md, section 2). Mark this done when checked.",
+      "Action": "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (https://github.com/segurata/segurata/blob/main/docs/plan.md#2-password-manager-passkeys-and-hardware-keys). Mark this done when checked.",
       "Command": "",
       "URL": "",
       "Findings": null
@@ -137,7 +137,7 @@
       "Priority": "",
       "Status": "open",
       "Who": "you",
-      "Action": "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (docs/plan.md, section 6). Mark this done when checked.",
+      "Action": "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (https://github.com/segurata/segurata/blob/main/docs/plan.md#6-developer-secrets). Mark this done when checked.",
       "Command": "",
       "URL": "https://dashboard.stripe.com/apikeys",
       "Findings": null
@@ -151,7 +151,7 @@
       "Priority": "",
       "Status": "open",
       "Who": "you",
-      "Action": "Set up read-only Admin SDK credentials for each tenant (docs/inventory.md, \"Google Workspace administration\"), then run the connector.",
+      "Action": "Set up read-only Admin SDK credentials for each tenant (https://github.com/segurata/segurata/blob/main/docs/inventory.md#google-workspace-administration-workspace), then run the connector.",
       "Command": "segurata inventory workspace",
       "URL": "",
       "Findings": null
@@ -636,7 +636,7 @@
       "Who": "you",
       "Action": "Treat the data as exposed to everyone who could clone the repository. Rotate every credential the dumps hold, then purge them from history in one pass: `git filter-repo --invert-paths --path 'db/prod.sql' --path 'backup.dump'` and force-push every branch and tag; collaborators must re-clone. segurata never rewrites history or pushes.\nFiles: db/prod.sql (x, pushed); backup.dump (x, pushed).\nIf they hold personal data of customers or staff, check the GDPR breach notification duty (72 hours): https://www.aepd.es/es/derechos-y-deberes/cumple-tus-deberes/medidas-de-cumplimiento/brechas-de-datos-personales, https://www.edpb.europa.eu/documents/guideline/guidelines-92022-on-personal-data-breach-notification-under-gdpr_en.",
       "Command": "segurata track show T-0029",
-      "URL": "docs/secrets.md#data-dumps-in-git",
+      "URL": "https://github.com/segurata/segurata/blob/main/docs/secrets.md#data-dumps-in-git",
       "Findings": [
         "local-secrets repo= project= Database dump committed to ~/src/api: backup.dump",
         "local-secrets repo= project= Database dump committed to ~/src/api: db/prod.sql"

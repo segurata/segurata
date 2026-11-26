@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/cliflag"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/gitlocal"
@@ -139,7 +140,7 @@ func (f *fileEdit) names() []string { return append([]string{f.path}, f.also...)
 
 func (r *replacement) locateIn(p, home string) (*fileEdit, error) {
 	if secretrisk.IsUserEnv(p) {
-		return nil, fmt.Errorf("%s is a user environment variable, not a file: delete it (`reg delete %s /v %s /f`), keep the new value in Credential Manager and read it from your PowerShell profile (docs/secrets.md#shell-variables-from-credential-manager), then run replace again",
+		return nil, fmt.Errorf("%s is a user environment variable, not a file: delete it (`reg delete %s /v %s /f`), keep the new value in Credential Manager and read it from your PowerShell profile ("+docref.Docs+"secrets.md#shell-variables-from-credential-manager), then run replace again",
 			p, secretrisk.UserEnvKey, p[len(secretrisk.UserEnvKey)+1:])
 	}
 	var recorded []int

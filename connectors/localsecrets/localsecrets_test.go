@@ -409,7 +409,7 @@ func TestInventoryEndToEnd(t *testing.T) {
 	if rc.Remediation.Action != connector.ActionChmod600 || !rc.Remediation.Automatable || env.Remediation.Action != "" {
 		t.Errorf("chmod action: readable %q, closed %q", rc.Remediation.Action, env.Remediation.Action)
 	}
-	if evidence(rc, "fix") != "docs/secrets.md#shell-variables-from-the-keychain" || !strings.HasPrefix(evidence(rc, "redacted"), "sk-ant-…") {
+	if evidence(rc, "fix") != fixDoc+"#shell-variables-from-the-keychain" || !strings.HasPrefix(evidence(rc, "redacted"), "sk-ant-…") {
 		t.Errorf("rc key fix or hint: %v", rc.Evidence)
 	}
 	tr := one("anthropic ~/.claude/projects/p/s.jsonl scan")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/doc"
+	"github.com/segurata/segurata/internal/docref"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -159,23 +160,23 @@ var gaps = []gap{
 		step:    "Give gh the read:user scope so the github connector can read whether 2FA is on, then run it again.",
 		command: "gh auth refresh -h github.com -s read:user && segurata inventory github", url: "https://github.com/settings/security"},
 	{slug: "google-recovery", title: "Google recovery options and passkeys are not audited by any connector",
-		step: "On every Google account, run Security Checkup (sessions, devices, recovery phone and email) and register a passkey or security key; remove SMS as a second factor (docs/plan.md, section 1). Mark this done when checked.",
+		step: "On every Google account, run Security Checkup (sessions, devices, recovery phone and email) and register a passkey or security key; remove SMS as a second factor (" + docref.Docs + "plan.md#1-google-accounts-and-workspace-administration). Mark this done when checked.",
 		url:  "https://myaccount.google.com/security-checkup"},
 	{slug: "apple-account", title: "Apple Account devices and Sign in with Apple apps are not audited by any connector",
-		step: "Review the devices and the apps using Sign in with Apple, and remove the ones you no longer use (docs/manual-review.md). Mark this done when checked.",
+		step: "Review the devices and the apps using Sign in with Apple, and remove the ones you no longer use (" + docref.Docs + "manual-review.md). Mark this done when checked.",
 		url:  "https://account.apple.com/account/manage"},
 	{slug: "stripe-keys", title: "Stripe API keys are not audited by any connector",
-		step: "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (docs/plan.md, section 6). Mark this done when checked.",
+		step: "In every Stripe account, replace secret keys with restricted keys and delete the unused ones (" + docref.Docs + "plan.md#6-developer-secrets). Mark this done when checked.",
 		url:  "https://dashboard.stripe.com/apikeys"},
 	{slug: "hibp", title: "Breaches of your email addresses are not checked: the hibp connector is not set up",
 		audited: true, unreported: true,
-		step:    "Install the example connector and give it a Have I Been Pwned API key and your addresses (examples/hibp/README.md), then run it.",
+		step:    "Install the example connector and give it a Have I Been Pwned API key and your addresses (" + docref.Repo + "examples/hibp/README.md), then run it.",
 		command: "segurata inventory hibp", url: "https://haveibeenpwned.com/API/Key"},
 	{slug: "password-manager", title: "The password manager's reused and breached password report is not audited by any connector",
-		step: "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (docs/plan.md, section 2). Mark this done when checked."},
+		step: "Review 1Password Watchtower or Bitwarden Reports and change the reused, weak and breached passwords (" + docref.Docs + "plan.md#2-password-manager-passkeys-and-hardware-keys). Mark this done when checked."},
 	{slug: "workspace", title: "Google Workspace administration is not audited: no workspace tenant could be read",
 		audited: true,
-		step:    "Set up read-only Admin SDK credentials for each tenant (docs/inventory.md, \"Google Workspace administration\"), then run the connector.",
+		step:    "Set up read-only Admin SDK credentials for each tenant (" + docref.Docs + "inventory.md#google-workspace-administration-workspace), then run the connector.",
 		command: "segurata inventory workspace"},
 }
 
