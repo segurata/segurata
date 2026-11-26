@@ -68,8 +68,9 @@ func closeAndUndo(t *testing.T, name string) {
 	if len(p.Undo) != 1 {
 		t.Fatalf("undo %v", p.Undo)
 	}
-	if err := (connector.System{}).Run(context.Background(), p.Undo[0], connectortest.QuietIO()); err != nil {
-		t.Fatalf("undo: %v", err)
+	undoIO := connectortest.QuietIO()
+	if err := (connector.System{}).Run(context.Background(), p.Undo[0], undoIO); err != nil {
+		t.Fatalf("undo: %v\n%s", err, undoIO.Err)
 	}
 	if after, err := fileacl.Fingerprint(path); err != nil || sortedEntries(after) != sortedEntries(before) {
 		t.Fatalf("undo left %q, want %q (%v)", after, before, err)
