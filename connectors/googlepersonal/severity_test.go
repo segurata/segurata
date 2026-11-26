@@ -45,6 +45,9 @@ func TestClassifyScopes(t *testing.T) {
 		// info
 		{"See your profile info", finding.SevInfo},
 		{"Ver la información de tu perfil", finding.SevInfo},
+		{"See your primary Google Account email address", finding.SevInfo},
+		{"Ver la dirección de correo electrónico principal de tu cuenta de Google", finding.SevInfo},
+		{"Associate you with your personal info on Google", finding.SevInfo},
 	}
 	for _, c := range cases {
 		if got := classify(c.scope).sev; got != c.want {

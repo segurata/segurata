@@ -6,10 +6,7 @@ import (
 	"github.com/segurata/segurata/connectors/internal/pagetext"
 )
 
-// Pure parsers over the innerText of Google Account pages, in English and Spanish.
-// Everything that depends on Google's wording lives here, so a UI change means one fixture and
-// one regexp to update.
-
+// Everything that depends on Google's wording, in English and Spanish, lives here.
 var (
 	reauthRE       = regexp.MustCompile(`Verify (it.s|that it.s) you|Demuestra que eres t`)
 	accessHeadRE   = regexp.MustCompile(`(?i)(has some access|tiene acceso parcial)`)
@@ -25,7 +22,6 @@ var (
 	noiseRE = regexp.MustCompile(`^(account_circle|pentagon|help|To use |Para usar )`)
 )
 
-// isReauth tells whether Google is asking for a fresh sign-in instead of showing the page.
 func isReauth(text string) bool { return reauthRE.MatchString(text) }
 
 type overview struct {
@@ -33,8 +29,7 @@ type overview struct {
 	CrossAccount bool     // "secured by Cross-Account Protection"
 }
 
-// parseOverview reads an app's linkedapps/overview page. The overview may truncate the list
-// with "+N more"; those markers are dropped, and the details page gives the full list.
+// parseOverview drops "+N more" markers: the details page gives the full list.
 func parseOverview(text string) overview {
 	o := overview{CrossAccount: crossAccountRE.MatchString(text)}
 	lines := pagetext.Lines(text)
@@ -52,7 +47,6 @@ type detail struct {
 	GivenOn string   // raw "Access given on" value, e.g. "March 24, 2020"
 }
 
-// parseDetail reads a linkedapps/details page (/oauth/ or /siwg/ variant).
 func parseDetail(text string) detail {
 	var d detail
 	lines := pagetext.Lines(text)

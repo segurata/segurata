@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -38,22 +39,6 @@ func (b *fakeBrowser) load(_ context.Context, url, _ string, ready func(json.Raw
 	return raw, nil
 }
 
-type recorder struct {
-	findings []finding.Finding
-	statuses []finding.Status
-	logs     []string
-	skipped  []string
-}
-
-func (r *recorder) Finding(f finding.Finding) { r.findings = append(r.findings, f) }
-func (r *recorder) Status(s finding.Status)   { r.statuses = append(r.statuses, s) }
-func (r *recorder) Scope(id string, inspected bool, reason string) {
-	if !inspected {
-		r.skipped = append(r.skipped, id+": "+reason)
-	}
-}
-func (r *recorder) Log(m string) { r.logs = append(r.logs, m) }
-
 const base = "https://myaccount.google.com/u/0/linkedapps/"
 
 func conns(mail, text string, apps ...appLink) map[string]any {
@@ -81,7 +66,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 		connectionsURL(2):            conns("a@example.test", "Third-party apps"), // fallback to the default account
 		connectionsURL(3):            conns("never@example.test", "must not be reached"),
 	}}
-	rec := &recorder{}
+	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +76,11 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 			t.Fatal("kept going after the email repeated")
 		}
 	}
-	if len(rec.findings) != 2 {
-		t.Fatalf("%d findings, want 2", len(rec.findings))
+	if len(rec.Findings) != 2 {
+		t.Fatalf("%d findings, want 2", len(rec.Findings))
 	}
 
-	acme := rec.findings[0]
+	acme := rec.Findings[0]
 	if acme.Account != "a@example.test" || acme.Kind != finding.KindGrant || acme.Severity != finding.SevHigh || acme.Blast != finding.BlastMailAndFiles {
 		t.Errorf("acme: %+v", acme)
 	}
@@ -123,7 +108,7 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 		t.Errorf("acme remediation %+v", acme.Remediation)
 	}
 
-	ex := rec.findings[1]
+	ex := rec.Findings[1]
 	if ex.Resource.Type != "sign_in_with_google_summary" || ex.Severity != finding.SevInfo || ex.Account != "a@example.test" {
 		t.Errorf("sign-in summary: %+v", ex)
 	}
@@ -133,31 +118,31 @@ func TestInventoryWalksAccountsUntilTheEmailRepeats(t *testing.T) {
 	if ex.Remediation.URL != connectionsURL(0) {
 		t.Errorf("summary points to %q", ex.Remediation.URL)
 	}
-	if len(rec.logs) != 1 || !strings.Contains(rec.logs[0], `unparsed access date "sometime"`) {
-		t.Errorf("logs %q", rec.logs)
+	if len(rec.Logs) != 1 || !strings.Contains(rec.Logs[0], `unparsed access date "sometime"`) {
+		t.Errorf("logs %q", rec.Logs)
 	}
 
 	wantStates := []finding.State{finding.StateOK, finding.StateReauth}
-	if len(rec.statuses) != len(wantStates) {
-		t.Fatalf("statuses %+v", rec.statuses)
+	if len(rec.Statuses) != len(wantStates) {
+		t.Fatalf("statuses %+v", rec.Statuses)
 	}
-	for i, s := range rec.statuses {
+	for i, s := range rec.Statuses {
 		if s.State != wantStates[i] {
 			t.Errorf("status %d = %+v, want %s", i, s, wantStates[i])
 		}
 	}
-	if rec.statuses[1].Account != "b@example.test" {
-		t.Errorf("reauth account %q", rec.statuses[1].Account)
+	if rec.Statuses[1].Account != "b@example.test" {
+		t.Errorf("reauth account %q", rec.Statuses[1].Account)
 	}
 }
 
 func TestInventoryReportsSignedOutBrowser(t *testing.T) {
-	rec := &recorder{}
+	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), &fakeBrowser{}, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.statuses) != 1 || rec.statuses[0].State != finding.StateSignedOut || len(rec.findings) != 0 {
-		t.Fatalf("got %+v %+v", rec.statuses, rec.findings)
+	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateSignedOut || len(rec.Findings) != 0 {
+		t.Fatalf("got %+v %+v", rec.Statuses, rec.Findings)
 	}
 }
 
@@ -178,15 +163,15 @@ func TestInventoryReportsUnreadableAppsAndKeepsTheRest(t *testing.T) {
 			connectionsURL(1):        errors.New("connection closed"),
 		},
 	}
-	rec := &recorder{}
+	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.findings) != 1 || fmt.Sprint(rec.findings[0].Evidence["services"]) != "[example.test]" {
-		t.Fatalf("findings %+v", rec.findings)
+	if len(rec.Findings) != 1 || fmt.Sprint(rec.Findings[0].Evidence["services"]) != "[example.test]" {
+		t.Fatalf("findings %+v", rec.Findings)
 	}
 	var details []string
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		details = append(details, string(s.State)+": "+s.Detail)
 	}
 	got := strings.Join(details, "\n")
@@ -195,8 +180,8 @@ func TestInventoryReportsUnreadableAppsAndKeepsTheRest(t *testing.T) {
 			t.Errorf("statuses missing %q:\n%s", want, got)
 		}
 	}
-	if len(rec.logs) != 1 || !strings.Contains(rec.logs[0], "details page: timeout") {
-		t.Errorf("logs %q", rec.logs)
+	if len(rec.Logs) != 1 || !strings.Contains(rec.Logs[0], "details page: timeout") {
+		t.Errorf("logs %q", rec.Logs)
 	}
 }
 
@@ -212,10 +197,10 @@ func TestFindingIDIgnoresGoogleTokensAndSeparatesRepeatedNames(t *testing.T) {
 			base + "overview/" + token + "2": page(overviewENAccess),
 			base + "overview/" + token + "3": page(overviewENSignIn),
 		}}
-		rec := &recorder{}
+		rec := &httpxtest.Recorder{}
 		inventory(context.Background(), b, rec, now, nil)
 		var ids []string
-		for _, f := range rec.findings {
+		for _, f := range rec.Findings {
 			ids = append(ids, f.ID)
 		}
 		return ids
@@ -239,15 +224,15 @@ func TestAccountsFilterSkipsOtherAccountsWithoutStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := &recorder{}
+	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), b, rec, now, only); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.statuses) != 1 || rec.statuses[0].Account != "me@example.test" {
-		t.Fatalf("statuses %+v", rec.statuses)
+	if len(rec.Statuses) != 1 || rec.Statuses[0].Account != "me@example.test" {
+		t.Fatalf("statuses %+v", rec.Statuses)
 	}
-	if len(rec.skipped) != 1 || rec.skipped[0] != "shared@example.test: not in connectors.google-personal.config.accounts" {
-		t.Fatalf("an account the config leaves out is a skipped scope: %q", rec.skipped)
+	if want := (httpxtest.Scope{ID: "shared@example.test", Reason: "not in connectors.google-personal.config.accounts"}); len(rec.Scopes) != 1 || rec.Scopes[0] != want {
+		t.Fatalf("an account the config leaves out is a skipped scope: %+v", rec.Scopes)
 	}
 	if _, err := accountFilter(map[string]any{"accounts": "me@example.test"}); err == nil {
 		t.Fatal("a non-list accounts setting must be rejected")
@@ -318,7 +303,7 @@ func TestRegisteredAsBuiltin(t *testing.T) {
 }
 
 func TestInventoryFailsToStartWithoutBrowser(t *testing.T) {
-	err := GooglePersonal{}.Inventory(context.Background(), connector.Request{CDPURL: "http://127.0.0.1:1"}, &recorder{})
+	err := GooglePersonal{}.Inventory(context.Background(), connector.Request{CDPURL: "http://127.0.0.1:1"}, &httpxtest.Recorder{})
 	if err == nil {
 		t.Fatal("expected an error when CDP is unreachable")
 	}
@@ -329,11 +314,11 @@ func TestGcloudGrantIsADependencyNotARevocation(t *testing.T) {
 		connectionsURL(0):   conns("a@example.test", "", appLink{Name: "Google Cloud SDK", Href: base + "overview/G"}),
 		base + "overview/G": page(overviewENAccess),
 	}}
-	rec := &recorder{}
+	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
-	f := rec.findings[0]
+	f := rec.Findings[0]
 	if !strings.HasSuffix(f.Title, "(segurata depends on it)") || f.Evidence["dependency"] != "segurata depends on it" ||
 		!strings.Contains(f.Remediation.Summary, "gcloud auth revoke") || strings.Contains(f.Remediation.Summary, "Remove all access") {
 		t.Errorf("gcloud grant: %q %q", f.Title, f.Remediation.Summary)
@@ -345,11 +330,11 @@ func TestGcloudGrantIsADependencyNotARevocation(t *testing.T) {
 func TestUnreadableAccountPageLeavesEverythingUninspected(t *testing.T) {
 	b := &fakeBrowser{pages: map[string]any{connectionsURL(0): conns("a@example.test", "Third-party apps")},
 		fail: map[string]error{connectionsURL(1): errors.New("target closed")}}
-	rec := &recorder{}
+	rec := &httpxtest.Recorder{}
 	if err := inventory(context.Background(), b, rec, now, nil); err != nil {
 		t.Fatal(err)
 	}
-	last := rec.statuses[len(rec.statuses)-1]
+	last := rec.Statuses[len(rec.Statuses)-1]
 	if last.Account != "authuser 1" || last.State != finding.StateError || last.Scope != finding.ScopeAll {
 		t.Fatalf("status %+v", last)
 	}

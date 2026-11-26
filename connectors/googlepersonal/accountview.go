@@ -15,8 +15,8 @@ const (
 	urlAdvancedProtection = "https://landing.google.com/advancedprotection/"
 )
 
-// signInSummary folds every Sign in with Google link of one account into one info finding that
-// lists the apps: each link alone judges nothing, the list is what to review.
+// signInSummary folds an account's Sign in with Google links into one finding: each link alone
+// judges nothing, the list is what to review.
 func signInSummary(account, connections string, signIns []finding.Finding) (finding.Finding, bool) {
 	if len(signIns) == 0 {
 		return finding.Finding{}, false
@@ -46,16 +46,12 @@ func signInSummary(account, connections string, signIns []finding.Finding) (find
 	}, true
 }
 
-// loginService is a kind of service whose account, signed in to with Google, holds money or
-// infrastructure. moves marks the ones that can move money out.
 type loginService struct {
 	re    *regexp.Regexp
-	moves bool
+	moves bool // can move money out
 }
 
-// loginServices match linked app names (Google shows a name or a domain). Crypto exchanges,
-// payment and money transfer services and banks can move money; investing platforms and cloud
-// consoles hold assets or infrastructure.
+// loginServices match the name or domain Google shows for a linked app.
 var loginServices = []loginService{
 	{rx(`\b(binance|bybit|coinbase|kraken|bitstamp|bitpanda|okx|kucoin|crypto\.com)\b`), true},
 	{rx(`\b(wise|transferwise|revolut|paypal|stripe|n26|qonto|payoneer)\b`), true},
@@ -64,8 +60,6 @@ var loginServices = []loginService{
 	{rx(`\b(amazon web services|aws|cloudflare|digitalocean|hetzner|ovhcloud|vercel|netlify|heroku|supabase|microsoft azure)\b`), false},
 }
 
-// loginDependency is one finding per account that is the login for financial or cloud services:
-// whoever takes the Google account takes them too.
 func loginDependency(account string, apps []finding.Finding) (finding.Finding, bool) {
 	var names []string
 	moves := false
