@@ -72,7 +72,7 @@ func (GooglePersonal) Inventory(ctx context.Context, req connector.Request, emit
 	if err != nil {
 		return err
 	}
-	return inventory(ctx, cdpBrowser{c}, emit, time.Now(), only)
+	return inventory(ctx, c, emit, time.Now(), only)
 }
 
 // accountFilter: other accounts signed in to the browser, such as a mailbox you were given access
@@ -97,19 +97,9 @@ func accountFilter(cfg map[string]any) (map[string]bool, error) {
 	return only, nil
 }
 
-// browser polls expr on a page until ready accepts its value or tries run out.
+// browser polls expr on a page until ready accepts its value or tries run out; *cdp.Client is one.
 type browser interface {
-	load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error)
-}
-
-type cdpBrowser struct{ c *cdp.Client }
-
-func (b cdpBrowser) load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (v json.RawMessage, err error) {
-	err = b.c.WithPage(ctx, url, func(p *cdp.Page) error {
-		v, err = p.WaitFor(ctx, expr, ready, tries)
-		return err
-	})
-	return v, err
+	Load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error)
 }
 
 // The account email is read from the page source: it is not always visible.
@@ -171,7 +161,7 @@ func connectionsURL(u int) string {
 func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.Time, only map[string]bool) error {
 	seen := map[string]bool{}
 	for u := 0; u < maxAccounts && ctx.Err() == nil; u++ {
-		raw, err := b.load(ctx, connectionsURL(u), connectionsJS, connectionsReady, 24)
+		raw, err := b.Load(ctx, connectionsURL(u), connectionsJS, connectionsReady, 24)
 		if err != nil { // which accounts are left unread is unknown
 			emit.Status(finding.Status{Account: fmt.Sprintf("authuser %d", u), Scope: finding.ScopeAll, State: finding.StateError, Detail: err.Error()})
 			break
@@ -246,7 +236,7 @@ func inspectAll(ctx context.Context, b browser, links []appLink, now time.Time) 
 }
 
 func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected {
-	raw, err := b.load(ctx, l.Href, pageJS, overviewReady, 30)
+	raw, err := b.Load(ctx, l.Href, pageJS, overviewReady, 30)
 	if err != nil {
 		return inspected{err: err}
 	}
@@ -260,7 +250,7 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 	var res inspected
 	var created *time.Time
 	for _, u := range page.Details {
-		raw, err := b.load(ctx, u, pageJS, detailReady, 30)
+		raw, err := b.Load(ctx, u, pageJS, detailReady, 30)
 		if err != nil {
 			res.warnings = append(res.warnings, fmt.Sprintf("details page: %v", err))
 			continue

@@ -390,9 +390,9 @@ func TestWithPageRunsTheSequenceAndWaitsUntilReady(t *testing.T) {
 	b := &fakeBrowser{readyAt: 3}
 	c := connectT(t, b)
 	var got json.RawMessage
-	err := c.WithPage(context.Background(), "https://example.com", func(p *Page) error {
+	err := c.withPage(context.Background(), "https://example.com", func(p *Page) error {
 		var err error
-		got, err = p.WaitFor(context.Background(), "x", func(v json.RawMessage) bool {
+		got, err = p.waitFor(context.Background(), "x", func(v json.RawMessage) bool {
 			var r struct{ Ready bool }
 			json.Unmarshal(v, &r)
 			return r.Ready
@@ -403,7 +403,7 @@ func TestWithPageRunsTheSequenceAndWaitsUntilReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != `{"n":3,"ready":true}` {
-		t.Fatalf("WaitFor = %s", got)
+		t.Fatalf("waitFor = %s", got)
 	}
 	want := "Target.createTarget Target.attachToTarget Runtime.enable Emulation.setFocusEmulationEnabled Page.navigate Runtime.evaluate Runtime.evaluate Runtime.evaluate Target.closeTarget"
 	if s := strings.Join(b.methods, " "); s != want {
@@ -499,8 +499,8 @@ func TestWithPageSetupErrorStillClosesTheTarget(t *testing.T) {
 func TestWaitForReturnsLastValueWhenNeverReady(t *testing.T) {
 	b := &fakeBrowser{readyAt: 100}
 	c := connectT(t, b)
-	err := c.WithPage(context.Background(), "u", func(p *Page) error {
-		v, err := p.WaitFor(context.Background(), "x", func(json.RawMessage) bool { return false }, 4)
+	err := c.withPage(context.Background(), "u", func(p *Page) error {
+		v, err := p.waitFor(context.Background(), "x", func(json.RawMessage) bool { return false }, 4)
 		if string(v) != `{"n":4,"ready":false}` {
 			t.Errorf("last value %s", v)
 		}
@@ -514,8 +514,8 @@ func TestWaitForReturnsLastValueWhenNeverReady(t *testing.T) {
 func TestWaitForTreatsExceptionsAsNotReady(t *testing.T) {
 	b := &fakeBrowser{failFor: 2, readyAt: 3}
 	c := connectT(t, b)
-	err := c.WithPage(context.Background(), "u", func(p *Page) error {
-		v, err := p.WaitFor(context.Background(), "document.body.innerText", func(json.RawMessage) bool { return true }, 5)
+	err := c.withPage(context.Background(), "u", func(p *Page) error {
+		v, err := p.waitFor(context.Background(), "document.body.innerText", func(json.RawMessage) bool { return true }, 5)
 		if string(v) != `{"n":3,"ready":true}` {
 			t.Errorf("value %s", v)
 		}
@@ -529,8 +529,8 @@ func TestWaitForTreatsExceptionsAsNotReady(t *testing.T) {
 func TestWaitForReturnsTheExceptionWhenEveryTryThrows(t *testing.T) {
 	b := &fakeBrowser{evalFail: true}
 	c := connectT(t, b)
-	err := c.WithPage(context.Background(), "u", func(p *Page) error {
-		_, err := p.WaitFor(context.Background(), "x", func(json.RawMessage) bool { return true }, 3)
+	err := c.withPage(context.Background(), "u", func(p *Page) error {
+		_, err := p.waitFor(context.Background(), "x", func(json.RawMessage) bool { return true }, 3)
 		return err
 	})
 	var ee *EvalError
@@ -542,7 +542,7 @@ func TestWaitForReturnsTheExceptionWhenEveryTryThrows(t *testing.T) {
 func TestWithPageClosesTargetWhenFnFails(t *testing.T) {
 	b := &fakeBrowser{evalFail: true}
 	c := connectT(t, b)
-	err := c.WithPage(context.Background(), "u", func(p *Page) error {
+	err := c.withPage(context.Background(), "u", func(p *Page) error {
 		_, err := p.Evaluate(context.Background(), "throw 1")
 		return err
 	})
@@ -558,9 +558,9 @@ func TestWithPageClosesTargetWhenContextIsCancelled(t *testing.T) {
 	b := &fakeBrowser{}
 	c := connectT(t, b)
 	ctx, cancel := context.WithCancel(context.Background())
-	err := c.WithPage(ctx, "u", func(p *Page) error {
+	err := c.withPage(ctx, "u", func(p *Page) error {
 		cancel()
-		_, err := p.WaitFor(ctx, "x", func(json.RawMessage) bool { return false }, 5)
+		_, err := p.waitFor(ctx, "x", func(json.RawMessage) bool { return false }, 5)
 		return err
 	})
 	if !errors.Is(err, context.Canceled) {
@@ -612,7 +612,7 @@ func TestScanPagesOpenAsHiddenTargets(t *testing.T) {
 	b := &fakeBrowser{}
 	c := connectT(t, b)
 	for range 2 {
-		if err := c.WithPage(context.Background(), "u", func(*Page) error { return nil }); err != nil {
+		if err := c.withPage(context.Background(), "u", func(*Page) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -630,7 +630,7 @@ func TestScanFallsBackToBackgroundTabsWhenHiddenIsRefused(t *testing.T) {
 	b := &fakeBrowser{noHidden: true}
 	c := connectT(t, b)
 	for range 2 {
-		if err := c.WithPage(context.Background(), "u", func(*Page) error { return nil }); err != nil {
+		if err := c.withPage(context.Background(), "u", func(*Page) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}

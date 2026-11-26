@@ -23,7 +23,7 @@ type fakeBrowser struct {
 	opened []string
 }
 
-func (b *fakeBrowser) load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
+func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.opened = append(b.opened, url)

@@ -116,7 +116,7 @@ func connect(ctx context.Context, cdpURL string) (*Client, Version, error) {
 		return nil, v, err
 	}
 	var brave bool
-	err = c.WithPage(ctx, "about:blank", func(p *Page) error {
+	err = c.withPage(ctx, "about:blank", func(p *Page) error {
 		raw, err := p.Evaluate(ctx, isBraveExpr)
 		if err == nil {
 			err = json.Unmarshal(raw, &brave)
@@ -295,10 +295,10 @@ func (p *Page) Evaluate(ctx context.Context, expr string) (json.RawMessage, erro
 	return r.Result.Value, nil
 }
 
-// WaitFor evaluates expr every pollInterval until ready accepts the value or tries run out, and
+// waitFor evaluates expr every pollInterval until ready accepts the value or tries run out, and
 // returns the last value either way, so the caller can inspect a page that never got ready. A
 // JavaScript exception means "still loading"; it is returned only if no try ever succeeded.
-func (p *Page) WaitFor(ctx context.Context, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
+func (p *Page) waitFor(ctx context.Context, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
 	var last json.RawMessage
 	var evalErr *EvalError
 	for i := 0; i < tries; i++ {
@@ -325,16 +325,16 @@ func (p *Page) WaitFor(ctx context.Context, expr string, ready func(json.RawMess
 	return last, nil
 }
 
-// WithPage opens url in a new hidden target, hands fn the attached page and always closes the
+// withPage opens url in a new hidden target, hands fn the attached page and always closes the
 // target afterwards, even when ctx is already cancelled.
-func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error) error {
+func (c *Client) withPage(ctx context.Context, url string, fn func(*Page) error) error {
 	return c.withPageSetup(ctx, url, nil, fn)
 }
 
 // Load opens url in a hidden page and returns what WaitFor returns.
 func (c *Client) Load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (v json.RawMessage, err error) {
-	err = c.WithPage(ctx, url, func(p *Page) error {
-		v, err = p.WaitFor(ctx, expr, ready, tries)
+	err = c.withPage(ctx, url, func(p *Page) error {
+		v, err = p.waitFor(ctx, expr, ready, tries)
 		return err
 	})
 	return v, err
@@ -386,7 +386,7 @@ func (c *Client) Capture(ctx context.Context, url, expr string, ready func(json.
 		return nil
 	}
 	err = c.withPageSetup(ctx, url, setup, func(p *Page) error {
-		if v, err = p.WaitFor(ctx, expr, ready, tries); err != nil {
+		if v, err = p.waitFor(ctx, expr, ready, tries); err != nil {
 			return err
 		}
 		mu.Lock()
