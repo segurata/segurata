@@ -20,8 +20,9 @@ import (
 // would type it. Brave is probed too, to log a skip and notify once the browser connectors have
 // been skipped for longer than browser_stale_days.
 //
-// The run ends before the next is due: launchd starts none while one is going, so a hung run would
-// stop scheduled scanning without a word.
+// The run ends before the next is due, and the inventory early enough to leave time for the
+// report: launchd starts none while one is going, so a hung run would stop scheduled scanning
+// without a word.
 func (e Env) Run(ctx context.Context, o Options) error {
 	every, err := o.every()
 	if err != nil {
@@ -143,7 +144,8 @@ func (e Env) news(start time.Time) ([]*tracker.Item, error) {
 
 const maxNotified = 3
 
-// notification names the new items by title; titles never hold secrets (docs/connectors.md).
+// notification names the new items by title; titles never hold secrets (docs/connectors.md), and
+// evidence is never shown.
 func notification(fresh []*tracker.Item) string {
 	var titles []string
 	what := string(fresh[0].EffectivePriority())

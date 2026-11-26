@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 )
 
+// Set with -X github.com/segurata/segurata/internal/version.Version=v1.2.3 (.goreleaser.yaml).
 var (
 	Version = ""
 	Commit  = ""

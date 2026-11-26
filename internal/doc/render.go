@@ -193,7 +193,8 @@ func safeURL(s string) bool {
 
 // --- HTML ---
 
-// The page is one file whose CSP forbids loading anything, so opening it contacts no server.
+// The page is one file, inline CSS and no script, whose CSP forbids loading anything, so opening it
+// contacts no server.
 const htmlHead = `<!doctype html>
 <html lang="en">
 <head>

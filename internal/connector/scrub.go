@@ -141,7 +141,8 @@ func (e *ScrubEmitter) Err(err error) error {
 	return err
 }
 
-// lineScrubber scrubs whole lines, so a value split across two writes is still found.
+// lineScrubber scrubs whole lines, so a value split across two writes is still found. A line
+// longer than maxStderrBytes fails, as the bounded writers do; Flush writes the unterminated rest.
 type lineScrubber struct {
 	w   io.Writer
 	s   scrubber

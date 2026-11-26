@@ -12,7 +12,8 @@ import (
 // ErrRefused is returned for a command that is not on the action's allowlist, before anything runs.
 var ErrRefused = errors.New("refused command outside the remediation allowlist")
 
-// Allowlist maps each action to the exact command lines it may run; there is no pattern matching.
+// Allowlist maps each action to the exact command lines it may run, sudo flag included: a step runs
+// only when an entry equals it argument for argument, with no pattern matching.
 type Allowlist map[string][]Step
 
 func (a Allowlist) Check(action string, s Step) error {
@@ -22,8 +23,9 @@ func (a Allowlist) Check(action string, s Step) error {
 	return fmt.Errorf("%w: %s: %s", ErrRefused, action, s)
 }
 
-// ActionChmod600 is the core's own action (remediate.Files) for the file at evidence.path: 600, or
-// 700 when its owner could execute it. Any connector may attach it.
+// ActionChmod600 is the core's own action (remediate.Files) for the file at evidence.path (absolute
+// or ~/): 600, or 700 when its owner could execute it. Any connector may attach it; with
+// Remediation.Group, one plan closes every file of the group.
 const ActionChmod600 = "file.chmod600"
 
 // Executor runs one step on the terminal; System is the real one.
@@ -34,6 +36,8 @@ type Executor interface {
 // sudoPath is absolute so a sudo earlier in PATH cannot intercept the password prompt.
 const sudoPath = "/usr/bin/sudo"
 
+// System runs steps as real processes on the terminal. sudo reads the password from the terminal
+// itself; nothing here reads, stores or pipes it.
 type System struct{}
 
 func (System) Run(ctx context.Context, s Step, io IO) error {
@@ -52,7 +56,8 @@ func (System) Run(ctx context.Context, s Step, io IO) error {
 	return nil
 }
 
-// Run checks every command of p before it runs any, in order, with ex (nil is System).
+// Run checks every command of p before it runs any, then runs them in order with ex (nil is
+// System), stopping at the first failure. File changes are the remediator's to apply.
 func (a Allowlist) Run(ctx context.Context, p Plan, ex Executor, io IO) error {
 	if ex == nil {
 		ex = System{}

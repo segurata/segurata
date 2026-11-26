@@ -36,7 +36,8 @@ func ReadEnv() []string {
 // name even when the working directory lies inside the work tree.
 func WholeTree() []string { return []string{"--full-name", "--", ":(top)"} }
 
-// Tracked reports whether any repository enclosing an absolute path has it in its index.
+// Tracked reports whether any repository enclosing an absolute path has it in its index. A failed
+// index lookup is an error: tracking is then unknown, never false.
 func Tracked(ctx context.Context, path string) (bool, error) {
 	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
 		dot := filepath.Join(dir, ".git")

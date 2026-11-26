@@ -29,9 +29,11 @@ type Description struct {
 	// connectors implement Remediator instead.
 	Remediates []string `json:"remediates,omitempty"`
 	// Timeout is a Go duration ("6h") for a connector that routinely needs more than an hour.
-	Timeout string        `json:"timeout,omitempty"`
-	Theme   finding.Theme `json:"theme,omitzero"`
-	// Covers are the plan areas (docs/plan.md) the connector audits.
+	Timeout string `json:"timeout,omitempty"`
+	// Theme is one of finding.Themes by id, or one of the connector's own; zero is "other".
+	Theme finding.Theme `json:"theme,omitzero"`
+	// Covers are the plan areas (docs/plan.md) the connector audits: a run that audited one closes
+	// the tracker's "not audited" item for it.
 	Covers []finding.Area `json:"covers,omitempty"`
 }
 
@@ -53,7 +55,8 @@ type Request struct {
 	CDPURL   string            `json:"cdp_url,omitempty"`
 	Config   map[string]any    `json:"config,omitempty"`
 	Secrets  map[string]string `json:"secrets,omitempty"`
-	// Known says whose each secret is; built-in connectors only, never sent to a plugin.
+	// Known says whose each secret is, so local-secrets' liveness check never tries one attributed
+	// to someone else; built-in connectors only, never sent to a plugin.
 	Known *attribution.Known `json:"-"`
 }
 

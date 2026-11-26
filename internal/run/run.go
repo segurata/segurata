@@ -208,7 +208,8 @@ func BrowserProblem(ctx context.Context, cdpURL string, check func(context.Conte
 }
 
 // Inventory runs the targets concurrently, results in input order. Brave is checked once when a
-// target drives it; without it those runs end at once with the reason, skipping every scope.
+// target drives it; without it those runs end at once with the reason, skipping every scope, so
+// they prove neither a finding nor a status gone.
 func Inventory(ctx context.Context, cfg config.Config, targets []Target, outDir string, verbose io.Writer, lent Lent) ([]*Result, error) {
 	dir := filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -246,7 +247,8 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, runfile.FileName(label))}
 	// A partial file of its own, renamed over the run file once run_end is written, so a killed or
-	// concurrent run never tears a finished one; readers skip it, and CreateTemp makes it 0600.
+	// concurrent run never tears a finished one; readers skip it, and CreateTemp makes it 0600: the
+	// output names accounts, apps and services.
 	f, err := os.CreateTemp(dir, filepath.Base(res.File)+".*.partial")
 	if err != nil {
 		res.Err = err
@@ -270,6 +272,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	}
 	ended, werr := s.end(ctx, started, res.Err, secretFingerprints(req.Secrets))
 	res.Err = errors.Join(res.Err, werr)
+	// A file without its run_end, or one that did not close, never replaces an earlier run.
 	if err := f.Close(); err != nil || !ended {
 		res.Err = errors.Join(res.Err, err)
 		_ = os.Remove(partial)

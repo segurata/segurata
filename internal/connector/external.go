@@ -32,7 +32,8 @@ type External struct {
 }
 
 // Discover finds segurata-<name> executables on the absolute entries of PATH, so the plugin set
-// matches what a scheduled run sees. A built-in name wins, then the earlier PATH directory.
+// matches what a scheduled run sees. A built-in name wins, then the earlier PATH directory; a file
+// whose suffix is not a valid name never runs.
 func Discover() []*External {
 	seen := map[string]bool{}
 	for _, c := range Builtins() {

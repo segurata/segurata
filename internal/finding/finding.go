@@ -31,7 +31,8 @@ const (
 
 func (s Severity) Valid() bool { return s == SevInfo || s.Rank() > 0 }
 
-// Rank orders severities worst last; unknown values rank lowest.
+// Rank is higher the worse the severity, so reports can sort worst first; unknown values rank
+// lowest.
 func (s Severity) Rank() int {
 	switch s {
 	case SevCritical:

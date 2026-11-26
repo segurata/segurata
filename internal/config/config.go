@@ -21,7 +21,8 @@ type ConnectorConfig struct {
 	// inventory keys can stay read-only.
 	RemediationSecrets map[string]string `json:"remediation_secrets,omitempty"`
 	Expected           []Expected        `json:"expected,omitempty"`
-	Timeout            string            `json:"timeout,omitempty"` // a Go duration ("3h")
+	// Timeout is a Go duration ("3h"); empty is the connector's own default, else one hour.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // Instance is one configured account of a connector: key "openrouter" is the unnamed instance,

@@ -1,6 +1,7 @@
 // Package proc starts child processes under a context. On Unix each runs in a process group of its
-// own that cancelling ends, SIGTERM first so a program can clean up, then SIGKILL after WaitDelay;
-// on Windows only the direct child is killed.
+// own that cancelling ends, SIGTERM first so a program can clean up (Prowler's temporary directory,
+// the token it was lent), then SIGKILL after WaitDelay, so no background child outlives it. On
+// Windows only the direct child is killed.
 package proc
 
 import (

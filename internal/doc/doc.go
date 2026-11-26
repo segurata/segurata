@@ -1,6 +1,7 @@
 // Package doc is the document model reports are built with, rendered as terminal text, Markdown or
-// a self-contained HTML page, so the formats always say the same thing. HTML escapes everything and
-// links only absolute http(s) URLs.
+// a self-contained HTML page, so the formats always say the same thing. Markdown escapes markup in
+// titles; HTML escapes everything, links only absolute http(s) URLs, has no script and loads
+// nothing.
 package doc
 
 import (

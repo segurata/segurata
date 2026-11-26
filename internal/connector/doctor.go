@@ -20,7 +20,8 @@ type Check struct {
 }
 
 // Doctor checks a built-in connector's own prerequisites through its inventory's read-only paths;
-// without it the core checks the `cli:` and `secret:` needs. It changes and prompts for nothing.
+// without it the core checks the `cli:` and `secret:` needs. It changes and prompts for nothing,
+// and prints no secret.
 type Doctor interface {
 	Doctor(ctx context.Context, req Request) []Check
 }

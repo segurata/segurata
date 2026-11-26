@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// ReadJSON decodes the file at path into v. A missing file is not found and no error; one that
-// cannot be decoded is found, with the error.
+// ReadJSON decodes the file at path into v. A missing file is not found, with no error; one that
+// cannot be read is not found, with the error; one that cannot be decoded is found, with the error.
 func ReadJSON(path string, v any) (found bool, err error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
