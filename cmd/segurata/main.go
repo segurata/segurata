@@ -1,5 +1,5 @@
-// segurata inventories a personal digital footprint. Run it without arguments for the verbs (the
-// commands table below); docs/architecture.md, "Verbs", says what each one changes.
+// segurata inventories a personal digital footprint; docs/architecture.md, "Verbs", says what each
+// command changes.
 package main
 
 import (
@@ -21,9 +21,7 @@ import (
 	_ "github.com/segurata/segurata/connectors" // registers built-in connectors
 )
 
-// command is one verb: its name, its arguments and summary for usage, and what runs it. commands is
-// the only list of verbs: dispatch and usage read it, and a test checks docs/architecture.md against
-// it.
+// commands is the only list of verbs: dispatch, usage and the docs test read it.
 type command struct {
 	name, args, summary string
 	run                 func(args []string) int
@@ -90,8 +88,7 @@ func connectorsCmd([]string) int {
 	return 0
 }
 
-// all is every connector, built-in and external. Discovery runs each plugin's describe, so it
-// happens once per process however many times a command asks.
+// all is every connector, discovered once per process: discovery runs each plugin's describe.
 var all = sync.OnceValue(discover)
 
 func discover() []connector.Connector {
