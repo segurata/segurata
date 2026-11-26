@@ -5,16 +5,11 @@ import (
 	"strings"
 )
 
-// Credentials inside URLs are judged by the host they open: a password for a database on
-// localhost or example.com protects nothing, one for a private address reaches only that
-// network, and one for a public host is worth as much as the type says, more when the host is a
-// managed database or reads like production. The connector writes the host into the note,
-// "postgresql://…@db.example.org" or "https://api.example.org/…?access_token=…".
-
+// URL credentials are judged by the host they open, which the note carries.
 var urlTypes = map[string]bool{"url-credentials": true, "url-token-param": true}
 
-// URLNote is the note of a URL credential: scheme and host, the parameter name for a token in a
-// query string, never the value. host may be "" (a bare query string); param is "" for a password.
+// URLNote is the note of a URL credential, never its value: "postgresql://…@db.example.org",
+// "https://api.example.org/…?access_token=…", "?token=…" without a host.
 func URLNote(scheme, host, param string) string {
 	var b strings.Builder
 	if host != "" {
@@ -29,8 +24,8 @@ func URLNote(scheme, host, param string) string {
 	return b.String()
 }
 
-// URLHost reads the host back from a URLNote, without its port; "" when the note has none.
-func URLHost(note string) string {
+// urlHost reads the host back from a URLNote, without its port.
+func urlHost(note string) string {
 	i := strings.Index(note, "://")
 	if i < 0 {
 		return ""
@@ -53,9 +48,8 @@ func URLHost(note string) string {
 	return strings.ToLower(strings.TrimSuffix(rest, "."))
 }
 
-// Hosts that never serve anyone else's data (the names reserved by RFC 2606 and RFC 6761, and
-// mDNS .local from RFC 6762) and the managed database services whose hosts carry production data,
-// by the host names in each provider's connection strings.
+// Reserved names (RFC 2606, RFC 6761, mDNS .local from RFC 6762) serve nobody's data; managed
+// database hosts, as each provider's connection strings name them, carry production data.
 var (
 	reservedSuffixes = []string{".localhost", ".example", ".test", ".invalid", ".local", ".example.com", ".example.org", ".example.net"}
 	reservedHosts    = set("localhost", "example.com", "example.org", "example.net")
@@ -73,7 +67,6 @@ var (
 	prodWords = set("prod", "production", "prd", "live")
 )
 
-// hostImpact adjusts the impact of a URL credential by its host; base is the type's impact.
 func hostImpact(host string, base Impact) Impact {
 	switch {
 	case host == "":
@@ -110,7 +103,7 @@ func managedDatabase(host string) bool {
 	return false
 }
 
-// anyLabel reports whether one of the host's labels, split also at "-", is in words.
+// anyLabel splits the host at "." and "-".
 func anyLabel(host string, words map[string]bool) bool {
 	for _, l := range strings.FieldsFunc(host, func(r rune) bool { return r == '.' || r == '-' }) {
 		if words[l] {

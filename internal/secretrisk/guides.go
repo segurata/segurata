@@ -1,15 +1,12 @@
 package secretrisk
 
-// Guide is how to rotate one kind of secret at its provider: a few ordered steps, and the
-// provider's documentation they were checked against.
+// Guide is how to rotate one kind of secret at its provider, and the documentation it follows.
 type Guide struct {
 	Steps []string
 	Doc   string
 }
 
-// Each guide was checked against the linked provider documentation on 2026-11-24. Where the
-// documentation leaves something open (does the old value die at once? is the new one shown only
-// once?) the step says so instead of guessing.
+// Checked against the linked documentation on 2026-11-24; what it leaves open, a step says so.
 var (
 	guideStripeKey = Guide{[]string{
 		"Dashboard > API keys > the key's ⋯ menu > Roll key.",
@@ -102,7 +99,6 @@ var (
 	}, "https://docs.sentry.io/account/auth-tokens/"}
 )
 
-// guides maps catalog types to their guide.
 var guides = map[string]Guide{
 	"stripe-live":                guideStripeKey,
 	"stripe-test":                guideStripeKey,
@@ -131,7 +127,6 @@ var guides = map[string]Guide{
 	"sentry-token":               guideSentry,
 }
 
-// GuideFor returns the rotation guide for a type, if there is one.
 func GuideFor(typ string) (Guide, bool) {
 	g, ok := guides[typ]
 	return g, ok

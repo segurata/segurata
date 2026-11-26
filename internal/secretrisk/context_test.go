@@ -88,16 +88,16 @@ func TestURLNoteAndHost(t *testing.T) {
 	}
 	for _, c := range cases {
 		n := URLNote(c.scheme, c.host, c.param)
-		if n != c.note || URLHost(n) != c.back {
-			t.Errorf("URLNote(%q,%q,%q) = %q (host %q)", c.scheme, c.host, c.param, n, URLHost(n))
+		if n != c.note || urlHost(n) != c.back {
+			t.Errorf("URLNote(%q,%q,%q) = %q (host %q)", c.scheme, c.host, c.param, n, urlHost(n))
 		}
 	}
 	for note, host := range map[string]string{
 		"postgresql://…@127.0.0.1": "127.0.0.1", "redis://…@Cache.Prod.Acme.IO:6379": "cache.prod.acme.io",
 		"mysql://…@[::1]": "::1", "https://h.example.net/…?key=…": "h.example.net", "ANTHROPIC_KEY": "",
 	} {
-		if got := URLHost(note); got != host {
-			t.Errorf("URLHost(%q) = %q, want %q", note, got, host)
+		if got := urlHost(note); got != host {
+			t.Errorf("urlHost(%q) = %q, want %q", note, got, host)
 		}
 	}
 }

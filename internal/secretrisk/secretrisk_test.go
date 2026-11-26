@@ -69,11 +69,11 @@ func TestImpactTable(t *testing.T) {
 		"vault-service-token": Medium, // unknown gitleaks rule
 	}
 	for typ, want := range cases {
-		if got := Lookup(typ).Impact; got != want {
+		if got := lookup(typ).Impact; got != want {
 			t.Errorf("%s impact %s, want %s", typ, got, want)
 		}
 	}
-	if u := Lookup("vault-service-token"); u.Service != "vault" || !strings.Contains(u.Label, "gitleaks") {
+	if u := lookup("vault-service-token"); u.Service != "vault" || !strings.Contains(u.Label, "gitleaks") {
 		t.Errorf("unknown rule entry %+v", u)
 	}
 	if ImpactOf(Evidence{Type: "jwt", Public: true}) != Noise || ImpactOf(Evidence{Type: "private-key", Encrypted: true}) != Noise {
@@ -93,7 +93,7 @@ func TestEveryRotateURLIsHTTPS(t *testing.T) {
 }
 
 func TestReasonInPlainWords(t *testing.T) {
-	got := Reason(Lookup("stripe-live"), Where("scan", "transcript", "600", false, false))
+	got := Reason(lookup("stripe-live"), Where("scan", "transcript", "600", false, false))
 	if got != "Stripe live secret key; pasted into an agent transcript, so it reached the model provider" {
 		t.Errorf("reason %q", got)
 	}

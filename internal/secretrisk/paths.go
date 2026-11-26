@@ -5,15 +5,13 @@ import (
 	"strings"
 )
 
-// PathRole is what a path inside a repository says about the files in it: tests and fixtures,
-// examples, documentation, vendored third-party code, or generated checksums and lockfiles. The
-// local-secrets connector uses it both for secrets (ImpactOf) and for data dumps, so the two never
-// disagree on what a fixture is.
+// PathRole is what a path inside a repository says about its files. Secrets (ImpactOf) and data
+// dumps share it, so the two never disagree on what a fixture is.
 type PathRole int
 
 const (
 	RoleNone      PathRole = iota
-	RoleTest               // test folders and test files: fixtures, recorded requests, specs
+	RoleTest               // fixtures, recorded requests, specs
 	RoleExample            // examples, samples, demos and *.example templates
 	RoleDoc                // documentation folders, README and other prose files
 	RoleVendor             // third-party code copied into the repository
@@ -26,14 +24,11 @@ var (
 	docDirs     = set("doc", "docs", "documentation")
 	vendorDirs  = set("vendor", "third_party", "third-party", "node_modules", "bower_components")
 
-	// checksumExts list files of hashes; lockFiles pin dependencies by hash.
 	checksumExts = []string{".md5", ".sha1", ".sha256", ".sha512", ".sum"}
 	lockFiles    = set("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
 		"gemfile.lock", "poetry.lock", "pipfile.lock", "uv.lock", "cargo.lock", "composer.lock", "mix.lock",
 		"podfile.lock", "package.resolved", "pubspec.lock", "flake.lock", "go.sum", "gradle.lockfile", "packages.lock.json")
-	// testNames and exampleNames are file-name markers: foo_test.go, Register.test.tsx,
-	// test_api.py, user_spec.rb; .env.example, config.yml.sample.
-	testNames    = []string{"_test.", ".test.", ".spec.", "_spec."}
+	testNames    = []string{"_test.", ".test.", ".spec.", "_spec."} // foo_test.go, Register.test.tsx, user_spec.rb
 	exampleNames = []string{".example", ".sample", ".template", ".dist"}
 	docExts      = []string{".md", ".markdown", ".rst", ".adoc"}
 )
@@ -46,17 +41,15 @@ func set(xs ...string) map[string]bool {
 	return m
 }
 
-// DirRoles reports which roles the folders of a path ("/"-separated, any case) carry, without
-// looking at the file name: test or vendor folders.
+// DirRoles reports whether the folders of a path ("/"-separated, any case), not its file name,
+// are test or vendor folders.
 func DirRoles(p string) (test, vendor bool) {
 	r := dirRolesOf(strings.ToLower(p))
 	return r.test, r.vendor
 }
 
-// dirRoles are the roles a path's folders carry.
 type dirRoles struct{ test, example, doc, vendor bool }
 
-// dirRolesOf reads the roles of the folders of a lowercased path.
 func dirRolesOf(lower string) dirRoles {
 	var r dirRoles
 	for _, d := range strings.Split(path.Dir(lower), "/") {
@@ -68,8 +61,8 @@ func dirRolesOf(lower string) dirRoles {
 	return r
 }
 
-// RoleOf classifies a path by its folders and its file name. When several roles apply the most
-// telling wins: generated, vendor, test, example, documentation.
+// RoleOf classifies a path by its folders and file name; the most telling role wins: generated,
+// vendor, test, example, documentation.
 func RoleOf(p string) PathRole {
 	lower := strings.ToLower(p)
 	base := path.Base(lower)
