@@ -506,6 +506,12 @@ func TestDumpItemsRegroupPerRepositoryAndWaitOnTheirDecision(t *testing.T) {
 	if got := tr.unblocks(d, t0.Add(time.Hour)); len(got) != 1 || got[0] != repo {
 		t.Errorf("unblocks %v", got)
 	}
+	// A question that only mentions a dump tool is not about the dumps in git.
+	backups := tr.addDecision("decide:nightly-backups", "Run mysqldump every night?", nil, t0)
+	if got := tr.unblocks(backups, t0.Add(time.Hour)); len(got) != 0 {
+		t.Errorf("a mysqldump question blocks %v", got)
+	}
+	backups.Status = Ignored
 	// Answered: the note goes away at the next sync, and is never doubled meanwhile.
 	syncOrDie(t, tr, out, t0.Add(2*time.Hour))
 	if strings.Count(repo.Next.Action, "Blocked by decision") != 1 {

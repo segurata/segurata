@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
@@ -39,8 +40,11 @@ func blocks(d, it *Item) bool {
 			return true
 		}
 	}
-	return it.Theme == "data-dumps" && strings.Contains(strings.ToLower(d.Key+" "+d.Decision.Question), "dump")
+	return it.Theme == "data-dumps" && aboutDumps.MatchString(d.Key+" "+d.Decision.Question)
 }
+
+// aboutDumps matches "dump" or "dumps" as a word, not a tool such as mysqldump.
+var aboutDumps = regexp.MustCompile(`(?i)\bdumps?\b`)
 
 const blockedPrefix = "Blocked by decision "
 
