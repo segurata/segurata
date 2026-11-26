@@ -11,19 +11,17 @@ const (
 	Fail Level = "FAIL" // the connector cannot do its job until this is fixed
 )
 
-// Check is one prerequisite checked by `segurata doctor`. Detail and Fix never hold a secret:
-// a token or key is at most obtained and discarded.
+// Check is one prerequisite checked by `segurata doctor`. Detail and Fix never hold a secret.
 type Check struct {
 	Level  Level
 	What   string // what was checked: "gcloud account a@b.com", "gh scopes"
 	Detail string
-	Fix    string // the exact command or step that fixes it; empty when Level is OK
+	Fix    string // the exact command or step that fixes it
 }
 
-// Doctor is implemented by built-in connectors that check their own prerequisites (CLIs, their
-// sign-in, tokens) with the same read-only code paths and allowlists their inventory uses. It is
-// optional: for a connector without it, the core checks the `cli:` and `secret:` needs of its
-// description generically. Doctor must change nothing, prompt for nothing and print no secret.
+// Doctor checks a built-in connector's own prerequisites through its inventory's read-only paths;
+// without it the core checks the `cli:` and `secret:` needs. It changes and prompts for nothing,
+// and prints no secret.
 type Doctor interface {
 	Doctor(ctx context.Context, req Request) []Check
 }

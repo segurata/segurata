@@ -15,18 +15,14 @@ import (
 	"github.com/segurata/segurata/internal/tracker"
 )
 
-// Run is one scheduled run, what the agent executes: `segurata inventory` over the selected
-// connectors (which ends in a tracker sync), a notification for the P0 and P1 items that sync
-// found, reopened or raised, then `segurata report --format md`. Both commands are this same binary, run
-// as separate processes so a scheduled run does exactly what the owner would type.
+// Run is what the agent executes: `segurata inventory` (which ends in a tracker sync), a
+// notification for the P0 and P1 items that sync brought, then `segurata report`, each as the owner
+// would type it. Brave is probed too, to log a skip and notify once the browser connectors have
+// been skipped for longer than browser_stale_days.
 //
-// Without --connectors every installed connector is selected. The inventory runs the browser
-// connectors only when Brave answers at cdp_url (run.Inventory); the schedule probes too, to log
-// a skip and to notify once they have been skipped for longer than browser_stale_days.
-//
-// The run ends before the next one is due, and the inventory early enough to leave time for the
-// report: launchd starts no run while one is still going, so one that hung would stop scheduled
-// scanning without a word.
+// The run ends before the next is due, and the inventory early enough to leave time for the
+// report: launchd starts none while one is going, so a hung run would stop scheduled scanning
+// without a word.
 func (e Env) Run(ctx context.Context, o Options) error {
 	every, err := o.every()
 	if err != nil {
@@ -86,7 +82,6 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	return nil
 }
 
-// names are every installed connector, sorted: the selection when none is named.
 func (e Env) names() []string {
 	out := make([]string, 0, len(e.Connectors))
 	for _, c := range e.Connectors {
@@ -96,8 +91,8 @@ func (e Env) names() []string {
 	return out
 }
 
-// notify posts a macOS notification; elsewhere the log line before it is all there is. It reports
-// whether the owner was told, by the notification or by that line.
+// notify posts a macOS notification, and reports whether the owner was told by it or, elsewhere, by
+// the log line before it.
 func (e Env) notify(ctx context.Context, script string) bool {
 	if e.GOOS != "darwin" {
 		return true
@@ -109,13 +104,11 @@ func (e Env) notify(ctx context.Context, script string) bool {
 	return true
 }
 
-// stamp logs one step of the run with the time.
 func (e Env) stamp(msg string) {
 	fmt.Fprintf(e.IO.Out, "%s %s\n", e.Now().Format("2006-01-02 15:04:05"), msg)
 }
 
-// prune removes run files older than the config's keep_runs_days that no latest run needs (runfile.Prune). A failure is
-// logged: the scan itself succeeded.
+// prune applies keep_runs_days (runfile.Prune); a failure is only logged, the scan succeeded.
 func (e Env) prune(outDir string) {
 	keep := e.Config.RunRetention()
 	if keep <= 0 {
@@ -130,8 +123,7 @@ func (e Env) prune(outDir string) {
 	}
 }
 
-// news are the open P0 and P1 items that a sync found, reopened or raised to P1 or P0 at or after
-// start (tracker.Item.NewsSince), most urgent first: what the inventory's sync recorded.
+// news are the active P0 and P1 items with news since start, most urgent first.
 func (e Env) news(start time.Time) ([]*tracker.Item, error) {
 	t, err := tracker.LoadOrNew(e.Tracker, e.Now())
 	if err != nil {
@@ -152,8 +144,8 @@ func (e Env) news(start time.Time) ([]*tracker.Item, error) {
 
 const maxNotified = 3
 
-// notification is the AppleScript that posts one notification naming the new items by title.
-// Titles never hold secrets (docs/connectors.md); evidence is never shown.
+// notification names the new items by title; titles never hold secrets (docs/connectors.md), and
+// evidence is never shown.
 func notification(fresh []*tracker.Item) string {
 	var titles []string
 	what := string(fresh[0].EffectivePriority())
@@ -171,13 +163,11 @@ func notification(fresh []*tracker.Item) string {
 	return appleNotification(strings.Join(titles, "; "), textfmt.Count(len(fresh), "new "+what+" item", "new "+what+" items"))
 }
 
-// appleNotification is the AppleScript that posts one notification titled segurata.
 func appleNotification(text, subtitle string) string {
 	return fmt.Sprintf("display notification %s with title %s subtitle %s",
 		appleString(text), appleString("segurata"), appleString(subtitle))
 }
 
-// appleString quotes s as an AppleScript string literal.
 func appleString(s string) string {
 	s = strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`

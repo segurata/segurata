@@ -8,6 +8,7 @@ import (
 
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/config"
+	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/signin"
 )
@@ -16,7 +17,7 @@ func signinCmd(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return signin.CLI{
-		Out: os.Stdout, Err: os.Stderr, In: os.Stdin, TTY: isTerminal(os.Stdin),
+		Out: os.Stdout, Err: os.Stderr, In: os.Stdin, TTY: prompt.IsTerminal(os.Stdin),
 		Config: config.DefaultPath(), Now: time.Now, Connectors: all(),
 		Connect: func(ctx context.Context, cdpURL string) (signin.Browser, func(), error) {
 			c, err := cdp.Connect(ctx, cdpURL)
@@ -34,10 +35,4 @@ func signinCmd(args []string) int {
 		},
 		Sync: func(out string) int { return trackerCLI().Track([]string{"sync", "--out", out}) },
 	}.Run(ctx, args)
-}
-
-// isTerminal reports whether f is a character device: someone can press Enter there.
-func isTerminal(f *os.File) bool {
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }

@@ -264,11 +264,11 @@ func TestLinuxPrintsSystemdUnitsAndNeverApplies(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", want, s)
 		}
 	}
-	if err := env.Install(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, ErrDarwinOnly) {
-		t.Fatalf("want ErrDarwinOnly, got %v", err)
+	if err := env.Install(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, errDarwinOnly) {
+		t.Fatalf("want errDarwinOnly, got %v", err)
 	}
-	if err := env.Uninstall(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, ErrDarwinOnly) {
-		t.Fatalf("want ErrDarwinOnly, got %v", err)
+	if err := env.Uninstall(context.Background(), Options{Apply: true, Yes: true}); !errors.Is(err, errDarwinOnly) {
+		t.Fatalf("want errDarwinOnly, got %v", err)
 	}
 	if len(r.calls) != 0 {
 		t.Fatalf("ran %v on Linux", r.calls)

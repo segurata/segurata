@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-// OwnerID reports the POSIX owner of a file, when its file information carries that identity.
+// OwnerID is the POSIX owner of a file, when its file information carries one.
 func OwnerID(st fs.FileInfo) (int, bool) {
 	s, ok := st.Sys().(*syscall.Stat_t)
 	if !ok {

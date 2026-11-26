@@ -22,13 +22,10 @@ type Legacy struct{}
 // Fingerprints, among Write's records, are the secret fingerprints its run_end names.
 type Fingerprints map[string]string
 
-// Write writes one finished run to path. recs are finding.Finding and finding.Status records, plus
-// finding.Skipped for a scope the connector declared skipped, an error for a connector that
-// failed, Fingerprints for the secrets the core resolved, and a finding.Theme and []finding.Area
-// for the theme and areas the connector declared. The theme is finding.ThemeOther when none is
-// given, as the core writes it for a connector that declares none, and none at all with Legacy, a
-// run written before connectors declared themes. The run counts as having inspected something, so only statuses, skips and
-// errors make it incomplete. Its times are the newest observed_at among the findings.
+// Write writes one finished run to path. recs are findings and statuses, plus finding.Skipped for a
+// declared skip, an error for a failed connector, Fingerprints, and the declared finding.Theme
+// (ThemeOther by default, none with Legacy) and []finding.Area. The run counts as having inspected
+// something; its times are the newest observed_at among the findings.
 func Write(t testing.TB, path string, recs ...any) {
 	t.Helper()
 	var tally finding.Tally
@@ -79,8 +76,7 @@ func Write(t testing.TB, path string, recs ...any) {
 	write(t, path, append(lines, end)...)
 }
 
-// WriteUnfinished writes recs to path without a run_end record: a run that was killed, is still
-// running, or predates run_end records.
+// WriteUnfinished writes recs to path without a run_end record.
 func WriteUnfinished(t testing.TB, path string, recs ...any) {
 	t.Helper()
 	write(t, path, recs...)

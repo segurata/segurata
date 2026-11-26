@@ -4,6 +4,5 @@ package proc
 
 import "os/exec"
 
-// ownGroup leaves cmd as exec.CommandContext made it: Windows has no process groups to kill, so
-// only the direct child is killed (see the package documentation).
+// ownGroup does nothing: Windows has no process groups to kill.
 func ownGroup(*exec.Cmd) {}

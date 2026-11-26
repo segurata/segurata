@@ -461,8 +461,8 @@ What segurata looked at, and what it cannot look at here (`internal/tracker/cove
 **Runs.** Each sync keeps, per connector instance, its newest folded run in the tracker's `runs`:
 when it ended, whether it has `run_end`, whether it was complete, the connector's error, and the
 first five scopes it skipped with the count. A scope left out by a status the config expects (when
-the run was written or by a rule added since), or one the connector skipped with a reason starting
-`expected` (the owner's config told it to, as Prowler's `skip_projects`), is counted as expected
+the run was written or by a rule added since), or one the connector skipped with the reason
+`expected` or `expected: …` (the owner's config told it to, as Prowler's `skip_projects`), is counted as expected
 and does not make the run partial, here or in the report (`finding.Coverage.CompleteAsConfigured`).
 It still proves nothing gone there. `status` prints one line for every configured instance (the targets an unfiltered
 `inventory` runs) and any other that ran:

@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Accounts are the accounts a connector instance is limited to (connectors.<key>.config.accounts),
-// and whether the config sets that list at all: without one, every account is inspected.
+// Accounts are connectors.<key>.config.accounts, and whether it is set: without it, every account
+// is inspected.
 func (c Config) Accounts(key string) ([]string, bool) {
 	raw, ok := c.Connectors[key].Config["accounts"].([]any)
 	if !ok {
@@ -23,9 +23,7 @@ func (c Config) Accounts(key string) ([]string, bool) {
 	return out, true
 }
 
-// SetAccounts writes accounts as connectors.<key>.config.accounts in the config file at path and
-// reports whether that changed the file, rewritten as editFile says; the backup's name is
-// returned.
+// SetAccounts writes connectors.<key>.config.accounts through editFile.
 func SetAccounts(file, key string, accounts []string, now time.Time) (bool, string, error) {
 	if len(accounts) == 0 {
 		return false, "", fmt.Errorf("connectors.%s.config.accounts: an empty list would leave nothing to inspect", key)

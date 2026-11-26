@@ -1,6 +1,7 @@
 package runfile
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -289,5 +290,75 @@ func TestPruneKeepsTheLastRunThatInspectedSomething(t *testing.T) {
 	}
 	if _, err := os.Stat(path("2026-01-01")); err != nil {
 		t.Fatalf("pruned the last run that inspected something: %v", err)
+	}
+}
+
+// A line torn by a kill can only be the last one of a run without run_end; anywhere else the file
+// is corrupt. Records name the instance, the file name only when there is none.
+func TestReadDropsOnlyATornLastLineAndLabelsFromRecords(t *testing.T) {
+	dir := t.TempDir()
+	st := finding.Status{Type: "status", Connector: "github", Instance: "work", Account: "a", State: finding.StateOK}
+	f := finding.Finding{Type: "finding", ID: "abcdef12", Connector: "openrouter", Instance: "home"}
+	torn := filepath.Join(dir, "torn.jsonl")
+	runtest.WriteUnfinished(t, torn, st)
+	appendTo(t, torn, `{"type":"finding","conn`)
+	r, err := Read(torn)
+	if err != nil || len(r.Statuses) != 1 || r.End != nil || r.Label(torn) != "github:work" {
+		t.Fatalf("torn last line: %+v %v", r, err)
+	}
+	middle := filepath.Join(dir, "middle.jsonl")
+	runtest.WriteUnfinished(t, middle, st)
+	appendTo(t, middle, "{\n"+`{"type":"status"}`)
+	if _, err := Read(middle); err == nil {
+		t.Error("a torn line before another record was dropped")
+	}
+	ended := filepath.Join(dir, "ended.jsonl")
+	runtest.WriteUnfinished(t, ended, json.RawMessage(`{"type":"run_end","connector":"aws"}`))
+	if r, err := Read(ended); err != nil || r.End == nil {
+		t.Fatalf("run_end not read: %+v %v", r, err)
+	}
+	appendTo(t, ended, "{")
+	if _, err := Read(ended); err == nil {
+		t.Error("a torn line after run_end was dropped")
+	}
+
+	for _, c := range []struct {
+		recs []any
+		want string
+	}{
+		{[]any{f, st}, "openrouter:home"},
+		{[]any{st}, "github:work"},
+		{nil, "github-x"},
+	} {
+		p := filepath.Join(dir, "github-x.jsonl")
+		runtest.WriteUnfinished(t, p, c.recs...)
+		if r, err := Read(p); err != nil || r.Label(p) != c.want {
+			t.Errorf("%v: label %q, %v", c.recs, r.Label(p), err)
+		}
+	}
+	finished := filepath.Join(dir, FileName("aws:x"))
+	runtest.Write(t, finished, finding.Status{Type: "status", Connector: "aws", Instance: "x", State: finding.StateOK})
+	if r, _ := Read(finished); r.Label(finished) != "aws:x" || FileLabel(finished) != "aws:x" {
+		t.Errorf("finished run: %q %q", r.Label(finished), FileLabel(finished))
+	}
+
+	all, err := Load([]string{torn, finished})
+	if err != nil || len(all) != 0 {
+		t.Fatalf("Load: %v %v", all, err)
+	}
+	if _, err := Find([]finding.Finding{f}, ""); err == nil {
+		t.Error("an empty id matched")
+	}
+}
+
+func appendTo(t *testing.T, path, text string) {
+	t.Helper()
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	if _, err := fh.WriteString(text); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,28 +54,62 @@ func TestLoadRejectsATimeoutThatIsNotAPositiveDuration(t *testing.T) {
 	}
 }
 
-func TestRunRetention(t *testing.T) {
-	for body, want := range map[string]time.Duration{
-		`{}`:                     30 * 24 * time.Hour,
-		`{"keep_runs_days": 7}`:  7 * 24 * time.Hour,
-		`{"keep_runs_days": -1}`: 0,
+func TestRetentionAndStalenessDays(t *testing.T) {
+	day := 24 * time.Hour
+	for _, c := range []struct {
+		body             string
+		retention, stale time.Duration
+	}{
+		{`{}`, 30 * day, 7 * day},
+		{`{"keep_runs_days": 7, "browser_stale_days": 3}`, 7 * day, 3 * day},
+		{`{"keep_runs_days": -1, "browser_stale_days": -1}`, 0, 0},
 	} {
-		cfg, err := loadBody(t, body)
-		if err != nil || cfg.RunRetention() != want {
-			t.Errorf("%s: %s, %v", body, cfg.RunRetention(), err)
+		cfg, err := loadBody(t, c.body)
+		if err != nil || cfg.RunRetention() != c.retention || cfg.BrowserStaleAfter() != c.stale {
+			t.Errorf("%s: retention %s, stale %s, %v", c.body, cfg.RunRetention(), cfg.BrowserStaleAfter(), err)
 		}
 	}
 }
 
-func TestBrowserStaleAfter(t *testing.T) {
-	for body, want := range map[string]time.Duration{
-		`{}`:                         7 * 24 * time.Hour,
-		`{"browser_stale_days": 3}`:  3 * 24 * time.Hour,
-		`{"browser_stale_days": -1}`: 0,
-	} {
-		cfg, err := loadBody(t, body)
-		if err != nil || cfg.BrowserStaleAfter() != want {
-			t.Errorf("%s: %s, %v", body, cfg.BrowserStaleAfter(), err)
-		}
+// A missing file is the defaults; SEGURATA_CDP and SEGURATA_CONFIG win over them.
+func TestLoadDefaultsAndEnvironment(t *testing.T) {
+	t.Setenv("SEGURATA_CDP", "")
+	cfg, err := Load(filepath.Join(t.TempDir(), "none.json"))
+	if err != nil || cfg.CDPURL != "http://127.0.0.1:9222" || cfg.Connectors == nil {
+		t.Fatalf("missing file: %+v %v", cfg, err)
+	}
+	if cfg, err := loadBody(t, `{"connectors": null}`); err != nil || cfg.Connectors == nil {
+		t.Fatalf("null connectors: %+v %v", cfg, err)
+	}
+	if _, err := loadBody(t, `{"connectors": [`); err == nil {
+		t.Error("malformed JSON loaded")
+	}
+	t.Setenv("SEGURATA_CDP", "http://127.0.0.1:9333")
+	if cfg, _ := loadBody(t, `{"cdp_url": "http://127.0.0.1:9444"}`); cfg.CDPURL != "http://127.0.0.1:9333" {
+		t.Errorf("SEGURATA_CDP: %s", cfg.CDPURL)
+	}
+	t.Setenv("SEGURATA_CONFIG", "/tmp/seg.json")
+	t.Setenv("SEGURATA_HOME", "/tmp/seg-home")
+	if DefaultPath() != "/tmp/seg.json" {
+		t.Errorf("SEGURATA_CONFIG: %s", DefaultPath())
+	}
+	if d, err := StateDir(); err != nil || d != "/tmp/seg-home" {
+		t.Errorf("SEGURATA_HOME: %s %v", d, err)
+	}
+}
+
+// Instances of a connector come sorted by label; a connector the config does not name has one
+// empty unnamed instance, and a key that only starts with its name is another connector's.
+func TestInstances(t *testing.T) {
+	cfg := Config{Connectors: map[string]ConnectorConfig{"aws:work": {}, "aws": {Timeout: "1h"}, "aws-extra": {}, "aws:home": {}}}
+	var labels []string
+	for _, in := range cfg.Instances("aws") {
+		labels = append(labels, in.Label)
+	}
+	if strings.Join(labels, ",") != ",home,work" || cfg.Instances("aws")[0].Timeout != "1h" {
+		t.Errorf("aws instances %q", labels)
+	}
+	if got := cfg.Instances("gcp"); len(got) != 1 || got[0].Label != "" || got[0].Secrets != nil {
+		t.Errorf("unconfigured connector: %+v", got)
 	}
 }

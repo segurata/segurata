@@ -6,16 +6,14 @@ import (
 	"io"
 )
 
-// New is a flag set that reports a bad flag on w and returns the error instead of exiting, so each
-// subcommand prints its own usage and exit code.
+// New is a flag set that reports a bad flag on w and returns the error instead of exiting.
 func New(name string, w io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(w)
 	return fs
 }
 
-// Parse parses flags wherever they appear, so `done <id> --note x` works as well as
-// `done --note x <id>`, and returns the positional arguments in order.
+// Parse takes flags wherever they appear and returns the positional arguments in order.
 func Parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for {

@@ -15,19 +15,15 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// minScrubbed is the shortest secret value the scrubber looks for: a shorter one would match
-// ordinary text.
+// minScrubbed is the shortest value scrubbed: a shorter one would match ordinary text.
 const minScrubbed = 6
 
-// scrubber finds the secret values the core handed a connector in what the connector prints, and
-// replaces each with its redacted form. A connector echoing its credential is a bug; the scrubber
-// makes sure the bug never puts the value where segurata shows or keeps text.
+// scrubber redacts the secret values the core handed a connector in what the connector prints.
 type scrubber struct {
 	values   []string // longest first, so a value inside another is never replaced first
 	replacer *strings.Replacer
 }
 
-// newScrubber looks for the values of secrets that are at least minScrubbed long.
 func newScrubber(secrets map[string]string) scrubber {
 	var s scrubber
 	for _, v := range secrets {
@@ -44,7 +40,6 @@ func newScrubber(secrets map[string]string) scrubber {
 	return s
 }
 
-// String is text with every secret value replaced by its redacted form.
 func (s scrubber) String(text string) string {
 	if len(s.values) == 0 {
 		return text
@@ -61,7 +56,6 @@ func ScrubChecks(checks []Check, secrets map[string]string) {
 	}
 }
 
-// Error is err, or an error with its text scrubbed when it carries a secret value.
 func (s scrubber) Error(err error) error {
 	if err == nil {
 		return nil
@@ -72,7 +66,7 @@ func (s scrubber) Error(err error) error {
 	return err
 }
 
-// Carries reports whether v, as JSON, holds a secret value anywhere: a field, a key, evidence.
+// Carries reports whether v, as JSON, holds a secret value anywhere.
 func (s scrubber) Carries(v any) bool {
 	if len(s.values) == 0 {
 		return false
@@ -91,10 +85,8 @@ func (s scrubber) Carries(v any) bool {
 	return false
 }
 
-// ScrubEmitter is an Emitter that scrubs what a connector emits before it reaches emit. A
-// finding or status carrying a secret value is dropped and counted, Err says so, and the run
-// fails: the record cannot be shown honestly, and dropping it silently would make what it
-// reported look resolved. A scope and a log line keep their place with the value redacted.
+// ScrubEmitter drops a finding or status that carries a secret value and fails the run through Err,
+// since a silent drop would look resolved; scopes and logs pass redacted.
 type ScrubEmitter struct {
 	emit    Emitter
 	s       scrubber
@@ -102,7 +94,6 @@ type ScrubEmitter struct {
 	dropped int
 }
 
-// NewScrubEmitter wraps emit with the scrubber of secrets.
 func NewScrubEmitter(emit Emitter, secrets map[string]string) *ScrubEmitter {
 	return &ScrubEmitter{emit: emit, s: newScrubber(secrets)}
 }
@@ -137,7 +128,7 @@ func (e *ScrubEmitter) drop(v any) bool {
 	return true
 }
 
-// Err scrubs the connector's own error, and adds one when records were dropped.
+// Err scrubs the connector's own error and adds one for dropped records.
 func (e *ScrubEmitter) Err(err error) error {
 	e.mu.Lock()
 	n := e.dropped
@@ -150,9 +141,8 @@ func (e *ScrubEmitter) Err(err error) error {
 	return err
 }
 
-// lineScrubber writes through to w one line at a time, scrubbed, so a value split across two
-// writes is still found. A line longer than maxStderrBytes fails, as the bounded writers do; Flush
-// writes what is left after the last newline.
+// lineScrubber scrubs whole lines, so a value split across two writes is still found. A line
+// longer than maxStderrBytes fails, as the bounded writers do; Flush writes the unterminated rest.
 type lineScrubber struct {
 	w   io.Writer
 	s   scrubber

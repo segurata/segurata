@@ -27,8 +27,6 @@ func (r *Report) document() *doc.Doc {
 		r.Generated.Format("2006-01-02 15:04"), r.OutDir, r.MinSev))
 	r.headline(d)
 	r.completeness(d)
-	// The tracker's units, as status shows them: setup items and item history, not the runs'
-	// statuses and file diffs again.
 	tracker.Blockers(d, r.tr.Items, r.Generated, nil)
 	d.H(2, "Changes in the last 7 days")
 	tracker.Changes(d, r.tr.Items, r.Generated.AddDate(0, 0, -7), true)
@@ -47,7 +45,7 @@ func (r *Report) headline(d *doc.Doc) {
 	r.tr.Headline(d, r.tr.Items, r.Generated)
 	head := []string{"Connector", "Run"}
 	for _, s := range severities {
-		head = append(head, strings.ToUpper(string(s[:1]))+string(s[1:]))
+		head = append(head, textfmt.UpperFirst(string(s)))
 	}
 	head = append(head, "Accepted", "Attention")
 	total := make([]int, len(severities)+2)
@@ -150,8 +148,6 @@ func needsAttention(sts []finding.Status) []finding.Status {
 	return out
 }
 
-func capped(fs []finding.Finding, n int) []finding.Finding { return fs[:min(len(fs), n)] }
-
 // more is the "and N more" line under a capped list, or an empty item when nothing was cut.
 func more(total, shown int, what string) doc.Item {
 	if total <= shown {
@@ -193,7 +189,7 @@ func (r *Report) topFindings(d *doc.Doc) {
 	for _, g := range groups {
 		d.H(3, fmt.Sprintf("%s (%d at or above %s)", g.run.Label, len(g.shown), r.MinSev))
 		var items []doc.Item
-		for _, f := range capped(g.shown, r.Top) {
+		for _, f := range g.shown[:min(len(g.shown), r.Top)] {
 			items = append(items, findingItem(f))
 		}
 		if m := more(len(g.shown), r.Top, "in "+g.run.File); m.Text != "" {

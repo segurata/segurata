@@ -97,9 +97,37 @@ func TestCoverageOfRunsThatProveNothing(t *testing.T) {
 	}
 }
 
-func TestScopeOfFallsBackToAccount(t *testing.T) {
+// A finding's coverage scope falls back to its account, and its path is its repository, else its
+// file, when either is a local path.
+func TestAFindingsScopeAndPath(t *testing.T) {
 	if ScopeOf(Finding{Account: "a"}) != "a" || ScopeOf(Finding{Account: "a", Scope: "s"}) != "s" {
 		t.Fatal("ScopeOf")
+	}
+	for _, c := range []struct {
+		evidence map[string]any
+		want     string
+	}{
+		{map[string]any{"repo": "~/src/x", "path": "~/src/x/.env"}, "~/src/x"},
+		{map[string]any{"repo": "github.com/a/b", "path": "/etc/x.env"}, "/etc/x.env"},
+		{map[string]any{"path": "relative/x.env"}, ""},
+		{nil, ""},
+	} {
+		if got := PathOf(Finding{Evidence: c.evidence}); got != c.want {
+			t.Errorf("PathOf(%v) = %q, want %q", c.evidence, got, c.want)
+		}
+	}
+	var tally Tally
+	tally.Declare("files", true, "")
+	tally.Declare(PathScope("files", "~/locked"), false, "unreadable")
+	end := tally.End("c", "", time.Now(), time.Now(), nil)
+	at := func(p string) Finding {
+		return Finding{Account: "local", Scope: "files", Evidence: map[string]any{"path": p}}
+	}
+	if _, unchecked := CoverageOf(&end).UncheckedFinding(at("~/locked/x")); !unchecked {
+		t.Error("a finding under an unreadable path was taken as checked")
+	}
+	if _, unchecked := CoverageOf(&end).UncheckedFinding(at("~/open/x")); unchecked {
+		t.Error("a finding elsewhere in the scope was taken as unchecked")
 	}
 }
 
@@ -116,6 +144,14 @@ func TestCoverageCompleteAsConfigured(t *testing.T) {
 	}
 	if _, unchecked := c.Unchecked("me", "sys-1"); !unchecked {
 		t.Error("a scope left out on purpose was taken as checked")
+	}
+	for reason, want := range map[string]bool{
+		"expected": true, "expected: in the config's skip list": true,
+		"expected a 200 from the API, got 403": false, "expectedly empty": false, "not expected": false,
+	} {
+		if got := (Skipped{Scope: "s", Reason: reason}).Expected(); got != want {
+			t.Errorf("Skipped with reason %q: expected %v, want %v", reason, got, want)
+		}
 	}
 	tally.Declare("b", false, "denied")
 	end = tally.End("prowler", "", time.Time{}, time.Time{}, nil)

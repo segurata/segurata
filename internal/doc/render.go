@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 )
 
-// Format is an output format.
 type Format string
 
 const (
@@ -18,10 +18,8 @@ const (
 	HTML     Format = "html"
 )
 
-// Valid reports whether f is a known format.
 func (f Format) Valid() bool { return f == Text || f == Markdown || f == HTML }
 
-// Render writes d in the given format.
 func Render(w io.Writer, d *Doc, f Format) error {
 	switch f {
 	case Text:
@@ -43,11 +41,12 @@ func renderText(w io.Writer, d *Doc) {
 		switch b.kind {
 		case bHeading:
 			t := plain(b.spans)
+			rule := utf8.RuneCountInString(t)
 			switch b.level {
 			case 1:
-				fmt.Fprintf(w, "%s\n%s\n", strings.ToUpper(t), strings.Repeat("=", len(t)))
+				fmt.Fprintf(w, "%s\n%s\n", strings.ToUpper(t), strings.Repeat("=", rule))
 			case 2:
-				fmt.Fprintf(w, "\n%s\n%s\n", t, strings.Repeat("-", len([]rune(t))))
+				fmt.Fprintf(w, "\n%s\n%s\n", t, strings.Repeat("-", rule))
 			default:
 				fmt.Fprintf(w, "\n%s\n", t)
 			}
@@ -88,8 +87,7 @@ func renderText(w io.Writer, d *Doc) {
 
 // --- Markdown ---
 
-// EscapeMarkdown backslash-escapes the characters Markdown would read as markup, including < so a
-// title cannot open an HTML tag in a viewer.
+// EscapeMarkdown backslash-escapes Markdown markup, < included so a title cannot open an HTML tag.
 func EscapeMarkdown(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -158,7 +156,7 @@ func renderMarkdown(w io.Writer, d *Doc) {
 			sep := make([]string, len(b.head))
 			for i, h := range b.head {
 				head[i], sep[i] = esc(h), "---"
-				if len(b.rows) > 0 && i < len(b.rows[0]) && b.rows[0][i].Num {
+				if b.numeric(i) {
 					sep[i] = "---:"
 				}
 			}
@@ -195,8 +193,8 @@ func safeURL(s string) bool {
 
 // --- HTML ---
 
-// The page is one file: inline CSS, no script, no external asset, and a CSP that forbids loading
-// anything, so opening it never contacts a server.
+// The page is one file, inline CSS and no script, whose CSP forbids loading anything, so opening it
+// contacts no server.
 const htmlHead = `<!doctype html>
 <html lang="en">
 <head>
@@ -300,7 +298,11 @@ func renderHTML(w io.Writer, d *Doc) {
 		case bTable:
 			fmt.Fprint(w, `<div class="scroll"><table><thead><tr>`)
 			for i, h := range b.head {
-				fmt.Fprintf(w, "<th%s>%s</th>", numClass(b, i), html.EscapeString(h))
+				cls := ""
+				if b.numeric(i) {
+					cls = ` class="num"`
+				}
+				fmt.Fprintf(w, "<th%s>%s</th>", cls, html.EscapeString(h))
 			}
 			fmt.Fprint(w, "</tr></thead><tbody>\n")
 			for _, row := range b.rows {
@@ -323,11 +325,9 @@ func renderHTML(w io.Writer, d *Doc) {
 	fmt.Fprintln(w, "</main>\n</body>\n</html>")
 }
 
-func numClass(b block, col int) string {
-	if len(b.rows) > 0 && col < len(b.rows[0]) && b.rows[0][col].Num {
-		return ` class="num"`
-	}
-	return ""
+// numeric reports whether a table column holds numbers, as its first row says.
+func (b block) numeric(col int) bool {
+	return len(b.rows) > 0 && col < len(b.rows[0]) && b.rows[0][col].Num
 }
 
 func htmlDetail(dt Detail) string {

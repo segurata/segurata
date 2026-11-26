@@ -8,12 +8,8 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Run completeness: every run ends with a run_end record saying which scopes it inspected and
-// which it skipped, so a finding missing from an incomplete run is never taken as resolved. See
-// docs/architecture.md, "Run completeness".
-
-// ScopeAll is the scope that stands for everything a run covers. A skipped scope ending in "*"
-// covers every scope that starts with the part before it, so "*" alone covers them all.
+// ScopeAll stands for everything a run covers: a skipped "prefix*" covers every scope with that
+// prefix (docs/architecture.md, "Run completeness").
 const ScopeAll = "*"
 
 const (
@@ -22,8 +18,7 @@ const (
 	maxReason          = 200
 )
 
-// ScopeOf is the part of the account a finding belongs to, as runs report coverage: its Scope, or
-// its Account when the connector inspects the account as one unit.
+// ScopeOf is the coverage scope of a finding: its Scope, else its Account.
 func ScopeOf(f Finding) string {
 	if f.Scope != "" {
 		return f.Scope
@@ -31,13 +26,12 @@ func ScopeOf(f Finding) string {
 	return f.Account
 }
 
-// Skipped is a scope a run did not inspect, and why.
 type Skipped struct {
 	Scope  string `json:"scope"`
 	Reason string `json:"reason"`
 }
 
-// Scopes lists a run's coverage. The lists are capped; the counts are not.
+// Scopes lists a run's coverage; the lists are capped, the counts are not.
 type Scopes struct {
 	Inspected      []string  `json:"inspected"`
 	InspectedCount int       `json:"inspected_count"`
@@ -45,8 +39,7 @@ type Scopes struct {
 	SkippedCount   int       `json:"skipped_count"`
 }
 
-// RunEnd is the last record of a connector instance's output. A file without one is a run that was
-// interrupted, is still running, or predates run_end records.
+// RunEnd is the last record of a finished run of one connector instance.
 type RunEnd struct {
 	Type      string    `json:"type"` // always "run_end"
 	Connector string    `json:"connector"`
@@ -56,18 +49,14 @@ type RunEnd struct {
 	Complete  bool      `json:"complete"` // nothing skipped and no error
 	Error     string    `json:"error,omitempty"`
 	Scopes    Scopes    `json:"scopes"`
-	// SecretFingerprints are the fingerprints (internal/fingerprint) of the secrets the core resolved
-	// for this instance, by name (OPENAI_ADMIN_KEY): never the values. The tracker matches them with
-	// leaked copies, which the run proves are in use.
+	// SecretFingerprints of the secrets the core resolved, by name, so the tracker can tell a leaked
+	// copy is in use.
 	SecretFingerprints map[string]string `json:"secret_fingerprints,omitempty"`
-	// Theme is the theme the connector declared, resolved by ThemeFor; zero in runs written before
-	// connectors declared themes and grouping.
-	Theme Theme `json:"theme,omitzero"`
-	// Covers are the plan areas the connector declared it audits.
-	Covers []Area `json:"covers,omitempty"`
+	Theme              Theme             `json:"theme,omitzero"` // zero in runs from before themes
+	Covers             []Area            `json:"covers,omitempty"`
 }
 
-// Tally collects a run's coverage as records arrive. It is not safe for concurrent use.
+// Tally collects a run's coverage as records arrive; not safe for concurrent use.
 type Tally struct {
 	inspected   []string
 	isInspected map[string]bool
@@ -76,8 +65,7 @@ type Tally struct {
 	any         bool // something was inspected
 }
 
-// Status counts a status: ok marks its scope (or account) inspected; any other state leaves it
-// uninspected, and a status naming neither leaves everything uninspected.
+// Status marks the status's scope (or account) inspected when ok, skipped otherwise.
 func (t *Tally) Status(st Status) {
 	id := st.Scope
 	if id == "" {
@@ -94,7 +82,7 @@ func (t *Tally) Status(st Status) {
 	t.Declare(id, false, reason)
 }
 
-// Declare records a scope a connector inspected, or skipped for reason. A skipped "" is ScopeAll.
+// Declare records a scope inspected, or skipped for reason; a skipped "" is ScopeAll.
 func (t *Tally) Declare(id string, inspected bool, reason string) {
 	if inspected {
 		t.any = true
@@ -124,9 +112,7 @@ func (t *Tally) Declare(id string, inspected bool, reason string) {
 	t.skipped = append(t.skipped, Skipped{Scope: id, Reason: clip(reason)})
 }
 
-// End is the run_end record for what was tallied. err is the connector's own error (it could not
-// start, or was interrupted): then nothing counts as inspected. So too when no status said ok and
-// no scope was declared inspected.
+// End is the run_end record. Nothing counts as inspected after err, or when nothing was inspected.
 func (t *Tally) End(connector, instance string, started, ended time.Time, err error) RunEnd {
 	var all []Skipped
 	switch {
@@ -161,18 +147,16 @@ func clip(s string) string {
 	return textfmt.Truncate(strings.Join(strings.Fields(s), " "), maxReason+1)
 }
 
-// unknownCoverage explains why a file without run_end is never trusted to say something is gone.
 const unknownCoverage = "no run_end record: the run was interrupted, is still running, or predates run_end records"
 
-// Coverage answers, for one run, whether a finding's scope was inspected. The zero value is a run
-// without run_end: usable for display, never proof that anything is gone.
+// Coverage answers whether a run inspected a finding's scope. The zero value, a run without
+// run_end, never proves anything gone.
 type Coverage struct {
 	Known   bool // the run has a run_end record
 	all     string
 	skipped []Skipped
 }
 
-// CoverageOf reads a run_end record; nil (or a zero record) gives the unknown coverage.
 func CoverageOf(end *RunEnd) Coverage {
 	if end == nil || end.Type != "run_end" {
 		return Coverage{}
@@ -189,17 +173,18 @@ func CoverageOf(end *RunEnd) Coverage {
 	return c
 }
 
-// Complete reports whether the run has a run_end and skipped nothing.
 func (c Coverage) Complete() bool { return c.Known && c.all == "" && len(c.skipped) == 0 }
 
-// Skipped is what the run did not inspect.
 func (c Coverage) Skipped() []Skipped { return c.skipped }
 
-// Expected reports a scope left out because the owner's config says so: the connector writes its
-// reason starting with "expected". It still proves nothing there gone.
-func (s Skipped) Expected() bool { return strings.HasPrefix(s.Reason, string(StateExpected)) }
+// Expected reports a scope the owner's config left out, its reason "expected" or "expected: …"; it
+// still proves nothing there gone.
+func (s Skipped) Expected() bool {
+	why, ok := strings.CutPrefix(s.Reason, string(StateExpected))
+	return ok && (why == "" || strings.HasPrefix(why, ":"))
+}
 
-// Missed is what the run did not inspect although the owner's config did not leave it out.
+// Missed is what the run did not inspect and the config did not leave out.
 func (c Coverage) Missed() []Skipped {
 	var out []Skipped
 	for _, s := range c.skipped {
@@ -210,12 +195,9 @@ func (c Coverage) Missed() []Skipped {
 	return out
 }
 
-// CompleteAsConfigured reports whether the run has a run_end and inspected everything the owner's
-// config did not leave out.
 func (c Coverage) CompleteAsConfigured() bool { return c.Known && c.all == "" && len(c.Missed()) == 0 }
 
-// NoneChecked reports, with the reason, a run that proves nothing gone: no run_end, or nothing
-// inspected.
+// NoneChecked reports, with the reason, a run that proves nothing gone.
 func (c Coverage) NoneChecked() (string, bool) {
 	switch {
 	case !c.Known:
@@ -226,8 +208,8 @@ func (c Coverage) NoneChecked() (string, bool) {
 	return "", false
 }
 
-// Unchecked reports, with the reason, whether the run did not inspect the given account and scope.
-// scope "" means unknown (recorded before scopes existed): then any skipped scope counts.
+// Unchecked reports, with the reason, whether the run did not inspect account and scope. scope ""
+// (recorded before scopes existed) counts as unchecked when anything was skipped.
 func (c Coverage) Unchecked(account, scope string) (string, bool) {
 	if why, none := c.NoneChecked(); none {
 		return why, true
@@ -243,12 +225,10 @@ func (c Coverage) Unchecked(account, scope string) (string, bool) {
 	return "", false
 }
 
-// PathScope is the part of scope at one path: a run that could not read that path, or a
-// directory holding it, skips it while the rest of scope counts as inspected.
+// PathScope is the part of scope at path, skipped when a run could not read it.
 func PathScope(scope, path string) string { return scope + ":" + path }
 
-// UncheckedPath is Unchecked for something at path within scope: also unchecked when the run
-// skipped the PathScope of a path that holds it or lies inside it.
+// UncheckedPath is also unchecked when the run skipped a PathScope that holds path or lies in it.
 func (c Coverage) UncheckedPath(account, scope, path string) (string, bool) {
 	if why, unchecked := c.Unchecked(account, scope); unchecked || path == "" {
 		return why, unchecked
@@ -265,13 +245,11 @@ func overlaps(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
-// UncheckedFinding is UncheckedPath for a finding of a run that records scopes.
 func (c Coverage) UncheckedFinding(f Finding) (string, bool) {
 	return c.UncheckedPath(f.Account, ScopeOf(f), PathOf(f))
 }
 
-// PathOf is the local path a finding is at, from its evidence: its repository, else its file;
-// "" when it names neither.
+// PathOf is the local path in a finding's evidence: its repository, else its file.
 func PathOf(f Finding) string {
 	for _, k := range []string{"repo", "path"} {
 		if p, _ := f.Evidence[k].(string); strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "/") {

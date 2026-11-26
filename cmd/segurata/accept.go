@@ -17,8 +17,7 @@ func trackerCLI() tracker.CLI {
 	return tracker.CLI{Out: os.Stdout, Err: os.Stderr, Config: config.DefaultPath(), Now: time.Now, Instances: instances, Browser: browserConnector}
 }
 
-// instances are the connector instances an unfiltered inventory runs, by label; none when the
-// config does not load (status then lists only what ran).
+// instances are the labels an unfiltered inventory runs; none when the config does not load.
 func instances() []string {
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
@@ -35,7 +34,7 @@ func instances() []string {
 	return out
 }
 
-// browserConnector reports whether the connector called name drives the browser over CDP.
+// browserConnector reports whether the connector called name drives the browser.
 func browserConnector(name string) bool {
 	for _, c := range all() {
 		if d := c.Describe(); d.Name == name {
@@ -45,8 +44,7 @@ func browserConnector(name string) bool {
 	return false
 }
 
-// lent loads what the tracker lends an inventory or remediate run: its acceptances, and whose each
-// secret is, against the tracker's accounts plus owned (config owned).
+// lent is what the tracker lends a run: its acceptances, and whose each secret is.
 func lent(owned attribution.Owned) (run.Lent, error) {
 	t, err := tracker.LoadOrNew(tracker.Paths{}, time.Now())
 	if err != nil {

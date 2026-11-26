@@ -50,12 +50,22 @@ func TestBackupsInTheSameSecondDoNotCollide(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
 	now := time.Date(2026, 11, 24, 15, 43, 0, 0, time.UTC)
 	a, err := Backup(p, []byte("one"), now)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || a != p+".segurata-bak-20261124T154300Z" {
+		t.Fatalf("first backup %q %v", a, err)
 	}
 	b, err := Backup(p, []byte("two"), now)
-	if err != nil || a == b {
-		t.Fatalf("second backup in the same second: %q %q %v", a, b, err)
+	if err != nil || b != a+"-2" {
+		t.Fatalf("second backup in the same second: %q %v", b, err)
+	}
+	for name, want := range map[string]string{a: "one", b: "two"} {
+		raw, _ := os.ReadFile(name)
+		st, err := os.Stat(name)
+		if err != nil || string(raw) != want || st.Mode().Perm() != 0o600 {
+			t.Errorf("%s: %q, %v", name, raw, err)
+		}
+	}
+	if _, err := Backup(filepath.Join(p, "missing", "x"), nil, now); err == nil {
+		t.Error("a backup in a missing directory succeeded")
 	}
 }
 

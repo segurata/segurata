@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -23,12 +22,8 @@ import (
 
 const externalPrefix = "segurata-"
 
-// validName is what a connector name may look like: it selects the secrets the core hands over
-// and names the run file, so it must be a plain word that cannot climb out of a directory.
+// validName selects secrets and names the run file, so it must not climb out of a directory.
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-
-// RemediationProtocol is the first protocol version with `plan` and `apply`.
-const RemediationProtocol = 2
 
 // External wraps a segurata-<name> executable so it behaves like a built-in connector.
 type External struct {
@@ -36,10 +31,9 @@ type External struct {
 	desc Description
 }
 
-// Discover finds segurata-<name> executables on PATH. A built-in name wins over an external one, an
-// earlier PATH directory over a later one, and a file whose suffix is not a valid name never runs.
-// Only absolute PATH entries count, so the plugin set never depends on the working directory and
-// matches what a scheduled run sees.
+// Discover finds segurata-<name> executables on the absolute entries of PATH, so the plugin set
+// matches what a scheduled run sees. A built-in name wins, then the earlier PATH directory; a file
+// whose suffix is not a valid name never runs.
 func Discover() []*External {
 	seen := map[string]bool{}
 	for _, c := range Builtins() {
@@ -69,7 +63,6 @@ func Discover() []*External {
 	return out
 }
 
-// fileName is the connector name a segurata-<name> path stands for.
 func fileName(path string) string { return strings.TrimPrefix(filepath.Base(path), externalPrefix) }
 
 func isExecutable(p string) bool {
@@ -77,27 +70,20 @@ func isExecutable(p string) bool {
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
 }
 
-// Bounds on a plugin's subprocesses, so one that hangs or floods its output cannot hang or exhaust
-// the core. describe runs on every command that lists connectors and prints a few hundred bytes.
+// Bounds on a plugin's subprocesses, so one that hangs or floods its output cannot hang the core.
 var describeTimeout = 10 * time.Second
 
 const (
 	maxDescribeBytes = 1 << 20
 	maxStderrBytes   = 1 << 20
+	maxPlanBytes     = 1 << 20
 )
 
-// command prepares `<path> <sub>`, killed when ctx is done; proc.Command bounds the wait for pipes
-// a child it left behind may still hold open.
-func command(ctx context.Context, path, sub string) *exec.Cmd {
-	return proc.Command(ctx, path, sub)
-}
-
-// LoadExternal runs `<path> describe` and checks what it prints, including that the name it
-// declares is the one in its file name.
+// LoadExternal runs `<path> describe` and checks that it names the connector its file name does.
 func LoadExternal(path string) (*External, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), describeTimeout)
 	defer cancel()
-	cmd := command(ctx, path, "describe")
+	cmd := proc.Command(ctx, path, "describe")
 	var raw bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &raw, n: maxDescribeBytes}
 	if err := cmd.Run(); err != nil {
@@ -119,7 +105,6 @@ func LoadExternal(path string) (*External, error) {
 	return e, nil
 }
 
-// validate checks a description an external connector printed.
 func (d Description) validate() error {
 	if d.Name == "" {
 		return errors.New("describe has no name")
@@ -127,11 +112,11 @@ func (d Description) validate() error {
 	if !validName.MatchString(d.Name) {
 		return fmt.Errorf("name %q is not lowercase letters, digits and dashes", d.Name)
 	}
-	if d.Protocol < MinProtocolVersion || d.Protocol > ProtocolVersion {
-		return fmt.Errorf("speaks protocol %d, core speaks %d to %d", d.Protocol, MinProtocolVersion, ProtocolVersion)
+	if d.Protocol < minProtocolVersion || d.Protocol > ProtocolVersion {
+		return fmt.Errorf("speaks protocol %d, core speaks %d to %d", d.Protocol, minProtocolVersion, ProtocolVersion)
 	}
-	if len(d.Remediates) > 0 && d.Protocol < RemediationProtocol {
-		return fmt.Errorf("declares remediations but speaks protocol %d; remediation needs protocol %d", d.Protocol, RemediationProtocol)
+	if len(d.Remediates) > 0 && d.Protocol < remediationProtocol {
+		return fmt.Errorf("declares remediations but speaks protocol %d; remediation needs protocol %d", d.Protocol, remediationProtocol)
 	}
 	if d.Theme.ID != "" && !validName.MatchString(d.Theme.ID) {
 		return fmt.Errorf("theme id %q is not lowercase letters, digits and dashes", d.Theme.ID)
@@ -151,10 +136,8 @@ func (d Description) validate() error {
 
 func (e *External) Describe() Description { return e.desc }
 
-// Inventory runs `segurata-<name> inventory`. The request carries the protocol version the
-// connector declared, so a version 1 connector never sees a version it does not know. A record the
-// core cannot use fails the run once the rest has been read: dropping it silently would make what
-// it reported look resolved.
+// Inventory runs `segurata-<name> inventory` with the protocol the connector declared. A record the
+// core cannot use fails the run once the rest is read: dropping it would make it look resolved.
 func (e *External) Inventory(ctx context.Context, req Request, emit Emitter) error {
 	req.Protocol = e.desc.Protocol
 	var stderr bytes.Buffer
@@ -180,29 +163,23 @@ func (e *External) Inventory(ctx context.Context, req Request, emit Emitter) err
 	return nil
 }
 
-// RemediationRequest is what the core writes to `plan` and `apply` (protocol 2). Plan is set only
-// for `apply`: the plan the owner saw and confirmed.
+// RemediationRequest is the stdin of `plan` and `apply`; Plan, for apply only, is the confirmed plan.
 type RemediationRequest struct {
 	Request
 	Finding finding.Finding `json:"finding"`
 	Plan    *Plan           `json:"plan,omitempty"`
 }
 
-// PlanReply is what `segurata-<name> plan` prints: the fields of a Plan, plus needs_sudo, which a
-// connector may set and the core refuses.
+// PlanReply is what `plan` prints: a Plan, plus needs_sudo, which the core refuses.
 type PlanReply struct {
 	Plan
 	SudoRequested bool `json:"needs_sudo,omitempty"`
 }
 
-// maxPlanBytes bounds what the core reads from `plan`; a plan is a few hundred bytes.
-const maxPlanBytes = 1 << 20
-
-// RequestPlan runs `segurata-<name> plan` and decodes its reply strictly: an unknown field or
-// trailing data is an error, never ignored, and so is a plan that carries one of the request's
-// secret values. It vets nothing else; the core does.
+// RequestPlan runs `plan` and decodes its reply strictly: an unknown field, trailing data or one of
+// the request's secret values is an error. The core vets the rest.
 func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (PlanReply, error) {
-	if e.desc.Protocol < RemediationProtocol {
+	if e.desc.Protocol < remediationProtocol {
 		return PlanReply{}, fmt.Errorf("%s speaks protocol %d, which has no remediation", e.desc.Name, e.desc.Protocol)
 	}
 	req.Protocol, req.Plan = e.desc.Protocol, nil
@@ -210,7 +187,7 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	if err != nil {
 		return PlanReply{}, err
 	}
-	cmd := command(ctx, e.Path, "plan")
+	cmd := proc.Command(ctx, e.Path, "plan")
 	cmd.Stdin = bytes.NewReader(in)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &limitedWriter{w: &stdout, n: maxPlanBytes}, &limitedWriter{w: &stderr, n: maxStderrBytes}
@@ -233,11 +210,10 @@ func (e *External) RequestPlan(ctx context.Context, req RemediationRequest) (Pla
 	return reply, nil
 }
 
-// RequestApply runs `segurata-<name> apply` with the confirmed plan. Its `log` records go to
-// out, its stderr to errw, both with the request's secret values redacted; a non-zero exit is a
-// failed apply.
+// RequestApply runs `apply` with the confirmed plan: its log records go to out and its stderr to
+// errw, both scrubbed of the request's secret values.
 func (e *External) RequestApply(ctx context.Context, req RemediationRequest, out, errw io.Writer) error {
-	if e.desc.Protocol < RemediationProtocol {
+	if e.desc.Protocol < remediationProtocol {
 		return fmt.Errorf("%s speaks protocol %d, which has no remediation", e.desc.Name, e.desc.Protocol)
 	}
 	if req.Plan == nil {
@@ -270,7 +246,7 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	cmd := command(ctx, e.Path, sub)
+	cmd := proc.Command(ctx, e.Path, sub)
 	cmd.Stdin = bytes.NewReader(raw)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -283,9 +259,7 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	// A child the plugin left behind can hold its pipes open after the plugin is killed, and the
-	// reads below would wait for that child however short ctx was: WaitDelay bounds only Wait.
-	// Closing both pipes when ctx ends releases them at once.
+	// A child the plugin left behind can hold the pipes open past ctx; WaitDelay bounds only Wait.
 	stop := context.AfterFunc(ctx, func() { _ = stdout.Close(); _ = errPipe.Close() })
 	defer stop()
 	copied := make(chan error, 1)
@@ -313,7 +287,7 @@ func (e *External) stream(ctx context.Context, sub string, in any, stderr io.Wri
 	return scanErr
 }
 
-// limitedWriter keeps at most n bytes and fails after that, so a runaway plugin cannot fill memory.
+// limitedWriter fails once more than n bytes arrive.
 type limitedWriter struct {
 	w io.Writer
 	n int
@@ -327,8 +301,7 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-// decodeRecord routes one JSON line to the emitter by its "type" field. It returns an error, and
-// emits nothing, for a line that is not a record of a known type with the fields that type needs.
+// decodeRecord routes one JSON line to the emitter by its type, emitting nothing on an error.
 func decodeRecord(line []byte, name string, emit Emitter) error {
 	var head struct {
 		Type string `json:"type"`

@@ -29,10 +29,10 @@ const (
 	SevCritical Severity = "critical"
 )
 
-// Valid reports whether s is one of the five severities, spelled exactly.
 func (s Severity) Valid() bool { return s == SevInfo || s.Rank() > 0 }
 
-// Rank orders severities so reports can sort worst first; unknown values rank lowest.
+// Rank is higher the worse the severity, so reports can sort worst first; unknown values rank
+// lowest.
 func (s Severity) Rank() int {
 	switch s {
 	case SevCritical:
@@ -58,9 +58,8 @@ func (s Severity) Pick(high, medium, low string) string {
 	return low
 }
 
-// Blast names what a finding puts at stake beyond its severity: the reach of what a connector
-// found, which ranks the tracker's "Do next" (docs/architecture.md). The connector says which
-// applies, the tracker weighs it; "" (and a value not listed here) is none.
+// Blast is what a finding puts at stake beyond its severity, which ranks the tracker's "Do next";
+// an unlisted value is none.
 type Blast string
 
 const (
@@ -83,15 +82,9 @@ type Resource struct {
 	Name string `json:"name"`
 }
 
-// Remediation says how to fix a finding. Action names a built-in remediation (such as
-// "macos.firewall.enable") that `segurata remediate` can apply; it is empty when the fix is
-// manual. Automatable is derived from Action by Fill.
-//
-// Group, when set, names the findings one plan fixes together: `segurata remediate` gathers every
-// finding of the same connector instance with the same Action and Group, plans them as one and
-// lists them as one line. Severity, when set, is the severity of what Action fixes when that is
-// less than the finding's own (a hardening step on a finding graded for something else); the list
-// ranks the action by it.
+// Remediation says how to fix a finding. Action names what `segurata remediate` can apply ("" is a
+// manual fix). Group joins the findings of one instance and Action that one plan fixes. Severity is
+// what Action fixes, when less than the finding's own.
 type Remediation struct {
 	Summary     string   `json:"summary"`
 	URL         string   `json:"url,omitempty"`
@@ -101,7 +94,6 @@ type Remediation struct {
 	Automatable bool     `json:"automatable"`
 }
 
-// ActionSeverity is the severity `segurata remediate --list` ranks the finding's action by.
 func (f Finding) ActionSeverity() Severity {
 	if f.Remediation.Severity != "" {
 		return f.Remediation.Severity
@@ -123,10 +115,8 @@ type Finding struct {
 	Title     string         `json:"title"`
 	Evidence  map[string]any `json:"evidence,omitempty"`
 	Blast     Blast          `json:"blast,omitempty"` // what it puts at stake beyond its severity
-	// Unconfirmed says the connector is not sure the problem is real (a file named like a
-	// database dump whose content does not show one); ranking discounts it.
-	Unconfirmed bool `json:"unconfirmed,omitempty"`
-	// Track says how the tracker groups and titles the finding; nil for the default (see Track).
+	// Unconfirmed: the connector is not sure the problem is real; ranking discounts it.
+	Unconfirmed bool        `json:"unconfirmed,omitempty"`
 	Track       *Track      `json:"track,omitempty"`
 	CreatedAt   *time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time  `json:"last_used_at"` // nil when the provider does not say
@@ -135,8 +125,7 @@ type Finding struct {
 	Accepted    *Acceptance `json:"accepted,omitempty"` // set by the core from the accepted-risks file
 }
 
-// Acceptance records that the owner keeps this risk on purpose. An expired one no longer hides
-// the finding.
+// Acceptance records that the owner keeps this risk on purpose until it expires.
 type Acceptance struct {
 	Reason     string    `json:"reason"`
 	AcceptedAt time.Time `json:"accepted_at"`
@@ -144,10 +133,9 @@ type Acceptance struct {
 	Expired    bool      `json:"expired,omitempty"`
 }
 
-// Hidden reports whether an acceptance in force keeps the finding out of summaries and lists.
+// Hidden reports whether an acceptance in force keeps the finding out of lists.
 func (f Finding) Hidden() bool { return f.Accepted != nil && !f.Accepted.Expired }
 
-// DisplayTitle is the title as summaries print it: an expired acceptance says so.
 func (f Finding) DisplayTitle() string {
 	if f.Accepted != nil && f.Accepted.Expired {
 		return f.Title + " (acceptance expired)"
@@ -155,8 +143,7 @@ func (f Finding) DisplayTitle() string {
 	return f.Title
 }
 
-// Label spells a connector instance as the command line and the config key do: "name", or
-// "name:label" for a labelled instance.
+// Label spells a connector instance as the config key does: "name" or "name:label".
 func Label(connector, instance string) string {
 	if instance == "" {
 		return connector
@@ -164,10 +151,9 @@ func Label(connector, instance string) string {
 	return connector + ":" + instance
 }
 
-// Selector is the connector instance that produced f, spelled as Label does.
 func (f Finding) Selector() string { return Label(f.Connector, f.Instance) }
 
-// HiddenNote is the line printed under a list that left out accepted findings, or "" for none.
+// HiddenNote is the line under a list that left out n accepted findings, or "".
 func HiddenNote(n int) string {
 	if n == 0 {
 		return ""
@@ -175,8 +161,7 @@ func HiddenNote(n int) string {
 	return fmt.Sprintf("%d accepted findings hidden; see segurata accept --list", n)
 }
 
-// Fill sets the fields a connector should not have to compute: type, stable id, observation time
-// and whether the remediation is automatable.
+// Fill sets type, stable id, observation time and Automatable.
 func (f *Finding) Fill(now time.Time) {
 	f.Type = "finding"
 	f.Remediation.Automatable = f.Remediation.Action != ""
@@ -192,7 +177,7 @@ func (f *Finding) Fill(now time.Time) {
 	}
 }
 
-// StableID is the same across runs for the same resource, so runs can be diffed.
+// StableID is the same across runs for the same parts.
 func StableID(parts ...string) string {
 	h := sha256.New()
 	for _, p := range parts {
@@ -213,14 +198,11 @@ const (
 	StateMissingCredentials State = "missing_credentials"
 	StateUnsupported        State = "unsupported"
 	StateError              State = "error"
-	// StateExpected is a status other than ok that the owner's config says to expect (see
-	// Status.Expected): it opens no setup item, and its scope still counts as not inspected.
+	// StateExpected is a state the owner's config expects: no setup item, scope still uninspected.
 	StateExpected State = "expected"
 )
 
-// Status says whether an account could be inspected, and why not. Scope, when set, narrows it to
-// one part of the account (a project, a repository): a status other than ok then leaves only that
-// scope uninspected instead of the whole account. See RunEnd.
+// Status says whether an account, or with Scope one part of it, could be inspected, and why not.
 type Status struct {
 	Type      string `json:"type"` // always "status"
 	Connector string `json:"connector"`
@@ -229,14 +211,12 @@ type Status struct {
 	Scope     string `json:"scope,omitempty"`
 	State     State  `json:"state"`
 	Detail    string `json:"detail,omitempty"`
-	// Expected is the reason of the config rule that made the state expected; Was is the state
-	// the connector reported. Both are set by the core, never by a connector.
+	// Expected (the rule's reason) and Was (the reported state) are set by the core only.
 	Expected string `json:"expected,omitempty"`
 	Was      State  `json:"was,omitempty"`
 }
 
-// IdleAfter is how long a credential can go unused before it is worth a look; a credential used
-// more recently is in use.
+// IdleAfter is how long a credential can go unused before it is worth a look.
 const IdleAfter = 90 * 24 * time.Hour
 
 // Redact keeps a short prefix and the length, enough to recognise a key without leaking it.

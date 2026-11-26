@@ -64,26 +64,23 @@ type Report struct {
 	tr        *tracker.Tracker // names the setup item of each status
 }
 
-// Inputs are the files and options a report reads.
-type Inputs struct {
+type inputs struct {
 	OutDir      string
 	Now         time.Time
 	Tracker     *tracker.Tracker
 	TrackerPath string
 	MinSev      finding.Severity
 	Top         int // findings per connector in "Top findings"
-	// Sync is how a tracker that was never synced is synced in memory, from OutDir, so the report
-	// counts items before the first `track sync` too; nothing is saved. Its Expect also applies the
-	// config's expected rules to the runs' statuses.
+	// Sync syncs, in memory only, a tracker that never synced; its Expect also applies to statuses.
 	Sync tracker.SyncOptions
 }
 
 // maxP0 is how many P0 rotation items the report names.
 const maxP0 = 5
 
-// Build reads the latest run of every connector instance and annotates every finding with the
-// tracker's acceptances as of today.
-func Build(in Inputs) (*Report, error) {
+// build reads the latest run of every connector instance, its findings annotated with the
+// tracker's acceptances as of in.Now.
+func build(in inputs) (*Report, error) {
 	latest, err := runfile.LatestRuns(in.OutDir, in.Now)
 	if err != nil {
 		return nil, err
@@ -133,8 +130,7 @@ func Build(in Inputs) (*Report, error) {
 
 func dateOf(file string) string { return filepath.Base(filepath.Dir(file)) }
 
-// readRun reads a latest run, or the newest run that inspected something when the latest inspected
-// nothing and found nothing (runfile.Latest.Evidence).
+// readRun reads a latest run, or its Evidence run when the latest inspected and found nothing.
 func readRun(l runfile.Latest, annotate func(*finding.Finding)) (*Run, error) {
 	rf, err := runfile.Read(l.File)
 	if err != nil {
@@ -189,8 +185,7 @@ func summarise(t *tracker.Tracker, path string, now time.Time) Rotations {
 	return s
 }
 
-// visible are the findings a report lists: not hidden by an acceptance, at or above minSev, worst
-// first (stable, so ties keep the connector's order).
+// visible are the findings a report lists, worst first, ties in the connector's order.
 func visible(fs []finding.Finding, minSev finding.Severity) []finding.Finding {
 	var out []finding.Finding
 	for _, f := range fs {
@@ -202,14 +197,4 @@ func visible(fs []finding.Finding, minSev finding.Severity) []finding.Finding {
 	return out
 }
 
-// Format is an output format of `segurata report`.
-type Format = doc.Format
-
-const (
-	Text     = doc.Text
-	Markdown = doc.Markdown
-	HTML     = doc.HTML
-)
-
-// Render writes the report in the given format.
-func (r *Report) Render(w io.Writer, f Format) error { return doc.Render(w, r.document(), f) }
+func (r *Report) Render(w io.Writer, f doc.Format) error { return doc.Render(w, r.document(), f) }

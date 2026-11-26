@@ -1,5 +1,5 @@
-// Package runfile reads the run files a connector run leaves under out/<date>/: which run of each
-// connector instance is the latest, what it holds, and which old ones can go.
+// Package runfile reads the run files under out/<date>/: which run of each connector instance is
+// the latest, what it holds, and which old ones can go.
 package runfile
 
 import (
@@ -24,20 +24,18 @@ import (
 
 // Latest is the run of one connector instance that consumers read.
 type Latest struct {
-	File string // out/<date>/<name>.jsonl
-	// Prev is the run before File by the same rule, or "" when File is the first: nothing reads
-	// it, Prune keeps it in case File proves unreadable.
+	File string
+	// Prev is the run before File by the same rule; Prune keeps it in case File proves unreadable.
 	Prev string
-	// Unfinished is a newer file without run_end that was passed over for File, or "".
+	// Unfinished is a newer file without run_end passed over for File.
 	Unfinished string
-	// Evidence is the newest finished run that inspected something, when File did not (the browser
-	// was not reachable, the connector failed), or "". The report shows it in File's place and
-	// Prune keeps it, so runs that inspected nothing never hide or delete the last real one.
+	// Evidence is the newest finished run that inspected something when File did not, so runs that
+	// inspected nothing never hide or delete the last real one.
 	Evidence string
 }
 
-// FileName keeps run files in a distinct namespace from the old dash-joined names. Encoding
-// the instance in lowercase hex preserves its case even on case-insensitive filesystems.
+// FileName is name@hex(instance).jsonl, apart from the legacy dash-joined names; hex keeps the
+// instance's case on case-insensitive filesystems.
 func FileName(label string) string {
 	name, instance, _ := strings.Cut(label, ":")
 	file := name + "@" + hex.EncodeToString([]byte(instance)) + ".jsonl"
@@ -48,12 +46,8 @@ func FileName(label string) string {
 	return "@" + hex.EncodeToString(digest[:]) + ".jsonl"
 }
 
-// LatestRuns picks, for every connector instance, the newest out/<YYYY-MM-DD> run that finished
-// (ends with a run_end record), so a run that was killed or is still running never stands in for
-// the last good one. An instance with no finished run at all (only files from before run_end
-// records) gets its newest file. Runs are per connector, so the newest day alone is not enough:
-// after midnight it may hold only the connectors run since. Days after now's are left out (see
-// History).
+// LatestRuns picks, for every connector instance, its newest finished run, else its newest file,
+// so a killed or running one never stands in for the last good one.
 func LatestRuns(outDir string, now time.Time) ([]Latest, error) {
 	history, err := History(outDir, now)
 	if err != nil {
@@ -71,9 +65,8 @@ func LatestRuns(outDir string, now time.Time) ([]Latest, error) {
 	return out, nil
 }
 
-// History lists every run file under out/<YYYY-MM-DD>/, by connector instance label,
-// oldest first, leaving out days after now's: one written while the clock was wrong would stand
-// in for every real run after it.
+// History lists every run file by connector instance label, oldest first. Days after now's are
+// left out: one written while the clock was wrong would stand in for every real run after it.
 func History(outDir string, now time.Time) (map[string][]string, error) {
 	entries, err := os.ReadDir(outDir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -117,21 +110,8 @@ func History(outDir string, now time.Time) (map[string][]string, error) {
 			}
 		}
 		for label, paths := range day {
-			// Old and new binaries can write the same instance on the same day. A tie
-			// keeps the filename order from Glob, which puts the new name last.
-			if len(paths) > 1 {
-				times := make(map[string]time.Time, len(paths))
-				for _, path := range paths {
-					stat, err := os.Stat(path)
-					if err != nil {
-						return nil, err
-					}
-					times[path] = stat.ModTime()
-					if end, err := endOf(path); err == nil && end != nil && !end.EndedAt.IsZero() {
-						times[path] = end.EndedAt
-					}
-				}
-				sort.SliceStable(paths, func(i, j int) bool { return times[paths[i]].Before(times[paths[j]]) })
+			if err := sortByEnd(paths); err != nil {
+				return nil, err
 			}
 			history[label] = append(history[label], paths...)
 		}
@@ -140,6 +120,27 @@ func History(outDir string, now time.Time) (map[string][]string, error) {
 		return nil, fmt.Errorf("no inventory under %s: run `segurata inventory` first", outDir)
 	}
 	return history, nil
+}
+
+// sortByEnd orders one day's files of one instance, which old and new binaries may both have
+// written, by when each run ended, else its mtime; a tie keeps Glob's order, the new name last.
+func sortByEnd(paths []string) error {
+	if len(paths) < 2 {
+		return nil
+	}
+	times := make(map[string]time.Time, len(paths))
+	for _, path := range paths {
+		stat, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		times[path] = stat.ModTime()
+		if end, err := endOf(path); err == nil && end != nil && !end.EndedAt.IsZero() {
+			times[path] = end.EndedAt
+		}
+	}
+	sort.SliceStable(paths, func(i, j int) bool { return times[paths[i]].Before(times[paths[j]]) })
+	return nil
 }
 
 // adoptOrphans files each legacy dash-joined file that holds no record (a run killed before its
@@ -178,15 +179,13 @@ func filenameLabel(file string) string {
 	return stem
 }
 
-// FileLabel returns the connector instance for a run file. Legacy filenames that merged the
-// connector and instance with a dash can recover the identity from their records.
+// FileLabel is the connector instance of a run file, read from its records for a legacy name.
 func FileLabel(file string) string {
 	label, _ := fileLabel(file)
 	return label
 }
 
-// fileLabel is FileLabel, and whether it is known: false for a legacy dash-joined or hashed file
-// that holds no record, whose label is only its stem.
+// fileLabel is FileLabel, and false for a legacy or hashed file with no record, labelled by its stem.
 func fileLabel(file string) (string, bool) {
 	stem := filenameLabel(file)
 	base := strings.TrimSuffix(filepath.Base(file), ".jsonl")
@@ -208,8 +207,7 @@ func fileLabel(file string) (string, bool) {
 	return stem, records
 }
 
-// firstIdentity is the connector and instance the file's first record names, and whether it
-// has one.
+// firstIdentity is the connector and instance the file's first record names.
 func firstIdentity(file string) (string, string, bool) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -230,10 +228,9 @@ func firstIdentity(file string) (string, string, bool) {
 	return "", "", false
 }
 
-// Prune removes the run files of days before cutoff that no LatestRuns entry as of now needs (its
-// File, Prev, Unfinished or Evidence), and partial files a killed run left in those days, then the days left
-// empty. It touches nothing else under outDir, and nothing at all when the runs cannot be read. It
-// returns what it removed.
+// Prune removes, from days before cutoff, the run files no LatestRuns entry needs and the partial
+// files of killed runs, then the days left empty. It touches nothing else, and nothing at all when
+// the runs cannot be read.
 func Prune(outDir string, now, cutoff time.Time) ([]string, error) {
 	runs, err := LatestRuns(outDir, now)
 	if err != nil {
@@ -278,11 +275,11 @@ func Prune(outDir string, now, cutoff time.Time) ([]string, error) {
 func pick(paths []string) (Latest, error) {
 	newest := func(paths []string) (string, error) { // newest finished, else newest
 		for i := len(paths) - 1; i >= 0; i-- {
-			done, err := Finished(paths[i])
+			end, err := endOf(paths[i])
 			if err != nil {
 				return "", err
 			}
-			if done {
+			if end != nil {
 				return paths[i], nil
 			}
 		}
@@ -317,7 +314,6 @@ func pick(paths []string) (Latest, error) {
 	return l, nil
 }
 
-// LatestFiles is the File of every LatestRuns entry.
 func LatestFiles(outDir string, now time.Time) ([]string, error) {
 	runs, err := LatestRuns(outDir, now)
 	if err != nil {
@@ -330,14 +326,8 @@ func LatestFiles(outDir string, now time.Time) ([]string, error) {
 	return out, nil
 }
 
-// maxTail bounds what Finished reads from the end of a file: a run_end record is a few KB.
+// maxTail bounds what endOf reads from the end of a file: a run_end record is a few KB.
 const maxTail = 1 << 20
-
-// Finished reports whether a run's output ends with a run_end record.
-func Finished(name string) (bool, error) {
-	end, err := endOf(name)
-	return end != nil, err
-}
 
 // endOf reads the run_end record a run's output ends with, nil when it ends with another record.
 func endOf(name string) (*finding.RunEnd, error) {
@@ -364,7 +354,7 @@ func endOf(name string) (*finding.RunEnd, error) {
 	return &end, nil
 }
 
-// Load reads every finding in the given files, skipping status and log records.
+// Load reads every finding in the given files.
 func Load(files []string) ([]finding.Finding, error) {
 	var out []finding.Finding
 	for _, name := range files {
@@ -377,18 +367,15 @@ func Load(files []string) ([]finding.Finding, error) {
 	return out, nil
 }
 
-// Output is one connector instance's output, as read back from its run file.
 type Output struct {
 	Findings []finding.Finding
 	Statuses []finding.Status
-	End      *finding.RunEnd // nil: no run_end, so the run's completeness is unknown
+	End      *finding.RunEnd // nil: the run's completeness is unknown
 }
 
-// Coverage is what the run proves about each scope; see finding.Coverage.
 func (r Output) Coverage() finding.Coverage { return finding.CoverageOf(r.End) }
 
-// Label names the connector instance from the run's records, which carry the exact connector
-// name and instance label; a run with none falls back to the name of its file.
+// Label names the connector instance from the run's records, else from its file name.
 func (r Output) Label(file string) string {
 	switch {
 	case r.End != nil:
@@ -401,8 +388,7 @@ func (r Output) Label(file string) string {
 	return filenameLabel(file)
 }
 
-// Read reads one connector instance's output, skipping log records. A file without run_end
-// may end in a half-written line (the run was killed mid-record): that line is dropped.
+// Read reads one run file. A file without run_end may end in a line torn by a kill: it is dropped.
 func Read(name string) (Output, error) {
 	var r Output
 	f, err := os.Open(name)

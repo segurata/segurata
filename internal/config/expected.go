@@ -16,17 +16,13 @@ import (
 	"github.com/segurata/segurata/internal/statefile"
 )
 
-// Expected says a status other than ok is known and kept on purpose: an ephemeral key, an IAM
-// user limited by design, accounts that belong to other people. A matching status gets state
-// expected: it opens no setup item, and its scope still counts as not inspected. Empty fields
-// match anything.
+// Expected marks a status other than ok as kept on purpose (an ephemeral key, other people's
+// accounts): it gets state expected. Empty fields match anything.
 type Expected struct {
-	State finding.State `json:"state,omitempty"`
-	// Account is a glob (path.Match: * and ?, \ escapes).
-	Account string `json:"account,omitempty"`
-	// Detail is a substring of the status detail, or a regular expression between slashes.
-	Detail string `json:"detail,omitempty"`
-	Reason string `json:"reason"`
+	State   finding.State `json:"state,omitempty"`
+	Account string        `json:"account,omitempty"` // a path.Match glob
+	Detail  string        `json:"detail,omitempty"`  // a substring, or a /regular expression/
+	Reason  string        `json:"reason"`
 }
 
 func (e Expected) detailRe() (*regexp.Regexp, bool, error) {
@@ -37,7 +33,6 @@ func (e Expected) detailRe() (*regexp.Regexp, bool, error) {
 	return re, true, err
 }
 
-// Matches reports whether the rule covers a status in its original state.
 func (e Expected) Matches(st finding.Status, state finding.State) bool {
 	if e.State != "" && e.State != state {
 		return false
@@ -72,11 +67,10 @@ func (e Expected) validate() error {
 	return nil
 }
 
-// WriteSecretSuffix ends the name of every write credential a remediation uses
-// (OPENAI_ADMIN_WRITE_KEY): such a name belongs under remediation_secrets.
-const WriteSecretSuffix = "_WRITE_KEY"
+// writeSecretSuffix ends the name of every write credential, which belongs under remediation_secrets.
+const writeSecretSuffix = "_WRITE_KEY"
 
-// labelRe is what an instance label may hold: it becomes part of a file name under out/.
+// labelRe is what an instance label may hold: it names a file under out/.
 var labelRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func (c Config) validate() error {
@@ -88,7 +82,7 @@ func (c Config) validate() error {
 			return fmt.Errorf("connectors.%s: timeout %q is not a duration such as \"3h\"", key, cc.Timeout)
 		}
 		for name := range cc.Secrets {
-			if strings.HasSuffix(name, WriteSecretSuffix) {
+			if strings.HasSuffix(name, writeSecretSuffix) {
 				return fmt.Errorf("connectors.%s: %s is a write credential: put it under remediation_secrets, which only remediate --apply resolves, not under secrets, which every inventory resolves", key, name)
 			}
 		}
@@ -101,10 +95,8 @@ func (c Config) validate() error {
 	return nil
 }
 
-// Expect sets a status's state from the expected rules of its connector instance (the config key
-// "name" or "name:label" that ran it): a status other than ok that a rule matches becomes
-// expected, with the rule's reason and its original state in Was. It first undoes an earlier
-// Expect, so a status read back from a run follows today's config.
+// Expect applies the expected rules of the status's instance, after undoing an earlier Expect so a
+// status read back from a run follows today's config.
 func (c Config) Expect(st *finding.Status) {
 	if st.State == finding.StateExpected && st.Was != "" {
 		st.State, st.Was, st.Expected = st.Was, "", ""
@@ -120,20 +112,37 @@ func (c Config) Expect(st *finding.Status) {
 	}
 }
 
-// AddExpected appends a rule to connectors.<key>.expected in the config file at path, unless an
-// equal rule is there already, and reports whether it changed the file. The file is rewritten as
-// editFile says; the backup's name is returned.
+// AddExpected appends rule to connectors.<key>.expected through editFile, unless it is there.
 func AddExpected(file, key string, rule Expected, now time.Time) (bool, string, error) {
 	if err := rule.validate(); err != nil {
 		return false, "", err
 	}
-	return editFile(file, now, func(raw []byte) ([]byte, bool, error) { return withExpected(raw, key, rule) })
+	return editFile(file, now, func(raw []byte) ([]byte, bool, error) {
+		return editInstance(raw, key, func(inst *object) (bool, error) {
+			var rules []json.RawMessage
+			if v, ok := inst.get("expected"); ok {
+				if err := json.Unmarshal(v, &rules); err != nil {
+					return false, fmt.Errorf("connectors.%s.expected: %w", key, err)
+				}
+			}
+			for _, r := range rules {
+				var have Expected
+				if json.Unmarshal(r, &have) == nil && have == rule {
+					return false, nil
+				}
+			}
+			add, err := json.Marshal(rule)
+			if err != nil {
+				return false, err
+			}
+			return true, inst.encode("expected", append(rules, add))
+		})
+	})
 }
 
-// editFile rewrites the config file at path with what edit makes of its text (empty when the file
-// does not exist), when edit reports a change and the result is a valid config: atomically, mode
-// 0600, two-space indentation and the keys in their original order; the previous content is kept
-// in a timestamped backup next to it, whose name it returns.
+// editFile rewrites the config file with what edit makes of its text, when it changed and is a
+// valid config: atomically, mode 0600, keys in their order, the previous content kept in a backup
+// whose name it returns.
 func editFile(file string, now time.Time, edit func(raw []byte) ([]byte, bool, error)) (bool, string, error) {
 	raw, err := os.ReadFile(file)
 	switch {
@@ -162,31 +171,7 @@ func editFile(file string, now time.Time, edit func(raw []byte) ([]byte, bool, e
 	return true, backup, statefile.Write(file, out)
 }
 
-// withExpected is the config text with the rule added under connectors.<key>.expected.
-func withExpected(raw []byte, key string, rule Expected) ([]byte, bool, error) {
-	return editInstance(raw, key, func(inst *object) (bool, error) {
-		var rules []json.RawMessage
-		if v, ok := inst.get("expected"); ok {
-			if err := json.Unmarshal(v, &rules); err != nil {
-				return false, fmt.Errorf("connectors.%s.expected: %w", key, err)
-			}
-		}
-		for _, r := range rules {
-			var have Expected
-			if json.Unmarshal(r, &have) == nil && have == rule {
-				return false, nil
-			}
-		}
-		add, err := json.Marshal(rule)
-		if err != nil {
-			return false, err
-		}
-		return true, inst.encode("expected", append(rules, add))
-	})
-}
-
-// editInstance is the config text after edit changed the object under connectors.<key> (created
-// when missing); raw comes back as it was when edit reports no change.
+// editInstance is the config text after edit changed connectors.<key>, created when missing.
 func editInstance(raw []byte, key string, edit func(inst *object) (bool, error)) ([]byte, bool, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		raw = []byte("{}")
@@ -215,8 +200,7 @@ func editInstance(raw []byte, key string, edit func(inst *object) (bool, error))
 	return append(out, '\n'), true, err
 }
 
-// object is a JSON object that keeps its keys in order, so rewriting the config moves nothing the
-// owner did not ask to change.
+// object is a JSON object that keeps its keys in order, so a rewrite moves nothing else.
 type object []member
 
 type member struct {

@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// ownGroup starts cmd as the leader of a new process group, and makes its Cancel end the group:
-// SIGTERM now, SIGKILL after WaitDelay for whatever ignored it.
+// ownGroup makes cmd lead a new process group that Cancel ends: SIGTERM, then SIGKILL after WaitDelay.
 func ownGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
