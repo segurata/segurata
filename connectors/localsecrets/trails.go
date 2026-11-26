@@ -51,7 +51,7 @@ func (c *Connector) Trails(ctx context.Context, cfg map[string]any) (*Trails, er
 		return nil, fmt.Errorf("fingerprint key: %w", err)
 	}
 	if _, err := c.LookPath("rg"); err != nil {
-		return nil, errors.New("rg (ripgrep) is required: install it, respecting the 4-day quarantine")
+		return nil, errors.New("rg (ripgrep) is required: install it (https://github.com/BurntSushi/ripgrep#installation)")
 	}
 	failed := &trailFailure{}
 	return &Trails{s: newScan(ctx, c, home, set, fp, failed), failed: failed}, nil

@@ -149,6 +149,7 @@ func TestDoctorReportsEveryArea(t *testing.T) {
 		"OK    plugin      jq: /usr/bin/jq",
 		"WARN  plugin      yq: not found in PATH",
 		"FAIL  plugin      zz: not found in PATH",
+		"fix: install zz\n",
 		"OK    cloud       secret CLOUD_TOKEN: env:DOCTOR_TEST_KEY resolves",
 		"OK    cloud       cloudctl: signed in",
 		"WARN  state       fingerprint key "+fx.env.KeyPath+": not created yet",

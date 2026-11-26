@@ -187,7 +187,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 	if _, err := c.LookPath("rg"); err != nil {
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported,
-			Detail: "rg (ripgrep) is required: install it, respecting the 4-day quarantine"})
+			Detail: "rg (ripgrep) is required: install it (https://github.com/BurntSushi/ripgrep#installation)"})
 		return nil
 	}
 	_, glErr := c.LookPath("gitleaks")

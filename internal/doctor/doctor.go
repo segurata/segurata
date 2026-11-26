@@ -228,7 +228,7 @@ func (e Env) cliNeed(arg string) connector.Check {
 	if optional {
 		level = connector.Warn
 	}
-	return connector.Check{Level: level, What: name, Detail: "not found in PATH", Fix: "install " + name + ", respecting the 4-day quarantine"}
+	return connector.Check{Level: level, What: name, Detail: "not found in PATH", Fix: "install " + name}
 }
 
 // state checks segurata's own files: present where needed, readable, closed to other users.

@@ -13,11 +13,6 @@ that list one item at a time with the provider's rotation steps, and `segurata r
 replace <id>` puts the new value in every file that held the old one, or in the Keychain
 ([inventory guide](inventory.md#rotation-ledger), [architecture](architecture.md#guided-rotation-next-and-replace)).
 
-Tools on this machine (2026-11-23): macOS Keychain (`security`), 1Password CLI (`op` 2.41, signed
-in), `age`, `gitleaks`, `git-credential-osxkeychain` already configured, `gh` with its token in the
-Keychain. Not installed: `direnv`, `sops`, `aws-vault`. To install them, respect the 4-day
-quarantine: `~/.claude/scripts/safe-update.sh`, or check the release date before `brew install`.
-
 | Finding | Section |
 |---|---|
 | Any secret in a tracked file or in history (gitleaks) | [In git: always rotate](#in-git-always-rotate) |
@@ -125,7 +120,7 @@ no backup unless `--backup`.
 
 Goal: keep a *reference* to the secret on disk, not the value.
 
-**With 1Password** (installed). The env file holds `op://` references and can be committed:
+**With 1Password**. The env file holds `op://` references and can be committed:
 
 ```bash
 # .env.op
@@ -306,7 +301,7 @@ a malicious package.
 
   and delete that profile's section from `~/.aws/credentials`.
 - `aws-vault` does the same with rotation and temporary sessions (`aws-vault add`,
-  `aws-vault exec`), but it is not installed.
+  `aws-vault exec`).
 - In the meantime: `chmod 600 ~/.aws/credentials` (on Windows, the `Set-Acl` command the finding
   prints) and rotate keys older than 90 days (`aws iam list-access-keys`).
 
@@ -351,7 +346,7 @@ a malicious package.
 
 ## Files that must live in the repo
 
-For encrypted config that is versioned, `sops` with `age` (`age` installed, `sops` not):
+For encrypted config that is versioned, `sops` with `age`:
 
 ```bash
 age-keygen -o ~/.config/sops/age/keys.txt          # keep a copy of this key in 1Password

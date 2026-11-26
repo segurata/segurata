@@ -21,9 +21,9 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 		missing connector.Check
 	}{
 		{"rg", guardRG(c.RG), []string{"--version"}, connector.Check{Level: connector.Fail,
-			Detail: "rg (ripgrep) is required", Fix: "install ripgrep (https://github.com/BurntSushi/ripgrep#installation), respecting the 4-day quarantine"}},
+			Detail: "rg (ripgrep) is required", Fix: "install ripgrep (https://github.com/BurntSushi/ripgrep#installation)"}},
 		{"gitleaks", guardGitleaks(c.Gitleaks), []string{"version"}, connector.Check{Level: connector.Warn,
-			Detail: "not installed: git history is not scanned", Fix: "install gitleaks (https://github.com/gitleaks/gitleaks#installing), respecting the 4-day quarantine"}},
+			Detail: "not installed: git history is not scanned", Fix: "install gitleaks (https://github.com/gitleaks/gitleaks#installing)"}},
 		{"git", nil, nil, connector.Check{Level: connector.Fail, Detail: "git is required to list tracked files", Fix: "install git (on macOS: xcode-select --install)"}},
 		{"ssh-keygen", nil, nil, connector.Check{Level: connector.Fail, Detail: "ssh-keygen is required to check SSH keys", Fix: "install OpenSSH"}},
 	}

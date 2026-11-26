@@ -250,8 +250,8 @@ characters of a long random key and the length (`sk_live_…a1b2(107)`), plus a 
   account may not read.
 - Git history: `gitleaks git` over every repository under `repos_root` and over `~/.claude`, six
   at a time, each with a 10-minute timeout. Without gitleaks it scans the whole working tree under
-  `repos_root` with its own patterns instead, but not history; install gitleaks respecting the
-  4-day quarantine (`~/.claude/scripts/safe-update.sh`).
+  `repos_root` with its own patterns instead, but not history; install gitleaks
+  (<https://github.com/gitleaks/gitleaks#installing>) to scan history.
 - Incremental history: after the first full scan of a repository, later runs scan only the commits
   added since, and replay the earlier leaks from `~/.cache/segurata/gitleaks/<repo-hash>.json`
   (mode 0600; fingerprints, redacted hints, paths and commits, never values). A rewritten or

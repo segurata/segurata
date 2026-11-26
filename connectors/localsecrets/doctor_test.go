@@ -42,8 +42,13 @@ func TestDoctor(t *testing.T) {
 	}
 
 	installed["gitleaks"], installed["rg"] = false, false
-	if got := levels(c.Doctor(context.Background(), connector.Request{})); got != "rg=FAIL gitleaks=WARN git=OK ssh-keygen=OK" {
+	missing := c.Doctor(context.Background(), connector.Request{})
+	if got := levels(missing); got != "rg=FAIL gitleaks=WARN git=OK ssh-keygen=OK" {
 		t.Errorf("missing tools: %s", got)
+	}
+	if missing[0].Fix != "install ripgrep (https://github.com/BurntSushi/ripgrep#installation)" ||
+		missing[1].Fix != "install gitleaks (https://github.com/gitleaks/gitleaks#installing)" {
+		t.Errorf("fixes name the tool and its install page, nothing else: %q, %q", missing[0].Fix, missing[1].Fix)
 	}
 	if got := levels(c.Doctor(context.Background(), connector.Request{Config: map[string]any{"skip_git_history": true}})); got != "rg=FAIL gitleaks=OK git=OK ssh-keygen=OK" {
 		t.Errorf("skip_git_history: %s", got)

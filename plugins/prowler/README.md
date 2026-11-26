@@ -17,34 +17,15 @@ and reported as `unsupported` until they are.
 
 ### Prowler
 
-Pin the exact version this connector was checked against, published more than four days ago, and
-install it in its own environment. Prowler 5.51.0 (uploaded to PyPI on 2026-11-19) needs Python
-3.10 to 3.13:
+Install the exact version this connector was checked against, Prowler 5.51.0 (Python 3.10 to
+3.13), in its own environment:
 
 ```bash
-pipx install --python python3.13 \
-  --pip-args="--only-binary=:all: --exclude-newer=$(date -u -v-4d +%Y-%m-%dT00:00:00Z)" \
-  prowler==5.51.0
+pipx install --python python3.13 prowler==5.51.0
 ```
 
-(`date -d '4 days ago'` on Linux. pipx 1.12 installs through uv, so `--exclude-newer` is uv's flag
-and applies the quarantine to every dependency, not only to Prowler.) Never `--upgrade` to the
-latest version: move the pin after checking the release's upload date at
-<https://pypi.org/pypi/prowler/json> and re-running the tests.
-
-**Known blocker under a wheels-only policy.** Prowler 5.51.0 depends on packages published only
-as source distributions: `alibabacloud-gateway-oss-util` 0.0.3, `shodan` 1.31.0, `polling` 0.3.2
-and nine other `alibabacloud-*` packages (`alibabacloud-tea`, `-tea-xml`, `-endpoint-util`,
-`-oss-util`, `-darabonba-string`, `-darabonba-signature-util`, `-darabonba-map`,
-`-darabonba-array`, `-darabonba-time`). With `only-binary = :all:` the install fails at
-resolution. Building those packages runs their `setup.py`, which the policy exists to avoid.
-Possible ways through, each a decision for the owner:
-
-1. Read the twelve sdists, then install once without `--only-binary`, keeping `--exclude-newer`
-   and the exact Prowler pin.
-2. Run the official image pinned by digest (`docker pull prowlercloud/prowler:5.51.0`) and point
-   `prowler_path` at a wrapper script that runs it with the token in its environment and the
-   output folder mounted.
+Do not `--upgrade` it: a newer Prowler can rename checks or change its output, so move the pin only
+after re-running the connector's tests against the new version.
 
 ### The connector
 
