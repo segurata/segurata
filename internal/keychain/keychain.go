@@ -1,7 +1,6 @@
 // Package keychain reads and writes generic passwords in the macOS login Keychain through
-// /usr/bin/security, and runs the few other programs that handle secret values. A value travels on
-// stdin or stdout, never in an argument list: arguments show up in process listings, stdin does
-// not. Tests inject a Runner instead of running anything.
+// /usr/bin/security. A value travels on stdin or stdout, never in an argument list, which process
+// listings show.
 package keychain
 
 import (
@@ -20,11 +19,9 @@ import (
 // Runner runs one external program with stdin and returns its stdout.
 type Runner func(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
 
-// Security is the only program Keychain runs.
 const Security = "/usr/bin/security"
 
-// Exec is the real Runner. Its error carries stderr, never stdout: stdout is the channel a value
-// comes back on.
+// Exec is the real Runner. Its error carries stderr, never stdout, which may hold a value.
 func Exec(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -38,22 +35,13 @@ func Exec(ctx context.Context, stdin []byte, name string, args ...string) ([]byt
 	return out.Bytes(), nil
 }
 
-// Scrub replaces every copy of value in msg with placeholder before msg is printed.
-func Scrub(msg, value, placeholder string) string {
-	if value == "" {
-		return msg
-	}
-	return strings.ReplaceAll(msg, value, placeholder)
-}
-
 // ErrNotFound is returned by Read when no item has the service.
 var ErrNotFound = errors.New("no such Keychain item")
 
 // itemNotFound is security's exit status for errSecItemNotFound.
 const itemNotFound = 44
 
-// notFound reports whether security failed because the item does not exist: its exit status, or
-// its message when a Runner gives no exit status.
+// notFound reads the exit status, or the message when a Runner gives no exit status.
 func notFound(err error) bool {
 	if err == nil {
 		return false
@@ -68,28 +56,29 @@ type Keychain struct {
 	Account string
 }
 
-// storable is what `security -i` reads back as one word: it splits its input on spaces and
-// interprets quotes and backslashes, so anything else would be stored altered.
+// storable is one word to `security -i`, which splits its input on spaces and interprets quotes
+// and backslashes.
 var storable = regexp.MustCompile(`^[!#-&(-\[\]-~]+$`)
 
-// Store adds or updates (-U) the item through `security -i`, which reads its commands from stdin,
-// so the value never appears in an argument list.
+// Store adds or updates the item through `security -i`, which reads its command from stdin.
 func (k Keychain) Store(ctx context.Context, service, value string) error {
 	if !storable.MatchString(value) {
 		return fmt.Errorf("storing %s in the Keychain: the value has spaces, quotes, backslashes or non-ASCII characters, which security -i would alter; store it by hand", service)
 	}
-	cmd := fmt.Sprintf("add-generic-password -U -a %s -s %s -w %s\n", k.Account, service, value)
+	if !storable.MatchString(k.Account) || !storable.MatchString(service) {
+		return fmt.Errorf("storing %q in the Keychain for account %q: security -i needs both as one plain word", service, k.Account)
+	}
+	cmd := strings.Join(append(k.args(service, "add-generic-password", "-U"), value), " ") + "\n"
 	if _, err := k.Run(ctx, []byte(cmd), Security, "-i"); err != nil {
-		return fmt.Errorf("storing %s in the Keychain: %s", service, Scrub(err.Error(), value, "[value]"))
+		return fmt.Errorf("storing %s in the Keychain: %s", service, strings.ReplaceAll(err.Error(), value, "[value]"))
 	}
 	return nil
 }
 
-// Read returns the stored value, to use or check in memory; callers never print it. A missing item
-// is ErrNotFound; any other failure (access denied, a prompt nobody answered) keeps the reason
-// security gave.
+// Read returns the stored value, to use or check in memory, never to print. A missing item is
+// ErrNotFound; any other failure keeps the reason security gave.
 func (k Keychain) Read(ctx context.Context, service string) (string, error) {
-	out, err := k.Run(ctx, nil, Security, k.args("find-generic-password", service, "-w")...)
+	out, err := k.Run(ctx, nil, Security, k.args(service, "find-generic-password")...)
 	if notFound(err) {
 		return "", fmt.Errorf("%w: %s", ErrNotFound, service)
 	}
@@ -99,10 +88,10 @@ func (k Keychain) Read(ctx context.Context, service string) (string, error) {
 	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
-func (k Keychain) args(cmd, service string, extra ...string) []string {
-	args := []string{cmd}
+// args is cmd for the account and service, ending in -w.
+func (k Keychain) args(service string, cmd ...string) []string {
 	if k.Account != "" {
-		args = append(args, "-a", k.Account)
+		cmd = append(cmd, "-a", k.Account)
 	}
-	return append(append(args, "-s", service), extra...)
+	return append(cmd, "-s", service, "-w")
 }

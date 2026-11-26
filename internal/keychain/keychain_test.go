@@ -28,31 +28,62 @@ func TestStoreSendsTheValueOnStdinOnly(t *testing.T) {
 }
 
 func TestStoreRefusesWhatSecurityWouldAlter(t *testing.T) {
-	k := Keychain{Run: func(context.Context, []byte, string, ...string) ([]byte, error) {
+	never := func(context.Context, []byte, string, ...string) ([]byte, error) {
 		t.Fatal("security ran")
 		return nil, nil
-	}}
+	}
 	for _, v := range []string{"", "two words", `quo"te`, "it's", `back\slash`, "ñ", "tab\there", "line\n"} {
-		if err := k.Store(context.Background(), "svc", v); err == nil || strings.Contains(err.Error(), v) && v != "" {
+		if err := (Keychain{Account: "me", Run: never}).Store(context.Background(), "svc", v); err == nil || strings.Contains(err.Error(), v) && v != "" {
 			t.Errorf("%q: %v", v, err)
 		}
 	}
+	// security -i would read "-a -s svc" as the account "-s".
+	for _, k := range []Keychain{{Run: never}, {Account: "two words", Run: never}} {
+		if err := k.Store(context.Background(), "svc", "v4lue"); err == nil {
+			t.Errorf("account %q accepted", k.Account)
+		}
+	}
+	if err := (Keychain{Account: "me", Run: never}).Store(context.Background(), "a b", "v4lue"); err == nil {
+		t.Error("a service with a space accepted")
+	}
 }
 
-func TestReadTakesTheValueFromStdout(t *testing.T) {
-	var gotArgs []string
-	k := Keychain{Run: func(_ context.Context, _ []byte, _ string, args ...string) ([]byte, error) {
-		gotArgs = args
-		if args[len(args)-2] == "missing" {
-			return nil, errors.New("not found")
-		}
-		return []byte("v4lue\n"), nil
-	}}
-	if v, err := k.Read(context.Background(), "svc"); err != nil || v != "v4lue" || strings.Join(gotArgs, " ") != "find-generic-password -s svc -w" {
-		t.Errorf("%q %v %v", v, err, gotArgs)
+func TestRead(t *testing.T) {
+	cases := []struct {
+		account, out, fail string
+		args, value, err   string
+		missing            bool
+	}{
+		{out: "v4lue\n", args: "find-generic-password -s svc -w", value: "v4lue"},
+		{account: "me", out: "v4lue\r\n", args: "find-generic-password -a me -s svc -w", value: "v4lue"},
+		{fail: "security: The specified item could not be found in the keychain.", missing: true},
+		{fail: "security: User interaction is not allowed.", err: "reading svc from the Keychain: security: User interaction is not allowed."},
 	}
-	if _, err := k.Read(context.Background(), "missing"); err == nil || !strings.Contains(err.Error(), "reading missing") {
-		t.Errorf("missing: %v", err)
+	for _, c := range cases {
+		var gotArgs []string
+		k := Keychain{Account: c.account, Run: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name != Security || stdin != nil {
+				t.Errorf("ran %s with stdin %q", name, stdin)
+			}
+			gotArgs = args
+			if c.fail != "" {
+				return nil, errors.New(c.fail)
+			}
+			return []byte(c.out), nil
+		}}
+		v, err := k.Read(context.Background(), "svc")
+		switch {
+		case c.missing:
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("missing: %v", err)
+			}
+		case c.err != "":
+			if errors.Is(err, ErrNotFound) || err == nil || err.Error() != c.err {
+				t.Errorf("denied: %v", err)
+			}
+		case err != nil || v != c.value || strings.Join(gotArgs, " ") != c.args:
+			t.Errorf("read %q %v with %v", v, err, gotArgs)
+		}
 	}
 }
 
@@ -65,18 +96,5 @@ func TestExecEndsAHungProgramWithItsContext(t *testing.T) {
 	}
 	if took := time.Since(start); took > proc.WaitDelay+5*time.Second {
 		t.Fatalf("took %s", took)
-	}
-}
-
-func TestReadTellsAMissingItemFromAnyOtherFailure(t *testing.T) {
-	fail := func(msg string) Keychain {
-		return Keychain{Run: func(context.Context, []byte, string, ...string) ([]byte, error) { return nil, errors.New(msg) }}
-	}
-	if _, err := fail("security: The specified item could not be found in the keychain.").Read(context.Background(), "svc"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("missing: %v", err)
-	}
-	_, err := fail("security: User interaction is not allowed.").Read(context.Background(), "svc")
-	if errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "User interaction is not allowed") {
-		t.Errorf("denied: %v", err)
 	}
 }

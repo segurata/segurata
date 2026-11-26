@@ -30,54 +30,56 @@ func stubRun(t *testing.T, want string, out string, err error) context.Context {
 	return ctx
 }
 
-func TestResolveEnv(t *testing.T) {
+func TestResolve(t *testing.T) {
 	t.Setenv("SEGURATA_TEST_KEY", "value")
-	if v, err := Resolve(context.Background(), "env:SEGURATA_TEST_KEY"); err != nil || v != "value" {
-		t.Fatalf("got %q, %v", v, err)
+	t.Setenv("SEGURATA_TEST_EMPTY", "")
+	const kc = keychain.Security + " find-generic-password -s svc -w"
+	cases := []struct {
+		ref, cmd, out string
+		fail          error
+		value, err    string // err: a part of the error
+		notErr        string // and a part it must not have
+	}{
+		{ref: "env:SEGURATA_TEST_KEY", value: "value"},
+		{ref: "env:SEGURATA_TEST_MISSING", err: "SEGURATA_TEST_MISSING is not set"},
+		{ref: "env:SEGURATA_TEST_EMPTY", err: "SEGURATA_TEST_EMPTY is not set"},
+		// Keychain references run the absolute /usr/bin/security, never one found in PATH.
+		{ref: "keychain:svc", cmd: kc, out: "secret\n", value: "secret"},
+		// A missing item and a denied read have different fixes.
+		{ref: "keychain:svc", cmd: kc, fail: errors.New("/usr/bin/security: exit status 44: security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain."),
+			err: "not found (add it with: security add-generic-password -s svc"},
+		{ref: "keychain:svc", cmd: kc, out: "\n", err: "not found (add it with"},
+		{ref: "keychain:svc", cmd: kc, fail: errors.New("/usr/bin/security: exit status 36: security: User interaction is not allowed."),
+			err: "User interaction is not allowed", notErr: "not found"},
+		{ref: "op://v/i/f", cmd: "op read op://v/i/f", out: "secret\n", value: "secret"},
+		{ref: "op://v/i/f", cmd: "op read op://v/i/f", fail: errors.New(`op: exit status 1: [ERROR] "i" isn't an item`), err: "isn't an item"},
+		{ref: "op://v/i/f", cmd: "op read op://v/i/f", out: "\n", err: "could not be read"},
 	}
-	if _, err := Resolve(context.Background(), "env:SEGURATA_TEST_MISSING"); err == nil {
-		t.Fatal("missing env var should fail")
-	}
-}
-
-// Keychain references go through internal/keychain: the absolute /usr/bin/security, never one
-// found in PATH.
-func TestResolveKeychain(t *testing.T) {
-	ctx := stubRun(t, keychain.Security+" find-generic-password -s svc -w", "secret\n", nil)
-	if v, err := Resolve(ctx, "keychain:svc"); err != nil || v != "secret" {
-		t.Fatalf("got %q, %v", v, err)
-	}
-}
-
-// A missing item and a denied read are different problems with different fixes.
-func TestKeychainMissingIsToldApartFromDenied(t *testing.T) {
-	want := keychain.Security + " find-generic-password -s svc -w"
-	ctx := stubRun(t, want, "", errors.New("/usr/bin/security: exit status 44: security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain."))
-	if _, err := Resolve(ctx, "keychain:svc"); err == nil || !strings.Contains(err.Error(), "not found (add it with: security add-generic-password -s svc") {
-		t.Fatalf("missing: %v", err)
-	}
-	ctx = stubRun(t, want, "", errors.New("/usr/bin/security: exit status 36: security: User interaction is not allowed."))
-	_, err := Resolve(ctx, "keychain:svc")
-	if err == nil || strings.Contains(err.Error(), "not found") || !strings.Contains(err.Error(), "User interaction is not allowed") {
-		t.Fatalf("denied: %v", err)
-	}
-}
-
-func TestResolveOnePassword(t *testing.T) {
-	ctx := stubRun(t, "op read op://v/i/f", "secret\n", nil)
-	if v, err := Resolve(ctx, "op://v/i/f"); err != nil || v != "secret" {
-		t.Fatalf("got %q, %v", v, err)
-	}
-	ctx = stubRun(t, "op read op://v/i/f", "", errors.New(`op: exit status 1: [ERROR] "i" isn't an item`))
-	if _, err := Resolve(ctx, "op://v/i/f"); err == nil || !strings.Contains(err.Error(), "isn't an item") {
-		t.Fatalf("op failure loses its reason: %v", err)
+	for _, c := range cases {
+		ctx := context.Background()
+		if c.cmd != "" {
+			ctx = stubRun(t, c.cmd, c.out, c.fail)
+		}
+		v, err := Resolve(ctx, c.ref)
+		if c.err == "" {
+			if err != nil || v != c.value {
+				t.Errorf("%s: got %q, %v", c.ref, v, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.err) || c.notErr != "" && strings.Contains(err.Error(), c.notErr) {
+			t.Errorf("%s: want an error with %q, got %v", c.ref, c.err, err)
+		}
 	}
 }
 
 func TestErrorsNameTheKeyNeverTheValue(t *testing.T) {
 	ctx := stubRun(t, keychain.Security+" find-generic-password -s svc -w", "", errors.New("exit 44"))
-	got, errs := ResolveAll(ctx, map[string]string{"OPENAI_ADMIN_KEY": "keychain:svc"})
-	if len(got) != 0 || len(errs) != 1 || !strings.HasPrefix(errs[0].Error(), "OPENAI_ADMIN_KEY: ") {
+	t.Setenv("SEGURATA_TEST_KEY", "v4lue")
+	got, errs := ResolveAll(ctx, map[string]string{"OPENAI_ADMIN_KEY": "keychain:svc", "OK": "env:SEGURATA_TEST_KEY"})
+	var re *ResolveError
+	if len(got) != 1 || got["OK"] != "v4lue" || len(errs) != 1 || !errors.As(errs[0], &re) || re.Key != "OPENAI_ADMIN_KEY" ||
+		!strings.HasPrefix(errs[0].Error(), "OPENAI_ADMIN_KEY: ") || strings.Contains(errs[0].Error(), "v4lue") {
 		t.Fatalf("got %v, %v", got, errs)
 	}
 }
