@@ -762,3 +762,36 @@ func (fx *fixture) fpOf(t *testing.T, c *Connector, span, typ string) string {
 	}
 	return key.Of(span)
 }
+
+// A trail search that ripgrep could not finish is an error, never a clean list: redact would
+// otherwise skip the files it missed and verify a rewrite against nothing.
+func TestTrailsLinesFailsWhenRipgrepFails(t *testing.T) {
+	fx := newFixture(t)
+	c := fx.connector(t, "[]")
+	if _, err := fingerprint.Load(c.KeyPath(fx.home)); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, script string
+		fails        bool
+	}{
+		{"regex error", `echo "rg: regex parse error" >&2; exit 2`, true},
+		{"killed", `kill -9 $$`, true},
+		{"unreadable files only", `echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, false},
+		{"no match", `exit 1`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c.RG = cli.Exec{Path: writeExe(t, "rg", tc.script), Timeout: time.Minute}
+			tr, err := c.Trails(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, files := range [][]string{nil, {filepath.Join(fx.home, ".zsh_history")}} {
+				fx.write(t, ".zsh_history", "x\n", 0o600)
+				if _, err := tr.Lines(files); (err != nil) != tc.fails {
+					t.Errorf("files %v: error %v, want failure %v", files, err, tc.fails)
+				}
+			}
+		})
+	}
+}

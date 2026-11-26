@@ -20,8 +20,8 @@ import (
 // transcripts), for `segurata redact`: it finds in them exactly the secrets an inventory would
 // report, with the bytes each one occupies on its line, so they can be replaced in place.
 type Trails struct {
-	s   *scan
-	log *firstLog
+	s      *scan
+	failed *trailFailure
 }
 
 // Hit is one secret found in a piece of text, as an inventory would classify it. It never holds
@@ -57,8 +57,8 @@ func (c *Connector) Trails(ctx context.Context, cfg map[string]any) (*Trails, er
 	if _, err := c.LookPath("rg"); err != nil {
 		return nil, errors.New("rg (ripgrep) is required: install it, respecting the 4-day quarantine")
 	}
-	l := &firstLog{}
-	return &Trails{s: newScan(ctx, c, home, set, fp, l), log: l}, nil
+	failed := &trailFailure{}
+	return &Trails{s: newScan(ctx, c, home, set, fp, failed), failed: failed}, nil
 }
 
 // Home is the home folder the trails live under.
@@ -115,7 +115,7 @@ func (t *Trails) Lines(files []string) (map[string][]int, error) {
 		})
 	}
 	wg.Wait()
-	if msg := t.log.get(); msg != "" {
+	if msg := t.failed.get(); msg != "" {
 		return nil, errors.New(msg)
 	}
 	out := make(map[string][]int, len(seen))
@@ -209,24 +209,25 @@ func (t *Trails) Mode(p string) string {
 	return eff
 }
 
-// firstLog is the emitter of a trail scan: it keeps the first log line (a ripgrep failure), so
-// the caller gets it as an error instead of a partial list.
-type firstLog struct {
+// trailFailure is the emitter of a trail scan: it keeps the first ripgrep failure, which leaves
+// the files scope uninspected, so the caller gets an error instead of a partial list.
+type trailFailure struct {
 	mu  sync.Mutex
 	msg string
 }
 
-func (l *firstLog) Finding(finding.Finding)    {}
-func (l *firstLog) Status(finding.Status)      {}
-func (l *firstLog) Scope(string, bool, string) {}
-func (l *firstLog) Log(m string) {
+func (l *trailFailure) Finding(finding.Finding) {}
+func (l *trailFailure) Status(finding.Status)   {}
+func (l *trailFailure) Log(string)              {}
+func (l *trailFailure) Scope(id string, inspected bool, reason string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.msg == "" {
-		l.msg = m
+	if id == filesScope && !inspected && l.msg == "" {
+		l.msg = reason
 	}
 }
-func (l *firstLog) get() string {
+
+func (l *trailFailure) get() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.msg
