@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -29,7 +30,7 @@ func dropboxFake(body string) *fakeBrowser {
 	p := map[string]any{"url": dropboxURL, "text": "View Dropbox content", "fetched": true}
 	b := &fakeBrowser{pages: map[string]any{dropboxURL: p}}
 	if body != "" {
-		b.responses = map[string]*response{dropboxURL: {status: 200, body: []byte(body)}}
+		b.responses = map[string]*cdp.Response{dropboxURL: {Status: 200, Body: []byte(body)}}
 	}
 	return b
 }

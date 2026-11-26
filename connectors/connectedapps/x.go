@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -38,7 +39,7 @@ func xReady(p listPage) bool {
 }
 
 func xService(ctx context.Context, e *env) {
-	raw, resp, err := e.b.capture(ctx, xURL, xJS, readyWhen(xReady), 50, xListRE)
+	raw, resp, err := e.b.Capture(ctx, xURL, xJS, readyWhen(xReady), 50, xListRE)
 	if err != nil {
 		e.fail("", err)
 		return
@@ -103,7 +104,7 @@ type xApp struct {
 }
 
 // parseXApps reads the captured oauth/list.json response.
-func parseXApps(resp *response) ([]xApp, error) {
+func parseXApps(resp *cdp.Response) ([]xApp, error) {
 	if resp == nil {
 		return nil, errors.New("X did not fetch the app list")
 	}
@@ -114,8 +115,8 @@ func parseXApps(resp *response) ([]xApp, error) {
 		} `json:"errors"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(resp.body, &body); err != nil || body.Applications == nil {
-		why := fmt.Sprintf("HTTP %d", resp.status)
+	if err := json.Unmarshal(resp.Body, &body); err != nil || body.Applications == nil {
+		why := fmt.Sprintf("HTTP %d", resp.Status)
 		switch {
 		case len(body.Errors) > 0:
 			why = body.Errors[0].Message

@@ -129,7 +129,7 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 	login := ""
 	for next, seen := ghSettings+"/applications", map[string]bool{}; next != "" && !seen[next]; {
 		seen[next] = true
-		raw, err := e.b.load(ctx, next, ghOAuthJS, readyWhen(ghListReady), 40)
+		raw, err := e.b.Load(ctx, next, ghOAuthJS, readyWhen(ghListReady), 40)
 		if err != nil {
 			e.fail(login, err)
 			return login, false
@@ -157,7 +157,7 @@ func githubOAuth(ctx context.Context, e *env) (string, bool) {
 		sem <- struct{}{}
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			raw, err := e.b.load(ctx, a.href, ghDetailJS, func(raw json.RawMessage) bool {
+			raw, err := e.b.Load(ctx, a.href, ghDetailJS, func(raw json.RawMessage) bool {
 				p, _ := decode[listPage](raw)
 				return strings.Contains(p.Text, "Permissions") || strings.Contains(p.Text, "Organization access")
 			}, 30)
@@ -236,7 +236,7 @@ func between(lines []string, start, end, skip *regexp.Regexp) []string {
 // asks for the password, that is reported as reauth and nothing is typed.
 func githubAuthorized(ctx context.Context, e *env, login string) {
 	u := ghSettings + "/apps/authorizations"
-	raw, err := e.b.load(ctx, u, ghAuthorizedJS, readyWhen(ghListReady), 30)
+	raw, err := e.b.Load(ctx, u, ghAuthorizedJS, readyWhen(ghListReady), 30)
 	if err != nil {
 		e.fail(login, err)
 		return
@@ -256,7 +256,7 @@ func githubAuthorized(ctx context.Context, e *env, login string) {
 // githubInstalled lists GitHub Apps installed on the personal account. Their permissions are on
 // the installation page, which needs sudo mode, so they are not read.
 func githubInstalled(ctx context.Context, e *env, login string) {
-	raw, err := e.b.load(ctx, ghSettings+"/installations", ghInstalledJS, readyWhen(ghListReady), 30)
+	raw, err := e.b.Load(ctx, ghSettings+"/installations", ghInstalledJS, readyWhen(ghListReady), 30)
 	if err != nil {
 		e.fail(login, err)
 		return
@@ -290,7 +290,7 @@ func parseGitHubInstalled(r row) (name, note string) {
 
 // githubSessions lists open web sessions.
 func githubSessions(ctx context.Context, e *env, login string) {
-	raw, err := e.b.load(ctx, ghSettings+"/sessions", ghSessionsJS, readyWhen(func(p listPage) bool { return len(p.Rows) > 0 || ghSudo(p) }), 30)
+	raw, err := e.b.Load(ctx, ghSettings+"/sessions", ghSessionsJS, readyWhen(func(p listPage) bool { return len(p.Rows) > 0 || ghSudo(p) }), 30)
 	if err != nil {
 		e.fail(login, err)
 		return

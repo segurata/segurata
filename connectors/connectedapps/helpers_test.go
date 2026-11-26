@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -23,7 +24,7 @@ var now = time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
 type fakeBrowser struct {
 	mu        sync.Mutex
 	pages     map[string]any
-	responses map[string]*response
+	responses map[string]*cdp.Response
 	fail      map[string]error
 	opened    []string
 }
@@ -44,11 +45,11 @@ func (b *fakeBrowser) value(url string, ready func(json.RawMessage) bool) (json.
 	return raw, nil
 }
 
-func (b *fakeBrowser) load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
+func (b *fakeBrowser) Load(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int) (json.RawMessage, error) {
 	return b.value(url, ready)
 }
 
-func (b *fakeBrowser) capture(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int, re *regexp.Regexp) (json.RawMessage, *response, error) {
+func (b *fakeBrowser) Capture(_ context.Context, url, _ string, ready func(json.RawMessage) bool, _ int, re *regexp.Regexp) (json.RawMessage, *cdp.Response, error) {
 	raw, err := b.value(url, ready)
 	if err != nil {
 		return nil, nil, err

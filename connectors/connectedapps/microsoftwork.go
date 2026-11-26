@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -98,7 +99,7 @@ func msReady() func(json.RawMessage) bool {
 }
 
 func microsoftWork(ctx context.Context, e *env) {
-	raw, resp, err := e.b.capture(ctx, msWorkAppsURL, msWorkAppsJS, msReady(), 60, msWorkTilesRE)
+	raw, resp, err := e.b.Capture(ctx, msWorkAppsURL, msWorkAppsJS, msReady(), 60, msWorkTilesRE)
 	if err != nil {
 		e.fail("", err)
 		return
@@ -158,15 +159,15 @@ type msTile struct {
 	AssignmentType string `json:"assignmentType"`
 }
 
-func parseMSTiles(resp *response) ([]msTile, error) {
+func parseMSTiles(resp *cdp.Response) ([]msTile, error) {
 	if resp == nil {
 		return nil, errors.New("My Apps did not fetch its app tiles")
 	}
 	var body struct {
 		Value *[]msTile `json:"value"`
 	}
-	if err := json.Unmarshal(resp.body, &body); err != nil || body.Value == nil {
-		return nil, fmt.Errorf("My Apps' tiles did not have the expected shape (HTTP %d)", resp.status)
+	if err := json.Unmarshal(resp.Body, &body); err != nil || body.Value == nil {
+		return nil, fmt.Errorf("My Apps' tiles did not have the expected shape (HTTP %d)", resp.Status)
 	}
 	return *body.Value, nil
 }
@@ -177,7 +178,7 @@ func msWorkSecurityInfo(ctx context.Context, e *env) {
 	status := func(st finding.State, format string, args ...any) {
 		e.emit.Status(finding.Status{Account: e.account(""), Scope: msWorkSecurityScope, State: st, Detail: fmt.Sprintf(format, args...)})
 	}
-	raw, err := e.b.load(ctx, msWorkSecurityURL, msWorkSecurityJS, msReady(), 60)
+	raw, err := e.b.Load(ctx, msWorkSecurityURL, msWorkSecurityJS, msReady(), 60)
 	if err != nil {
 		status(finding.StateError, "%v", err)
 		return

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -26,7 +27,7 @@ const msStepUpURL = "https://login.microsoftonline.com/tenant/oauth2/v2.0/author
 func msFake(apps map[string]any, tiles string, security map[string]any) *fakeBrowser {
 	b := &fakeBrowser{pages: map[string]any{msWorkAppsURL: apps}}
 	if tiles != "" {
-		b.responses = map[string]*response{msWorkAppsURL: {status: 200, body: []byte(tiles)}}
+		b.responses = map[string]*cdp.Response{msWorkAppsURL: {Status: 200, Body: []byte(tiles)}}
 	}
 	if security != nil {
 		b.pages[msWorkSecurityURL] = security

@@ -10,7 +10,6 @@ package connectedapps
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
@@ -111,7 +109,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 			return err
 		}
 		defer client.Close()
-		b = cdpBrowser{client}
+		b = client
 	}
 	gh := c.ghRunner()
 	now := time.Now
@@ -283,107 +281,10 @@ func (e *env) report(g grant) {
 // staleAfter is how long without use raises a grant's severity one level.
 const staleAfter = 365 * 24 * time.Hour
 
-// browser loads a page in a hidden target, polls a JavaScript expression until ready accepts
-// its value or tries run out, closes the target and returns the last value. The seam that lets
-// tests replace Brave with synthetic pages.
+// browser is *cdp.Client; tests replace it with synthetic pages.
 type browser interface {
-	load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error)
-	// capture is load that also returns the last response, among those the page fetched, whose
-	// URL matches re. It reads what the page itself requested; it never sends a request.
-	capture(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int, re *regexp.Regexp) (json.RawMessage, *response, error)
-}
-
-// response is a body the page fetched. It may hold tokens: parsers decode the fields they need
-// and drop the rest, and it is never logged or written.
-type response struct {
-	status int
-	body   []byte
-}
-
-type cdpBrowser struct{ c *cdp.Client }
-
-func (b cdpBrowser) load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (v json.RawMessage, err error) {
-	err = b.c.WithPage(ctx, url, func(p *cdp.Page) error {
-		v, err = p.WaitFor(ctx, expr, ready, tries)
-		return err
-	})
-	return v, err
-}
-
-func (b cdpBrowser) capture(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int, re *regexp.Regexp) (v json.RawMessage, resp *response, err error) {
-	var mu sync.Mutex
-	type hit struct {
-		id     string
-		status int
-	}
-	var hits []hit
-	finished := map[string]bool{}
-	setup := func(p *cdp.Page) error {
-		if _, err := p.Send(ctx, "Network.enable", nil); err != nil {
-			return err
-		}
-		p.On("Network.responseReceived", func(raw json.RawMessage) {
-			var e struct {
-				RequestID string `json:"requestId"`
-				Response  struct {
-					URL    string `json:"url"`
-					Status int    `json:"status"`
-				} `json:"response"`
-			}
-			if json.Unmarshal(raw, &e) == nil && re.MatchString(e.Response.URL) {
-				mu.Lock()
-				hits = append(hits, hit{e.RequestID, e.Response.Status})
-				mu.Unlock()
-			}
-		})
-		p.On("Network.loadingFinished", func(raw json.RawMessage) {
-			var e struct {
-				RequestID string `json:"requestId"`
-			}
-			if json.Unmarshal(raw, &e) == nil {
-				mu.Lock()
-				finished[e.RequestID] = true
-				mu.Unlock()
-			}
-		})
-		return nil
-	}
-	err = b.c.WithPageSetup(ctx, url, setup, func(p *cdp.Page) error {
-		if v, err = p.WaitFor(ctx, expr, ready, tries); err != nil {
-			return err
-		}
-		mu.Lock()
-		var last *hit
-		for i := range hits {
-			if finished[hits[i].id] {
-				last = &hits[i]
-			}
-		}
-		mu.Unlock()
-		if last == nil {
-			return nil
-		}
-		raw, err := p.Send(ctx, "Network.getResponseBody", map[string]any{"requestId": last.id})
-		if err != nil {
-			return err
-		}
-		var r struct {
-			Body          string `json:"body"`
-			Base64Encoded bool   `json:"base64Encoded"`
-		}
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return err
-		}
-		body := []byte(r.Body)
-		if r.Base64Encoded {
-			if body, err = base64.StdEncoding.DecodeString(r.Body); err != nil {
-				return err
-			}
-		}
-		resp = &response{status: last.status, body: body}
-		return nil
-	})
-	return v, resp, err
+	Load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error)
+	Capture(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int, re *regexp.Regexp) (json.RawMessage, *cdp.Response, error)
 }
 
 // decode reads a page value into T; a value of the wrong shape gives the zero T and false.

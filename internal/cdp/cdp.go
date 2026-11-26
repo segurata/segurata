@@ -1,27 +1,29 @@
-// Package cdp is a minimal Chrome DevTools Protocol client for the user's own running Brave,
-// started with --remote-debugging-port; it drives no other browser (Connect). Scan pages open as
-// hidden targets: they load with the browser's cookies but never appear in a window or the tab
-// strip, so the user's tabs and focus are never touched. OpenTab opens the one kind of page the
-// user is meant to see. Standard library only.
+// Package cdp is a minimal Chrome DevTools Protocol client for the user's own running Brave; it
+// drives no other browser. Scan pages open as hidden targets, which load with the browser's
+// cookies but never appear in a window, so the user's tabs and focus are never touched.
 package cdp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// DefaultTimeout bounds a single CDP command when the caller's context has no deadline.
-const DefaultTimeout = 30 * time.Second
+const defaultTimeout = 30 * time.Second
 
-// pollInterval is how long WaitFor sleeps between evaluations. A variable so tests run fast.
-var pollInterval = 500 * time.Millisecond
+var (
+	pollInterval = 500 * time.Millisecond
+	// A browser listening on the port answers at once, and nothing listening fails at once too.
+	versionTimeout = 3 * time.Second
+)
 
 // Client is one browser-level CDP connection. Safe for concurrent use.
 type Client struct {
@@ -31,13 +33,11 @@ type Client struct {
 	pending   map[int64]chan message
 	listeners map[eventKey][]func(json.RawMessage)
 	done      chan struct{}
-	err       error // why the read loop stopped; valid once done is closed
-	// visibleScan is set once the browser refused a hidden target: scan pages then open as
-	// background tabs, as browsers without hidden targets need.
+	err       error // valid once done is closed
+	// set once the browser refused a hidden target: scan pages then open as background tabs
 	visibleScan atomic.Bool
 }
 
-// eventKey routes an event to the listeners of one page session.
 type eventKey struct{ sessionID, method string }
 
 type message struct {
@@ -82,21 +82,13 @@ func ReadVersion(ctx context.Context, cdpURL string) (Version, error) {
 	return v, nil
 }
 
-// versionTimeout bounds Brave's /json/version request: a browser listening on the port answers at
-// once, and nothing listening fails at once too. A variable so tests run fast.
-var versionTimeout = 3 * time.Second
-
-// ErrNotBrave is the error of Brave when the endpoint answers but its browser is not Brave.
+// ErrNotBrave: the endpoint answers but its browser is not Brave.
 var ErrNotBrave = errors.New("not Brave")
 
-// isBraveExpr is true only in Brave: navigator.brave.isBrave() is Brave's own API. Brave reports
-// itself as Chrome in /json/version ("Browser": "Chrome/156…", checked on Brave 156) and in its
-// user agent, so neither tells it from Chrome.
+// Brave reports itself as Chrome in /json/version and its user agent; only its own API tells.
 const isBraveExpr = `(async () => !!(navigator.brave && await navigator.brave.isBrave()))()`
 
-// Brave checks that the browser at cdpURL answers over CDP and is Brave, without starting or
-// focusing anything (see Connect), and closes the connection. It returns what /json/version said;
-// the error wraps ErrNotBrave when the browser answered but is not Brave.
+// Brave checks that the browser at cdpURL is Brave, then closes the connection.
 func Brave(ctx context.Context, cdpURL string) (Version, error) {
 	c, v, err := connect(ctx, cdpURL)
 	if err == nil {
@@ -105,11 +97,8 @@ func Brave(ctx context.Context, cdpURL string) (Version, error) {
 	return v, err
 }
 
-// Connect opens the browser WebSocket at cdpURL once the browser there proved to be Brave: only
-// Brave is ever driven, whoever started it and however the run was started. The proof is
-// /json/version (bounded by versionTimeout), then isBraveExpr in a hidden about:blank target that
-// is closed at once; Brave reports itself as Chrome in both /json/version and its user agent. The
-// error wraps ErrNotBrave when the browser answered but is not Brave.
+// Connect opens the browser at cdpURL once a hidden probe page proved it is Brave: no other
+// browser is ever driven.
 func Connect(ctx context.Context, cdpURL string) (*Client, error) {
 	c, _, err := connect(ctx, cdpURL)
 	return c, err
@@ -147,17 +136,6 @@ func connect(ctx context.Context, cdpURL string) (*Client, Version, error) {
 	return c, v, nil
 }
 
-// dial opens the browser WebSocket at cdpURL without telling which browser it is: for this
-// package's tests of the protocol, which a fake browser answers.
-func dial(ctx context.Context, cdpURL string) (*Client, error) {
-	v, err := ReadVersion(ctx, cdpURL)
-	if err != nil {
-		return nil, err
-	}
-	return connectTo(ctx, v)
-}
-
-// connectTo opens the browser WebSocket /json/version named.
 func connectTo(ctx context.Context, v Version) (*Client, error) {
 	ws, err := dialWS(ctx, v.WebSocketDebuggerURL)
 	if err != nil {
@@ -172,7 +150,7 @@ func (c *Client) readLoop() {
 	var err error
 	for {
 		var raw []byte
-		if _, raw, err = c.ws.ReadMessage(); err != nil {
+		if raw, err = c.ws.readMessage(); err != nil {
 			break
 		}
 		var m message
@@ -191,11 +169,10 @@ func (c *Client) readLoop() {
 			ch <- m
 		}
 	}
-	c.err = err // published to readers by close(c.done)
+	c.err = err
 	close(c.done)
 }
 
-// dispatch hands an event to the listeners registered for its session and method.
 func (c *Client) dispatch(raw []byte) {
 	var ev struct {
 		Method    string          `json:"method"`
@@ -214,14 +191,13 @@ func (c *Client) dispatch(raw []byte) {
 }
 
 // Close shuts the connection; pending calls fail.
-func (c *Client) Close() error { return c.ws.Close() }
+func (c *Client) Close() error { return c.ws.close() }
 
-// Send issues one CDP command and waits for its reply, the context, or DefaultTimeout.
-// sessionID is empty for browser-level commands.
-func (c *Client) Send(ctx context.Context, method string, params any, sessionID string) (json.RawMessage, error) {
+// send issues one CDP command and waits for its reply; sessionID is empty for browser commands.
+func (c *Client) send(ctx context.Context, method string, params any, sessionID string) (json.RawMessage, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, DefaultTimeout)
+		ctx, cancel = context.WithTimeout(ctx, defaultTimeout)
 		defer cancel()
 	}
 	if params == nil {
@@ -244,7 +220,7 @@ func (c *Client) Send(ctx context.Context, method string, params any, sessionID 
 		forget()
 		return nil, err
 	}
-	if err := c.ws.WriteText(raw); err != nil {
+	if err := c.ws.writeText(raw); err != nil {
 		forget()
 		return nil, fmt.Errorf("cdp: %s: %w", method, err)
 	}
@@ -268,21 +244,19 @@ type Page struct {
 	sessionID string
 }
 
-// Send issues a CDP command on this page's session.
-func (p *Page) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	return p.c.Send(ctx, method, params, p.sessionID)
+func (p *Page) send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	return p.c.send(ctx, method, params, p.sessionID)
 }
 
-// On registers fn for the events called method on this page, until the page closes. fn runs on
-// the connection's read loop, so it must return quickly and must not call Send.
-func (p *Page) On(method string, fn func(params json.RawMessage)) {
+// on registers fn for an event of this page until it closes. fn runs on the read loop, so it
+// must return quickly and must not call send.
+func (p *Page) on(method string, fn func(params json.RawMessage)) {
 	p.c.mu.Lock()
 	defer p.c.mu.Unlock()
 	k := eventKey{p.sessionID, method}
 	p.c.listeners[k] = append(p.c.listeners[k], fn)
 }
 
-// forgetListeners drops every listener of a session.
 func (c *Client) forgetListeners(sessionID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -298,10 +272,9 @@ type EvalError struct{ Text string }
 
 func (e *EvalError) Error() string { return "cdp: evaluate: " + e.Text }
 
-// Evaluate runs expr in the page (awaiting promises) and returns its value as JSON.
-// A JavaScript exception becomes an error.
+// Evaluate runs expr in the page, awaiting promises, and returns its value as JSON.
 func (p *Page) Evaluate(ctx context.Context, expr string) (json.RawMessage, error) {
-	raw, err := p.Send(ctx, "Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true})
+	raw, err := p.send(ctx, "Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true})
 	if err != nil {
 		return nil, err
 	}
@@ -322,10 +295,9 @@ func (p *Page) Evaluate(ctx context.Context, expr string) (json.RawMessage, erro
 	return r.Result.Value, nil
 }
 
-// WaitFor evaluates expr every pollInterval until ready accepts the value or tries run out.
-// It returns the last value either way, so the caller can still inspect a page that never got
-// ready (a sign-in wall, an empty list). A JavaScript exception counts as "not ready yet"
-// (document.body is null while the page loads); it is returned only if no try ever succeeded.
+// WaitFor evaluates expr every pollInterval until ready accepts the value or tries run out, and
+// returns the last value either way, so the caller can inspect a page that never got ready. A
+// JavaScript exception means "still loading"; it is returned only if no try ever succeeded.
 func (p *Page) WaitFor(ctx context.Context, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error) {
 	var last json.RawMessage
 	var evalErr *EvalError
@@ -356,41 +328,119 @@ func (p *Page) WaitFor(ctx context.Context, expr string, ready func(json.RawMess
 // WithPage opens url in a new hidden target, hands fn the attached page and always closes the
 // target afterwards, even when ctx is already cancelled.
 func (c *Client) WithPage(ctx context.Context, url string, fn func(*Page) error) error {
-	return c.WithPageSetup(ctx, url, nil, fn)
+	return c.withPageSetup(ctx, url, nil, fn)
 }
 
-// scanTarget creates the blank target a scan page loads in. It is hidden: observable over CDP but
-// in no window and not in the tab strip, so a run never flashes tabs among the user's own or takes
-// focus (checked on Brave 156, 2026-11-24: it loads signed-in pages and reports itself visible).
-// Opening scan tabs in one dedicated window instead was tried and dropped: Target.createTarget
-// cannot name a window, so a window gets only the tab it is created with, and window.open from
-// that tab brings the window to the front each time. A browser that refuses hidden targets gets
-// background tabs, as before.
+// Load opens url in a hidden page and returns what WaitFor returns.
+func (c *Client) Load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (v json.RawMessage, err error) {
+	err = c.WithPage(ctx, url, func(p *Page) error {
+		v, err = p.WaitFor(ctx, expr, ready, tries)
+		return err
+	})
+	return v, err
+}
+
+// Response is a body a page fetched. It may hold tokens: callers decode what they need and never
+// log or store it.
+type Response struct {
+	Status int
+	Body   []byte
+}
+
+// Capture is Load that also returns the last finished response, among those the page itself
+// fetched, whose URL matches re. It never sends a request of its own.
+func (c *Client) Capture(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int, re *regexp.Regexp) (v json.RawMessage, resp *Response, err error) {
+	var mu sync.Mutex
+	status := map[string]int{} // matching request id -> HTTP status
+	var order []string
+	finished := map[string]bool{}
+	setup := func(p *Page) error {
+		if _, err := p.send(ctx, "Network.enable", nil); err != nil {
+			return err
+		}
+		p.on("Network.responseReceived", func(raw json.RawMessage) {
+			var e struct {
+				RequestID string `json:"requestId"`
+				Response  struct {
+					URL    string `json:"url"`
+					Status int    `json:"status"`
+				} `json:"response"`
+			}
+			if json.Unmarshal(raw, &e) == nil && re.MatchString(e.Response.URL) {
+				mu.Lock()
+				status[e.RequestID] = e.Response.Status
+				order = append(order, e.RequestID)
+				mu.Unlock()
+			}
+		})
+		p.on("Network.loadingFinished", func(raw json.RawMessage) {
+			var e struct {
+				RequestID string `json:"requestId"`
+			}
+			if json.Unmarshal(raw, &e) == nil {
+				mu.Lock()
+				finished[e.RequestID] = true
+				mu.Unlock()
+			}
+		})
+		return nil
+	}
+	err = c.withPageSetup(ctx, url, setup, func(p *Page) error {
+		if v, err = p.WaitFor(ctx, expr, ready, tries); err != nil {
+			return err
+		}
+		mu.Lock()
+		last := ""
+		for _, id := range order {
+			if finished[id] {
+				last = id
+			}
+		}
+		mu.Unlock()
+		if last == "" {
+			return nil
+		}
+		raw, err := p.send(ctx, "Network.getResponseBody", map[string]any{"requestId": last})
+		if err != nil {
+			return err
+		}
+		var r struct {
+			Body          string `json:"body"`
+			Base64Encoded bool   `json:"base64Encoded"`
+		}
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return err
+		}
+		body := []byte(r.Body)
+		if r.Base64Encoded {
+			if body, err = base64.StdEncoding.DecodeString(r.Body); err != nil {
+				return err
+			}
+		}
+		resp = &Response{Status: status[last], Body: body}
+		return nil
+	})
+	return v, resp, err
+}
+
+// scanTarget creates the blank target a scan page loads in: hidden (in no window, never taking
+// focus) unless the browser refuses that, then a background tab.
 func (c *Client) scanTarget(ctx context.Context) (string, error) {
 	if !c.visibleScan.Load() {
-		raw, err := c.Send(ctx, "Target.createTarget", map[string]any{"url": "about:blank", "background": true, "hidden": true}, "")
-		if err == nil {
-			return targetID(raw)
-		}
-		if ctx.Err() != nil {
-			return "", err
+		id, err := c.createTarget(ctx, map[string]any{"url": "about:blank", "background": true, "hidden": true})
+		if err == nil || ctx.Err() != nil {
+			return id, err
 		}
 		c.visibleScan.Store(true)
 	}
 	return c.createTarget(ctx, map[string]any{"url": "about:blank", "background": true})
 }
 
-// createTarget creates a target with params and returns its id.
 func (c *Client) createTarget(ctx context.Context, params map[string]any) (string, error) {
-	raw, err := c.Send(ctx, "Target.createTarget", params, "")
+	raw, err := c.send(ctx, "Target.createTarget", params, "")
 	if err != nil {
 		return "", err
 	}
-	return targetID(raw)
-}
-
-// targetID reads the id of the target Target.createTarget created.
-func targetID(raw json.RawMessage) (string, error) {
 	var t struct {
 		TargetID string `json:"targetId"`
 	}
@@ -403,9 +453,8 @@ func targetID(raw json.RawMessage) (string, error) {
 	return t.TargetID, nil
 }
 
-// attach opens a flat session on a target.
 func (c *Client) attach(ctx context.Context, targetID string) (*Page, error) {
-	raw, err := c.Send(ctx, "Target.attachToTarget", map[string]any{"targetId": targetID, "flatten": true}, "")
+	raw, err := c.send(ctx, "Target.attachToTarget", map[string]any{"targetId": targetID, "flatten": true}, "")
 	if err != nil {
 		return nil, err
 	}
@@ -418,17 +467,16 @@ func (c *Client) attach(ctx context.Context, targetID string) (*Page, error) {
 	return &Page{c: c, sessionID: a.SessionID}, nil
 }
 
-// WithPageSetup is WithPage with a setup step that runs on the attached page before it navigates:
-// the place to enable a domain such as Network and subscribe to its events with On.
-func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*Page) error) (err error) {
+// withPageSetup is WithPage with a setup step that runs on the attached page before it navigates.
+func (c *Client) withPageSetup(ctx context.Context, url string, setup, fn func(*Page) error) (err error) {
 	id, err := c.scanTarget(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DefaultTimeout)
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultTimeout)
 		defer cancel()
-		if _, cerr := c.Send(cctx, "Target.closeTarget", map[string]any{"targetId": id}, ""); cerr != nil && err == nil {
+		if _, cerr := c.send(cctx, "Target.closeTarget", map[string]any{"targetId": id}, ""); cerr != nil && err == nil {
 			err = cerr
 		}
 	}()
@@ -438,10 +486,10 @@ func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*
 		return err
 	}
 	defer c.forgetListeners(p.sessionID)
-	if _, err := p.Send(ctx, "Runtime.enable", nil); err != nil {
+	if _, err := p.send(ctx, "Runtime.enable", nil); err != nil {
 		return err
 	}
-	if _, err := p.Send(ctx, "Emulation.setFocusEmulationEnabled", map[string]any{"enabled": true}); err != nil {
+	if _, err := p.send(ctx, "Emulation.setFocusEmulationEnabled", map[string]any{"enabled": true}); err != nil {
 		return err
 	}
 	if setup != nil {
@@ -449,16 +497,14 @@ func (c *Client) WithPageSetup(ctx context.Context, url string, setup, fn func(*
 			return err
 		}
 	}
-	if _, err := p.Send(ctx, "Page.navigate", map[string]any{"url": url}); err != nil {
+	if _, err := p.send(ctx, "Page.navigate", map[string]any{"url": url}); err != nil {
 		return err
 	}
 	return fn(p)
 }
 
-// OpenTab opens url in a normal foreground tab of the user's last active window and attaches to
-// it, so its state can be read with Evaluate. The tab is the user's: it is never closed, and it
-// stays open after the connection closes. For pages where the user has to act (sign in, confirm
-// a password); scans use WithPage.
+// OpenTab opens url in a foreground tab for the user to act on and attaches to it. The tab is
+// the user's: it is never closed.
 func (c *Client) OpenTab(ctx context.Context, url string) (*Page, error) {
 	id, err := c.createTarget(ctx, map[string]any{"url": url})
 	if err != nil {

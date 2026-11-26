@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -27,7 +28,7 @@ func xPage() map[string]any {
 }
 
 func TestXReadsTheListResponseOnceAndDropsTokens(t *testing.T) {
-	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*response{xURL: {status: 200, body: []byte(xList)}}}
+	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*cdp.Response{xURL: {Status: 200, Body: []byte(xList)}}}
 	rec := run(t, b, nil, "x")
 
 	if len(b.opened) != 1 {
@@ -67,7 +68,7 @@ func TestXReadsTheListResponseOnceAndDropsTokens(t *testing.T) {
 
 func TestXRateLimitedAndSignedOut(t *testing.T) {
 	limited := `{"errors":[{"message":"Rate limit exceeded","code":88}]}`
-	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*response{xURL: {status: 429, body: []byte(limited)}}}
+	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*cdp.Response{xURL: {Status: 429, Body: []byte(limited)}}}
 	rec := run(t, b, nil, "x")
 	if d := rec.detail("x:@chirper", finding.StateError); !strings.Contains(d, "Rate limit exceeded") || !strings.Contains(d, "15 minutes") {
 		t.Errorf("rate limit detail %q", d)
@@ -151,9 +152,9 @@ func TestSlackReadsEachSignedInWorkspace(t *testing.T) {
 }
 
 // slackList is an admin.apps.installed.list response with these apps.
-func slackList(apps ...map[string]any) *response {
+func slackList(apps ...map[string]any) *cdp.Response {
 	body, _ := json.Marshal(map[string]any{"ok": true, "apps": apps})
-	return &response{status: 200, body: body}
+	return &cdp.Response{Status: 200, Body: body}
 }
 
 func slackInstalledApp(id, name string, bot, user []string) map[string]any {
@@ -177,7 +178,7 @@ func TestSlackGradesAppsByTheirDeclaredScopes(t *testing.T) {
 		slackSignin: page(slackSignin, "Your workspaces", rows(row{Href: "https://acme-team.slack.com/"}, row{Href: "https://zeta-team.slack.com/"})),
 		"https://acme-team.slack.com/apps/manage": acme,
 		"https://zeta-team.slack.com/apps/manage": zeta,
-	}, responses: map[string]*response{
+	}, responses: map[string]*cdp.Response{
 		"https://acme-team.slack.com/apps/manage": slackList(
 			slackInstalledApp("A1", "Poster", []string{"chat:write", "chat:write.public", "commands"}, nil),
 			slackInstalledApp("A2", "Reader", nil, []string{"channels:history", "im:history", "users:read"}),
@@ -229,7 +230,7 @@ func TestSlackGradesAppsByTheirDeclaredScopes(t *testing.T) {
 	b = &fakeBrowser{pages: map[string]any{
 		slackSignin: page(slackSignin, "Your workspaces", rows(row{Href: "https://acme-team.slack.com/"})),
 		"https://acme-team.slack.com/apps/manage": map[string]any{"url": acmeURL, "text": "Installed apps\nFilter"},
-	}, responses: map[string]*response{"https://acme-team.slack.com/apps/manage": {status: 200, body: []byte(`{"ok":false,"error":"not_allowed"}`)}}}
+	}, responses: map[string]*cdp.Response{"https://acme-team.slack.com/apps/manage": {Status: 200, Body: []byte(`{"ok":false,"error":"not_allowed"}`)}}}
 	rec = run(t, b, nil, "slack")
 	if d := rec.detail("slack:acme-team.slack.com", finding.StateUnverified); !strings.Contains(d, `the app list answered "not_allowed"`) || len(rec.findings) != 0 {
 		t.Errorf("unlisted workspace: %+v %+v", rec.statuses, rec.findings)
@@ -408,7 +409,7 @@ const xOldList = `{"applications":[
 ]}`
 
 func TestXGroupsAppsApprovedMoreThanTenYearsAgo(t *testing.T) {
-	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*response{xURL: {status: 200, body: []byte(xOldList)}}}
+	b := &fakeBrowser{pages: map[string]any{xURL: xPage()}, responses: map[string]*cdp.Response{xURL: {Status: 200, Body: []byte(xOldList)}}}
 	rec := run(t, b, nil, "x")
 	if len(rec.findings) != 3 {
 		t.Fatalf("%d findings, want the two recent apps and one batch", len(rec.findings))

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -112,19 +113,19 @@ type slackInstalled struct {
 }
 
 // parseSlackInstalled reads the captured app list.
-func parseSlackInstalled(resp *response) ([]slackInstalled, error) {
+func parseSlackInstalled(resp *cdp.Response) ([]slackInstalled, error) {
 	if resp == nil {
 		return nil, errors.New("the page did not fetch its app list")
 	}
-	if resp.status != 200 {
-		return nil, fmt.Errorf("the app list answered HTTP %d", resp.status)
+	if resp.Status != 200 {
+		return nil, fmt.Errorf("the app list answered HTTP %d", resp.Status)
 	}
 	var v struct {
 		OK    bool             `json:"ok"`
 		Error string           `json:"error"`
 		Apps  []slackInstalled `json:"apps"`
 	}
-	if err := json.Unmarshal(resp.body, &v); err != nil {
+	if err := json.Unmarshal(resp.Body, &v); err != nil {
 		return nil, fmt.Errorf("the app list is not the JSON segurata knows: %v", err)
 	}
 	if !v.OK {
@@ -149,7 +150,7 @@ func slackReady() func(json.RawMessage) bool {
 func slackSignedIn(p listPage) bool { return len(slackWorkspaces(p.Rows)) > 0 }
 
 func slack(ctx context.Context, e *env) {
-	raw, err := e.b.load(ctx, slackSignin, slackSigninJS, readyWhen(slackSignedIn), 30)
+	raw, err := e.b.Load(ctx, slackSignin, slackSigninJS, readyWhen(slackSignedIn), 30)
 	if err != nil {
 		e.fail("", err)
 		return
@@ -173,7 +174,7 @@ func slack(ctx context.Context, e *env) {
 // waiting for approval), by their scope count. The page is loaded once; no app page is opened.
 func slackWorkspace(ctx context.Context, e *env, host string) {
 	manage := "https://" + host + "/apps/manage"
-	raw, resp, err := e.b.capture(ctx, manage, slackAppsJS, slackReady(), 40, slackListRE)
+	raw, resp, err := e.b.Capture(ctx, manage, slackAppsJS, slackReady(), 40, slackListRE)
 	if err != nil {
 		e.fail(host, err)
 		return

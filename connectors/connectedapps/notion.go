@@ -68,7 +68,7 @@ func parseNotionRow(cells [][]string) notionIntegration {
 func notionListed(p notionPage) bool { return len(p.Cells) > 0 || notionEmptyRE.MatchString(p.Text) }
 
 func notion(ctx context.Context, e *env) {
-	raw, err := e.b.load(ctx, notionURL, notionJS, func(raw json.RawMessage) bool {
+	raw, err := e.b.Load(ctx, notionURL, notionJS, func(raw json.RawMessage) bool {
 		p, ok := decode[notionPage](raw)
 		return ok && (notionSignedOutRE.MatchString(p.URL) || notionListed(p))
 	}, 50)

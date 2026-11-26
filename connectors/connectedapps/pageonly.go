@@ -19,7 +19,7 @@ type pageOnly struct {
 }
 
 func (s pageOnly) run(ctx context.Context, e *env) {
-	raw, err := e.b.load(ctx, s.url, pageTextJS, readyWhen(func(p listPage) bool {
+	raw, err := e.b.Load(ctx, s.url, pageTextJS, readyWhen(func(p listPage) bool {
 		return s.signedOut.MatchString(p.URL) || s.loaded.MatchString(p.Text)
 	}), 40)
 	if err != nil {

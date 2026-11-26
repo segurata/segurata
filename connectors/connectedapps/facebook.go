@@ -102,7 +102,7 @@ func parseFacebookDetail(text string) fbDetail {
 func fbListed(p fbListPage) bool { return len(p.Rows) > 0 || fbLoadedRE.MatchString(p.Text) }
 
 func facebook(ctx context.Context, e *env) {
-	raw, err := e.b.load(ctx, fbURL, fbListJS, func(raw json.RawMessage) bool {
+	raw, err := e.b.Load(ctx, fbURL, fbListJS, func(raw json.RawMessage) bool {
 		p, ok := decode[fbListPage](raw)
 		return ok && (fbSignedOutRE.MatchString(p.URL) || fbReauthRE.MatchString(p.URL) || fbListed(p))
 	}, 40)
@@ -128,7 +128,7 @@ func facebook(ctx context.Context, e *env) {
 			return
 		}
 		a := parseFacebookRow(r)
-		raw, err := e.b.load(ctx, a.href, pageTextJS, func(raw json.RawMessage) bool {
+		raw, err := e.b.Load(ctx, a.href, pageTextJS, func(raw json.RawMessage) bool {
 			d, _ := decode[listPage](raw)
 			return fbSharingRE.MatchString(d.Text)
 		}, 30)

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -150,12 +152,12 @@ func TestFragmentedReplyWithInterleavedPing(t *testing.T) {
 		pong <- p
 	})
 	ws := dialT(t, wsURL(srv))
-	if err := ws.WriteText([]byte("hello")); err != nil {
+	if err := ws.writeText([]byte("hello")); err != nil {
 		t.Fatal(err)
 	}
-	op, msg, err := ws.ReadMessage()
-	if err != nil || op != opText || string(msg) != "hello, world" {
-		t.Fatalf("ReadMessage = %d %q %v", op, msg, err)
+	msg, err := ws.readMessage()
+	if err != nil || string(msg) != "hello, world" {
+		t.Fatalf("readMessage = %q %v", msg, err)
 	}
 	if p := <-pong; string(p) != "are you there" {
 		t.Fatalf("pong payload %q", p)
@@ -173,10 +175,10 @@ func TestLargePayloadsBothDirections(t *testing.T) {
 			s.writeFrame(true, opText, p)
 		})
 		ws := dialT(t, wsURL(srv))
-		if err := ws.WriteText(payload); err != nil {
+		if err := ws.writeText(payload); err != nil {
 			t.Fatal(err)
 		}
-		_, msg, err := ws.ReadMessage()
+		msg, err := ws.readMessage()
 		if err != nil || !bytes.Equal(msg, payload) {
 			t.Fatalf("n=%d: echo %d bytes, err %v", n, len(msg), err)
 		}
@@ -191,7 +193,7 @@ func TestCloseFromServerIsEchoed(t *testing.T) {
 		echoed <- op
 	})
 	ws := dialT(t, wsURL(srv))
-	if _, _, err := ws.ReadMessage(); !errors.Is(err, errClosed) {
+	if _, err := ws.readMessage(); !errors.Is(err, errClosed) {
 		t.Fatalf("err = %v, want errClosed", err)
 	}
 	if op := <-echoed; op != opClose {
@@ -200,18 +202,25 @@ func TestCloseFromServerIsEchoed(t *testing.T) {
 }
 
 func TestProtocolViolationsAreErrors(t *testing.T) {
-	cases := map[string]func(*srvConn){
-		"masked server frame": func(s *srvConn) { s.conn.Write([]byte{0x81, 0x81, 1, 2, 3, 4, 'x'}) },
-		"orphan continuation": func(s *srvConn) { s.writeFrame(true, opContinuation, []byte("x")) },
-		"fragmented ping":     func(s *srvConn) { s.writeFrame(false, opPing, nil) },
-		"reserved bits":       func(s *srvConn) { s.conn.Write([]byte{0xC1, 0x01, 'x'}) },
+	cases := map[string]struct {
+		send func(*srvConn)
+		want string
+	}{
+		"masked server frame": {func(s *srvConn) { s.conn.Write([]byte{0x81, 0x81, 1, 2, 3, 4, 'x'}) }, "must not be masked"},
+		"orphan continuation": {func(s *srvConn) { s.writeFrame(true, opContinuation, []byte("x")) }, "continuation without a message"},
+		"fragmented ping":     {func(s *srvConn) { s.writeFrame(false, opPing, nil) }, "invalid control frame"},
+		"reserved bits":       {func(s *srvConn) { s.conn.Write([]byte{0xC1, 0x01, 'x'}) }, "reserved bits"},
+		"new message mid-way": {func(s *srvConn) { s.writeFrame(false, opText, []byte("a")); s.writeFrame(true, opText, []byte("b")) }, "before the previous one ended"},
+		"unknown opcode":      {func(s *srvConn) { s.writeFrame(true, 0x3, nil) }, "unknown opcode"},
 	}
-	for name, send := range cases {
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			srv := wsServer(t, func(s *srvConn) { send(s); time.Sleep(100 * time.Millisecond) })
+			hold := make(chan struct{})
+			defer close(hold)
+			srv := wsServer(t, func(s *srvConn) { c.send(s); <-hold })
 			ws := dialT(t, wsURL(srv))
-			if _, _, err := ws.ReadMessage(); err == nil {
-				t.Fatal("expected an error")
+			if _, err := ws.readMessage(); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
 			}
 		})
 	}
@@ -253,6 +262,7 @@ type fakeBrowser struct {
 	creates  []map[string]any // Target.createTarget params, in order
 	browser  string           // the Browser field of /json/version
 	value    any              // when set, what every Runtime.evaluate returns
+	bodies   []string         // request ids of Network.getResponseBody
 }
 
 func (b *fakeBrowser) serve(t *testing.T) *httptest.Server {
@@ -298,11 +308,24 @@ func (b *fakeBrowser) answer(s *srvConn, id int64, method string, params map[str
 	var events []map[string]any
 	switch method {
 	case "Page.navigate":
-		// The page's own event, then the same event for another page: only the first may arrive.
-		events = []map[string]any{
-			{"method": "Network.responseReceived", "sessionId": "S1", "params": map[string]any{"requestId": "R1"}},
-			{"method": "Network.responseReceived", "sessionId": "S2", "params": map[string]any{"requestId": "R2"}},
+		// This page's events, then one for another page that must not arrive. R0 matches a
+		// capture but never finishes; R9 finishes but does not match.
+		resp := func(session, id, url string, status int) map[string]any {
+			return map[string]any{"method": "Network.responseReceived", "sessionId": session,
+				"params": map[string]any{"requestId": id, "response": map[string]any{"url": url, "status": status}}}
 		}
+		done := func(id string) map[string]any {
+			return map[string]any{"method": "Network.loadingFinished", "sessionId": "S1", "params": map[string]any{"requestId": id}}
+		}
+		events = []map[string]any{
+			resp("S1", "R1", "https://example.com/api/list?page=1", 200), done("R1"),
+			resp("S1", "R0", "https://example.com/api/list?page=2", 500),
+			resp("S1", "R9", "https://example.com/other", 200), done("R9"),
+			resp("S2", "R2", "https://example.com/api/list", 200), done("R2"),
+		}
+	case "Network.getResponseBody":
+		b.bodies = append(b.bodies, params["requestId"].(string))
+		result = map[string]any{"body": base64.StdEncoding.EncodeToString([]byte(`{"apps":[]}`)), "base64Encoded": true}
 	case "Target.createTarget":
 		b.creates = append(b.creates, params)
 		if b.noHidden && params["hidden"] == true {
@@ -351,7 +374,11 @@ func connectT(t *testing.T, b *fakeBrowser) *Client {
 	t.Helper()
 	pollInterval = time.Millisecond
 	srv := b.serve(t)
-	c, err := dial(context.Background(), srv.URL+"/")
+	v, err := ReadVersion(context.Background(), srv.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := connectTo(context.Background(), v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,10 +417,10 @@ func TestWithPageSetupSubscribesBeforeNavigatingAndForgetsOnClose(t *testing.T) 
 	var mu sync.Mutex
 	var got []string
 	setup := func(p *Page) error {
-		if _, err := p.Send(context.Background(), "Network.enable", nil); err != nil {
+		if _, err := p.send(context.Background(), "Network.enable", nil); err != nil {
 			return err
 		}
-		p.On("Network.responseReceived", func(params json.RawMessage) {
+		p.on("Network.responseReceived", func(params json.RawMessage) {
 			var e struct{ RequestID string }
 			json.Unmarshal(params, &e)
 			mu.Lock()
@@ -402,17 +429,14 @@ func TestWithPageSetupSubscribesBeforeNavigatingAndForgetsOnClose(t *testing.T) 
 		})
 		return nil
 	}
-	err := c.WithPageSetup(context.Background(), "https://example.com", setup, func(p *Page) error {
-		// The events precede the navigate reply on the wire, so they have been dispatched.
-		return nil
-	})
-	if err != nil {
+	// The events precede the navigate reply on the wire, so they have been dispatched.
+	if err := c.withPageSetup(context.Background(), "https://example.com", setup, func(*Page) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if strings.Join(got, ",") != "R1" {
-		t.Fatalf("events = %v, want only this page's R1", got)
+	if strings.Join(got, ",") != "R1,R0,R9" {
+		t.Fatalf("events = %v, want only this page's", got)
 	}
 	want := "Target.createTarget Target.attachToTarget Runtime.enable Emulation.setFocusEmulationEnabled Network.enable Page.navigate Target.closeTarget"
 	if s := strings.Join(b.methods, " "); s != want {
@@ -426,11 +450,44 @@ func TestWithPageSetupSubscribesBeforeNavigatingAndForgetsOnClose(t *testing.T) 
 	}
 }
 
+func TestCaptureReadsTheLastFinishedMatchingResponse(t *testing.T) {
+	b := &fakeBrowser{readyAt: 1}
+	c := connectT(t, b)
+	v, resp, err := c.Capture(context.Background(), "https://example.com", "x", func(json.RawMessage) bool { return true }, 3, regexp.MustCompile(`/api/list`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(v) != `{"n":1,"ready":true}` || resp == nil || resp.Status != 200 || string(resp.Body) != `{"apps":[]}` {
+		t.Fatalf("Capture = %s, %+v", v, resp)
+	}
+	if strings.Join(b.bodies, ",") != "R1" || len(b.closed) != 1 {
+		t.Fatalf("bodies read %v, closed %v", b.bodies, b.closed)
+	}
+}
+
+func TestCaptureWithoutAMatchReadsNoBody(t *testing.T) {
+	b := &fakeBrowser{readyAt: 1}
+	c := connectT(t, b)
+	_, resp, err := c.Capture(context.Background(), "u", "x", func(json.RawMessage) bool { return true }, 3, regexp.MustCompile(`/nothing`))
+	if err != nil || resp != nil || len(b.bodies) != 0 {
+		t.Fatalf("resp %+v, err %v, bodies %v", resp, err, b.bodies)
+	}
+}
+
+func TestLoadReturnsTheReadyValueAndClosesThePage(t *testing.T) {
+	b := &fakeBrowser{readyAt: 2}
+	c := connectT(t, b)
+	v, err := c.Load(context.Background(), "u", "x", func(v json.RawMessage) bool { return strings.Contains(string(v), `"ready":true`) }, 5)
+	if err != nil || string(v) != `{"n":2,"ready":true}` || len(b.closed) != 1 {
+		t.Fatalf("Load = %s, %v; closed %v", v, err, b.closed)
+	}
+}
+
 func TestWithPageSetupErrorStillClosesTheTarget(t *testing.T) {
 	b := &fakeBrowser{}
 	c := connectT(t, b)
 	boom := errors.New("boom")
-	err := c.WithPageSetup(context.Background(), "https://example.com", func(*Page) error { return boom }, func(*Page) error {
+	err := c.withPageSetup(context.Background(), "https://example.com", func(*Page) error { return boom }, func(*Page) error {
 		t.Fatal("fn ran after a failed setup")
 		return nil
 	})
@@ -517,12 +574,12 @@ func TestWithPageClosesTargetWhenContextIsCancelled(t *testing.T) {
 func TestSendReportsProtocolErrorsAndTimeouts(t *testing.T) {
 	b := &fakeBrowser{silent: map[string]bool{"Never.answers": true}}
 	c := connectT(t, b)
-	if _, err := c.Send(context.Background(), "Bogus.method", nil, ""); err == nil || !strings.Contains(err.Error(), "wasn't found") {
+	if _, err := c.send(context.Background(), "Bogus.method", nil, ""); err == nil || !strings.Contains(err.Error(), "wasn't found") {
 		t.Fatalf("err = %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := c.Send(ctx, "Never.answers", nil, ""); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := c.send(ctx, "Never.answers", nil, ""); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want deadline", err)
 	}
 	c.mu.Lock()
@@ -538,7 +595,7 @@ func TestSendFailsOnceConnectionDrops(t *testing.T) {
 	c := connectT(t, b)
 	c.ws.conn.Close()
 	<-c.done
-	if _, err := c.Send(context.Background(), "Target.createTarget", nil, ""); err == nil {
+	if _, err := c.send(context.Background(), "Target.createTarget", nil, ""); err == nil {
 		t.Fatal("expected an error")
 	}
 }
@@ -674,7 +731,7 @@ func TestConnectRefusesABrowserThatIsNotBrave(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if _, err := c.Send(context.Background(), "Bogus.method", nil, ""); err == nil {
+	if _, err := c.send(context.Background(), "Bogus.method", nil, ""); err == nil {
 		t.Fatal("the connection Connect returned does not work")
 	}
 }

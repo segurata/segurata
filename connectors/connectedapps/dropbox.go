@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -46,7 +47,7 @@ var dropboxOld = oldBatch{title: "Dropbox", verb: "Disconnect", approved: "linke
 	each: `expand it under "View Dropbox content" and choose "Disconnect"`, again: "Apps you still use ask you to connect again."}
 
 func dropbox(ctx context.Context, e *env) {
-	raw, resp, err := e.b.capture(ctx, dropboxURL, dropboxJS, dropboxReady(), 50, dropboxListRE)
+	raw, resp, err := e.b.Capture(ctx, dropboxURL, dropboxJS, dropboxReady(), 50, dropboxListRE)
 	if err != nil {
 		e.fail("", err)
 		return
@@ -86,7 +87,7 @@ type dropboxApp struct {
 
 // parseDropboxApps reads the captured get_linked_apps response: the user's apps, then any the
 // team linked. A response missing user_apps is a page segurata does not know.
-func parseDropboxApps(resp *response) ([]dropboxApp, error) {
+func parseDropboxApps(resp *cdp.Response) ([]dropboxApp, error) {
 	if resp == nil {
 		return nil, errors.New("Dropbox did not fetch the app list")
 	}
@@ -94,8 +95,8 @@ func parseDropboxApps(resp *response) ([]dropboxApp, error) {
 		User *[]dropboxApp `json:"user_apps"`
 		Team []dropboxApp  `json:"team_apps"`
 	}
-	if err := json.Unmarshal(resp.body, &body); err != nil || body.User == nil {
-		return nil, fmt.Errorf("Dropbox's app list did not have the expected shape (HTTP %d)", resp.status)
+	if err := json.Unmarshal(resp.Body, &body); err != nil || body.User == nil {
+		return nil, fmt.Errorf("Dropbox's app list did not have the expected shape (HTTP %d)", resp.Status)
 	}
 	for i := range body.Team {
 		body.Team[i].team = true

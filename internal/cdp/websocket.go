@@ -19,8 +19,7 @@ import (
 	"time"
 )
 
-// This file is a minimal RFC 6455 WebSocket client: enough for CDP, nothing more.
-// No extensions, no subprotocols; text and binary messages, fragmentation, ping/pong, close.
+// A minimal RFC 6455 WebSocket client, enough for CDP: no extensions, no subprotocols.
 
 const (
 	opContinuation = 0x0
@@ -30,14 +29,13 @@ const (
 	opPing         = 0x9
 	opPong         = 0xA
 
-	// wsGUID is the fixed string RFC 6455 section 1.3 appends to the key.
+	// RFC 6455 section 1.3
 	wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-	// maxMessage caps a reassembled message so a misbehaving peer cannot exhaust memory.
+	// so a misbehaving peer cannot exhaust memory
 	maxMessage = 64 << 20
 )
 
-// errClosed is returned by ReadMessage once the peer has sent a close frame.
 var errClosed = errors.New("websocket: closed by peer")
 
 type wsConn struct {
@@ -46,13 +44,11 @@ type wsConn struct {
 	wmu  sync.Mutex // one writer at a time: frames must not interleave
 }
 
-// acceptKey is the Sec-WebSocket-Accept value the server must answer to key.
 func acceptKey(key string) string {
 	h := sha1.Sum([]byte(key + wsGUID))
 	return base64.StdEncoding.EncodeToString(h[:])
 }
 
-// dialWS opens a WebSocket connection to a ws:// or wss:// URL.
 func dialWS(ctx context.Context, rawURL string) (*wsConn, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -151,7 +147,7 @@ func headerHasToken(h http.Header, name, token string) bool {
 	return false
 }
 
-// writeFrame sends one final frame. Client frames are always masked (RFC 6455 section 5.3).
+// writeFrame sends one final frame, masked as RFC 6455 section 5.3 requires of clients.
 func (w *wsConn) writeFrame(op byte, payload []byte) error {
 	hdr := make([]byte, 0, 14)
 	hdr = append(hdr, 0x80|op)
@@ -185,8 +181,7 @@ func (w *wsConn) writeFrame(op byte, payload []byte) error {
 	return err
 }
 
-// WriteText sends payload as one text message.
-func (w *wsConn) WriteText(payload []byte) error { return w.writeFrame(opText, payload) }
+func (w *wsConn) writeText(payload []byte) error { return w.writeFrame(opText, payload) }
 
 type frame struct {
 	fin     bool
@@ -234,19 +229,20 @@ func (w *wsConn) readFrame() (frame, error) {
 	return f, nil
 }
 
-// ReadMessage returns the next complete data message, reassembling fragments and answering
-// pings on the way. After a close frame it replies with close and returns errClosed.
-func (w *wsConn) ReadMessage() (op byte, msg []byte, err error) {
+// readMessage returns the next complete data message, reassembling fragments and answering
+// pings. After a close frame it echoes the close and returns errClosed.
+func (w *wsConn) readMessage() ([]byte, error) {
 	var started bool
+	var msg []byte
 	for {
 		f, err := w.readFrame()
 		if err != nil {
-			return 0, nil, err
+			return nil, err
 		}
 		switch f.op {
 		case opPing:
 			if err := w.writeFrame(opPong, f.payload); err != nil {
-				return 0, nil, err
+				return nil, err
 			}
 			continue
 		case opPong:
@@ -257,31 +253,31 @@ func (w *wsConn) ReadMessage() (op byte, msg []byte, err error) {
 				code = code[:2]
 			}
 			_ = w.writeFrame(opClose, code)
-			return 0, nil, errClosed
+			return nil, errClosed
 		case opText, opBinary:
 			if started {
-				return 0, nil, errors.New("websocket: new message before the previous one ended")
+				return nil, errors.New("websocket: new message before the previous one ended")
 			}
-			started, op, msg = true, f.op, f.payload
+			started, msg = true, f.payload
 		case opContinuation:
 			if !started {
-				return 0, nil, errors.New("websocket: continuation without a message")
+				return nil, errors.New("websocket: continuation without a message")
 			}
 			if len(msg)+len(f.payload) > maxMessage {
-				return 0, nil, errors.New("websocket: message exceeds limit")
+				return nil, errors.New("websocket: message exceeds limit")
 			}
 			msg = append(msg, f.payload...)
 		default:
-			return 0, nil, fmt.Errorf("websocket: unknown opcode %#x", f.op)
+			return nil, fmt.Errorf("websocket: unknown opcode %#x", f.op)
 		}
 		if f.fin {
-			return op, msg, nil
+			return msg, nil
 		}
 	}
 }
 
-// Close sends a normal-closure frame and closes the socket without waiting for the echo.
-func (w *wsConn) Close() error {
-	_ = w.writeFrame(opClose, []byte{0x03, 0xE8}) // 1000, normal closure
+// close sends a normal closure (1000) and closes the socket without waiting for the echo.
+func (w *wsConn) close() error {
+	_ = w.writeFrame(opClose, []byte{0x03, 0xE8})
 	return w.conn.Close()
 }
