@@ -25,6 +25,7 @@ import (
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secrets"
+	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
@@ -243,7 +244,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 	started := time.Now()
 	res := &Result{Name: label, File: filepath.Join(dir, runfile.FileName(label))}
 	// A partial file of its own, renamed over the run file once run_end is written, so a killed or
-	// concurrent run never tears a finished one; readers skip it, and CreateTemp makes it 0600: the
+	// concurrent run never tears a finished one; readers skip it, and it is created private: the
 	// output names accounts, apps and services.
 	f, err := fileacl.CreatePrivate(dir, filepath.Base(res.File)+".*.partial")
 	if err != nil {
@@ -274,7 +275,7 @@ func runOne(ctx context.Context, cfg config.Config, t Target, dir string, verbos
 		_ = os.Remove(partial)
 		return res
 	}
-	if err := os.Rename(partial, res.File); err != nil {
+	if err := statefile.Rename(partial, res.File); err != nil {
 		res.Err = errors.Join(res.Err, err)
 		_ = os.Remove(partial)
 	}

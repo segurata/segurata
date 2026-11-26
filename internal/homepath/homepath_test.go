@@ -1,10 +1,13 @@
 package homepath
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestExpand(t *testing.T) {
 	for p, want := range map[string]string{
-		"~": "/h", "~/a/b": "/h/a/b", "~/": "/h", "/abs": "/abs", "rel": "rel", "~user/x": "~user/x", "": "",
+		"~": "/h", "~/a/b": filepath.Join("/h", "a", "b"), "~/": filepath.Clean("/h"), "/abs": "/abs", "rel": "rel", "~user/x": "~user/x", "": "",
 	} {
 		if got := Expand(p, "/h"); got != want {
 			t.Errorf("Expand(%q) = %q, want %q", p, got, want)

@@ -10,13 +10,17 @@ import (
 // FindGcloud tries the configured path, PATH, then the SDK's install folders, which
 // non-interactive shells often lack in PATH. connector names the config section an error points to.
 func FindGcloud(configured, home, connector string) (string, error) {
+	return findGcloud(configured, connector, gcloudInstallPaths(home))
+}
+
+func findGcloud(configured, connector string, installs []string) (string, error) {
 	if configured != "" {
 		return configured, nil
 	}
 	if p, err := exec.LookPath("gcloud"); err == nil {
 		return p, nil
 	}
-	for _, p := range gcloudInstallPaths(home) {
+	for _, p := range installs {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return p, nil
 		}

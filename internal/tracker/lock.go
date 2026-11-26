@@ -4,7 +4,6 @@ package tracker
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -19,7 +18,7 @@ func lock(path string) (func(), error) {
 		return nil, err
 	}
 	name := path + ".lock"
-	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, fileacl.Private)
+	f, err := fileacl.OpenPrivate(name)
 	if err != nil {
 		return nil, err
 	}

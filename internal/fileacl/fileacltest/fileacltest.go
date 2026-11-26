@@ -19,6 +19,30 @@ func AssertPrivateDir(t testing.TB, path string) {
 	assert(t, path, true)
 }
 
+// Expose lets BUILTIN\Users, on Unix the group and others, read path, the way a shared folder
+// passes its access down.
+func Expose(t testing.TB, path string) {
+	t.Helper()
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := expose(path, st.IsDir()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Access is who may reach path, to compare before and after a rewrite: its mode on Unix, its DACL
+// on Windows. The owner is left out: Windows gives a replaced file the writer's.
+func Access(t testing.TB, path string) string {
+	t.Helper()
+	a, err := access(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
 func assert(t testing.TB, path string, dir bool) {
 	t.Helper()
 	st, err := os.Stat(path)

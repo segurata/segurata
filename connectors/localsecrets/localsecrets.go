@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -557,6 +558,12 @@ func secretScope(ev secretrisk.Evidence) string {
 func remedy(summary, url string, ev secretrisk.Evidence) finding.Remediation {
 	r := finding.Remediation{Summary: summary, URL: url}
 	if ev.Source == "gitleaks" || ev.Mode == "" || secretrisk.ImpactOf(ev) == secretrisk.Noise {
+		return r
+	}
+	if runtime.GOOS == "windows" {
+		if othersCanRead(ev.Mode) {
+			r.Summary += " Restrict access in the file's Windows Security settings."
+		}
 		return r
 	}
 	switch {

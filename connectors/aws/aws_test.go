@@ -16,8 +16,10 @@ import (
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
+	"github.com/segurata/segurata/internal/statefile"
 )
 
 var now = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
@@ -244,7 +246,7 @@ func TestR2ProfileIsReportedAsR2AndSkipsSTS(t *testing.T) {
 	cred := filepath.Join(dir, "credentials")
 	conf := filepath.Join(dir, "config")
 	creds := "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = x\n[r2]\naws_access_key_id = ab2665aaaabbbbccccddddeeeeffff00\naws_secret_access_key = y\n"
-	if err := os.WriteFile(cred, []byte(creds), 0o600); err != nil {
+	if err := statefile.Write(cred, []byte(creds)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(conf, []byte("[default]\nregion = eu-west-1\n[profile r2]\nregion = auto\n"), 0o600); err != nil {
@@ -490,11 +492,11 @@ func TestCredentialsFileReportsLongLivedKeysWithoutSecrets(t *testing.T) {
 	}{{0o600, finding.SevMedium}, {0o644, finding.SevHigh}} {
 		t.Run(tc.mode.String(), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "credentials")
-			if err := os.WriteFile(path, []byte(credentialsFixture), tc.mode); err != nil {
+			if err := statefile.Write(path, []byte(credentialsFixture)); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Chmod(path, tc.mode); err != nil { // umask may have narrowed it
-				t.Fatal(err)
+			if tc.mode == 0o644 {
+				fileacltest.Expose(t, path)
 			}
 			fr := &fakeRunner{errs: map[string]error{"configure list-profiles": fmt.Errorf("aws: %w", exec.ErrNotFound)}}
 			rec := &httpxtest.Recorder{}

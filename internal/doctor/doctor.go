@@ -238,24 +238,31 @@ func (e Env) state() []connector.Check {
 		checks = append(checks, connector.Check{Level: connector.Warn, What: "fingerprint key " + e.KeyPath,
 			Detail: "not created yet", Fix: "segurata inventory local-secrets creates it; back it up: losing it changes every fingerprint"})
 	} else {
-		checks = append(checks, fileCheck("fingerprint key", e.KeyPath, err, 0o600))
+		checks = append(checks, fileCheck("fingerprint key", e.KeyPath, err))
 	}
 	_, err := tracker.Load(e.Tracker.Tracker)
-	checks = append(checks, optionalFile("tracker", e.Tracker.Tracker, err, 0o600, "segurata track sync creates it"))
+	checks = append(checks, optionalFile("tracker", e.Tracker.Tracker, err, "segurata track sync creates it"))
 	checks = append(checks, dirCheck("tracker dir", filepath.Dir(e.Tracker.Tracker), "the first command that saves the tracker creates it"))
 	checks = append(checks, dirCheck("output dir", e.OutDir, "segurata inventory creates it"))
 	return checks
 }
 
-func optionalFile(label, path string, loadErr error, want fs.FileMode, creator string) connector.Check {
+func optionalFile(label, path string, loadErr error, creator string) connector.Check {
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return connector.Check{Level: connector.OK, What: label + " " + path, Detail: "none yet (" + creator + ")"}
 	}
-	return fileCheck(label, path, loadErr, want)
+	return fileCheck(label, path, loadErr)
 }
 
-// fileCheck reports a state file that failed to load, or whose mode lets others read it.
-func fileCheck(label, path string, loadErr error, want fs.FileMode) connector.Check {
+// privacy is whether one of segurata's files or folders is closed to other accounts: the owner
+// and mode on Unix, the DACL on Windows.
+type privacy struct {
+	ok          bool
+	detail, fix string
+}
+
+// fileCheck reports a state file that failed to load, or that other accounts can reach.
+func fileCheck(label, path string, loadErr error) connector.Check {
 	what := label + " " + path
 	if loadErr != nil {
 		return connector.Check{Level: connector.Fail, What: what, Detail: "unreadable: " + loadErr.Error(), Fix: "fix or restore " + path}
@@ -264,28 +271,31 @@ func fileCheck(label, path string, loadErr error, want fs.FileMode) connector.Ch
 	if err != nil {
 		return connector.Check{Level: connector.Fail, What: what, Detail: err.Error(), Fix: "fix or restore " + path}
 	}
-	if mode := st.Mode().Perm(); mode != want {
-		return connector.Check{Level: connector.Fail, What: what, Detail: fmt.Sprintf("mode %#o, want %#o", mode, want), Fix: fmt.Sprintf("chmod %o %s", want, path)}
+	p := filePrivacy(path, st)
+	if !p.ok {
+		return connector.Check{Level: connector.Fail, What: what, Detail: p.detail, Fix: p.fix}
 	}
-	return connector.Check{Level: connector.OK, What: what, Detail: fmt.Sprintf("readable, mode %#o", want)}
+	return connector.Check{Level: connector.OK, What: what, Detail: "readable, " + p.detail}
 }
 
-// dirCheck checks one of segurata's folders. Its files are 0600 already, so a looser folder is a
-// warning: it only shows which files exist and when they changed.
+// dirCheck checks one of segurata's folders. Its files are private already, so a looser folder is
+// a warning: it only shows which files exist and when they changed.
 func dirCheck(label, dir, creator string) connector.Check {
 	what := label + " " + dir
 	st, err := os.Stat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return connector.Check{Level: connector.OK, What: what, Detail: "not created yet (" + creator + ", mode 0700)"}
+		return connector.Check{Level: connector.OK, What: what, Detail: "not created yet (" + creator + ", " + newDirAccess + ")"}
 	case err != nil:
 		return connector.Check{Level: connector.Fail, What: what, Detail: err.Error(), Fix: "fix or remove " + dir}
 	case !st.IsDir():
 		return connector.Check{Level: connector.Fail, What: what, Detail: "not a directory", Fix: "move it away, or pass another --out"}
-	case st.Mode().Perm() != 0o700:
-		return connector.Check{Level: connector.Warn, What: what, Detail: fmt.Sprintf("mode %#o, want 0700", st.Mode().Perm()), Fix: "chmod 700 " + dir}
 	}
-	return connector.Check{Level: connector.OK, What: what, Detail: "mode 0700"}
+	p := dirPrivacy(dir, st)
+	if !p.ok {
+		return connector.Check{Level: connector.Warn, What: what, Detail: p.detail, Fix: p.fix}
+	}
+	return connector.Check{Level: connector.OK, What: what, Detail: p.detail}
 }
 
 // keychainFix configures secret as a keychain: reference and says how to add its item.

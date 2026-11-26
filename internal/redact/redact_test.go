@@ -164,6 +164,7 @@ func TestApplyKeepsJSONLValidModeAndMtime(t *testing.T) {
 	fx := newFixture(t)
 	orig := fx.transcript()
 	p := fx.write(".claude/projects/-src-app/session.jsonl", orig, 0o640)
+	access := fileacltest.Access(t, p)
 
 	code, out := fx.run("", false, "--trails", "--apply", "--yes")
 	if code != 0 {
@@ -210,8 +211,8 @@ func TestApplyKeepsJSONLValidModeAndMtime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0o640 {
-		t.Errorf("mode %o, want 640", st.Mode().Perm())
+	if got := fileacltest.Access(t, p); got != access {
+		t.Errorf("access %s, was %s", got, access)
 	}
 	if !st.ModTime().Equal(fx.old) {
 		t.Errorf("mtime %v, want %v", st.ModTime(), fx.old)

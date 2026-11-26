@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,7 @@ func (credentialed) Apply(context.Context, finding.Finding, connector.Plan, conn
 }
 
 func TestChmod600PlansExactlyAndApplies(t *testing.T) {
+	requiresUnixChmod(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
 	if err := os.WriteFile(path, []byte("X=1\n"), 0o644); err != nil {
@@ -241,6 +243,7 @@ func TestChmod600PlansExactlyAndApplies(t *testing.T) {
 }
 
 func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
+	requiresUnixChmod(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "key")
 	_ = os.WriteFile(path, nil, 0o600)
@@ -268,6 +271,13 @@ func TestChmod600RefusesStalePlansSymlinksAndRelativePaths(t *testing.T) {
 		if _, err := (files{}).Plan(context.Background(), g); err == nil {
 			t.Errorf("planned chmod on %q", bad)
 		}
+	}
+}
+
+func requiresUnixChmod(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("this action requires Unix file modes")
 	}
 }
 

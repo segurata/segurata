@@ -120,7 +120,7 @@ func (c *Connector) shown(p string) string {
 	if c.Root == "" {
 		return p
 	}
-	return strings.TrimPrefix(p, filepath.Clean(c.Root))
+	return filepath.ToSlash(strings.TrimPrefix(p, filepath.Clean(c.Root)))
 }
 
 func init() { connector.Register(New()) }

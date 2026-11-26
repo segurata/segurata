@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/fingerprint"
 	"github.com/segurata/segurata/internal/secretrisk"
+	"github.com/segurata/segurata/internal/statefile"
 	"github.com/segurata/segurata/internal/testcorpus"
 )
 
@@ -158,9 +160,10 @@ func TestPEMEncrypted(t *testing.T) {
 }
 
 func TestSettings(t *testing.T) {
+	home := t.TempDir()
 	s, err := parseSettings(map[string]any{"repos_root": "~/code", "skip_git_history": true, "gitleaks_workers": 2.0, "gitleaks_timeout": "90s",
-		"owned_owners": []any{"me", "my-org"}, "emit_noise": true}, "/h")
-	if err != nil || s.reposRoot != "/h/code" || !s.skipHistory || s.workers != 2 || s.timeout != 90*time.Second ||
+		"owned_owners": []any{"me", "my-org"}, "emit_noise": true}, home)
+	if err != nil || s.reposRoot != filepath.Join(home, "code") || !s.skipHistory || s.workers != 2 || s.timeout != 90*time.Second ||
 		!slices.Equal(s.ownedOwners, []string{"me", "my-org"}) || !s.emitNoise {
 		t.Fatalf("settings %+v err %v", s, err)
 	}
@@ -218,6 +221,15 @@ type fixture struct {
 func (fx *fixture) write(t *testing.T, rel, content string, mode os.FileMode) string {
 	t.Helper()
 	p := filepath.Join(fx.home, rel)
+	if runtime.GOOS == "windows" {
+		if err := statefile.Write(p, []byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		if mode&0o077 != 0 {
+			fileacltest.Expose(t, p)
+		}
+		return p
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +406,11 @@ func TestInventoryEndToEnd(t *testing.T) {
 	if rc.Severity != finding.SevMedium || evidence(rc, "bucket") != "1-readable" || evidence(rc, "note") != "ANTHROPIC_API_KEY" {
 		t.Errorf("readable rc key: %s %v", rc.Severity, rc.Evidence)
 	}
-	if rc.Remediation.Action != "file.chmod600" || !rc.Remediation.Automatable || env.Remediation.Action != "" {
+	wantAction := connector.ActionChmod600
+	if runtime.GOOS == "windows" {
+		wantAction = ""
+	}
+	if rc.Remediation.Action != wantAction || rc.Remediation.Automatable != (wantAction != "") || env.Remediation.Action != "" {
 		t.Errorf("chmod action: readable %q, closed %q", rc.Remediation.Action, env.Remediation.Action)
 	}
 	if evidence(rc, "fix") != "docs/secrets.md#shell-variables-from-the-keychain" || !strings.HasPrefix(evidence(rc, "redacted"), "sk-ant-…") {
@@ -609,7 +625,11 @@ func TestNoChmodFixForNoise(t *testing.T) {
 		t.Fatalf("noise in a readable file must not offer a fix, got %q", r.Action)
 	}
 	readable.Type = "anthropic"
-	if r := remedy("s", "", readable); r.Action != "file.chmod600" || r.Severity != "" || r.Group != "" {
+	if runtime.GOOS == "windows" {
+		if r := remedy("s", "", readable); r.Action != "" || !strings.Contains(r.Summary, "Windows Security settings") {
+			t.Fatalf("a Windows file should offer manual ACL guidance: %+v", r)
+		}
+	} else if r := remedy("s", "", readable); r.Action != "file.chmod600" || r.Severity != "" || r.Group != "" {
 		t.Fatalf("a real key in a readable file should offer chmod 600 ranked by the finding, got %+v", r)
 	}
 }
@@ -619,6 +639,12 @@ func TestChmodHardeningForFilesOnlyAParentCloses(t *testing.T) {
 	ev := secretrisk.Evidence{Source: "scan", Kind: "config", Type: "anthropic", Mode: "600", FileMode: "644",
 		Path: "~/src/acme/app/config/.env"}
 	r := remedy("Move it to the Keychain.", "", ev)
+	if runtime.GOOS == "windows" {
+		if r.Action != "" || r.Group != "" || r.Summary != "Move it to the Keychain." {
+			t.Fatalf("a Unix parent-mode fix cannot run on Windows: %+v", r)
+		}
+		return
+	}
 	if r.Action != "file.chmod600" || r.Severity != finding.SevLow || r.Group != "files in ~/src/acme/app" {
 		t.Fatalf("hardening: %+v", r)
 	}
@@ -641,8 +667,19 @@ func TestChmodHardeningForFilesOnlyAParentCloses(t *testing.T) {
 func TestModeCountsParentFolders(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "src", "app")
-	_ = os.MkdirAll(dir, 0o755)
 	f := filepath.Join(dir, ".env")
+	if runtime.GOOS == "windows" {
+		if err := statefile.Write(f, []byte("X=1\n")); err != nil {
+			t.Fatal(err)
+		}
+		fileacltest.AssertPrivateDir(t, dir)
+		fileacltest.Expose(t, f)
+		if eff, raw := modeOf(f, home); eff != "644" || raw != "" {
+			t.Fatalf("the parent DACL must not hide an exposed file: effective %q, file %q", eff, raw)
+		}
+		return
+	}
+	_ = os.MkdirAll(dir, 0o755)
 	_ = os.WriteFile(f, []byte("X=1\n"), 0o644)
 	_ = os.Chmod(f, 0o644)
 

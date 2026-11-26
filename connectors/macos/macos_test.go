@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -134,7 +135,11 @@ func TestHealthyMacEmitsOnlyInformationalFindings(t *testing.T) {
 			ok++
 		}
 	}
-	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], "check:remote-login remote-login:") || ok != 1 {
+	wantSkipped := 1
+	if runtime.GOOS == "windows" {
+		wantSkipped++ // This fixture's home is a Windows directory, not a macOS path.
+	}
+	if len(skipped) != wantSkipped || !strings.HasPrefix(skipped[0], "check:remote-login remote-login:") || ok != 1 {
 		t.Fatalf("skipped %v, ok statuses %d", skipped, ok)
 	}
 	if f := rec.ByResource(t, "background_item", "btm:16.com.example.helper"); f.Scope != "check:btm" {

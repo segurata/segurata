@@ -56,3 +56,21 @@ func TestAssertPrivate(t *testing.T) {
 		t.Error("a file left as created passed as private")
 	}
 }
+
+func TestExposeOpensToOtherAccounts(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "d")
+	if err := fileacl.MkdirPrivate(dir); err != nil {
+		t.Fatal(err)
+	}
+	f, err := fileacl.CreatePrivate(dir, "f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	for _, path := range []string{f.Name(), dir} {
+		Expose(t, path)
+		if m, err := fileacl.Exposure(path); err != nil || m.Perm()&0o044 != 0o044 {
+			t.Errorf("%s exposed: %o %v", filepath.Base(path), m, err)
+		}
+	}
+}

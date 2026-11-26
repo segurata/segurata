@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/statefile"
 )
 
 type ConnectorConfig struct {
@@ -81,7 +82,7 @@ func DefaultPath() string {
 
 func Load(path string) (Config, error) {
 	cfg := Config{CDPURL: "http://127.0.0.1:9222", Connectors: map[string]ConnectorConfig{}}
-	raw, err := os.ReadFile(path)
+	raw, err := statefile.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:

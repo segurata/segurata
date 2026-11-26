@@ -16,6 +16,14 @@ const (
 // ReplaceFileW flags.
 const ReplacefileIgnoreMergeErrors = 0x2
 
+// File errors the syscall package does not name.
+const (
+	ErrorSharingViolation        = syscall.Errno(32)
+	ErrorLockViolation           = syscall.Errno(33)
+	ErrorUnableToRemoveReplaced  = syscall.Errno(1175)
+	ErrorUnableToMoveReplacement = syscall.Errno(1176)
+)
+
 var (
 	procLockFileEx   = newProc(kernel32, "LockFileEx")
 	procUnlockFileEx = newProc(kernel32, "UnlockFileEx")

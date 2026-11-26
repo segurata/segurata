@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +21,7 @@ import (
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/fileacl"
+	"github.com/segurata/segurata/internal/proc"
 	"github.com/segurata/segurata/internal/prompt"
 	"github.com/segurata/segurata/internal/tracker"
 )
@@ -46,12 +47,13 @@ type System struct{}
 // stopGrace lets an interrupted inventory write run_end and sync the tracker before it is killed.
 var stopGrace = 2 * time.Minute
 
-// Run interrupts the command when ctx ends, the signal segurata stops cleanly on, and kills it
-// after stopGrace.
+// Run gives an interrupted command time to stop on Unix. On Windows it cancels the process.
 func (System) Run(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
-	cmd.WaitDelay = stopGrace
+	cmd := proc.Command(ctx, name, args...)
+	if runtime.GOOS != "windows" {
+		cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+		cmd.WaitDelay = stopGrace
+	}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	return cmd.Run()
 }

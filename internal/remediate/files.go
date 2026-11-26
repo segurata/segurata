@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/segurata/segurata/internal/connector"
@@ -17,6 +18,8 @@ import (
 type files struct {
 	home func() (string, error) // nil means os.UserHomeDir
 }
+
+var errChmodOnWindows = errors.New("this action changes Unix file modes; use Windows file security settings to restrict access")
 
 func (fs files) Plan(ctx context.Context, f finding.Finding) (connector.Plan, error) {
 	return fs.PlanGroup(ctx, []finding.Finding{f})
@@ -30,6 +33,9 @@ func (fs files) Apply(ctx context.Context, f finding.Finding, p connector.Plan, 
 // can still open. A file that cannot be changed is left out with the reason; when none can, that is
 // the error.
 func (fs files) PlanGroup(_ context.Context, group []finding.Finding) (connector.Plan, error) {
+	if runtime.GOOS == "windows" {
+		return connector.Plan{}, errChmodOnWindows
+	}
 	p := connector.Plan{Action: connector.ActionChmod600}
 	var left []string
 	seen := map[string]bool{}
@@ -90,6 +96,9 @@ func change(path string) (connector.FileChange, error) {
 }
 
 func (files) ApplyGroup(_ context.Context, _ []finding.Finding, p connector.Plan, _ connector.IO) error {
+	if runtime.GOOS == "windows" {
+		return errChmodOnWindows
+	}
 	for _, c := range p.Files {
 		if err := os.Chmod(c.Path, c.Mode); err != nil {
 			return err

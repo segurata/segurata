@@ -3,11 +3,11 @@ package schedule
 import (
 	"context"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/internal/fileacl"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/runfile"
 	"github.com/segurata/segurata/internal/secretrisk"
@@ -33,7 +33,7 @@ func (e Env) Run(ctx context.Context, o Options) error {
 	invCtx, cancelInv := context.WithTimeout(ctx, every*8/10)
 	defer cancelInv()
 	p := e.Paths()
-	if err := os.MkdirAll(p.Out, 0o700); err != nil {
+	if err := fileacl.MkdirPrivate(p.Out); err != nil {
 		return err
 	}
 	connectors := o.Connectors

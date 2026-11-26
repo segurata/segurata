@@ -19,6 +19,9 @@ const everyoneDenyDelete = " 0: group:everyone deny delete"
 // homeTest is a connector whose home folder has the given mode and the ACL macOS puts on homes.
 func homeTest(t *testing.T, mode os.FileMode) (*Connector, string, *recordingExec) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("this macOS check requires POSIX directory modes")
+	}
 	c, fr, ex := newTest(t, healthy())
 	home, _ := c.Home()
 	if err := os.Chmod(home, mode); err != nil {

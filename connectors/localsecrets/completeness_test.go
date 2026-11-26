@@ -42,7 +42,7 @@ func TestFailedRipgrepLeavesTheFilesUninspected(t *testing.T) {
 		{"partial output, then an error", `printf '%s\0001:x\n' "$HOME/.zshrc"; echo "rg: something broke" >&2; exit 2`, time.Minute, true, nil},
 		{"unreadable files and an I/O error", `echo "rg: /x/a: Permission denied (os error 13)" >&2
 echo "rg: /x/b: Input/output error (os error 5)" >&2; exit 2`, time.Minute, true, nil},
-		{"unreadable root", lastRoot + `echo "rg: $root: Permission denied (os error 13)" >&2; exit 2`, time.Minute, true, nil},
+		{"unreadable root", lastRoot + `printf 'rg: %s: Permission denied (os error 13)\n' "$root" >&2; exit 2`, time.Minute, true, nil},
 		{"exit 2 without a message", `exit 2`, time.Minute, true, nil},
 		{"killed", `kill -9 $$`, time.Minute, true, nil},
 		{"timed out", `exec sleep 5`, 100 * time.Millisecond, true, nil},
@@ -51,7 +51,7 @@ echo "rg: /x/a: Permission denied (os error 13)" >&2
 echo "rg: /x/a: Permission denied (os error 13)" >&2; exit 2`, time.Minute, false, []string{"/x/Mail", "/x/a"}},
 		{"unreadable and vanished files", `echo "rg: /x/a: Permission denied (os error 13)" >&2
 echo "rg: /x/gone.jsonl: No such file or directory (os error 2)" >&2; exit 2`, time.Minute, false, []string{"/x/a"}},
-		{"vanished root", lastRoot + `echo "rg: $root: No such file or directory (os error 2)" >&2; exit 2`, time.Minute, true, nil},
+		{"vanished root", lastRoot + `printf 'rg: %s: No such file or directory (os error 2)\n' "$root" >&2; exit 2`, time.Minute, true, nil},
 		{"no match", `exit 1`, time.Minute, false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,8 +145,8 @@ func TestRealRipgrepCountsAnUnreadableFile(t *testing.T) {
 	}
 	fx := newFixture(t)
 	c := fx.connector(t, "[]")
-	locked := fx.write(t, ".config/locked.env", "TOKEN="+fx.stripe+"\n", 0o000)
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+	locked := fx.write(t, ".config/locked.env", "TOKEN="+fx.stripe+"\n", 0o600)
+	denyRead(t, locked)
 	rec := &recorder{}
 	if err := c.Inventory(context.Background(), connector.Request{Config: map[string]any{"data_dumps": false}}, rec); err != nil {
 		t.Fatal(err)

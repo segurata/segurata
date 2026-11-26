@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -81,7 +80,7 @@ func LoadFor(p Paths, now time.Time, exclusive bool) (t *Tracker, path string, u
 // Load reads and validates tracker.json. A file that does not parse is an error, never an empty
 // tracker, so a later save cannot lose it.
 func Load(path string) (*Tracker, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := statefile.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +197,7 @@ func (t *Tracker) Save(path string) error {
 	if err := t.validate(); err != nil {
 		return fmt.Errorf("not saving an invalid tracker: %w", err)
 	}
-	old, err := os.ReadFile(path)
+	old, err := statefile.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:

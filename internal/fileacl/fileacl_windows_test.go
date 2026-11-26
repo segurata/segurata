@@ -80,7 +80,11 @@ func TestCreatedPrivateFromTheStart(t *testing.T) {
 func TestAnExtraGrantIsExposureAndMakePrivateClosesIt(t *testing.T) {
 	user := currentUser(t)
 	path := filepath.Join(t.TempDir(), "f")
-	if err := os.WriteFile(path, []byte("synthetic"), 0o600); err != nil {
+	f, err := CreatePrivateAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
 	setDACL(t, path, "(A;;FA;;;"+user+")(A;;FR;;;BU)")
@@ -113,8 +117,8 @@ func TestAdministratorsAndSystemAreTolerated(t *testing.T) {
 
 func TestChangeableByOthersOnWindows(t *testing.T) {
 	user := currentUser(t)
-	dir := t.TempDir()
-	if err := MakePrivate(dir); err != nil {
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := MkdirPrivate(dir); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := ChangeableByOthers(dir); err != nil || got {

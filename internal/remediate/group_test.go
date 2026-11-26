@@ -170,6 +170,7 @@ func TestListShowsAGroupAsOneLineRankedByItsActionSeverity(t *testing.T) {
 }
 
 func TestChmodGroupClosesEachFileOnceAndKeepsScriptsRunnable(t *testing.T) {
+	requiresUnixChmod(t)
 	dir := t.TempDir()
 	write := func(name string, mode os.FileMode) string {
 		p := filepath.Join(dir, name)

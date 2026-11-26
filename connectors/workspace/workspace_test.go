@@ -438,8 +438,9 @@ func TestParseSettings(t *testing.T) {
 			t.Errorf("%v must be rejected", bad)
 		}
 	}
-	s, err := parseSettings(map[string]any{"domain": domain}, "/home/u")
-	if err != nil || s.inactiveDays != 90 || s.cloudsdkConfig != "/home/u/.config/segurata/gcloud-example.com" {
+	home := t.TempDir()
+	s, err := parseSettings(map[string]any{"domain": domain}, home)
+	if err != nil || s.inactiveDays != 90 || s.cloudsdkConfig != filepath.Join(home, ".config", "segurata", "gcloud-example.com") {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 }

@@ -10,12 +10,14 @@ import (
 
 func TestDefaultOutDirIgnoresTheWorkingDirectory(t *testing.T) {
 	t.Setenv("SEGURATA_OUT", "")
-	t.Setenv("SEGURATA_HOME", "/tmp/seg-home")
-	if got := DefaultOutDir(); got != "/tmp/seg-home/out" {
+	home := t.TempDir()
+	t.Setenv("SEGURATA_HOME", home)
+	if got := DefaultOutDir(); got != filepath.Join(home, "out") {
 		t.Fatalf("got %q", got)
 	}
-	t.Setenv("SEGURATA_OUT", "/tmp/elsewhere")
-	if got := DefaultOutDir(); got != "/tmp/elsewhere" {
+	out := t.TempDir()
+	t.Setenv("SEGURATA_OUT", out)
+	if got := DefaultOutDir(); got != out {
 		t.Fatalf("SEGURATA_OUT: got %q", got)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -76,7 +77,7 @@ func (c *Connector) launchJobs(ctx context.Context) []launchJob {
 				j.program, _ = args[0].(string)
 			}
 			switch {
-			case !filepath.IsAbs(j.program):
+			case !path.IsAbs(j.program) && !filepath.IsAbs(j.program):
 				j.program = ""
 			case home != "" && strings.HasPrefix(j.program, home+"/"):
 				j.onDisk = j.program

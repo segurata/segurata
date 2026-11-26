@@ -184,11 +184,13 @@ func TestLoadValidates(t *testing.T) {
 }
 
 func TestPaths(t *testing.T) {
-	t.Setenv("SEGURATA_HOME", "/h")
-	if p, err := (Paths{}).Resolve(); err != nil || p.Tracker != "/h/tracker.json" {
+	home := t.TempDir()
+	t.Setenv("SEGURATA_HOME", home)
+	if p, err := (Paths{}).Resolve(); err != nil || p.Tracker != filepath.Join(home, "tracker.json") {
 		t.Errorf("default paths %+v %v", p, err)
 	}
-	if p, _ := (Paths{Tracker: "/x/tracker.json"}).Resolve(); p.Tracker != "/x/tracker.json" {
+	explicit := filepath.Join(t.TempDir(), "tracker.json")
+	if p, _ := (Paths{Tracker: explicit}).Resolve(); p.Tracker != explicit {
 		t.Errorf("a tracker path given is kept: %+v", p)
 	}
 }

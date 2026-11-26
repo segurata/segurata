@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/statefile"
 )
 
 // Latest is the run of one connector instance that consumers read.
@@ -209,7 +210,7 @@ func fileLabel(file string) (string, bool) {
 
 // firstIdentity is the connector and instance the file's first record names.
 func firstIdentity(file string) (string, string, bool) {
-	f, err := os.Open(file)
+	f, err := statefile.Open(file)
 	if err != nil {
 		return "", "", false
 	}
@@ -331,7 +332,7 @@ const maxTail = 1 << 20
 
 // endOf reads the run_end record a run's output ends with, nil when it ends with another record.
 func endOf(name string) (*finding.RunEnd, error) {
-	f, err := os.Open(name)
+	f, err := statefile.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +392,7 @@ func (r Output) Label(file string) string {
 // Read reads one run file. A file without run_end may end in a line torn by a kill: it is dropped.
 func Read(name string) (Output, error) {
 	var r Output
-	f, err := os.Open(name)
+	f, err := statefile.Open(name)
 	if err != nil {
 		return r, err
 	}

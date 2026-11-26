@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -141,7 +142,7 @@ func (s *scan) rgOutput(args []string) []byte {
 
 // ripgrep's message endings for a path it may not read, and for one removed while it searched.
 var (
-	unreadableErrs = []string{": Permission denied (os error 13)", ": Operation not permitted (os error 1)"}
+	unreadableErrs = []string{": Permission denied (os error 13)", ": Operation not permitted (os error 1)", ": Access is denied. (os error 5)"}
 	vanishedErr    = ": No such file or directory (os error 2)"
 )
 
@@ -151,7 +152,7 @@ func unreadableBelow(stderr string, roots []string) ([]string, bool) {
 	var paths []string
 	lines := 0
 	for line := range strings.Lines(strings.TrimSpace(stderr)) {
-		msg, ok := strings.CutPrefix(strings.TrimSuffix(line, "\n"), "rg: ")
+		msg, ok := strings.CutPrefix(strings.TrimRight(line, "\r\n"), "rg: ")
 		if !ok {
 			return nil, false
 		}
@@ -163,7 +164,7 @@ func unreadableBelow(stderr string, roots []string) ([]string, bool) {
 			}
 			path = strings.TrimSuffix(msg, unreadableErrs[i])
 		}
-		if slices.Contains(roots, path) {
+		if slices.ContainsFunc(roots, func(root string) bool { return filepath.Clean(root) == filepath.Clean(path) }) {
 			return nil, false
 		}
 		if !vanished {

@@ -9,9 +9,8 @@ import (
 )
 
 func tryLock(f *os.File) (busy bool, err error) {
-	const lockViolation = syscall.Errno(33)
 	err = winsys.LockFile(syscall.Handle(f.Fd()), winsys.LockfileExclusiveLock|winsys.LockfileFailImmediately)
-	if errors.Is(err, lockViolation) {
+	if errors.Is(err, winsys.ErrorLockViolation) {
 		return true, nil
 	}
 	return false, err

@@ -96,6 +96,12 @@ func CreatePrivateAt(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, Private)
 }
 
+// OpenPrivate opens path for reading and writing, creating it with mode 0600 when missing; an
+// existing file keeps its mode.
+func OpenPrivate(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE, Private)
+}
+
 // MkdirPrivate creates dir and any missing parents with mode 0700, leaving existing ones as they
 // are.
 func MkdirPrivate(dir string) error { return os.MkdirAll(dir, 0o700) }

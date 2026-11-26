@@ -34,7 +34,8 @@ func TestReplaceKeepsTheGivenModeAndLeavesNoTemporaryFile(t *testing.T) {
 	if after.Mode().Perm() != wantMode {
 		t.Fatalf("mode %o, want %o", after.Mode().Perm(), wantMode)
 	}
-	if os.SameFile(before, after) {
+	// ReplaceFileW gives the new file the old one's identity, so only Unix can tell a rename here.
+	if runtime.GOOS != "windows" && os.SameFile(before, after) {
 		t.Error("written in place instead of renamed over")
 	}
 	if got, _ := os.ReadFile(path); string(got) != "new\n" {

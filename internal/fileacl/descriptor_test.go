@@ -78,7 +78,7 @@ func TestChangeableByOthers(t *testing.T) {
 	}{
 		{"a private folder", privateSDDL(me, true), false},
 		{"the profile", "O:" + me + "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;" + me + ")", false},
-		{"C:\\", "O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:PAI(A;OICIIO;SDGXGWGR;;;AU)(A;;LC;;;AU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)", true},
+		{"C:\\", "O:" + sidTrustedInstaller + "D:PAI(A;OICIIO;SDGXGWGR;;;AU)(A;;LC;;;AU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)", false},
 		{"C:\\ owned by Administrators", "O:BAD:PAI(A;OICIIO;SDGXGWGR;;;AU)(A;;LC;;;AU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)", false},
 		{"C:\\Users", "O:SYD:PAI(A;OICIIO;GA;;;SY)(A;;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)(A;;0x1200a9;;;WD)", false},
 		{"Users may add files", "O:" + me + "D:(A;;0x2;;;BU)", true},

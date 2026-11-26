@@ -3,9 +3,12 @@
 package tracker
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 )
 
 // Commands that change the tracker take its lock and wait for another command holding it; views
@@ -35,4 +38,30 @@ func TestChangingCommandsTakeTheTrackerLock(t *testing.T) {
 	if _, e, code := x.run(t, "note", "T-1", "after"); code != 0 {
 		t.Fatalf("after unlock: %q", e)
 	}
+}
+
+// A second holder, another handle in this process as much as another command, waits for lockWait
+// and then gives up; the lock file is private like the tracker beside it.
+func TestLockWaitsThenGivesUp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tracker.json")
+	unlock, err := lock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileacltest.AssertPrivate(t, path+".lock")
+	defer func(w time.Duration) { lockWait = w }(lockWait)
+	lockWait = 100 * time.Millisecond
+	start := time.Now()
+	if _, err := lock(path); err == nil || !strings.Contains(err.Error(), "in use by another segurata command") {
+		t.Fatalf("second lock: %v", err)
+	}
+	if waited := time.Since(start); waited < lockWait {
+		t.Errorf("gave up after %s", waited)
+	}
+	unlock()
+	again, err := lock(path)
+	if err != nil {
+		t.Fatalf("after unlock: %v", err)
+	}
+	again()
 }

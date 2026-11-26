@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -36,14 +37,14 @@ func TestExecFailureKeepsStderr(t *testing.T) {
 	if !errors.As(err, &ce) {
 		t.Fatalf("want *Error, got %T %v", err, err)
 	}
-	if strings.TrimSpace(ce.Stderr) != "PERMISSION_DENIED: nope" || ce.Cmd != "sh" {
+	if strings.TrimSpace(ce.Stderr) != "PERMISSION_DENIED: nope" || ce.Cmd != filepath.Base(sh) {
 		t.Errorf("error fields: %+v", ce)
 	}
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
 		t.Errorf("exit status not wrapped: %v", err)
 	}
-	if want := "sh: exit status 3: PERMISSION_DENIED: nope"; err.Error() != want {
+	if want := filepath.Base(sh) + ": exit status 3: PERMISSION_DENIED: nope"; err.Error() != want {
 		t.Errorf("message %q, want %q", err.Error(), want)
 	}
 }

@@ -6,13 +6,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/segurata/segurata/internal/finding"
+	"github.com/segurata/segurata/internal/statefile"
 )
 
 // Legacy, among Write's records, writes a run_end without a theme, as segurata wrote them before
@@ -84,9 +84,6 @@ func WriteUnfinished(t testing.TB, path string, recs ...any) {
 
 func write(t testing.TB, path string, recs ...any) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	for _, r := range recs {
@@ -94,7 +91,7 @@ func write(t testing.TB, path string, recs ...any) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+	if err := statefile.Write(path, buf.Bytes()); err != nil {
 		t.Fatal(err)
 	}
 }

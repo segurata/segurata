@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/segurata/segurata/internal/fileacl"
+	"github.com/segurata/segurata/internal/statefile"
 )
 
 type Key struct{ key []byte }
@@ -52,7 +53,7 @@ func Load(path string) (Key, error) {
 // Open reads an existing key, for commands that compare against fingerprints in the ledger, which
 // a new key would match none of.
 func Open(path string) (Key, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := statefile.ReadFile(path)
 	if err != nil {
 		return Key{}, err
 	}

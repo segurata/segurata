@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,10 +15,24 @@ import (
 	"github.com/segurata/segurata/internal/fileacl"
 )
 
+// errKeptTemp marks a failed replace whose new content survives only in the temporary file, which
+// is then left in place.
+var errKeptTemp = errors.New("the new content is kept in the temporary file")
+
+// ReadFile reads one of segurata's files through Open, so the read never blocks a writer.
+func ReadFile(path string) ([]byte, error) {
+	f, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
 // ReadJSON decodes the file at path into v. A missing file is not found, with no error; one that
 // cannot be read is not found, with the error; one that cannot be decoded is found, with the error.
 func ReadJSON(path string, v any) (found bool, err error) {
-	raw, err := os.ReadFile(path)
+	raw, err := ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
@@ -40,11 +55,11 @@ func Write(path string, data []byte) error {
 	if err := fileacl.MkdirPrivate(filepath.Dir(path)); err != nil {
 		return err
 	}
-	return write(path, data, fileacl.Private, os.Rename)
+	return write(path, data, fileacl.Private, Rename)
 }
 
 // Replace writes data with mode to a synced temporary file and renames it over path, which must not
-// be a symlink. On Windows it keeps the destination's access list.
+// be a symlink. On Windows the user's file keeps its access list.
 func Replace(path string, data []byte, mode fs.FileMode) error {
 	return write(path, data, mode, replaceFile)
 }
@@ -55,7 +70,12 @@ func write(path string, data []byte, mode fs.FileMode, rename func(src, dst stri
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	keep := false
+	defer func() {
+		if !keep {
+			os.Remove(tmp.Name())
+		}
+	}()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
@@ -71,7 +91,9 @@ func write(path string, data []byte, mode fs.FileMode, rename func(src, dst stri
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return rename(tmp.Name(), path)
+	err = rename(tmp.Name(), path)
+	keep = errors.Is(err, errKeptTemp)
+	return err
 }
 
 // Backup writes data, path's content before an edit, to a new private <path>.segurata-bak-<UTC time>

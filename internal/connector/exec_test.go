@@ -71,7 +71,7 @@ func TestStepStringQuotesLikeAShell(t *testing.T) {
 func TestSystemRunsAStepOnTheTerminal(t *testing.T) {
 	var out bytes.Buffer
 	io := connector.IO{In: strings.NewReader("typed by the owner\n"), Out: &out, Err: &bytes.Buffer{}}
-	if err := (connector.System{}).Run(context.Background(), connector.Step{Argv: []string{"/bin/cat"}}, io); err != nil {
+	if err := (connector.System{}).Run(context.Background(), connector.Step{Argv: []string{proctest.Shell(t), "-c", `IFS= read -r line; printf '%s\n' "$line"`}}, io); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "typed by the owner\n" {

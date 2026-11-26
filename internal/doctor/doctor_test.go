@@ -7,11 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/segurata/segurata/internal/cdp"
 	"github.com/segurata/segurata/internal/connector"
+	"github.com/segurata/segurata/internal/fileacl"
+	"github.com/segurata/segurata/internal/fileacl/fileacltest"
 	"github.com/segurata/segurata/internal/keychain"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/tracker"
@@ -223,26 +226,40 @@ func TestDoctorInvalidConfig(t *testing.T) {
 
 func TestDoctorStateModes(t *testing.T) {
 	fx := newFixture(t, "")
-	write(t, fx.env.KeyPath, strings.Repeat("ab", 32)+"\n", 0o644)
-	write(t, fx.env.Tracker.Tracker, `{broken`, 0o600)
-	if err := os.Chmod(filepath.Dir(fx.env.Tracker.Tracker), 0o700); err != nil {
+	write(t, fx.env.KeyPath, strings.Repeat("ab", 32)+"\n", 0o600)
+	fileacltest.Expose(t, fx.env.KeyPath)
+	trackerDir := filepath.Dir(fx.env.Tracker.Tracker)
+	if err := fileacl.MkdirPrivate(trackerDir); err != nil {
 		t.Fatal(err)
 	}
+	write(t, fx.env.Tracker.Tracker, `{broken`, 0o600)
 	if err := os.Mkdir(fx.env.OutDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	fileacltest.Expose(t, fx.env.OutDir)
 	out, code := fx.run(t, "api")
 	if code != 1 {
 		t.Errorf("exit %d", code)
 	}
-	wantLines(t, out,
-		"FAIL  state   fingerprint key "+fx.env.KeyPath+": mode 0644, want 0600",
-		"fix: chmod 600 "+fx.env.KeyPath,
-		"FAIL  state   tracker "+fx.env.Tracker.Tracker+": unreadable:",
-		"OK    state   tracker dir "+filepath.Dir(fx.env.Tracker.Tracker)+": mode 0700",
-		"WARN  state   output dir "+fx.env.OutDir+": mode 0755, want 0700",
-		"fix: chmod 700 "+fx.env.OutDir,
-	)
+	want := []string{
+		"FAIL  state   fingerprint key " + fx.env.KeyPath + ": mode 0644, want 0600",
+		"fix: chmod 600 " + fx.env.KeyPath,
+		"FAIL  state   tracker " + fx.env.Tracker.Tracker + ": unreadable:",
+		"OK    state   tracker dir " + trackerDir + ": mode 0700",
+		"WARN  state   output dir " + fx.env.OutDir + ": mode 0755, want 0700",
+		"fix: chmod 700 " + fx.env.OutDir,
+	}
+	if runtime.GOOS == "windows" {
+		want = []string{
+			"FAIL  state   fingerprint key " + fx.env.KeyPath + `: readable by BUILTIN\Users`,
+			`fix: icacls "` + fx.env.KeyPath + `" /inheritance:r /grant:r "%USERNAME%:F" "SYSTEM:F"`,
+			"FAIL  state   tracker " + fx.env.Tracker.Tracker + ": unreadable:",
+			"OK    state   tracker dir " + trackerDir + ": private (owner, SYSTEM and Administrators)",
+			"WARN  state   output dir " + fx.env.OutDir + `: readable by BUILTIN\Users`,
+			`fix: icacls "` + fx.env.OutDir + `" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F" "SYSTEM:(OI)(CI)F"`,
+		}
+	}
+	wantLines(t, out, want...)
 	if strings.Contains(out, "abab") {
 		t.Error("key printed")
 	}

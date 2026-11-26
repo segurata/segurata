@@ -10,10 +10,9 @@ import (
 
 // SECURITY_INFORMATION flags.
 const (
-	OwnerSecurityInformation           = 0x1
-	DaclSecurityInformation            = 0x4
-	UnprotectedDaclSecurityInformation = 0x20000000
-	ProtectedDaclSecurityInformation   = 0x80000000
+	OwnerSecurityInformation         = 0x1
+	DaclSecurityInformation          = 0x4
+	ProtectedDaclSecurityInformation = 0x80000000
 )
 
 const (

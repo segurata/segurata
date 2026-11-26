@@ -13,9 +13,10 @@ import (
 // the rules run, and are tested, on every platform.
 
 const (
-	sidSystem         = "S-1-5-18"
-	sidAdministrators = "S-1-5-32-544"
-	sidOwnerRights    = "S-1-3-4"
+	sidSystem           = "S-1-5-18"
+	sidAdministrators   = "S-1-5-32-544"
+	sidOwnerRights      = "S-1-3-4"
+	sidTrustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 )
 
 // File access rights.
@@ -263,16 +264,19 @@ func (d descriptor) exposure(user string, dir bool) fs.FileMode {
 // trustedForAccess is the owner (whose rights are the owner bits), the user, SYSTEM and
 // Administrators.
 func (d descriptor) trustedForAccess(user string) func(string) bool {
+	trusted := trustedAccount(user)
 	return func(sid string) bool {
-		return sid == user || sid == d.owner || sid == sidOwnerRights || sid == sidSystem || sid == sidAdministrators
+		return sid == d.owner || sid == sidOwnerRights || trusted(sid)
 	}
 }
 
 func trustedAccount(user string) func(string) bool {
-	return func(sid string) bool { return sid == user || sid == sidSystem || sid == sidAdministrators }
+	return func(sid string) bool {
+		return sid == user || sid == sidSystem || sid == sidAdministrators || sid == sidTrustedInstaller
+	}
 }
 
-// changeable reports whether an account other than the user, SYSTEM and Administrators can rename,
+// changeable reports whether an account outside the trusted set can rename,
 // replace or re-permission entries of this directory, or the directory itself. The right to create
 // subfolders alone, which Authenticated Users hold on C:\, is allowed: it is the analogue of a
 // sticky /tmp.

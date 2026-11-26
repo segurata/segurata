@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -144,7 +143,7 @@ func AddExpected(file, key string, rule Expected, now time.Time) (bool, string, 
 // valid config: atomically, mode 0600, keys in their order, the previous content kept in a backup
 // whose name it returns.
 func editFile(file string, now time.Time, edit func(raw []byte) ([]byte, bool, error)) (bool, string, error) {
-	raw, err := os.ReadFile(file)
+	raw, err := statefile.ReadFile(file)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		raw = nil
