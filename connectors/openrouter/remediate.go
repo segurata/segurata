@@ -13,13 +13,11 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// ActionDeleteUnusedKey deletes an API key that was never used or not for longer than
-// httpx.IdleAfter.
+// ActionDeleteUnusedKey deletes an API key never used or idle past httpx.IdleAfter.
 const ActionDeleteUnusedKey = "openrouter.key.delete-unused"
 
-// writeSecret is a read/write management key. The inventory's OPENROUTER_MANAGEMENT_KEY is
-// read-only by its setup hint, and a read-only management key gets 403 on any write; this one
-// lives under remediation_secrets and is resolved only at apply time.
+// writeSecret is a read/write management key: the inventory's is read-only, which gets 403 on any
+// write. It lives under remediation_secrets and is resolved only at apply time.
 const writeSecret = "OPENROUTER_MANAGEMENT_WRITE_KEY"
 
 const writeSetup = writeSecret + " is not configured. Deleting a key needs a read/write Management API key, apart from the inventory's read-only one: " +
@@ -32,9 +30,7 @@ const writeSetup = writeSecret + " is not configured. Deleting a key needs a rea
 // (openrouter.ai/docs, "Management API keys", checked 2026-11-24).
 var writeRoutes = []httpw.Route{httpw.Delete(`/keys/` + httpw.Seg)}
 
-// unusedAction offers the deletion for a key that has not expired and has no recorded use for
-// longer than httpx.IdleAfter: never used, idle, or with past spend but no use recorded since
-// OpenRouter began recording it at the end of 2025.
+// unusedAction counts past spend with no use recorded since the end of 2025 as idle.
 func unusedAction(k apiKey, now time.Time) string {
 	if k.Disabled {
 		return ""
@@ -48,7 +44,6 @@ func unusedAction(k apiKey, now time.Time) string {
 	return ""
 }
 
-// WithCredentials binds the instance's credentials (connector.CredentialedRemediator).
 func (c *Connector) WithCredentials(cs connector.Credentials) connector.Remediator {
 	return &remediator{c: c, cs: cs}
 }
@@ -58,7 +53,7 @@ type remediator struct {
 	cs connector.Credentials
 }
 
-// read finds the key now in its workspace's listing, with the read-only inventory key.
+// read finds the key now with the read-only inventory key.
 func (r *remediator) read(ctx context.Context, f finding.Finding) (apiKey, error) {
 	read := r.cs.Request.Secrets[secretName]
 	if read == "" {
@@ -90,10 +85,7 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 		return connector.Plan{}, err
 	}
 	now := connector.Now(r.c.Now)
-	n := k.Name
-	if n == "" {
-		n = k.Hash
-	}
+	n := k.label()
 	if unusedAction(k, now) == "" {
 		return connector.Plan{}, fmt.Errorf("API key %q is no longer an unused, enabled key: not deleting it; run the inventory again", n)
 	}
@@ -122,7 +114,6 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	return p, nil
 }
 
-// Apply resolves the write key and sends the plan's one DELETE through the write client's routes.
 func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.Plan, _ connector.IO) error {
 	write, err := r.cs.Write(ctx, writeSecret)
 	if err != nil {

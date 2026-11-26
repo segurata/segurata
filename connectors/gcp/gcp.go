@@ -21,12 +21,11 @@ import (
 
 const connectorName = "gcp"
 
-// parallel is how many projects are inspected at once; Cloud Billing answers 429 above a few.
+// parallel stays low: Cloud Billing answers 429 above a few concurrent projects.
 const parallel = 4
 
 func init() { connector.Register(New()) }
 
-// Connector is the built-in gcp connector. Its fields are injectable for tests.
 type Connector struct {
 	runner  cli.Runner // nil: run the real gcloud
 	getenv  func(string) string
@@ -56,7 +55,7 @@ type settings struct {
 	accounts       []string
 	projects       []string
 	skipProjects   []string
-	billingProject string // passed as --billing-project to budgets list when set
+	billingProject string
 	gcloudPath     string
 }
 
@@ -98,7 +97,6 @@ func stringList(m map[string]any, key string) ([]string, error) {
 }
 
 // target is one project and the accounts that list it, in config or `gcloud auth list` order.
-// Each project is inspected once: a check denied to the first account is retried with the next.
 type target struct {
 	accounts        []string
 	project, number string
@@ -117,11 +115,8 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: localAccount, State: finding.StateUnsupported, Detail: err.Error()})
 		return nil
 	}
-	// Service accounts are credentials, not identities to inventory: no finding is ever scoped to
-	// one, so declaring them skipped would only mark every run partial. They are left out silently
-	// (list one in connectors.gcp.config.accounts to inventory with it). People's accounts the
-	// config leaves out are declared skipped, so findings an earlier run made for them are not
-	// taken as resolved.
+	// Accounts the config leaves out are declared skipped so their earlier findings are not taken
+	// as resolved.
 	accounts, unwatched, err := c.accounts(ctx, g, cfg)
 	for _, a := range unwatched {
 		emit.Scope(a, false, "not in connectors.gcp.config.accounts")
@@ -150,21 +145,17 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	for _, t := range targets {
-		wg.Add(1)
-		go func(t target) {
-			defer wg.Done()
-			sem <- struct{}{}
+		sem <- struct{}{}
+		wg.Go(func() {
 			defer func() { <-sem }()
 			c.inspect(ctx, g, t, bill, emit)
-		}(t)
+		})
 	}
 	wg.Wait()
 	bill.judge(ctx, emit)
 	return nil
 }
 
-// gcloud is the guarded gcloud the connector runs: the injected runner, or the CLI found from
-// gcloud_path, PATH or the SDK's install folders.
 func (c *Connector) gcloud(cfg settings) (*gcloud, error) {
 	r := c.runner
 	if r == nil {
@@ -177,14 +168,14 @@ func (c *Connector) gcloud(cfg settings) (*gcloud, error) {
 	return &gcloud{run: r, backoff: c.backoff}, nil
 }
 
-// serviceAccountSuffix ends the email of every user-managed service account. gcloud lists a service
-// account it activated (`gcloud auth activate-service-account`) next to people: it is a credential
-// the gcp checks already report, not an identity to inventory projects with.
+// serviceAccountSuffix marks accounts gcloud activated with activate-service-account: credentials
+// the checks already report, not identities to inventory with. Nothing is scoped to them, so they
+// are left out silently unless configured.
 const serviceAccountSuffix = ".iam.gserviceaccount.com"
 
-// accounts are the configured accounts, or every credentialed account gcloud lists except
-// service accounts. With configured accounts, unwatched are the people's accounts gcloud lists
-// that the config leaves out (none when gcloud cannot list them: the configured ones still run).
+// accounts are the configured accounts, or every credentialed non-service account gcloud lists.
+// unwatched are listed people's accounts the config leaves out; configured accounts run even when
+// gcloud cannot list.
 func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings) (accounts, unwatched []string, err error) {
 	var listed []struct {
 		Account string `json:"account"`
@@ -209,8 +200,8 @@ func (c *Connector) accounts(ctx context.Context, g *gcloud, cfg settings) (acco
 	return accounts, nil, nil
 }
 
-// projectsFinding records, as an info finding, the id and number of every project an account
-// sees, so attribution knows the owner's projects (an OAuth client id names the number only).
+// projectsFinding feeds attribution the id and number of every project an account sees: an OAuth
+// client id names the number only.
 func projectsFinding(account string, projects []listedProject) finding.Finding {
 	list := make([]any, 0, len(projects))
 	for _, p := range projects {
@@ -221,16 +212,14 @@ func projectsFinding(account string, projects []listedProject) finding.Finding {
 		Evidence: map[string]any{"projects": list}}
 }
 
-// listedProject is a project as `gcloud projects list` reports it.
 type listedProject struct {
 	ProjectID      string `json:"projectId"`
 	ProjectNumber  string `json:"projectNumber"`
 	LifecycleState string `json:"lifecycleState"`
 }
 
-// plan lists each account's projects and gives every project the accounts that see it, first
-// lister first. Configured projects nobody lists go to the accounts that could list projects.
-// Skipped projects and projects pending deletion are left out.
+// plan gives every project the accounts that see it, first lister first. Configured projects
+// nobody lists go to every account that could list projects.
 func (c *Connector) plan(ctx context.Context, g *gcloud, accounts []string, cfg settings, emit connector.Emitter) ([]target, []string) {
 	var targets []target
 	var usable []string
@@ -279,9 +268,8 @@ func (c *Connector) plan(ctx context.Context, g *gcloud, accounts []string, cfg 
 	return targets, usable
 }
 
-// inspect runs the per-project checks and reports the ones that failed in one status line, on
-// the project's first account. A check denied to one account is retried with the next account
-// that lists the project, so a project another account can read is not reported as denied.
+// inspect runs the per-project checks, retrying a denied check with the next account that lists
+// the project, and reports what still failed in one status line scoped to the project.
 func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *billing, emit connector.Emitter) {
 	proj := "--project=" + t.project
 	var failed, denied []string
@@ -292,14 +280,12 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 			worst = state
 		}
 		if strings.HasPrefix(why, deniedPrefix) {
-			denied = append(denied, check) // the reason is the same for each: list the checks only
+			denied = append(denied, check)
 			return
 		}
 		failed = append(failed, check+": "+why)
 	}
-	// run calls fn with each account in turn until one is not denied, and returns that account.
-	// Findings stay on the project's first account whichever account read them, so their ids and
-	// the coverage of that account's project scope do not depend on who answered.
+	// Findings stay on the first account whoever answered, so their ids do not depend on it.
 	run := func(check string, fn func(acct string) error) (string, bool) {
 		var err error
 		for _, a := range t.accounts {
@@ -320,7 +306,7 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		}
 	}
 
-	var found []finding.Finding // this project's credential findings, counted as spend risks
+	var found []finding.Finding // credential findings, counted as spend risks
 	var policy iamPolicy
 	if _, ok := run("iam policy", func(a string) error {
 		return g.json(ctx, &policy, "projects", "get-iam-policy", t.project, "--account="+a)
@@ -368,25 +354,22 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		failed = append([]string{msg}, failed...)
 	}
 	if len(failed) > 0 {
-		// Scoped to the project: the account's other projects were read. Only checks denied to
-		// every account that lists the project get here.
 		emit.Status(finding.Status{Account: t.accounts[0], Scope: t.project, State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
 	}
 }
 
-// billing collects billing accounts seen through accounts and projects, then judges each once.
 type billing struct {
 	g              *gcloud
 	billingProject string
 	mu             sync.Mutex
 	accounts       map[string]*billingState
-	ids            map[string]string // project number to id, for budget filters
+	ids            map[string]string // project number to id
 }
 
 type billingState struct {
-	account  string // gcloud account used to read it
+	account  string // gcloud account that reads it
 	open     *bool
-	currency string // the account's currency, for budgets whose amount leaves it out
+	currency string // for budgets whose amount leaves it out
 	linked   []linkedProject
 }
 
@@ -403,7 +386,7 @@ func (b *billing) discover(ctx context.Context, account string, emit connector.E
 	var list []billingAccount
 	if err := b.g.json(ctx, &list, "billing", "accounts", "list", "--account="+account); err != nil {
 		state, why := classify(err)
-		// Budgets are judged per billing account; without the list any of them may be missed.
+		// Budgets are judged per billing account: without the list any of them may be missed.
 		emit.Status(finding.Status{Account: account, Scope: billingScope("*"), State: state, Detail: "billing accounts list: " + why})
 		return
 	}
@@ -423,7 +406,6 @@ func (b *billing) link(account string, p linkedProject, id string) {
 	st.linked = append(st.linked, p)
 }
 
-// judge reads budgets for every billing account that is open or pays for a project we saw.
 func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 	for _, id := range slices.Sorted(maps.Keys(b.accounts)) {
 		st := b.accounts[id]
@@ -448,9 +430,8 @@ func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 	}
 }
 
-// Findings and failures carry a scope narrower than the gcloud account, so one project the account
-// cannot read leaves only that project's findings unresolved: the project id for project checks,
-// "billing:<id>" for a billing account's budgets.
+// billingScope, like a project id for project checks, is narrower than the gcloud account, so one
+// billing account or project the account cannot read leaves only its own findings unresolved.
 func billingScope(id string) string { return "billing:" + id }
 
 func projectList(ps []linkedProject) string {

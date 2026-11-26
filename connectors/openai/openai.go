@@ -43,12 +43,10 @@ type Connector struct {
 
 func init() { connector.Register(&Connector{}) }
 
-// SetupHint says how to create and store the secret the connector needs (connector.SetupHinter).
 func (c *Connector) SetupHint(secret string) string {
 	return connector.HintFor(secret, secretName, setupHint)
 }
 
-// base is the API base URL: BaseURL, or the real API.
 func (c *Connector) base() string { return httpx.Base(c.BaseURL, DefaultBaseURL) }
 
 func (c *Connector) Describe() connector.Description {
@@ -86,7 +84,6 @@ type scan struct {
 	failed bool
 }
 
-// fail reports a partial failure; the run goes on with whatever else it can read.
 func (s *scan) fail(err error) {
 	s.failed = true
 	s.emit.Status(finding.Status{Account: account, State: httpx.State(err), Detail: err.Error()})
@@ -95,18 +92,15 @@ func (s *scan) fail(err error) {
 func (s *scan) run() {
 	projects, err := list[project](s, "/organization/projects", nil)
 	if err != nil {
-		// Without projects nothing else is meaningful, and the key is most likely wrong.
-		s.fail(err)
+		s.fail(err) // most likely a wrong key; nothing else is meaningful
 		return
 	}
-	// The admin key listing also returns the organization's project keys, and it is the only
-	// listing that carries their last_used_at. Split it: admin keys get their own findings,
-	// project keys only lend their last use to the per-project listing below.
 	listed, err := list[adminKey](s, "/organization/admin_api_keys", nil)
+	admins, lastUsed := splitAdminListing(listed)
 	if err != nil {
 		s.fail(err)
+		lastUsed = nil // unknown: no key is called never used
 	}
-	admins, lastUsed := splitAdminListing(listed)
 
 	orgLimit := s.spendLimit("/organization/spend_limit")
 	orgAlerts := s.alerts("/organization/spend_alerts")
@@ -139,10 +133,11 @@ func (s *scan) run() {
 		}
 		capped := limitCover{known: orgLimit.known && projLimit.known, set: orgLimit.set || projLimit.set}
 		for _, k := range keys {
+			usageKnown := k.LastUsedAt != nil || lastUsed != nil
 			if k.LastUsedAt == nil {
 				k.LastUsedAt = lastUsed[k.ID]
 			}
-			s.emit.Finding(projectKeyFinding(k, p, capped, s.now))
+			s.emit.Finding(projectKeyFinding(k, p, capped, usageKnown, s.now))
 		}
 	}
 
@@ -154,14 +149,12 @@ func (s *scan) run() {
 	}
 }
 
-// page is OpenAI's cursor list envelope.
 type page[T any] struct {
 	Data    []T     `json:"data"`
 	HasMore bool    `json:"has_more"`
 	LastID  *string `json:"last_id"`
 }
 
-// list follows after=last_id until has_more is false.
 func list[T any](s *scan, path string, q url.Values) ([]T, error) {
 	var out []T
 	after := ""
@@ -246,9 +239,8 @@ type adminKey struct {
 	} `json:"owner"`
 }
 
-// keyHint writes a key's redacted_value in secretrisk.Redact's format. OpenAI masks one star per
-// hidden character (an sk-proj key's redacted_value is 164 characters long, the length of the key;
-// checked 2026-11-24), so a long run of stars gives the key's length; a short mask does not.
+// keyHint: OpenAI masks one star per hidden character (an sk-proj redacted_value is as long as
+// the key, checked 2026-11-24), so a long run of stars gives the key's length.
 func keyHint(redacted string) string {
 	n := 0
 	if strings.Count(redacted, "*") >= 20 {
@@ -257,12 +249,10 @@ func keyHint(redacted string) string {
 	return secretrisk.Masked(redacted, n)
 }
 
-// adminKeyPrefix marks real admin keys in redacted_value; everything else in the admin listing
-// is a project key.
 const adminKeyPrefix = "sk-admin"
 
-// splitAdminListing separates real admin keys from the project keys the admin listing also
-// returns, keeping the project keys' last use by key id.
+// splitAdminListing: the admin listing also returns the project keys, and is the only listing
+// that carries their last_used_at, kept here by key id.
 func splitAdminListing(listed []adminKey) ([]adminKey, map[string]*int64) {
 	var admins []adminKey
 	lastUsed := map[string]*int64{}
@@ -278,7 +268,7 @@ func splitAdminListing(listed []adminKey) ([]adminKey, map[string]*int64) {
 	return admins, lastUsed
 }
 
-// limitState is what GET .../spend_limit said: a 404 means no hard limit is configured.
+// limitState: GET .../spend_limit answers 404 when no hard limit is configured.
 type limitState struct {
 	known       bool
 	set         bool
@@ -306,7 +296,6 @@ func (s *scan) spendLimit(path string) limitState {
 	return limitState{known: true, set: true, cents: l.ThresholdAmount, enforcement: l.Enforcement.Status}
 }
 
-// alertState counts spend alerts; known is false when they could not be read.
 type alertState struct {
 	known bool
 	count int
@@ -336,7 +325,7 @@ type costPage struct {
 	NextPage *string `json:"next_page"`
 }
 
-// costs sums the last 30 days of cost per project id (empty id: not attributed to a project).
+// costs sums the last 30 days per project id; "" is cost not attributed to a project.
 func (s *scan) costs() (map[string]float64, error) {
 	out := map[string]float64{}
 	q := url.Values{
@@ -368,8 +357,7 @@ func (s *scan) costs() (map[string]float64, error) {
 	return out, fmt.Errorf("GET /organization/costs: pagination did not end")
 }
 
-// budgetSeverity: a hard limit is fine; alerts without a limit still let spend run; nothing at
-// all is the hole this connector exists to find.
+// budgetSeverity: alerts without a hard limit still let spend run.
 func budgetSeverity(l limitState, a alertState) finding.Severity {
 	switch {
 	case l.set:
@@ -382,9 +370,8 @@ func budgetSeverity(l limitState, a alertState) finding.Severity {
 	return finding.SevLow
 }
 
-// emitBudget reports one organization's or project's limit and alerts. keys is the number of
-// project keys the limit covers, -1 when unknown or not a project: the spend risk of every key is
-// stated here once, not on each key.
+// emitBudget states the spend risk of the keys a limit covers once, not on each key. keys is -1
+// when unknown or not a project.
 func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a alertState, cost float64, costKnown bool, keys int) {
 	sev := budgetSeverity(l, a)
 	ev := map[string]any{"spend_alerts": a.count}
@@ -432,13 +419,12 @@ func (s *scan) emitBudget(res finding.Resource, label string, l limitState, a al
 	})
 }
 
-// limitCover says whether a key's traffic is capped by its project's or the organization's limit.
 type limitCover struct{ known, set bool }
 
-// keyAssessment applies the severity rules to one key from the key's own state: expired, owner
-// gone, unused. OpenAI keys have no spend limit of their own; a missing project or organization
-// limit is that project's or organization's finding, and only changes the wording here.
-func keyAssessment(lastUsed, expires *time.Time, ownerGone bool, cover limitCover, now time.Time) httpx.Assessment {
+// keyAssessment: OpenAI keys have no spend limit of their own, so a missing project or
+// organization limit is that finding's, and only changes the wording here. Without usageKnown a
+// key with no recorded use is not called never used.
+func keyAssessment(lastUsed, expires *time.Time, usageKnown, ownerGone bool, cover limitCover, now time.Time) httpx.Assessment {
 	var a httpx.Assessment
 	if expires != nil && expires.Before(now) {
 		return a.Done("expired")
@@ -446,7 +432,10 @@ func keyAssessment(lastUsed, expires *time.Time, ownerGone bool, cover limitCove
 	if ownerGone {
 		a.Raise(finding.SevHigh, "its owner no longer has access to the project")
 	}
+	use := "in use"
 	switch {
+	case lastUsed == nil && !usageKnown:
+		use = "last use unknown"
 	case lastUsed == nil:
 		a.Raise(finding.SevMedium, "never used")
 	case now.Sub(*lastUsed) > httpx.IdleAfter:
@@ -454,16 +443,20 @@ func keyAssessment(lastUsed, expires *time.Time, ownerGone bool, cover limitCove
 	}
 	switch {
 	case cover.set:
-		return a.Done("in use and capped by a hard spend limit")
+		return a.Done(use + " and capped by a hard spend limit")
 	case cover.known:
-		return a.Done("in use; no hard spend limit caps it (see the project finding)")
+		return a.Done(use + "; no hard spend limit caps it (see the project finding)")
 	}
-	return a.Done("in use")
+	return a.Done(use)
 }
 
-func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time) finding.Finding {
+func projectKeyFinding(k projectKey, p project, cover limitCover, usageKnown bool, now time.Time) finding.Finding {
 	created, lastUsed, expires := httpx.Unix(k.CreatedAt), httpx.Unix(k.LastUsedAt), httpx.Unix(k.ExpiresAt)
-	a := keyAssessment(lastUsed, expires, k.OwnerProjectAccess == "inactive", cover, now)
+	a := keyAssessment(lastUsed, expires, usageKnown, k.OwnerProjectAccess == "inactive", cover, now)
+	action := ""
+	if usageKnown {
+		action = unusedAction(lastUsed, expires, now)
+	}
 	ev := map[string]any{
 		"redacted":   keyHint(k.RedactedValue),
 		"project":    p.label(),
@@ -495,7 +488,7 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 		Remediation: finding.Remediation{
 			Summary: "Revoke keys nobody uses or owns. Spend caps are set on the project or the organization, not on the key.",
 			URL:     keysURL,
-			Action:  unusedAction(lastUsed, expires, now),
+			Action:  action,
 		},
 	}
 }
@@ -503,7 +496,7 @@ func projectKeyFinding(k projectKey, p project, cover limitCover, now time.Time)
 // adminKeyFinding: admin keys spend nothing themselves but can mint keys, so idleness matters.
 func adminKeyFinding(k adminKey, now time.Time) finding.Finding {
 	created, lastUsed, expires := httpx.Unix(k.CreatedAt), httpx.Unix(k.LastUsedAt), httpx.Unix(k.ExpiresAt)
-	a := keyAssessment(lastUsed, expires, false, limitCover{}, now)
+	a := keyAssessment(lastUsed, expires, true, false, limitCover{}, now)
 	n := k.ID
 	if k.Name != nil && *k.Name != "" {
 		n = *k.Name
@@ -529,5 +522,4 @@ func adminKeyFinding(k adminKey, now time.Time) finding.Finding {
 	}
 }
 
-// Track groups the account's API keys by severity (keytrack).
 func (c *Connector) Track(f finding.Finding) *finding.Track { return keytrack.Track("OpenAI", f) }

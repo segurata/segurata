@@ -13,13 +13,11 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// ActionDeleteUnusedKey deletes a project API key or an admin key that was never used or not for
-// longer than httpx.IdleAfter.
+// ActionDeleteUnusedKey deletes a project or admin key never used or idle past httpx.IdleAfter.
 const ActionDeleteUnusedKey = "openai.key.delete-unused"
 
-// writeSecret is the admin key with write access that a deletion needs. The inventory's
-// OPENAI_ADMIN_KEY may be read-only; this one lives under remediation_secrets and is resolved only
-// at apply time.
+// writeSecret lives under remediation_secrets, apart from the possibly read-only inventory key,
+// and is resolved only at apply time.
 const writeSecret = "OPENAI_ADMIN_WRITE_KEY"
 
 const writeSetup = writeSecret + " is not configured. Deleting a key needs an admin key with write access, apart from the inventory's (which may be read-only): " +
@@ -28,14 +26,12 @@ const writeSetup = writeSecret + " is not configured. Deleting a key needs an ad
 	` in ~/.config/segurata/config.json. Only remediate --apply reads it; delete that key when you are done if you prefer.`
 
 // writeRoutes are the only requests a deletion may send (developers.openai.com/api/reference,
-// checked 2026-11-24): DELETE a project API key, DELETE an admin API key.
+// checked 2026-11-24).
 var writeRoutes = []httpw.Route{
 	httpw.Delete(`/organization/projects/` + httpw.Seg + `/api_keys/` + httpw.Seg),
 	httpw.Delete(`/organization/admin_api_keys/` + httpw.Seg),
 }
 
-// unusedAction offers the deletion for a key that has not expired and was never used or not for
-// longer than httpx.IdleAfter.
 func unusedAction(lastUsed, expires *time.Time, now time.Time) string {
 	if expires != nil && expires.Before(now) {
 		return ""
@@ -46,7 +42,6 @@ func unusedAction(lastUsed, expires *time.Time, now time.Time) string {
 	return ""
 }
 
-// WithCredentials binds the instance's credentials (connector.CredentialedRemediator).
 func (c *Connector) WithCredentials(cs connector.Credentials) connector.Remediator {
 	return &remediator{c: c, cs: cs}
 }
@@ -56,7 +51,6 @@ type remediator struct {
 	cs connector.Credentials
 }
 
-// liveKey is the key a finding names, as the API lists it now.
 type liveKey struct {
 	path     string // DELETE path under the base URL
 	label    string
@@ -65,8 +59,7 @@ type liveKey struct {
 	expires  *time.Time
 }
 
-// read finds the key now, with the read-only inventory key: its project listing (or the admin
-// listing), and its last use from the admin listing, the only one that carries it.
+// read finds the key now with the read-only inventory key.
 func (r *remediator) read(ctx context.Context, f finding.Finding) (liveKey, error) {
 	read := r.cs.Request.Secrets[secretName]
 	if read == "" {
@@ -118,8 +111,8 @@ func (r *remediator) read(ctx context.Context, f finding.Finding) (liveKey, erro
 	return liveKey{}, fmt.Errorf("key %s no longer exists: nothing to do; run the inventory again", id)
 }
 
-// projectID is the finding's project id, or for a finding recorded before it carried one, the id
-// of the only project with its name, read now.
+// projectID falls back, for a finding recorded before it carried one, to the only project with
+// its name.
 func projectID(s *scan, f finding.Finding) (string, error) {
 	if id, _ := f.Evidence["project_id"].(string); id != "" {
 		return id, nil
@@ -175,7 +168,6 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	return p, nil
 }
 
-// Apply resolves the write key and sends the plan's one DELETE through the write client's routes.
 func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.Plan, _ connector.IO) error {
 	write, err := r.cs.Write(ctx, writeSecret)
 	if err != nil {

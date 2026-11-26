@@ -12,7 +12,6 @@ type user struct {
 	TwoFactor *bool `json:"two_factor_authentication"`
 }
 
-// user reads the signed-in account. It returns false when nothing else can run.
 func (r *run) user(ctx context.Context) (user, bool) {
 	var u user
 	if err := r.get(ctx, "/user", &u); err != nil || u.Login == "" {
@@ -26,8 +25,6 @@ func (r *run) user(ctx context.Context) (user, bool) {
 	return u, true
 }
 
-// account2FA reports an account without two-factor authentication: critical when it owns
-// organizations, whose every repository it can then hand over.
 func (r *run) account2FA(u user, ownsOrgs bool) {
 	acct := account(u.Login)
 	switch {

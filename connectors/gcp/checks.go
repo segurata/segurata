@@ -14,8 +14,6 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Shapes of the gcloud --format=json outputs this connector reads. Only the fields it uses.
-
 type apiKey struct {
 	Name         string        `json:"name"`
 	UID          string        `json:"uid"`
@@ -66,7 +64,6 @@ type billingAccount struct {
 	CurrencyCode string `json:"currencyCode"`
 }
 
-// gcpBudget is a Budget API v1 budget as `gcloud billing budgets list` prints it.
 type gcpBudget struct {
 	Name         string `json:"name"`
 	DisplayName  string `json:"displayName"`
@@ -107,13 +104,11 @@ func consoleURL(path, project string) string {
 	return fmt.Sprintf("https://console.cloud.google.com/%s?project=%s", path, project)
 }
 
-// lastSegment returns what follows the last slash of a resource name.
 func lastSegment(name string) string {
 	return name[strings.LastIndexByte(name, '/')+1:]
 }
 
-// apiKeyFindings flags keys missing API restrictions or application restrictions. It never sees
-// the key string: `api-keys list` does not return it, and get-key-string is not allowed.
+// apiKeyFindings never sees a key string: `api-keys list` does not return it.
 func apiKeyFindings(account, project string, keys []apiKey) []finding.Finding {
 	var out []finding.Finding
 	for _, k := range keys {
@@ -165,7 +160,6 @@ func apiKeyFindings(account, project string, keys []apiKey) []finding.Finding {
 	return out
 }
 
-// saKeyFindings flags user-managed service account keys: medium, high when older than 90 days.
 func saKeyFindings(account, project string, sa serviceAccount, keys []saKey, now time.Time) []finding.Finding {
 	var out []finding.Finding
 	for _, k := range keys {
@@ -211,14 +205,11 @@ func saKeyFindings(account, project string, sa serviceAccount, keys []saKey, now
 	return out
 }
 
-// broadRoles are the basic roles that give a service account control of the whole project.
 var broadRoles = map[string]bool{"roles/owner": true, "roles/editor": true}
 
-// googleManaged reports service agents that Google itself grants Editor to and that cannot hold
-// user keys. The default Compute Engine and App Engine accounts are not skipped: Google advises
-// taking Editor away from them. system.gserviceaccount.com is Google's own domain: for example
-// appsdev-apps-dev-script-auth@system.gserviceaccount.com owns every Apps Script default project
-// (sys-<digits>); the owner cannot change it.
+// googleManaged reports service agents Google grants Editor itself and the owner cannot change
+// (system.gserviceaccount.com owns every Apps Script default project). The default Compute Engine
+// and App Engine accounts are not among them: Google advises taking Editor away from those.
 func googleManaged(email string) bool {
 	local, domain, _ := strings.Cut(email, "@")
 	if domain == "cloudservices.gserviceaccount.com" || domain == "system.gserviceaccount.com" || strings.HasPrefix(domain, "gcp-sa-") {
@@ -228,7 +219,6 @@ func googleManaged(email string) bool {
 	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
 }
 
-// iamFindings flags service accounts holding Owner or Editor on the project.
 func iamFindings(account, project string, p iamPolicy) []finding.Finding {
 	roles := map[string][]string{}
 	for _, b := range p.Bindings {
@@ -273,7 +263,6 @@ type linkedProject struct {
 	risks      []budget.Risk
 }
 
-// projectIDs returns the sorted ids of the linked projects.
 func projectIDs(ps []linkedProject) []string {
 	ids := make([]string, len(ps))
 	for i, p := range ps {
@@ -283,9 +272,8 @@ func projectIDs(ps []linkedProject) []string {
 	return ids
 }
 
-// neutral maps a Budget API budget to the shared model. The filter names projects by number;
-// ids maps the numbers of every project this run saw to their ids. currency is the billing
-// account's, for a specifiedAmount that leaves its own out.
+// neutral maps a Budget API budget to the shared model. ids maps the project numbers the filter
+// names to ids; currency is the billing account's.
 func (b gcpBudget) neutral(currency string, ids map[string]string) budget.Budget {
 	nb := budget.Budget{ID: lastSegment(b.Name), Name: b.DisplayName, Currency: currency, Period: budget.PeriodMonth}
 	if nb.Name == "" {
@@ -315,8 +303,7 @@ func (b gcpBudget) neutral(currency string, ids map[string]string) budget.Budget
 		}
 		nb.Scope.Units = append(nb.Scope.Units, p)
 	}
-	// Folders and organizations cannot be matched to projects without more calls: like services,
-	// they narrow what is counted but are not taken as leaving any linked project out.
+	// Folders and organizations narrow what is counted but are not taken as leaving a project out.
 	nb.Scope.Filters = append(nb.Scope.Filters, f.ResourceAncestors...)
 	var detail []string
 	for _, list := range []struct {
@@ -361,7 +348,6 @@ func (b gcpBudget) neutral(currency string, ids map[string]string) budget.Budget
 	return nb
 }
 
-// billingWording is how the shared budget rules speak about a GCP billing account.
 func billingWording(billingID string) budget.Wording {
 	return budget.Wording{
 		UnitNoun:   "project",
@@ -377,8 +363,6 @@ func billingWording(billingID string) budget.Wording {
 	}
 }
 
-// billingFindings judges one billing account's budgets with the shared rules. The risks are the
-// unrestricted API keys and user-managed service account keys this run found in linked projects.
 func billingFindings(account, billingID, currency string, budgets []gcpBudget, linked []linkedProject, ids map[string]string) []finding.Finding {
 	c := budget.Container{
 		ID:       billingID,
@@ -404,8 +388,8 @@ func billingFindings(account, billingID, currency string, budgets []gcpBudget, l
 	return fs
 }
 
-// projectRisks counts what this run found in a project that lets someone run spend up: API keys
-// without restrictions and enabled user-managed service account keys.
+// projectRisks counts what lets someone run spend up: unrestricted API keys and enabled
+// user-managed service account keys.
 func projectRisks(project string, fs []finding.Finding) []budget.Risk {
 	var keys, saKeys int
 	for _, f := range fs {

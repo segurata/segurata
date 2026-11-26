@@ -12,8 +12,7 @@ type scopeRule struct {
 	label string // completes "<App> can …"
 }
 
-// scopeRules classifies one scope line, English or Spanish. First match wins, so narrow rules
-// (app-specific Drive files, read-only calendars) come before the broad ones they would match.
+// scopeRules: first match wins, so narrow rules come before the broad ones they would match.
 var scopeRules = []scopeRule{
 	{rx(`specific Google Drive files|own configuration data|archivos específicos|propios datos de configuración`), finding.SevLow, "use only its own files in your Google Drive"},
 	{rx(`^view events on|^see and download any calendar|^ver (los )?eventos|^consultar (los )?eventos|^ver y descargar cualquier calendario`), finding.SevLow, "see your calendar events"},
@@ -29,10 +28,10 @@ var scopeRules = []scopeRule{
 	{rx(`calendar|calendario`), finding.SevMedium, "see and change your calendars"},
 	{rx(`manage your YouTube|(gestionar|administrar) tu cuenta de YouTube`), finding.SevMedium, "manage your YouTube account"},
 
-	{rx(`profile info|información de tu perfil|información del perfil`), finding.SevInfo, "see your profile info"},
+	{rx(`profile info|información de tu perfil|información del perfil|associate you with your personal info`), finding.SevInfo, "see your profile info"},
+	{rx(`primary Google Account email address|correo electrónico principal`), finding.SevInfo, "see your email address"},
 }
 
-// unknownScope is what a scope no rule recognises gets: data access of unknown reach.
 var unknownScope = scopeRule{sev: finding.SevMedium, label: "access some of your Google Account data"}
 
 func rx(s string) *regexp.Regexp { return regexp.MustCompile(`(?i)` + s) }
@@ -46,8 +45,7 @@ func classify(scope string) scopeRule {
 	return unknownScope
 }
 
-// assess returns the worst scope's severity and label; ties go to the earlier scope.
-// No scopes means Sign in with Google only.
+// assess: ties go to the earlier scope; no scopes means Sign in with Google only.
 func assess(scopes []string) (finding.Severity, string) {
 	if len(scopes) == 0 {
 		return finding.SevInfo, "sign you in with your Google account"

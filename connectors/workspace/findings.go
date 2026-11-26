@@ -1,8 +1,11 @@
 package workspace
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -12,7 +15,7 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// Help pages for each finding, checked on 2026-11-24.
+// Help pages checked on 2026-11-24.
 const (
 	twoSVURL   = "https://knowledge.workspace.google.com/admin/security/deploy-2-step-verification"
 	adminsURL  = "https://knowledge.workspace.google.com/admin/users/security-best-practices-for-administrator-accounts"
@@ -22,7 +25,6 @@ const (
 	scopesBase = "https://www.googleapis.com/auth/"
 )
 
-// account is a Directory user with the derived fields the checks need.
 type account struct {
 	email                      string
 	superAdmin, delegatedAdmin bool
@@ -61,7 +63,6 @@ func (a account) role() string {
 	return "user"
 }
 
-// before orders super admins first, then delegated admins, then everyone else, by email.
 func (a account) before(b account) bool {
 	if a.superAdmin != b.superAdmin {
 		return a.superAdmin
@@ -84,7 +85,6 @@ func (a account) evidence() map[string]any {
 		"suspended": a.suspended, "archived": a.archived, "last_login": a.lastLoginText()}
 }
 
-// userFindings covers 2SV, admins and stale accounts, in the order accounts come (admins first).
 func userFindings(domain string, accounts []account, inactiveDays int, now time.Time) []finding.Finding {
 	var twoSV, admins, stale []finding.Finding
 	superAdmins := 0
@@ -186,7 +186,7 @@ type scopeRule struct {
 	label string
 }
 
-// scopeRules classify one OAuth scope, without the googleapis prefix. First match wins.
+// scopeRules match a scope without the googleapis prefix; first match wins.
 var scopeRules = []scopeRule{
 	{regexp.MustCompile(`^admin\..*\.readonly$`), finding.SevHigh, "read the domain's admin data"},
 	{regexp.MustCompile(`^admin\.`), finding.SevCritical, "change the domain's admin settings"},
@@ -211,7 +211,7 @@ func classifyScope(scope string) scopeRule {
 	return unknownScope
 }
 
-// assessScopes returns the worst rule; ties go to the earlier scope. No scopes counts as sign-in.
+// assessScopes returns the worst rule, the earlier scope on a tie; no scopes counts as sign-in.
 func assessScopes(scopes []string) scopeRule {
 	worst := scopeRule{sev: finding.SevInfo, label: "Sign in with Google only"}
 	for i, s := range scopes {
@@ -228,17 +228,12 @@ type app struct {
 	native, anonymous bool
 }
 
-// aggregate groups grants per OAuth client, most users first.
 func aggregate(grants []grant) []app {
 	byClient := map[string]*app{}
 	for _, g := range grants {
 		a := byClient[g.ClientID]
 		if a == nil {
-			name := g.DisplayText
-			if name == "" {
-				name = g.ClientID
-			}
-			a = &app{clientID: g.ClientID, name: name}
+			a = &app{clientID: g.ClientID, name: cmp.Or(g.DisplayText, g.ClientID)}
 			byClient[g.ClientID] = a
 		}
 		a.users = append(a.users, g.user)
@@ -249,7 +244,8 @@ func aggregate(grants []grant) []app {
 	out := make([]app, 0, len(byClient))
 	for _, a := range byClient {
 		sort.Strings(a.users)
-		a.scopes = uniqueSorted(a.scopes)
+		slices.Sort(a.scopes)
+		a.scopes = slices.Compact(a.scopes)
 		out = append(out, *a)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -261,19 +257,7 @@ func aggregate(grants []grant) []app {
 	return out
 }
 
-func uniqueSorted(s []string) []string {
-	sort.Strings(s)
-	out := s[:0]
-	for i, v := range s {
-		if i == 0 || v != s[i-1] {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-// appFindings emits one grant finding per app with current grants, with its recent token activity,
-// and an info finding for apps that only show up in the activity.
+// appFindings adds an info finding for apps that show up only in the token activity.
 func appFindings(domain string, apps []app, activity map[string]*appActivity) []finding.Finding {
 	var out []finding.Finding
 	seen := map[string]bool{}
@@ -297,12 +281,7 @@ func appFindings(domain string, apps []app, activity map[string]*appActivity) []
 		}
 		out = append(out, f)
 	}
-	keys := make([]string, 0, len(activity))
-	for k := range activity {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(activity)) {
 		act := activity[k]
 		if seen[activityKey(act)] {
 			continue
@@ -318,14 +297,9 @@ func appFindings(domain string, apps []app, activity map[string]*appActivity) []
 	return out
 }
 
-func activityKey(a *appActivity) string {
-	if a.clientID != "" {
-		return a.clientID
-	}
-	return a.app
-}
+func activityKey(a *appActivity) string { return cmp.Or(a.clientID, a.app) }
 
-// lookup finds an app's activity by client id, or by name for events that carried no client id.
+// lookup falls back to the name for events that carried no client id.
 func lookup(activity map[string]*appActivity, clientID, name string) *appActivity {
 	if act := activity[clientID]; act != nil {
 		return act

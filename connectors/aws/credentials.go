@@ -13,12 +13,8 @@ import (
 	"github.com/segurata/segurata/internal/secretrisk"
 )
 
-// awsKeyPrefixes are the prefixes a key id hint shows (secretrisk.RedactID).
 const awsKeyPrefixes = "AKIA|ASIA"
 
-// credentialFindings flags long-lived keys stored in plain text, worse when other users can read them.
-// Each names the key id by its redacted hint and, with key, by the fingerprint local-secrets gives
-// its copies; an AWS key id also names the account it belongs to, read offline from the id.
 func credentialFindings(path string, mode fs.FileMode, profiles []awsfiles.Profile, cfg map[string]awsfiles.Config, key *fingerprint.Key) []finding.Finding {
 	var out []finding.Finding
 	for _, p := range profiles {
@@ -75,9 +71,7 @@ func localKeyFinding(path string, mode fs.FileMode, p awsfiles.Profile, by awsfi
 	return f
 }
 
-// scanLocalFiles returns the findings for plain-text keys in the shared credentials file, for
-// Inventory to emit, and who issued each profile's key, so profiles that are not AWS skip the STS
-// and IAM calls.
+// scanLocalFiles also says who issued each profile's key, so non-AWS profiles skip STS and IAM.
 func (c *Connector) scanLocalFiles(emit connector.Emitter) ([]finding.Finding, map[string]awsfiles.Provider) {
 	cfg, err := awsfiles.ReadConfig(c.ConfigFile())
 	if err != nil {

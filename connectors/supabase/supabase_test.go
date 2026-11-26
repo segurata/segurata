@@ -101,6 +101,27 @@ func TestMissingTokenExplainsSetup(t *testing.T) {
 	if st := rec.Statuses[0]; st.State != finding.StateMissingCredentials || !strings.Contains(st.Detail, "keychain:segurata-supabase") {
 		t.Fatalf("status: %+v", st)
 	}
+	if c := (&Connector{}); c.SetupHint(secretName) != setupHint || c.SetupHint("OTHER") != "" {
+		t.Fatal("SetupHint must answer for its own secret only")
+	}
+}
+
+func TestFailedListingsAreReportedPerAccount(t *testing.T) {
+	r := routes(t)
+	r["/v1/organizations/org-pro"] = httpxtest.Fail(http.StatusInternalServerError, "boom")
+	r["/v1/projects"] = httpxtest.Fail(http.StatusInternalServerError, "boom")
+	rec := run(t, httpxtest.NewServer(t, http.Header{"Authorization": {"Bearer " + testToken}}, r), testToken)
+	if len(rec.Scopes) != 1 || rec.Scopes[0].ID != "project:*" || rec.Scopes[0].Inspected {
+		t.Fatalf("a failed project list must leave every project unread: %+v", rec.Scopes)
+	}
+	states := map[string]finding.State{}
+	for _, st := range rec.Statuses {
+		states[st.Account] = st.State
+	}
+	want := map[string]finding.State{"org-free": finding.StateOK, "org-pro": finding.StateError, "supabase": finding.StateError}
+	if fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Fatalf("statuses %v, want %v", states, want)
+	}
 }
 
 func TestRejectedTokenIsReauth(t *testing.T) {

@@ -1,7 +1,6 @@
-// Package workspace audits a Google Workspace tenant through the Admin SDK, read-only: 2-Step
-// Verification, admins, suspended or inactive accounts, third-party apps holding OAuth grants and
-// recent token authorizations and revocations. One instance per tenant ("workspace:example.com").
-// Only GET requests with read-only scopes: nothing in the tenant changes.
+// Package workspace audits a Google Workspace tenant through the Admin SDK with read-only scopes
+// and GET requests only: 2-Step Verification, admins, stale accounts and third-party OAuth apps.
+// One instance per tenant ("workspace:example.com").
 package workspace
 
 import (
@@ -34,8 +33,8 @@ const (
 	defaultInactiveDays = 90
 )
 
-// Scopes are the read-only Admin SDK scopes the access token is requested with. The Reports
-// scope is optional: without it the token activity is skipped.
+// Scopes are requested for the access token; without the last, optional one, token activity is
+// skipped.
 var Scopes = []string{
 	"https://www.googleapis.com/auth/admin.directory.user.readonly",
 	"https://www.googleapis.com/auth/admin.directory.user.security",
@@ -47,21 +46,18 @@ var (
 	reportsScope   = Scopes[2]
 )
 
-// readOnly is the only gcloud command this connector runs. It prints a token from the tenant's
-// stored credentials; signing in is always left to the owner.
+// readOnly is the only gcloud command the connector runs; signing in is left to the owner.
 var readOnly = cli.Allowlist{"auth application-default print-access-token"}
 
 func init() { connector.Register(New()) }
 
-// Connector is the built-in workspace connector. Its fields are injectable for tests.
 type Connector struct {
 	apiURL       string
 	tokenInfoURL string
 	home         string
 	now          func() time.Time
 	http         *http.Client
-	// gcloud returns the runner for the gcloud CLI, with env added to its environment.
-	gcloud func(configured string, env []string) (cli.Runner, error)
+	gcloud       func(configured string, env []string) (cli.Runner, error)
 }
 
 func New() *Connector {
@@ -92,7 +88,7 @@ func (c *Connector) Describe() connector.Description {
 
 type settings struct {
 	domain         string
-	cloudsdkConfig string // gcloud config folder holding this tenant's credentials
+	cloudsdkConfig string // gcloud config folder of this tenant's credentials
 	quotaProject   string // sent as X-Goog-User-Project
 	gcloudPath     string
 	inactiveDays   int
@@ -132,8 +128,7 @@ func parseSettings(m map[string]any, home string) (settings, error) {
 	return s, nil
 }
 
-// DefaultConfigDir is the separate gcloud config a tenant's credentials live in, so the usual
-// ADC is left alone.
+// DefaultConfigDir keeps a tenant's credentials apart from the usual ADC.
 func DefaultConfigDir(home, domain string) string {
 	return filepath.Join(home, ".config", "segurata", "gcloud-"+domain)
 }
@@ -141,9 +136,8 @@ func DefaultConfigDir(home, domain string) string {
 const noTenantHint = `no tenant configured: add one instance per tenant to ~/.config/segurata/config.json, ` +
 	`such as "workspace:example.com": {"config": {"domain": "example.com"}}, and run again for the one-time sign-in steps`
 
-// loginHelp gives the one-time setup per tenant. gcloud requires cloud-platform on the ADC login;
-// the token the connector requests carries only the read-only Scopes. An own OAuth client is
-// needed because gcloud's default client does not allow scopes outside Google Cloud.
+// loginHelp: gcloud requires cloud-platform on the ADC login (the token requested carries only
+// Scopes), and its default OAuth client refuses scopes outside Google Cloud, hence an own client.
 func loginHelp(s settings) string {
 	return strings.Join([]string{
 		"No admin credentials for " + s.domain + " with the read-only Admin SDK scopes.",
@@ -188,7 +182,6 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return nil
 }
 
-// token returns the access token, or the state and detail of why there is none.
 func (c *Connector) token(ctx context.Context, cfg settings, secret string) (string, finding.State, string) {
 	if secret != "" {
 		return secret, "", ""
@@ -237,8 +230,7 @@ type tokenInfo struct {
 	reports bool
 }
 
-// checkToken asks tokeninfo which scopes and account the token carries before calling the API.
-// The token goes in a form body, never in a URL, so no error message can carry it.
+// checkToken posts the token in a form body, never a URL, so no error message can carry it.
 func (c *Connector) checkToken(ctx context.Context, cfg settings, token string) (tokenInfo, finding.State, string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenInfoURL,
 		strings.NewReader(url.Values{"access_token": {token}}.Encode()))

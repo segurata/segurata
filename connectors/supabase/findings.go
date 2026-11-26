@@ -1,6 +1,7 @@
 package supabase
 
 import (
+	"cmp"
 	"fmt"
 
 	"github.com/segurata/segurata/connectors/internal/httpx"
@@ -12,9 +13,8 @@ const (
 	urlAPIKeys     = "https://supabase.com/docs/guides/api/api-keys"
 )
 
-// orgFindings records the plan and, where usage can be billed beyond quota, asks for a manual
-// spend cap check: the Management API does not expose it (verified against
-// https://api.supabase.com/api/v1-json).
+// orgFindings asks for a manual spend cap check on paid plans: the Management API does not expose
+// it (verified against https://api.supabase.com/api/v1-json).
 func orgFindings(o organization) []finding.Finding {
 	out := []finding.Finding{{
 		Resource: finding.Resource{Type: "supabase_organization", ID: o.Slug, Name: o.Name},
@@ -39,17 +39,14 @@ func orgFindings(o organization) []finding.Finding {
 	return out
 }
 
-// keyFinding lists one API key by name and type. Legacy service_role keys are long-lived JWTs that
-// bypass Row Level Security and cannot be revoked one by one, so they are worth migrating.
+// keyFinding: legacy service_role keys are long-lived JWTs that bypass Row Level Security and
+// cannot be revoked one by one.
 func keyFinding(p project, k apiKey) finding.Finding {
 	typ := "unknown"
 	if k.Type != nil {
 		typ = *k.Type
 	}
-	id := k.ID
-	if id == "" {
-		id = typ + ":" + k.Name
-	}
+	id := cmp.Or(k.ID, typ+":"+k.Name)
 	f := finding.Finding{
 		Resource:  finding.Resource{Type: "supabase_api_key", ID: p.Ref + "/" + id, Name: p.Name + " / " + k.Name},
 		Kind:      finding.KindCredential,

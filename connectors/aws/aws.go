@@ -1,6 +1,5 @@
-// Package aws inventories AWS accounts through the installed `aws` CLI: root user MFA and keys,
-// IAM access keys (age, last use), console users without MFA, budgets and their alerts, and
-// long-lived keys left in the local shared credentials file. Read-only. See docs/cloud-connectors.md.
+// Package aws inventories AWS accounts read-only through the `aws` CLI, and long-lived keys left
+// in the shared credentials file. See docs/cloud-connectors.md.
 package aws
 
 import (
@@ -24,11 +23,7 @@ import (
 	"github.com/segurata/segurata/internal/fingerprint"
 )
 
-// staleAfter is the age or idle time past which an access key is a liability.
-const staleAfter = 90 * 24 * time.Hour
-
-// readOnly lists every aws command this connector runs. Anything else is refused before it reaches
-// the CLI, so a bug cannot create, delete or change anything in the account.
+// readOnly is every aws command the connector runs, so a bug cannot change the account.
 var readOnly = cli.Allowlist{
 	"configure list-profiles",
 	"sts get-caller-identity",
@@ -47,15 +42,12 @@ var readOnly = cli.Allowlist{
 }
 
 type Connector struct {
-	// Run executes aws commands after the read-only guard. Tests replace it with canned output.
-	Run cli.Runner
-	Now func() time.Time
-	// CredentialsFile returns the shared credentials file path to scan for long-lived keys.
+	Run             cli.Runner // aws, behind the read-only guard
+	Now             func() time.Time
 	CredentialsFile func() string
-	// ConfigFile returns the shared config file path, read for each profile's region and endpoint.
-	ConfigFile func() string
-	// Fingerprint opens the key local-secrets fingerprints secrets with, so a plain-text key id is
-	// named by the same fingerprint as its leaked copies; nil or not ok leaves it out.
+	ConfigFile      func() string
+	// Fingerprint names a plain-text key id by the fingerprint local-secrets gives its leaked
+	// copies; nil or not ok leaves it out.
 	Fingerprint func() (fingerprint.Key, bool)
 }
 
@@ -85,8 +77,7 @@ func (c *Connector) Track(finding.Finding) *finding.Track {
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
 	now := c.Now()
 	local, issuers := c.scanLocalFiles(emit)
-	// The plain-text keys are reported after the profiles are inspected, so each says whether STS
-	// accepted it, and for which account.
+	// Plain-text keys are reported last, so each says whether STS accepted it.
 	works := map[string]string{} // profile -> account STS named
 	defer func() {
 		for _, f := range local {
@@ -120,7 +111,6 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return nil
 }
 
-// profiles comes from config `profiles` when set, otherwise from `aws configure list-profiles`.
 func (c *Connector) profiles(ctx context.Context, cfg map[string]any) ([]string, error) {
 	if raw, ok := cfg["profiles"].([]any); ok {
 		var out []string
@@ -138,8 +128,7 @@ func (c *Connector) profiles(ctx context.Context, cfg map[string]any) ([]string,
 	return strings.Fields(string(out)), nil
 }
 
-// call runs one read-only aws command for a profile and decodes its JSON output.
-// us-east-1 hosts the global IAM, STS, Budgets and Cost Explorer endpoints of the aws partition.
+// call pins us-east-1, which hosts the global IAM, STS, Budgets and Cost Explorer endpoints.
 func (c *Connector) call(ctx context.Context, profile string, out any, args ...string) error {
 	args = append(args, "--profile", profile, "--region", "us-east-1", "--output", "json", "--no-cli-pager")
 	raw, err := c.aws(ctx, args...)
@@ -152,12 +141,10 @@ func (c *Connector) call(ctx context.Context, profile string, out any, args ...s
 	return json.Unmarshal(raw, out)
 }
 
-// aws runs one command through the read-only guard.
 func (c *Connector) aws(ctx context.Context, args ...string) ([]byte, error) {
 	return readOnly.Guard(c.Run).Run(ctx, args...)
 }
 
-// classify maps an aws CLI failure to the status the owner has to act on.
 func classify(err error) finding.State {
 	if errors.Is(err, exec.ErrNotFound) {
 		return finding.StateUnsupported
@@ -181,7 +168,6 @@ func containsAny(s string, subs ...string) bool {
 	return false
 }
 
-// audit inspects one account through one profile and collects the checks that failed.
 type audit struct {
 	c          *Connector
 	ctx        context.Context
@@ -192,12 +178,12 @@ type audit struct {
 	emitter    connector.Emitter
 	failedWith []string
 	denied     []string // IAM actions the principal may not call, in the order first seen
-	activeKeys int      // active IAM user access keys, a spend risk the budget rules weigh
-	rootKeys   int      // root user access keys, same
+	activeKeys int      // spend risks the budget rules weigh
+	rootKeys   int
 }
 
-// emit stamps a finding with the account and with the profile as its scope: a profile whose
-// identity cannot be read is reported by profile name, and then only its findings are unresolved.
+// emit scopes a finding to its profile: a profile whose identity cannot be read leaves only its
+// own findings unresolved.
 func (a *audit) emit(f finding.Finding) {
 	f.Account, f.Scope = a.account, profileScope(a.profile)
 	if f.Evidence == nil {
@@ -207,7 +193,6 @@ func (a *audit) emit(f finding.Finding) {
 	a.emitter.Finding(f)
 }
 
-// call runs one read-only aws command through the audited profile.
 func (a *audit) call(out any, args ...string) error {
 	return a.c.call(a.ctx, a.profile, out, args...)
 }
@@ -240,9 +225,8 @@ func (a *audit) check(name string, fn func() error) {
 	}
 }
 
-// policyHint names the AWS managed policies that grant the denied read-only actions: SecurityAudit
-// allows iam:Get* and iam:List*, AWSBudgetsReadOnlyAccess allows budgets:ViewBudget and
-// budgets:Describe*. Anything else (Cost Explorer) has to be allowed by name.
+// policyHint: SecurityAudit grants iam:Get* and iam:List*, AWSBudgetsReadOnlyAccess
+// budgets:ViewBudget and budgets:Describe*; Cost Explorer has to be allowed by name.
 func policyHint(principal string, denied []string) string {
 	var iam, budgets, other []string
 	for _, a := range denied {
@@ -277,8 +261,7 @@ func policyHint(principal string, denied []string) string {
 
 func profileScope(profile string) string { return "profile " + profile }
 
-// inspectProfile audits the account a profile reaches and returns its id, "" when STS refused the
-// profile's credentials.
+// inspectProfile returns the account id, "" when STS refused the profile's credentials.
 func (c *Connector) inspectProfile(ctx context.Context, profile string, now time.Time, costExplorer bool, seen map[string]bool, emit connector.Emitter) string {
 	var id struct{ Account, Arn string }
 	if err := c.call(ctx, profile, &id, "sts", "get-caller-identity"); err != nil {
@@ -295,8 +278,7 @@ func (c *Connector) inspectProfile(ctx context.Context, profile string, now time
 	var aliases struct{ AccountAliases []string }
 	if err := c.call(ctx, profile, &aliases, "iam", "list-account-aliases"); err == nil && len(aliases.AccountAliases) > 0 {
 		a.account = aliases.AccountAliases[0]
-		// Findings and statuses name the alias: one info record keeps the id, so attribution knows
-		// which account a leaked key id belongs to.
+		// Findings name the alias; this record keeps the id for attribution of leaked key ids.
 		a.emit(finding.Finding{Resource: finding.Resource{Type: attribution.AWSAccountType, ID: id.Account, Name: a.account},
 			Kind: finding.KindSetting, Severity: finding.SevInfo, Title: fmt.Sprintf("AWS account %s is %s", a.account, id.Account),
 			Evidence: map[string]any{"account_id": id.Account}})
@@ -433,8 +415,7 @@ type notification struct {
 	ThresholdType      string
 }
 
-// budgets judges the account's cost budgets with the shared rules. Budget actions are read only
-// when some budget alerts, since only then is their absence a finding.
+// budgets reads budget actions only when some budget alerts: only then is their absence a finding.
 func (a *audit) budgets() error {
 	var list struct{ Budgets []awsBudget }
 	if err := a.call(&list, "budgets", "describe-budgets", "--account-id", a.accountID); err != nil {

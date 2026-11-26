@@ -21,7 +21,6 @@ func ms(v *int64) *time.Time {
 	return &t
 }
 
-// tokenFinding grades one token: reported leaked, idle, or without expiry.
 func tokenFinding(t token, now time.Time) finding.Finding {
 	created, active, expires, leaked := ms(t.CreatedAt), ms(t.ActiveAt), ms(t.ExpiresAt), ms(t.LeakedAt)
 	var scopes []string
@@ -68,8 +67,8 @@ func tokenFinding(t token, now time.Time) finding.Finding {
 	return f
 }
 
-// teamFindings lists the team and, on plans billed by usage, asks for a manual Spend Management check:
-// the public REST API does not expose budgets (verified against https://vercel.com/openapi.json).
+// teamFindings asks for a manual Spend Management check on plans billed by usage: the REST API
+// does not expose budgets (verified against https://vercel.com/openapi.json).
 func teamFindings(t team) []finding.Finding {
 	plan := t.plan()
 	ev := map[string]any{"slug": t.Slug, "plan": plan}

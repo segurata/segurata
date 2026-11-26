@@ -226,6 +226,19 @@ func TestPolicyHintAllowsCostExplorerByName(t *testing.T) {
 	}
 }
 
+func TestPrincipalName(t *testing.T) {
+	for arn, want := range map[string]string{
+		"arn:aws:iam::111122223333:user/alice":                   "user alice",
+		"arn:aws:iam::111122223333:root":                         "root",
+		"arn:aws:sts::111122223333:assumed-role/Admin/session-1": "arn:aws:sts::111122223333:assumed-role/Admin/session-1",
+		"": "the profile",
+	} {
+		if got := principalName(arn); got != want {
+			t.Errorf("%q: got %q, want %q", arn, got, want)
+		}
+	}
+}
+
 func TestR2ProfileIsReportedAsR2AndSkipsSTS(t *testing.T) {
 	dir := t.TempDir()
 	cred := filepath.Join(dir, "credentials")

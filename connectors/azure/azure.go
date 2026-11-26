@@ -1,11 +1,11 @@
-// Package azure inventories Azure through the installed `az` CLI: consumption budgets per
-// subscription and client secrets of app registrations that never expire or are about to.
-// Read-only; the remediation in remediate.go deletes only after a confirmed plan. See
+// Package azure inventories, read-only through the `az` CLI, budgets per subscription and app
+// registration client secrets. The remediation deletes only after a confirmed plan. See
 // docs/cloud-connectors.md.
 package azure
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,8 +20,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// readOnly lists every az command this connector runs. Anything else is refused before it reaches
-// the CLI, so a bug cannot reset a credential, delete an app or change a subscription.
+// readOnly is every az command the inventory runs, so a bug cannot change the tenant.
 var readOnly = cli.Allowlist{
 	"account show",
 	"account list",
@@ -30,11 +29,9 @@ var readOnly = cli.Allowlist{
 }
 
 type Connector struct {
-	// Run executes az commands after the read-only guard. Tests replace it with canned output.
-	Run cli.Runner
-	Now func() time.Time
-	// Exec runs a confirmed remediation's allowlisted commands; nil is connector.System.
-	Exec connector.Executor
+	Run  cli.Runner // az, behind the read-only guard
+	Now  func() time.Time
+	Exec connector.Executor // runs a confirmed remediation; nil is connector.System
 }
 
 func New() *Connector {
@@ -89,12 +86,7 @@ type account struct {
 }
 
 func (a account) tenantLabel() string {
-	for _, s := range []string{a.TenantDefaultDomain, a.TenantDisplayName, a.TenantID} {
-		if s != "" {
-			return s
-		}
-	}
-	return "azure"
+	return cmp.Or(a.TenantDefaultDomain, a.TenantDisplayName, a.TenantID, "azure")
 }
 
 func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit connector.Emitter) error {
@@ -110,7 +102,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 		emit.Status(finding.Status{Account: tenant, State: classify(err), Detail: err.Error()})
 		return nil
 	}
-	// App secrets come first: the tenant's non-expiring ones are spend risks of its subscriptions.
+	// The tenant's non-expiring secrets are spend risks of its subscriptions.
 	secrets := c.appSecrets(ctx, tenant, now, emit)
 	for _, s := range subs {
 		if s.State != "Enabled" {
@@ -125,8 +117,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	return nil
 }
 
-// azBudget is a consumption budget as `az consumption budget list` prints it: the CLI flattens
-// the REST properties into the budget, and the REST shape nests them under properties.
+// azBudget reads both the CLI's flattened properties and the REST shape's nested ones.
 type azBudget struct {
 	Name string `json:"name"`
 	budgetProps
@@ -192,7 +183,6 @@ type app struct {
 	PasswordCredentials []passwordCredential `json:"passwordCredentials"`
 }
 
-// listApps reads every app registration with its client secrets (metadata only).
 func (c *Connector) listApps(ctx context.Context) ([]app, error) {
 	var apps []app
 	query := "[].{appId:appId,displayName:displayName,passwordCredentials:passwordCredentials}"
@@ -200,7 +190,7 @@ func (c *Connector) listApps(ctx context.Context) ([]app, error) {
 	return apps, err
 }
 
-// appSecrets reports the tenant's client secrets and returns how many never expire.
+// appSecrets returns how many client secrets never expire.
 func (c *Connector) appSecrets(ctx context.Context, tenant string, now time.Time, emit connector.Emitter) int {
 	apps, err := c.listApps(ctx)
 	if err != nil {

@@ -309,19 +309,17 @@ func TestMissingTokenExplainsSetup(t *testing.T) {
 	}
 }
 
-func TestRejectedTokenIsReauth(t *testing.T) {
+func TestRefusedOrExpiredTokenIsReauth(t *testing.T) {
 	rec := run(t, newServer(t, nil), "wrong-token", nil)
 	if len(rec.Statuses) != 1 || rec.Statuses[0].State != finding.StateReauth || len(rec.Findings) != 0 {
-		t.Fatalf("statuses %+v findings %d", rec.Statuses, len(rec.Findings))
+		t.Fatalf("rejected: statuses %+v findings %d", rec.Statuses, len(rec.Findings))
 	}
 	rec.AssertNoSecret(t, "wrong-token")
-}
 
-func TestExpiredTokenIsReauth(t *testing.T) {
 	srv := newServer(t, map[string]httpxtest.Route{"/user/tokens/verify": raw(`{"id":"t","status":"expired"}`)})
-	rec := run(t, srv, testToken, nil)
+	rec = run(t, srv, testToken, nil)
 	if st := rec.Statuses[0]; st.State != finding.StateReauth || !strings.Contains(st.Detail, "expired") {
-		t.Fatalf("status %+v", st)
+		t.Fatalf("expired: status %+v", st)
 	}
 }
 

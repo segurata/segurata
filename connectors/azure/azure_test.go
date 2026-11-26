@@ -146,6 +146,7 @@ func TestSecretFinding(t *testing.T) {
 	at := func(d time.Duration) *time.Time { x := now.Add(d); return &x }
 	day := 24 * time.Hour
 	date := func(t *time.Time) string { return t.UTC().Format(time.DateOnly) }
+	portalMax := now.AddDate(2, 0, 0)
 	cases := []struct {
 		name  string
 		end   *time.Time
@@ -154,6 +155,7 @@ func TestSecretFinding(t *testing.T) {
 	}{
 		{"no end date", nil, finding.SevHigh, `Client secret of app "ci" has no expiry date`},
 		{"far future", at(3 * 365 * day), finding.SevHigh, `Client secret of app "ci" never expires in practice (expires ` + date(at(3*365*day)) + ")"},
+		{"the portal's 24-month maximum across a leap day", &portalMax, finding.SevInfo, `Client secret of app "ci" expires ` + date(&portalMax)},
 		{"healthy", at(200 * day), finding.SevInfo, `Client secret of app "ci" expires ` + date(at(200*day))},
 		{"expiring", at(10 * day), finding.SevMedium, `Client secret of app "ci" expires ` + date(at(10*day)) + ", in 10 days"},
 		{"expired", at(-day), finding.SevLow, `Client secret of app "ci" expired on ` + date(at(-day)) + " and is still registered"},

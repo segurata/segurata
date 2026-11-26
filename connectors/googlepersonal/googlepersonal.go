@@ -33,12 +33,11 @@ const (
 		`Set up another way to sign in to the app first if you still need that account.`
 )
 
-// dependency is a grant held by a command-line tool you run, segurata's own among them: removing
-// it signs the tool out, so the fix is never "Remove all access".
+// dependency is a grant a command-line tool you run holds, segurata's own among them: removing it
+// signs the tool out, so the fix is never "Remove all access".
 type dependency struct{ label, fix string }
 
-// dependencies by the app name Google shows. Google gives these CLIs the whole cloud-platform
-// scope and offers nothing narrower.
+// dependencies by app name: Google gives these CLIs the whole cloud-platform scope, nothing narrower.
 var dependencies = map[string]dependency{
 	"Google Cloud SDK": {"segurata depends on it",
 		"segurata's gcp connector runs gcloud with this grant: do not remove it on accounts you inventory. " +
@@ -76,9 +75,8 @@ func (GooglePersonal) Inventory(ctx context.Context, req connector.Request, emit
 	return inventory(ctx, cdpBrowser{c}, emit, time.Now(), only)
 }
 
-// accountFilter reads config `accounts`: when set, only these emails are inventoried. Other
-// accounts signed in to the browser (someone else's mailbox you were given access to) get no
-// status; each is declared as a skipped scope.
+// accountFilter: other accounts signed in to the browser, such as a mailbox you were given access
+// to, get no status, only a skipped scope.
 func accountFilter(cfg map[string]any) (map[string]bool, error) {
 	raw, ok := cfg["accounts"]
 	if !ok || raw == nil {
@@ -99,8 +97,7 @@ func accountFilter(cfg map[string]any) (map[string]bool, error) {
 	return only, nil
 }
 
-// browser loads a page, polls a JavaScript expression until ready accepts its value or tries
-// run out, and returns the last value. The seam that lets tests replace Brave with fixtures.
+// browser polls expr on a page until ready accepts its value or tries run out.
 type browser interface {
 	load(ctx context.Context, url, expr string, ready func(json.RawMessage) bool, tries int) (json.RawMessage, error)
 }
@@ -115,7 +112,7 @@ func (b cdpBrowser) load(ctx context.Context, url, expr string, ready func(json.
 	return v, err
 }
 
-// The account email is read from the page source: it is not always in the visible text.
+// The account email is read from the page source: it is not always visible.
 const connectionsJS = `({
   url: location.href,
   mail: ((document.documentElement.innerHTML.match(/"([\w.+-]+@[\w-]+\.[\w.-]+)"/) || [])[1]) || "",
@@ -171,14 +168,11 @@ func connectionsURL(u int) string {
 	return fmt.Sprintf("https://myaccount.google.com/u/%d/connections", u)
 }
 
-// inventory walks the accounts signed in to the browser. only, when not nil, names the accounts
-// to inventory.
 func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.Time, only map[string]bool) error {
 	seen := map[string]bool{}
 	for u := 0; u < maxAccounts && ctx.Err() == nil; u++ {
 		raw, err := b.load(ctx, connectionsURL(u), connectionsJS, connectionsReady, 24)
-		if err != nil {
-			// The accounts from here on were not read, and which they are is unknown.
+		if err != nil { // which accounts are left unread is unknown
 			emit.Status(finding.Status{Account: fmt.Sprintf("authuser %d", u), Scope: finding.ScopeAll, State: finding.StateError, Detail: err.Error()})
 			break
 		}
@@ -195,8 +189,7 @@ func inventory(ctx context.Context, b browser, emit connector.Emitter, now time.
 		}
 		seen[page.Mail] = true
 		if only != nil && !only[strings.ToLower(page.Mail)] {
-			// Turned off by config: declared skipped, so findings an earlier run made for this
-			// account are not taken as resolved.
+			// Declared skipped, so findings an earlier run made for this account are not resolved.
 			emit.Scope(page.Mail, false, "not in connectors.google-personal.config.accounts")
 			continue
 		}
@@ -246,18 +239,16 @@ type inspected struct {
 	err      error
 }
 
-// inspectAll reads every app with a bounded number of pages open, keeping input order.
 func inspectAll(ctx context.Context, b browser, links []appLink, now time.Time) []inspected {
 	out := make([]inspected, len(links))
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for i, l := range links {
-		wg.Add(1)
 		sem <- struct{}{}
-		go func() {
-			defer func() { <-sem; wg.Done() }()
+		wg.Go(func() {
+			defer func() { <-sem }()
 			out[i] = inspect(ctx, b, l, now)
-		}()
+		})
 	}
 	wg.Wait()
 	return out
@@ -313,7 +304,7 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 	}
 	var blast finding.Blast
 	if resType == "oauth_grant" && sev.Rank() >= finding.SevHigh.Rank() {
-		blast = finding.BlastMailAndFiles // high-risk scopes read or change mail and files
+		blast = finding.BlastMailAndFiles
 	}
 	res.finding = finding.Finding{
 		Blast:     blast,
@@ -331,9 +322,8 @@ func inspect(ctx context.Context, b browser, l appLink, now time.Time) inspected
 	return res
 }
 
-// stableID keys a finding on account, resource type and app name. Google's overview ids are
-// fresh opaque tokens on every page load (checked 2026-11-23), so the default id, which hashes
-// resource.id, would change between runs. Repeated names get an ordinal in page order.
+// stableID keys on account, type and app name: Google's overview ids are fresh tokens on every
+// page load (checked 2026-11-23). Repeated names get an ordinal in page order.
 func stableID(f finding.Finding, occurrences map[string]int) string {
 	key := f.Resource.Type + "|" + f.Resource.Name
 	n := occurrences[key]
@@ -344,8 +334,6 @@ func stableID(f finding.Finding, occurrences map[string]int) string {
 	return finding.StableID(name, f.Account, key)
 }
 
-// overviewID is the opaque token Google puts after linkedapps/overview/. It identifies the app
-// within one page load only (see stableID); the overview URL keeps working for a while.
 func overviewID(href string) string {
 	_, id, ok := strings.Cut(href, "linkedapps/overview/")
 	if !ok {
@@ -357,7 +345,7 @@ func overviewID(href string) string {
 	return id
 }
 
-// union appends to a the entries of b it does not already hold. Never returns nil.
+// union never returns nil.
 func union(a, b []string) []string {
 	out := append([]string{}, a...)
 	have := map[string]bool{}

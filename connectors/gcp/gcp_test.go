@@ -16,6 +16,7 @@ import (
 
 	"github.com/segurata/segurata/connectors/internal/budget"
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 )
@@ -66,40 +67,22 @@ func fixture(t *testing.T, name string) string {
 	return string(b)
 }
 
-type recorder struct {
-	mu       sync.Mutex
-	findings []finding.Finding
-	statuses []finding.Status
-	skipped  []string
-}
+type recorder struct{ httpxtest.Recorder }
 
-func (r *recorder) Finding(f finding.Finding) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	f.Connector = connectorName
-	f.Fill(time.Now())
-	r.findings = append(r.findings, f)
-}
-
-func (r *recorder) Status(s finding.Status) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.statuses = append(r.statuses, s)
-}
-
-func (r *recorder) Scope(id string, inspected bool, _ string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !inspected {
-		r.skipped = append(r.skipped, id)
+func (r *recorder) skipped() []string {
+	var out []string
+	for _, s := range r.Scopes {
+		if !s.Inspected {
+			out = append(out, s.ID)
+		}
 	}
+	return out
 }
-func (r *recorder) Log(string) {}
 
 func (r *recorder) byTitle(t *testing.T, sub string) finding.Finding {
 	t.Helper()
 	for _, match := range []func(string, string) bool{strings.HasSuffix, strings.Contains} {
-		for _, f := range r.findings {
+		for _, f := range r.Findings {
 			if match(f.Title, sub) {
 				return f
 			}
@@ -111,7 +94,7 @@ func (r *recorder) byTitle(t *testing.T, sub string) finding.Finding {
 
 func (r *recorder) titles() string {
 	var b strings.Builder
-	for _, f := range r.findings {
+	for _, f := range r.Findings {
 		b.WriteString("  [" + string(f.Severity) + "] " + f.Title + "\n")
 	}
 	return b.String()
@@ -219,8 +202,8 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		// the projects each account sees, for attribution
 		"owner@example.com sees 3 projects": finding.SevInfo,
 	}
-	if len(rec.findings) != len(want) {
-		t.Fatalf("got %d findings, want %d:\n%s", len(rec.findings), len(want), rec.titles())
+	if len(rec.Findings) != len(want) {
+		t.Fatalf("got %d findings, want %d:\n%s", len(rec.Findings), len(want), rec.titles())
 	}
 	for title, sev := range want {
 		if f := rec.byTitle(t, title); f.Severity != sev {
@@ -256,15 +239,12 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		t.Errorf("budget finding kind %s", b.Kind)
 	}
 
-	raw, _ := json.Marshal(rec.findings)
 	for _, secret := range []string{"SYNTHETIC-NOT-A-KEY", "SYNTHETIC-refresh-token", "SYNTHETIC-client-secret", "11111111-2222-3333-4444-555555555555"} {
-		if strings.Contains(string(raw), secret) {
-			t.Errorf("secret %q leaked into findings", secret)
-		}
+		rec.AssertNoSecret(t, secret)
 	}
 
 	statuses := map[string]finding.State{}
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		statuses[s.Account+" | "+s.Detail] = s.State
 	}
 	wantStatus := []struct {
@@ -287,8 +267,8 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 			t.Errorf("missing status %s %q (%s); got %v", w.account, w.detail, w.state, statuses)
 		}
 	}
-	if len(rec.statuses) != len(wantStatus) {
-		t.Errorf("got %d statuses, want %d: %v", len(rec.statuses), len(wantStatus), statuses)
+	if len(rec.Statuses) != len(wantStatus) {
+		t.Errorf("got %d statuses, want %d: %v", len(rec.Statuses), len(wantStatus), statuses)
 	}
 	for k := range statuses {
 		if strings.Contains(k, "Help Token") || strings.Contains(k, "authenticated as") {
@@ -298,7 +278,7 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 
 	// Permission denied on demo-blog leaves only demo-blog's findings unresolved.
 	var tally finding.Tally
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		tally.Status(s)
 	}
 	end := tally.End(connectorName, "", time.Now(), time.Now(), nil)
@@ -369,8 +349,8 @@ func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 		t.Errorf("linked projects: %v", got)
 	}
 	// The person's account the config leaves out is declared skipped; the service account is not.
-	if !slices.Equal(rec.skipped, []string{"work@example.org"}) {
-		t.Errorf("skipped %v, want the unwatched work@example.org only", rec.skipped)
+	if !slices.Equal(rec.skipped(), []string{"work@example.org"}) {
+		t.Errorf("skipped %v, want the unwatched work@example.org only", rec.skipped())
 	}
 }
 
@@ -398,7 +378,7 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 		t.Fatal(err)
 	}
 	var projectStatuses []string
-	for _, s := range rec.statuses {
+	for _, s := range rec.Statuses {
 		if strings.HasPrefix(s.Detail, "project ") {
 			projectStatuses = append(projectStatuses, s.Account+" | "+s.Detail)
 		}
@@ -415,7 +395,7 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 	// The skipped project is declared, so findings earlier runs made there are not taken as
 	// resolved. The service account is not: nothing is scoped to it, and declaring it would mark
 	// every run partial.
-	if got := strings.Join(rec.skipped, ","); got != "demo-blog" {
+	if got := strings.Join(rec.skipped(), ","); got != "demo-blog" {
 		t.Errorf("skipped scopes %q", got)
 	}
 }
@@ -436,8 +416,8 @@ func TestServiceAccountListedInConfigIsUsed(t *testing.T) {
 	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1, Config: cfg}, rec); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.statuses) == 0 || rec.statuses[0].Account != "ci@demo-shop.iam.gserviceaccount.com" || rec.statuses[0].State != finding.StateOK {
-		t.Fatalf("statuses: %+v", rec.statuses)
+	if len(rec.Statuses) == 0 || rec.Statuses[0].Account != "ci@demo-shop.iam.gserviceaccount.com" || rec.Statuses[0].State != finding.StateOK {
+		t.Fatalf("statuses: %+v", rec.Statuses)
 	}
 }
 
@@ -481,6 +461,21 @@ func TestRateLimitGivesUpAfterRetries(t *testing.T) {
 	}
 	if state, why := classify(err); state != finding.StateError || !strings.HasPrefix(why, "rate limited") {
 		t.Errorf("classify: %s %s", state, why)
+	}
+}
+
+func TestClassify(t *testing.T) {
+	for stderr, want := range map[string]string{
+		"ERROR: (gcloud.projects.list) Reauthentication failed. cannot prompt during non-interactive execution.": "credentials expired",
+		"ERROR: (gcloud.services.api-keys.list) PERMISSION_DENIED: Permission denied on resource project p.":     deniedPrefix,
+		"ERROR: (gcloud.billing.budgets.list) HttpError accessing <https://x>: response: <{'status': '403'}>":    deniedPrefix,
+		"ERROR: (gcloud.projects.get-iam-policy) NOT_FOUND: project 1403777 was not found.":                      "NOT_FOUND",
+		"ERROR: (gcloud.services.api-keys.list) SERVICE_DISABLED: API has not been used in project 4030.":        "API not enabled",
+	} {
+		_, why := classify(&cli.Error{Stderr: stderr, Err: errors.New("exit status 1")})
+		if !strings.HasPrefix(why, want) {
+			t.Errorf("%q: got %q, want prefix %q", stderr, why, want)
+		}
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/budget"
+	"github.com/segurata/segurata/connectors/internal/httpx"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/secretrisk"
 )
@@ -26,8 +27,6 @@ const (
 	urlR2Tokens      = "https://dash.cloudflare.com/?to=/:account/r2/overview"
 )
 
-func days(d time.Duration) int { return int(d.Hours() / 24) }
-
 func rootProfileFinding(profile string) finding.Finding {
 	return finding.Finding{
 		Resource: finding.Resource{Type: "aws_root_profile", ID: profile, Name: profile},
@@ -41,7 +40,6 @@ func rootProfileFinding(profile string) finding.Finding {
 	}
 }
 
-// rootFindings reads the root user's state from `iam get-account-summary`.
 func rootFindings(summary map[string]int) []finding.Finding {
 	var out []finding.Finding
 	if summary["AccountMFAEnabled"] == 0 {
@@ -67,10 +65,9 @@ func rootFindings(summary map[string]int) []finding.Finding {
 	return out
 }
 
-// keyFinding grades one IAM access key by status, age and last use.
 func keyFinding(user string, k accessKey, lastUsed *time.Time, now time.Time) finding.Finding {
 	created := k.CreateDate
-	age := days(now.Sub(created))
+	age := httpx.Days(now, created)
 	f := finding.Finding{
 		Resource:   finding.Resource{Type: "aws_access_key", ID: k.AccessKeyId, Name: user},
 		Kind:       finding.KindCredential,
@@ -88,20 +85,19 @@ func keyFinding(user string, k accessKey, lastUsed *time.Time, now time.Time) fi
 	case k.Status != "Active":
 		f.Severity = finding.SevLow
 		f.Title = fmt.Sprintf("Inactive access key of IAM user %s still exists (%d days old)", user, age)
-	case lastUsed == nil && now.Sub(created) > staleAfter:
+	case lastUsed == nil && now.Sub(created) > httpx.IdleAfter:
 		f.Severity = finding.SevHigh
 		f.Title = fmt.Sprintf("Access key of IAM user %s has never been used (%d days old)", user, age)
-	case lastUsed != nil && now.Sub(*lastUsed) > staleAfter:
+	case lastUsed != nil && now.Sub(*lastUsed) > httpx.IdleAfter:
 		f.Severity = finding.SevHigh
-		f.Title = fmt.Sprintf("Access key of IAM user %s unused for %d days", user, days(now.Sub(*lastUsed)))
-	case now.Sub(created) > staleAfter:
+		f.Title = fmt.Sprintf("Access key of IAM user %s unused for %d days", user, httpx.Days(now, *lastUsed))
+	case now.Sub(created) > httpx.IdleAfter:
 		f.Severity = finding.SevHigh
 		f.Title = fmt.Sprintf("Access key of IAM user %s is %d days old", user, age)
 	}
 	return f
 }
 
-// userMFAFinding flags users who can sign in to the console without a second factor.
 func userMFAFinding(user string, console bool, mfaDevices int) (finding.Finding, bool) {
 	if !console || mfaDevices > 0 {
 		return finding.Finding{}, false
@@ -115,7 +111,6 @@ func userMFAFinding(user string, console bool, mfaDevices int) (finding.Finding,
 	}, true
 }
 
-// accountWording is how the shared budget rules speak about an AWS account.
 var accountWording = budget.Wording{
 	AllScope:   "whole account",
 	ConsoleURL: "https://console.aws.amazon.com/billing/home#/budgets",
@@ -138,9 +133,8 @@ func accountContainer(accountID, label string, activeKeys, rootKeys int) budget.
 
 var timeUnits = map[string]string{"DAILY": budget.PeriodDay, "MONTHLY": budget.PeriodMonth, "QUARTERLY": budget.PeriodQuarter, "ANNUALLY": budget.PeriodYear}
 
-// neutral maps a cost budget and its notifications to the shared model. Every AWS notification
-// has at least one subscriber (email or SNS); which kind is not read. An absolute threshold is
-// turned into a percentage of the limit; LESS_THAN notifications do not warn of overspend.
+// neutral: every AWS notification has at least one subscriber, of a kind not read; LESS_THAN
+// notifications do not warn of overspend.
 func (b awsBudget) neutral(ns []notification) budget.Budget {
 	nb := budget.Budget{ID: b.BudgetName, Name: b.BudgetName, Period: budget.PeriodCustom}
 	if p, ok := timeUnits[b.TimeUnit]; ok {

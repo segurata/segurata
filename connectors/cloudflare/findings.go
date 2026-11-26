@@ -1,8 +1,11 @@
 package cloudflare
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -42,8 +45,8 @@ type apiToken struct {
 	Policies   []policy  `json:"policies"`
 }
 
-// condition holds the client IP filter. The API guide writes the key "request.ip"; the API
-// reference writes "request_ip". Both are read.
+// condition reads both spellings of the client IP filter: the API guide writes "request.ip", the
+// reference "request_ip".
 type condition struct {
 	RequestIP    *ipFilter `json:"request.ip"`
 	RequestIPAlt *ipFilter `json:"request_ip"`
@@ -75,23 +78,16 @@ type policy struct {
 	Resources        map[string]json.RawMessage `json:"resources"`
 }
 
-// canEdit reports whether a permission group grants more than reading. Cloudflare names read-only
-// groups "… Read" or "… Read-Only"; anything else (Write, Edit, Admin, an unnamed group) counts as
-// edit, so an unknown group is never taken for read-only.
+// canEdit takes only groups named "… Read" or "… Read-Only" as read-only, so an unknown or
+// unnamed group is never taken for read-only.
 func canEdit(g permissionGroup) bool {
 	n := strings.ToLower(strings.TrimSpace(g.Name))
 	return n == "" || !(strings.HasSuffix(n, " read") || strings.HasSuffix(n, " read-only"))
 }
 
-// scopes describes a policy's resources and lists the ones that cover every zone or every
-// account the user can reach.
+// scopes describes a policy's resources; broad are the ones covering every zone or account.
 func scopes(res map[string]json.RawMessage) (desc, broad []string) {
-	keys := make([]string, 0, len(res))
-	for k := range res {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(res)) {
 		switch {
 		case k == resAllAccounts:
 			desc, broad = append(desc, "all accounts"), append(broad, "all accounts")
@@ -119,7 +115,6 @@ func scopes(res map[string]json.RawMessage) (desc, broad []string) {
 	return desc, broad
 }
 
-// policySummary condenses a token's policies for the evidence and the severity rules.
 type policySummary struct {
 	lines []string
 	edit  bool
@@ -152,8 +147,6 @@ func summarize(ps []policy) policySummary {
 	return s
 }
 
-// tokenFinding grades one user API token: no expiry, idle, edit rights without an IP filter,
-// edit rights on every zone or account.
 func tokenFinding(t apiToken, self bool, now time.Time) finding.Finding {
 	issued, modified := httpx.ParseTime(t.IssuedOn), httpx.ParseTime(t.ModifiedOn)
 	lastUsed, expires := httpx.ParseTime(t.LastUsedOn), httpx.ParseTime(t.ExpiresOn)
@@ -214,7 +207,6 @@ func tokenFinding(t apiToken, self bool, now time.Time) finding.Finding {
 	}
 }
 
-// globalKeyFinding asks for a manual look: the API cannot list or describe the Global API Key.
 func globalKeyFinding() finding.Finding {
 	return finding.Finding{
 		Account:  userAccount,
@@ -239,12 +231,7 @@ type account struct {
 	} `json:"settings"`
 }
 
-func (a account) label() string {
-	if a.Name != "" {
-		return a.Name
-	}
-	return a.ID
-}
+func (a account) label() string { return cmp.Or(a.Name, a.ID) }
 
 func accountFinding(a account, label string) finding.Finding {
 	enforced := a.Settings != nil && a.Settings.EnforceTwofactor
@@ -291,8 +278,7 @@ func (m member) email() string {
 	return m.Email
 }
 
-// roles lists role names and the permission groups of allow policies (newer memberships carry
-// policies instead of roles), deduplicated.
+// roles adds the permission groups of allow policies: newer memberships carry them instead of roles.
 func (m member) roles() []string {
 	seen := map[string]bool{}
 	var out []string
@@ -315,16 +301,6 @@ func (m member) roles() []string {
 	return out
 }
 
-func (m member) superAdmin() bool {
-	for _, r := range m.roles() {
-		if r == superAdminRole {
-			return true
-		}
-	}
-	return false
-}
-
-// memberFindings grades each member's second factor and counts the account's super administrators.
 func memberFindings(accountID, label string, members []member, enforced bool) []finding.Finding {
 	var admins []string
 	var fs []finding.Finding
@@ -343,7 +319,7 @@ func memberFindings(accountID, label string, members []member, enforced bool) []
 				URL:     urlRoles,
 			},
 		}
-		if m.Status == "accepted" && m.superAdmin() {
+		if m.Status == "accepted" && slices.Contains(roles, superAdminRole) {
 			admins = append(admins, m.email())
 		}
 		if m.User != nil {
@@ -355,8 +331,7 @@ func memberFindings(accountID, label string, members []member, enforced bool) []
 					Summary: "Ask the member to turn on two-factor authentication (My Profile > Authentication), and enforce it for the account.",
 					URL:     url2FA,
 				}
-				if enforced {
-					// Enforcement keeps them out until they enrol.
+				if enforced { // it keeps them out until they enrol
 					f.Severity = finding.SevLow
 				}
 			}
@@ -393,17 +368,8 @@ type zone struct {
 	} `json:"account"`
 }
 
-func (z zone) accountLabel() string {
-	switch {
-	case z.Account.Name != "":
-		return z.Account.Name
-	case z.Account.ID != "":
-		return z.Account.ID
-	}
-	return userAccount
-}
+func (z zone) accountLabel() string { return cmp.Or(z.Account.Name, z.Account.ID, userAccount) }
 
-// zoneSetting is one setting; value is a string for the ones read here.
 type zoneSetting struct {
 	ID    string          `json:"id"`
 	Value json.RawMessage `json:"value"`
@@ -433,7 +399,6 @@ func zoneFinding(z zone, setting string, sev finding.Severity, title string, ev 
 	}
 }
 
-// settingFinding grades one zone setting; ok is false for a setting this connector does not read.
 func settingFinding(z zone, id, v string) (finding.Finding, bool) {
 	ev := map[string]any{"setting": id, "value": v}
 	switch id {

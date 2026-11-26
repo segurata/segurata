@@ -9,7 +9,7 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Doctor asks STS who each profile is, through the same read-only allowlist as the inventory.
+// Doctor asks STS who each profile is.
 func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connector.Check {
 	profiles, err := c.profiles(ctx, req.Config)
 	if err != nil {
@@ -36,7 +36,6 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 	return checks
 }
 
-// failure turns an aws CLI error into a check with the command that fixes it.
 func failure(what, profile string, err error) connector.Check {
 	ch := connector.Check{Level: connector.Fail, What: what, Detail: err.Error()}
 	switch classify(err) {

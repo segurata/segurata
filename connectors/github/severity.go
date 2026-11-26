@@ -2,8 +2,6 @@ package github
 
 import "github.com/segurata/segurata/internal/finding"
 
-// check names one thing this connector looks at. Its severity comes from the table below, so
-// every finding of a kind gets the same answer.
 type check string
 
 const (
@@ -35,7 +33,7 @@ const (
 )
 
 var severities = map[check]finding.Severity{
-	// The account's own 2FA guards everything else; owning organizations widens the blast radius.
+	// The account's own 2FA guards everything else; owning organizations hands over every repository.
 	accountNo2FA:      finding.SevHigh,
 	accountNo2FAOwner: finding.SevCritical,
 
@@ -63,7 +61,6 @@ var severities = map[check]finding.Severity{
 	repoUnprotectedDefault:   finding.SevLow,
 }
 
-// blasts are what a check puts at stake beyond its severity (finding.Blast).
 var blasts = map[check]finding.Blast{
 	orgNo2FARequirement:   finding.BlastOrgAccess, // one stolen password opens every repository of the org
 	orgMembersNo2FA:       finding.BlastOrgAccess,
@@ -71,7 +68,6 @@ var blasts = map[check]finding.Blast{
 	orgDefaultPermission:  finding.BlastOrgWrite,
 }
 
-// issue is one failed check on a repository, kept in the repository's single finding.
 type issue struct {
 	Check    check            `json:"check"`
 	Severity finding.Severity `json:"severity"`
