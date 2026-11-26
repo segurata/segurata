@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
-"""segurata-prowler: external segurata connector that runs Prowler and reports its failed checks.
-
-Prowler (https://github.com/prowler-cloud/prowler) audits cloud posture with a hundred-odd checks
-per provider. This connector runs it read-only, one project at a time, as each of the owner's
-gcloud accounts, reads its OCSF output and emits one segurata finding per failed check and
-resource. Checks segurata's own gcp connector already makes are left out unless the config asks
-for them (README.md, "Overlap with the gcp connector"). Each project also gets an activity profile
-(empty, light, production) from a few read-only gcloud calls, and hygiene checks are weighted by it
-so that CIS logging alerts repeated in forty idle projects do not bury a real exposure (README.md,
-"Relevance").
-
-Standard library only; speaks protocol 1 of the external connector protocol (docs/connectors.md).
+"""segurata-prowler: an external segurata connector (protocol 1, docs/connectors.md) that runs
+Prowler read-only on each Google Cloud project, as each gcloud account, and reports its failed
+checks weighed by what the project runs. README.md has the design.
 
     segurata-prowler describe
     segurata-prowler inventory < request.json
@@ -27,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 
 NAME = "prowler"
@@ -36,7 +28,7 @@ PROWLER_VERSION = "5.51.0"  # the version the parser and the overlap table were 
 DEFAULT_TIMEOUT = 1800  # seconds per project
 TOKEN_LIFETIME = 3600  # a gcloud access token lasts an hour and Prowler cannot refresh it
 GCLOUD_TIMEOUT = 90
-RETRY_DELAY = 3  # seconds before the one retry of a profile read Google throttled or dropped
+RETRY_DELAY = 3  # seconds before the one retry of a read Google throttled or dropped
 OUTPUT_NAME = "prowler"  # --output-filename; the OCSF file is <dir>/prowler.ocsf.json
 LOG_NAME = "prowler.log"  # --log-file, in the same directory
 IMPLEMENTED = ("gcp",)
@@ -48,13 +40,12 @@ INSTALL_HINT = (
     "under connectors.prowler.config"
 )
 
-# Prowler's severities, in order, and segurata's name for each.
 PROWLER_SEVERITIES = ["informational", "low", "medium", "high", "critical"]
-SEVERITY = {"informational": "info", "low": "low", "medium": "medium", "high": "high", "critical": "critical"}
+SEVERITIES = ["info", "low", "medium", "high", "critical"]
+SEVERITY = dict(zip(PROWLER_SEVERITIES, SEVERITIES))
 
-# Prowler GCP checks segurata's gcp connector already makes (docs/gcp-connector.md). FULL ones are
-# not run at all; PARTIAL ones run, and a failure is dropped only when its text matches what the
-# gcp connector reports. README.md has the table with the reasons.
+# Checks the gcp connector already makes (README.md, "Overlap with the gcp connector"): FULL ones
+# are not run; a PARTIAL failure is dropped when its text matches what gcp reports.
 OVERLAP_FULL = {
     "apikeys_api_restrictions_configured": "gcp reports every API key without an API restriction (high)",
     "apikeys_key_exists": "gcp lists every API key, restricted ones as info",
@@ -62,20 +53,12 @@ OVERLAP_FULL = {
     "iam_sa_user_managed_key_rotate_90_days": "gcp reports user-managed keys older than 90 days (high)",
 }
 OVERLAP_PARTIAL = {
-    # Prowler fails any admin role; gcp reports Owner and Editor. Prowler names the last matching
-    # binding, so an account that also holds a narrower admin role is still covered by the Owner or
-    # Editor finding, which implies it.
     "iam_sa_no_administrative_privileges": re.compile(r"with roles/(owner|editor)\.?$"),
-    # The unrestricted-key half is gcp's; a key allowing Gemini next to other APIs is new.
     "apikeys_api_restricted_with_gemini_api": re.compile(r"does not have restrictions configured"),
 }
 
-# --- relevance ---------------------------------------------------------------------------------
-# Hygiene checks: monitoring, logging and governance settings whose absence matters in proportion to
-# what the project runs. A failure is lowered one level in a light project and set to info in an
-# empty one; production projects keep Prowler's severity. Checked against Prowler 5.51.0.
+# Settings whose absence matters in proportion to what the project runs (README.md, "Rules").
 HYGIENE_CHECKS = frozenset([
-    # CIS 2.4-2.11: a log-based metric and alert per kind of change.
     "logging_log_metric_filter_and_alert_for_audit_configuration_changes_enabled",
     "logging_log_metric_filter_and_alert_for_bucket_permission_changes_enabled",
     "logging_log_metric_filter_and_alert_for_compute_configuration_changes_enabled",
@@ -85,7 +68,6 @@ HYGIENE_CHECKS = frozenset([
     "logging_log_metric_filter_and_alert_for_vpc_firewall_rule_changes_enabled",
     "logging_log_metric_filter_and_alert_for_vpc_network_changes_enabled",
     "logging_log_metric_filter_and_alert_for_vpc_network_route_changes_enabled",
-    # Log export, audit and flow logs.
     "logging_sink_created",
     "iam_audit_logs_enabled",
     "cloudstorage_audit_logs_enabled",
@@ -93,7 +75,6 @@ HYGIENE_CHECKS = frozenset([
     "compute_subnet_flow_logs_enabled",
     "compute_network_dns_logging_enabled",
     "compute_loadbalancer_logging_enabled",
-    # Inventory, image scanning and governance services.
     "iam_cloud_asset_inventory_enabled",
     "artifacts_container_analysis_enabled",
     "gcr_container_scanning_enabled",
@@ -101,33 +82,8 @@ HYGIENE_CHECKS = frozenset([
     "iam_organization_essential_contacts_configured",
 ])
 
-# Checks about real exposure or credentials: never lowered by the profile, whatever the project
-# runs. Findings of kind exposure or credential are protected too, even when they are not listed.
-PROTECTED_CHECKS = frozenset([
-    "compute_firewall_ssh_access_from_the_internet_allowed",
-    "compute_firewall_rdp_access_from_the_internet_allowed",
-    "compute_instance_public_ip",
-    "compute_instance_default_service_account_in_use",
-    "compute_instance_default_service_account_in_use_with_full_api_access",
-    "compute_image_not_publicly_shared",
-    "compute_public_address_shodan",
-    "cloudstorage_bucket_public_access",
-    "cloudsql_instance_public_ip",
-    "cloudsql_instance_public_access",
-    "bigquery_dataset_public_access",
-    "cloudfunction_function_not_publicly_accessible",
-    "kms_key_not_publicly_accessible",
-    "secretmanager_secret_not_publicly_accessible",
-    "vertexai_workbench_instance_public_ip_disabled",
-    "apikeys_api_restricted_with_gemini_api",
-    "apikeys_key_rotated_in_90_days",
-    "iam_sa_no_administrative_privileges",
-    "iam_sa_user_managed_key_unused",
-])
-
 OVERRIDES = ("keep", "info")
 NA_WHERE = ("any", "no_organization")
-# Failures that cannot be fixed where they occur: reported as info with the reason.
 DEFAULT_NOT_APPLICABLE = [{
     "check": "iam_account_access_approval_enabled",
     "where": "no_organization",
@@ -135,7 +91,6 @@ DEFAULT_NOT_APPLICABLE = [{
               "project has none (https://cloud.google.com/assured-workloads/access-approval/docs/overview)",
 }]
 
-# --- activity profile ------------------------------------------------------------------------
 # Services Google enables on every new project (https://cloud.google.com/service-usage/docs/enabled-service,
 # "Services enabled by default"); they say nothing about what the project runs.
 DEFAULT_SERVICES = frozenset(s + ".googleapis.com" for s in (
@@ -145,8 +100,7 @@ DEFAULT_SERVICES = frozenset(s + ".googleapis.com" for s in (
     "storage-api", "cloudtrace", "cloudapis", "servicemanagement", "serviceusage", "telemetry"))
 EMPTY_MAX_SERVICES = 5  # non-default services an empty project may still have enabled
 
-# Resources the profile counts: (key, enabling services, gcloud list command, runs workloads). A kind
-# is listed only when one of its services is enabled; otherwise it has none.
+# (key, enabling services, gcloud list command, runs workloads)
 RESOURCE_KINDS = (
     ("compute_instances", ("compute.googleapis.com",), ("compute", "instances", "list"), True),
     ("gke_clusters", ("container.googleapis.com",), ("container", "clusters", "list"), True),
@@ -157,7 +111,6 @@ RESOURCE_KINDS = (
      ("storage", "buckets", "list"), False),
 )
 
-# The only gcloud commands the connector runs; every one reads.
 READ_COMMANDS = (
     ("auth", "list"),
     ("auth", "print-access-token"),
@@ -167,12 +120,8 @@ READ_COMMANDS = (
 ) + tuple(k[2] for k in RESOURCE_KINDS)
 
 DISABLED_API = re.compile(r"([\w.-]+) API has not been used in project ([^\s\"]+) before or it is disabled")
-# A call Prowler was refused. Each run covers one project, so any refused project-level call in its
-# log is a gap in that project; organization-level calls are not.
 DENIED_CALL = re.compile(r"HttpError 403 when requesting https://([a-z0-9-]+)\.googleapis\.com/(\S*)")
-# Google refuses calls to a project with billing disabled with a 403 too, though nothing can run
-# there: "Read access to project 'x' was denied: please check billing account associated", "This
-# API method requires billing to be enabled".
+# Google answers 403 to calls on a project with billing disabled, where nothing can run.
 BILLING_OFF = re.compile(r"check billing account associated|requires billing to be enabled")
 SERVICEUSAGE_TARGET = re.compile(r"services/([a-z0-9-]+)\.googleapis\.com")
 TOKEN_LIKE = re.compile(r"ya29\.[A-Za-z0-9_\-.]+")
@@ -180,6 +129,9 @@ DENIED = re.compile(r"HttpError 403|\b403 Forbidden|PERMISSION_DENIED|[Pp]ermiss
                     r"GCPNoAccesibleProjectsError|No (Input )?Project IDs (are active or )?can be accessed")
 REAUTH = re.compile(r"HttpError 401|\b401 Unauthorized|invalid_grant|UNAUTHENTICATED|Reauthentication|"
                     r"does not have any valid credentials|invalid authentication credentials")
+TRANSIENT = re.compile(r"RESOURCE_EXHAUSTED|rateLimitExceeded|[Qq]uota exceeded|\b429\b|\b50[23]\b|UNAVAILABLE|"
+                       r"DEADLINE_EXCEEDED|timed out|Connection reset")
+SERVICE_DISABLED = re.compile(r"SERVICE_DISABLED|has not been used in project|is disabled")
 
 
 def describe():
@@ -190,14 +142,12 @@ def describe():
         "summary": "Failed Prowler checks per Google Cloud project, run as each gcloud account",
         "needs": ["cli:prowler", "cli:gcloud"],
         "theme": {"id": "cloud"},
-        # Projects run `parallel` at a time, each for up to `timeout` seconds.
         "timeout": "12h",
     }
 
 
 class Emitter:
-    """Writes records as JSON Lines; safe to call from several threads. Every string passes through
-    the scrubber, so a token Prowler or gcloud echoed never leaves the process."""
+    """Thread-safe JSON Lines writer that scrubs every string of the tokens it was given."""
 
     def __init__(self, out):
         self.out = out
@@ -269,13 +219,6 @@ class Config:
             raise ValueError("severity_min must be one of " + ", ".join(["info"] + PROWLER_SEVERITIES[1:]))
         self.severities = PROWLER_SEVERITIES[PROWLER_SEVERITIES.index(sev):] if sev else []
 
-    def excluded(self):
-        """Checks Prowler is told not to run: the configured ones plus the full overlaps."""
-        out = list(self.excluded_checks)
-        if not self.include_overlaps:
-            out += [c for c in sorted(OVERLAP_FULL) if c not in out]
-        return out
-
 
 def overrides_of(raw):
     raw = raw or {}
@@ -288,7 +231,7 @@ def overrides_of(raw):
 
 
 def not_applicable_of(raw):
-    """{check id: (where, reason)} from the not_applicable list."""
+    """{check id: (where, reason)}"""
     if not isinstance(raw, list):
         raise ValueError("not_applicable must be a list of {check, reason, where}")
     out = {}
@@ -332,7 +275,7 @@ GCLOUD_INSTALL_PATHS = (
 
 
 class Gcloud:
-    """Read-only gcloud calls. --account is passed on every call so gcloud config never changes."""
+    """Read-only gcloud calls, each with --account so the gcloud config never changes."""
 
     def __init__(self, path):
         self.path = path
@@ -349,13 +292,9 @@ class Gcloud:
         return p.returncode, p.stdout, p.stderr
 
     def accounts(self):
-        code, out, err = self.run("auth", "list", "--format=json")
-        if code != 0:
-            raise RuntimeError(first_line(err) or "gcloud auth list failed")
-        return [a.get("account", "") for a in json.loads(out or "[]") if a.get("account")]
+        return [a["account"] for a in self.read_json(None, "auth", "list") or [] if a.get("account")]
 
     def token(self, account):
-        """An access token for account, or raises RuntimeError with gcloud's reason. Never logged."""
         code, out, err = self.run("auth", "print-access-token", "--account=" + account)
         token = out.strip()
         if code != 0 or not token:
@@ -363,22 +302,19 @@ class Gcloud:
         return token
 
     def projects(self, account):
-        """{project id: whether it sits in an organization} for the active projects account lists.
-        A project in a folder is in an organization too: folders exist only under one."""
-        code, out, err = self.run("projects", "list", "--account=" + account,
-                                  "--filter=lifecycleState:ACTIVE", "--format=json")
-        if code != 0:
-            raise RuntimeError(first_line(err) or "gcloud projects list failed")
-        return {p["projectId"]: bool((p.get("parent") or {}).get("type"))
-                for p in json.loads(out or "[]") if p.get("projectId")}
+        """{active project id: whether it has a parent}; folders exist only under an organization."""
+        rows = self.read_json(account, "projects", "list", "--filter=lifecycleState:ACTIVE")
+        return {p["projectId"]: bool((p.get("parent") or {}).get("type")) for p in rows or [] if p.get("projectId")}
 
     def read_json(self, account, *args):
-        code, out, err = self.run(*args, "--account=" + account, "--format=json")
+        """Parsed output of a read, retried once when Google throttled or dropped it."""
+        args += (("--account=" + account,) if account else ()) + ("--format=json",)
+        code, out, err = self.run(*args)
         if code != 0 and TRANSIENT.search(err):
             time.sleep(RETRY_DELAY)
-            code, out, err = self.run(*args, "--account=" + account, "--format=json")
+            code, out, err = self.run(*args)
         if code != 0:
-            raise RuntimeError(first_line(err) or "gcloud %s failed" % " ".join(args[:3]))
+            raise RuntimeError(first_line(err) or "gcloud %s failed" % " ".join(a for a in args[:3] if a[:1] != "-"))
         return json.loads(out or "null")
 
     def enabled_services(self, account, project):
@@ -400,6 +336,11 @@ def first_line(text):
     return ""
 
 
+def last_error(text):
+    lines = [l.strip() for l in text.splitlines() if "ERROR" in l or "CRITICAL" in l or "Error" in l]
+    return one_line(lines[-1] if lines else first_line(text) or "no output")
+
+
 def is_service_account(account):
     return account.endswith(".iam.gserviceaccount.com")
 
@@ -418,16 +359,9 @@ def login_hint(account):
             "credentials)" % account)
 
 
-# --- activity profile ------------------------------------------------------------------------
-
-TRANSIENT = re.compile(r"RESOURCE_EXHAUSTED|rateLimitExceeded|[Qq]uota exceeded|\b429\b|\b50[23]\b|UNAVAILABLE|"
-                       r"DEADLINE_EXCEEDED|timed out|Connection reset")
-SERVICE_DISABLED = re.compile(r"SERVICE_DISABLED|has not been used in project|is disabled")
-
-
-def profile_project(gcloud, account, project, in_org, log=lambda msg: None):
-    """What the project runs, read as account. A value that could not be read is None, named in
-    unread and logged with gcloud's reason; classify_profile treats it as possibly production."""
+def profile_project(gcloud, account, project, in_org, log):
+    """What the project runs, read as account; a value that could not be read is None and named in
+    unread, so classify_profile never takes it for idle."""
     profile = {"services_enabled": None, "services_non_default": None, "billing_enabled": None,
                "in_organization": in_org, "resources": {}, "unread": []}
 
@@ -463,11 +397,8 @@ def profile_project(gcloud, account, project, in_org, log=lambda msg: None):
 
 
 def classify_profile(profile):
-    """'production', 'light', 'empty', or 'unknown' when what was not read could change the answer.
-
-    production: a VM, GKE cluster, Cloud SQL instance, Cloud Run service or function, or billing on
-    with any counted resource. empty: no counted resource and at most EMPTY_MAX_SERVICES services
-    beyond Google's defaults. light: everything else."""
+    """'production', 'light', 'empty', or 'unknown' when what was not read could change the answer
+    (README.md, "Activity profile")."""
     res = profile["resources"]
     workloads = [k for k, _, _, runs in RESOURCE_KINDS if runs]
     if any(res.get(k) for k in workloads):
@@ -482,7 +413,7 @@ def classify_profile(profile):
 
 
 def profile_text(profile):
-    """The profile for the project's status line, e.g. 'light: 25 non-default services, 2 buckets, billing off'."""
+    """e.g. 'light: 25 non-default services, 2 buckets, billing off'"""
     parts = []
     if profile["services_non_default"] is not None:
         parts.append("%d non-default services" % profile["services_non_default"])
@@ -496,20 +427,12 @@ def profile_text(profile):
     return profile["class"] + (": " + ", ".join(parts) if parts else "")
 
 
-UNKNOWN_PROFILE = {"class": "unknown", "services_enabled": None, "services_non_default": None,
-                   "billing_enabled": None, "in_organization": None, "resources": {}, "unread": ["profile"]}
-
-
-# --- relevance -------------------------------------------------------------------------------
-
 def lower(severity):
-    order = ["info", "low", "medium", "high", "critical"]
-    return order[max(0, order.index(severity) - 1)]
+    return SEVERITIES[max(0, SEVERITIES.index(severity) - 1)]
 
 
 def weigh(check_id, kind, severity, profile, config):
-    """(severity, why) for a failure: why is "" when Prowler's severity stands, "not applicable"
-    names the reason. Order: not_applicable, relevance_overrides, then the profile rules."""
+    """(severity, why), why being "" when Prowler's severity stands (README.md, "Rules")."""
     na = config.not_applicable.get(check_id)
     if na and (na[0] == "any" or profile.get("in_organization") is False):
         return "info", "not applicable: " + na[1]
@@ -518,7 +441,7 @@ def weigh(check_id, kind, severity, profile, config):
         return "info", "relevance_overrides sets it to info"
     if override == "keep" or not config.relevance:
         return severity, ""
-    if check_id not in HYGIENE_CHECKS or check_id in PROTECTED_CHECKS or kind != "setting":
+    if check_id not in HYGIENE_CHECKS or kind != "setting":
         return severity, ""
     if profile["class"] == "empty":
         return "info", "hygiene check in an empty project"
@@ -526,8 +449,6 @@ def weigh(check_id, kind, severity, profile, config):
         return lower(severity), "hygiene check in a light project, one level lower"
     return severity, ""
 
-
-# --- OCSF to segurata ------------------------------------------------------------------------
 
 def kind_of(categories):
     if "internet-exposed" in categories:
@@ -554,7 +475,7 @@ def one_line(text, limit=300):
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def to_finding(rec, account, project, profile=UNKNOWN_PROFILE):
+def to_finding(rec, account, project, profile):
     info = rec.get("finding_info") or {}
     meta = rec.get("metadata") or {}
     unmapped = rec.get("unmapped") or {}
@@ -598,9 +519,7 @@ def to_finding(rec, account, project, profile=UNKNOWN_PROFILE):
 
 
 def track(check, name, project):
-    """One check failing in many projects is one thing to fix: one tracker item per check, titled by
-    the check and how many projects fail it ("… fails in 40 projects (Prowler logging_sink_created)"),
-    or the project when only one does (docs/connectors.md, "Theme and grouping")."""
+    """One tracker item per check across projects (docs/connectors.md, "Theme and grouping")."""
     return {
         "group": "check",
         "key": check,
@@ -613,7 +532,7 @@ def track(check, name, project):
 
 
 def read_ocsf(path):
-    """The records of a Prowler OCSF file: a JSON array, or nothing when Prowler wrote no file."""
+    """Prowler writes no file when it had nothing to report."""
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
@@ -621,9 +540,8 @@ def read_ocsf(path):
     return json.loads(text) if text else []
 
 
-def summarize(records, config, account, project, profile=UNKNOWN_PROFILE):
-    """Findings for the FAIL records, weighed by the project's profile, and the counts that go into
-    the project's ok status."""
+def summarize(records, config, account, project, profile):
+    """Weighed findings for the FAIL records, and the counts for the project's status."""
     findings, counts = [], {"FAIL": 0, "PASS": 0, "MANUAL": 0, "muted": 0, "overlap": 0, "below_min": 0,
                             "lowered": 0, "not_applicable": 0}
     for rec in records:
@@ -653,9 +571,8 @@ def summarize(records, config, account, project, profile=UNKNOWN_PROFILE):
 
 
 def log_problems(text, project):
-    """Services whose API Prowler found disabled in project, services refused because the project
-    has no billing (nothing can run there either), and services it was refused a call to for any
-    other reason (including reading whether their API is enabled), so their checks saw nothing."""
+    """(services with their API disabled, services refused for lack of billing, services refused
+    otherwise) in Prowler's log; organization-level refusals are no gap in the project."""
     disabled, unbilled, refused = set(), set(), set()
     for service, p in DISABLED_API.findall(text):
         if p == project:
@@ -669,10 +586,11 @@ def log_problems(text, project):
     return disabled, unbilled - disabled - refused, refused - disabled
 
 
-# --- running Prowler -------------------------------------------------------------------------
-
 class Timeout(Exception):
     pass
+
+
+Context = namedtuple("Context", "config emit gcloud prowler in_org")
 
 
 def prowler_args(prowler, project, outdir, config):
@@ -682,7 +600,8 @@ def prowler_args(prowler, project, outdir, config):
             "--no-banner", "--no-color", "--ignore-exit-code-3"]
     if config.checks:
         args += ["--checks", *config.checks]
-    excluded = [c for c in config.excluded() if c not in config.checks]
+    excluded = config.excluded_checks + ([] if config.include_overlaps else sorted(OVERLAP_FULL))
+    excluded = [c for c in dict.fromkeys(excluded) if c not in config.checks]
     if excluded:
         args += ["--excluded-checks", *excluded]
     if config.severities:
@@ -690,32 +609,32 @@ def prowler_args(prowler, project, outdir, config):
     return args
 
 
-# What a SIGTERM must clean up: the process groups of the Prowler runs under way, which run in
-# sessions of their own and so miss the signal segurata sends the plugin's group, and their output
-# directories. Set operations are atomic under the GIL; the handler only reads a copy.
+# Prowler runs in sessions of its own, so the SIGTERM segurata sends the plugin's group misses it.
 RUNNING = set()
 OUTDIRS = set()
 
 
+def kill_group(pgid):
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def on_sigterm(signum, _frame):
-    """segurata cancelled the run (timeout, Ctrl-C): stop every Prowler, which holds a live token,
-    remove the output directories and exit at once, without waiting for the worker threads."""
+    """Stop every Prowler, which holds a live token, and remove its output without waiting for the workers."""
     for pgid in list(RUNNING):
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        kill_group(pgid)
     for d in list(OUTDIRS):
         shutil.rmtree(d, ignore_errors=True)
     os._exit(128 + signum)
 
 
-def run_prowler(args, token, project, timeout):
-    """Run Prowler with the token in its environment. Returns (exit code, stderr + log text)."""
+def spawn(args, token, project, timeout):
+    """(exit code, stderr) of Prowler run with the token instead of ADC."""
     env = {k: v for k, v in os.environ.items()
            if k not in ("GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_AUTH_ACCESS_TOKEN")}
-    # Prowler reads CLOUDSDK_AUTH_ACCESS_TOKEN before falling back to ADC
-    # (prowler/providers/gcp/gcp_provider.py, setup_session), so ADC is never read or changed.
+    # Prowler reads CLOUDSDK_AUTH_ACCESS_TOKEN before ADC (prowler/providers/gcp/gcp_provider.py, setup_session).
     env.update(CLOUDSDK_AUTH_ACCESS_TOKEN=token, GOOGLE_CLOUD_PROJECT=project, CLOUDSDK_CORE_DISABLE_PROMPTS="1")
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             text=True, env=env, start_new_session=True)
@@ -723,10 +642,7 @@ def run_prowler(args, token, project, timeout):
     try:
         _, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        kill_group(proc.pid)
         proc.communicate()
         raise Timeout()
     finally:
@@ -734,81 +650,132 @@ def run_prowler(args, token, project, timeout):
     return proc.returncode, err or ""
 
 
+def run_prowler(project, token, ctx):
+    """(exit code, stderr and log text, OCSF records when it succeeded) of one run in a private
+    directory that is always removed. Raises Timeout, or ValueError when the OCSF is not JSON."""
+    outdir = tempfile.mkdtemp(prefix="segurata-prowler-")  # 0700
+    OUTDIRS.add(outdir)
+    try:
+        code, text = spawn(prowler_args(ctx.prowler, project, outdir, ctx.config), token, project, ctx.config.timeout)
+        log_path = os.path.join(outdir, LOG_NAME)
+        if os.path.exists(log_path):
+            with open(log_path, encoding="utf-8", errors="replace") as f:
+                text += "\n" + f.read()
+        records = read_ocsf(os.path.join(outdir, OUTPUT_NAME + ".ocsf.json")) if code == 0 else None
+        return code, text, records
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
+        OUTDIRS.discard(outdir)
+
+
 def inspect_project(project, candidates, ctx):
-    """Run Prowler on one project with the first account that lists it, falling back to the next
-    one when Prowler is denied. Findings keep the first account so their ids never depend on who
-    answered."""
-    config, emit, gcloud = ctx["config"], ctx["emit"], ctx["gcloud"]
+    """Run Prowler as the first account that lists the project, falling back to the next one when
+    Prowler is denied. Findings keep the first account so their ids never depend on who answered."""
+    emit = ctx.emit
     owner = candidates[0]
     failures = []
     for account in candidates:
         try:
-            token = gcloud.token(account)
+            token = ctx.gcloud.token(account)
         except RuntimeError as e:
             failures.append("%s has no token (%s)" % (account, e))
             continue
         emit.add_secret(token)
-        outdir = tempfile.mkdtemp(prefix="segurata-prowler-")  # mkdtemp makes it 0700
-        OUTDIRS.add(outdir)
         try:
-            try:
-                code, text = run_prowler(prowler_args(ctx["prowler"], project, outdir, config), token, project, config.timeout)
-            except Timeout:
-                emit.status(owner, "error", "Prowler did not finish within %d s; raise timeout under "
-                            "connectors.prowler.config or narrow checks" % config.timeout, scope=project)
-                return
-            log_path = os.path.join(outdir, LOG_NAME)
-            if os.path.exists(log_path):
-                with open(log_path, encoding="utf-8", errors="replace") as f:
-                    text += "\n" + f.read()
-            if code != 0:
-                why = classify(text)
-                emit.log("%s: Prowler as %s exited %d (%s)" % (project, account, code, why))
-                if why == "denied":
-                    failures.append("%s was denied (%s)" % (account, last_error(text)))
-                    continue
-                if why == "reauth":
-                    emit.status(owner, "reauth", "Prowler was refused the token of %s: %s" % (account, login_hint(account)), scope=project)
-                    return
-                emit.status(owner, "error", "Prowler exited %d: %s" % (code, last_error(text)), scope=project)
-                return
-            try:
-                records = read_ocsf(os.path.join(outdir, OUTPUT_NAME + ".ocsf.json"))
-            except ValueError:
-                emit.status(owner, "error", "Prowler's OCSF output is not JSON", scope=project)
-                return
-        finally:
-            shutil.rmtree(outdir, ignore_errors=True)
-            OUTDIRS.discard(outdir)
-        profile = profile_project(gcloud, account, project, ctx["in_org"].get(project), emit.log)
-        findings, counts = summarize(records, config, owner, project, profile)
-        for f in findings:
-            emit.finding(f)
-        disabled, unbilled, refused = log_problems(text, project)
-        detail = "%d FAIL, %d PASS, %d MANUAL; %d muted, %d already checked by gcp, %d below severity_min" % (
-            counts["FAIL"], counts["PASS"], counts["MANUAL"], counts["muted"], counts["overlap"], counts["below_min"])
-        detail += "; profile %s; %d lowered by relevance, %d not applicable" % (
-            profile_text(profile), counts["lowered"], counts["not_applicable"])
-        if account != owner:
-            detail += "; read as " + account
-        if disabled:
-            detail += "; APIs disabled (nothing to check there): " + ", ".join(sorted(disabled))
-        if unbilled:
-            detail += "; calls refused because billing is disabled (nothing can run there): " + ", ".join(sorted(unbilled))
-        if refused:
-            emit.status(owner, "noscope", "Google refused Prowler (HTTP 403) on %s, so those checks saw nothing: grant "
-                        "%s roles/viewer and roles/iam.securityReviewer on %s (roles/serviceusage.serviceUsageViewer "
-                        "when serviceusage is named). %s" % (", ".join(sorted(refused)), account, project, detail), scope=project)
+            code, text, records = run_prowler(project, token, ctx)
+        except Timeout:
+            emit.status(owner, "error", "Prowler did not finish within %d s; raise timeout under "
+                        "connectors.prowler.config or narrow checks" % ctx.config.timeout, scope=project)
             return
-        emit.status(owner, "ok", detail, scope=project)
+        except ValueError:
+            emit.status(owner, "error", "Prowler's OCSF output is not JSON", scope=project)
+            return
+        if code == 0:
+            report_project(project, owner, account, records, text, ctx)
+            return
+        why = classify(text)
+        emit.log("%s: Prowler as %s exited %d (%s)" % (project, account, code, why))
+        if why == "denied":
+            failures.append("%s was denied (%s)" % (account, last_error(text)))
+            continue
+        if why == "reauth":
+            emit.status(owner, "reauth", "Prowler was refused the token of %s: %s" % (account, login_hint(account)), scope=project)
+        else:
+            emit.status(owner, "error", "Prowler exited %d: %s" % (code, last_error(text)), scope=project)
         return
     emit.status(owner, "noscope", "Prowler could not read the project: %s. Grant roles/viewer and "
                 "roles/iam.securityReviewer on %s to one of these accounts" % ("; ".join(failures), project), scope=project)
 
 
-def last_error(text):
-    lines = [l.strip() for l in text.splitlines() if "ERROR" in l or "CRITICAL" in l or "Error" in l]
-    return one_line(lines[-1] if lines else first_line(text) or "no output")
+def report_project(project, owner, account, records, text, ctx):
+    emit = ctx.emit
+    profile = profile_project(ctx.gcloud, account, project, ctx.in_org.get(project), emit.log)
+    findings, counts = summarize(records, ctx.config, owner, project, profile)
+    for f in findings:
+        emit.finding(f)
+    disabled, unbilled, refused = log_problems(text, project)
+    detail = "%d FAIL, %d PASS, %d MANUAL; %d muted, %d already checked by gcp, %d below severity_min" % (
+        counts["FAIL"], counts["PASS"], counts["MANUAL"], counts["muted"], counts["overlap"], counts["below_min"])
+    detail += "; profile %s; %d lowered by relevance, %d not applicable" % (
+        profile_text(profile), counts["lowered"], counts["not_applicable"])
+    if account != owner:
+        detail += "; read as " + account
+    if disabled:
+        detail += "; APIs disabled (nothing to check there): " + ", ".join(sorted(disabled))
+    if unbilled:
+        detail += "; calls refused because billing is disabled (nothing can run there): " + ", ".join(sorted(unbilled))
+    if refused:
+        emit.status(owner, "noscope", "Google refused Prowler (HTTP 403) on %s, so those checks saw nothing: grant "
+                    "%s roles/viewer and roles/iam.securityReviewer on %s (roles/serviceusage.serviceUsageViewer "
+                    "when serviceusage is named). %s" % (", ".join(sorted(refused)), account, project, detail), scope=project)
+    else:
+        emit.status(owner, "ok", detail, scope=project)
+
+
+def list_projects(config, emit, gcloud, known):
+    """{account: {project: in an organization}} for the accounts to scan with."""
+    accounts = config.accounts or [a for a in known if not is_service_account(a)]
+    for a in known:
+        if a not in accounts and not is_service_account(a):
+            emit.scope(a, False, "expected: not in connectors.prowler.config.accounts")
+    listing = {}
+    for account in accounts:
+        if account not in known:
+            emit.status(account, "missing_credentials", "gcloud has no credentials for %s: run gcloud auth "
+                        "login %s, then run the inventory again" % (account, account))
+            continue
+        try:
+            gcloud.token(account)
+            listing[account] = gcloud.projects(account)
+        except (RuntimeError, ValueError) as e:
+            if classify(str(e)) == "reauth":
+                emit.status(account, "reauth", login_hint(account))
+            else:
+                emit.status(account, "error", "gcloud could not list projects: %s" % e)
+            continue
+        emit.status(account, "ok", "%d active projects" % len(listing[account]))
+    return listing
+
+
+def projects_to_scan(config, emit, listing):
+    """[(project, the accounts that list it)] after projects and skip_projects, and {project: in an organization}."""
+    owners, in_org = {}, {}
+    for account, projects in listing.items():
+        for p, org in projects.items():
+            owners.setdefault(p, []).append(account)
+            in_org[p] = in_org.get(p, False) or org
+    if config.projects:
+        for p in config.projects:
+            if p not in owners:
+                emit.scope(p, False, "no configured account can list this project")
+        owners = {p: a for p, a in owners.items() if p in config.projects}
+    todo = []
+    for p in sorted(owners):
+        if any(fnmatch.fnmatchcase(p, pat) for pat in config.skip_projects):
+            emit.scope(p, False, "expected: in connectors.prowler.config.skip_projects")
+        else:
+            todo.append((p, owners[p]))
+    return todo, in_org
 
 
 def inventory_gcp(config, emit):
@@ -829,46 +796,8 @@ def inventory_gcp(config, emit):
     except (RuntimeError, ValueError) as e:
         emit.status("gcp", "error", "gcloud auth list failed: %s" % e, scope="*")
         return
-    accounts = config.accounts or [a for a in known if not is_service_account(a)]
-    for a in known:
-        if a not in accounts and not is_service_account(a):
-            emit.scope(a, False, "expected: not in connectors.prowler.config.accounts")
-    listing = {}
-    for account in accounts:
-        if account not in known:
-            emit.status(account, "missing_credentials", "gcloud has no credentials for %s: run gcloud auth "
-                        "login %s, then run the inventory again" % (account, account))
-            continue
-        try:
-            gcloud.token(account)
-            listing[account] = gcloud.projects(account)
-        except (RuntimeError, ValueError) as e:
-            why = classify(str(e))
-            if why == "reauth":
-                emit.status(account, "reauth", login_hint(account))
-            else:
-                emit.status(account, "error", "gcloud could not list projects: %s" % e)
-            continue
-        emit.status(account, "ok", "%d active projects" % len(listing[account]))
-    owners, in_org = {}, {}
-    for account, projects in listing.items():
-        for p, org in projects.items():
-            owners.setdefault(p, []).append(account)
-            in_org[p] = in_org.get(p, False) or org
-    if config.projects:
-        for p in config.projects:
-            if p not in owners:
-                emit.scope(p, False, "no configured account can list this project")
-        owners = {p: a for p, a in owners.items() if p in config.projects}
-    def skipped(project):
-        # Exact ids or shell patterns, e.g. "sys-*" for Apps Script's default projects.
-        return any(fnmatch.fnmatchcase(project, pat) for pat in config.skip_projects)
-
-    for p in sorted(owners):
-        if skipped(p):
-            emit.scope(p, False, "expected: in connectors.prowler.config.skip_projects")
-    todo = [(p, owners[p]) for p in sorted(owners) if not skipped(p)]
-    ctx = {"config": config, "emit": emit, "gcloud": gcloud, "prowler": prowler, "in_org": in_org}
+    todo, in_org = projects_to_scan(config, emit, list_projects(config, emit, gcloud, known))
+    ctx = Context(config, emit, gcloud, prowler, in_org)
     with ThreadPoolExecutor(max_workers=config.parallel) as pool:
         for fut in [pool.submit(inspect_project, p, cands, ctx) for p, cands in todo]:
             fut.result()

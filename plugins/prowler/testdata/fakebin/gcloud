@@ -8,8 +8,6 @@
 #   profile/<project>/<group>.json    what `<group> ... list` prints, by the command's first word
 #                                     (compute, container, sql, run, functions, storage); missing: []
 #   profile/<project>/deny-<group>    that list fails with a 403
-#   profile/<project>/flaky-<group>   the next call of that group (or billing, services) fails with a
-#                                     429 once; the flag is removed
 set -eu
 echo "gcloud $*" >> "$FAKE_DIR/calls.log"
 account="" project=""
@@ -23,12 +21,6 @@ profile="$FAKE_DIR/profile/$project"
 from() {  # print $1 or fail like gcloud does when it is missing
   if [ -e "$1" ]; then cat "$1"; else echo "ERROR: (gcloud) fake has no $1" >&2; exit 1; fi
 }
-group="$1"
-[ "$1" = "billing" ] && group=billing && profile="$FAKE_DIR/profile/$4"
-if [ -e "$profile/flaky-$group" ]; then
-  rm "$profile/flaky-$group"
-  echo "ERROR: (gcloud.$1) RESOURCE_EXHAUSTED: Quota exceeded (429)" >&2; exit 1
-fi
 case "$1 $2" in
   "auth list") cat "$FAKE_DIR/accounts.json" ;;
   "auth print-access-token")

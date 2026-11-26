@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "segurata-prowler")
@@ -28,6 +29,8 @@ BOB = "bob@example.org"
 ROBOT = "robot@demo-proj-alpha.iam.gserviceaccount.com"
 ALPHA, BETA, GAMMA = "demo-proj-alpha", "demo-proj-beta", "demo-proj-gamma"
 DELTA = "demo-proj-delta"  # hygiene failures next to exposures (testdata/ocsf/demo-proj-delta.json)
+UNKNOWN = {"class": "unknown", "services_enabled": None, "services_non_default": None,
+           "billing_enabled": None, "in_organization": None, "resources": {}, "unread": ["profile"]}
 DEFAULTS = ["bigquery.googleapis.com", "logging.googleapis.com", "storage.googleapis.com", "serviceusage.googleapis.com"]
 
 
@@ -97,11 +100,10 @@ class Fake:
             runs.append((["prowler"] + args[len("ARGS "):].split(" "), facts))
         return runs
 
-    def run(self, config=None, protocol=1, env_extra=None):
-        env = dict(os.environ, FAKE_DIR=self.dir, PATH=FAKEBIN + os.pathsep + "/usr/bin:/bin",
+    def run(self, config=None, path=FAKEBIN):
+        env = dict(os.environ, FAKE_DIR=self.dir, PATH=path + os.pathsep + "/usr/bin:/bin",
                    GOOGLE_APPLICATION_CREDENTIALS="/nonexistent/adc.json")
-        env.update(env_extra or {})
-        req = {"protocol": protocol, "config": config or {}}
+        req = {"protocol": 1, "config": config or {}}
         proc = subprocess.run([sys.executable, "-I", SCRIPT, "inventory"], input=json.dumps(req),
                               capture_output=True, text=True, env=env, timeout=60)
         records = [json.loads(line) for line in proc.stdout.splitlines()]
@@ -110,6 +112,11 @@ class Fake:
 
 def of(records, kind):
     return [r for r in records if r["type"] == kind]
+
+
+def on(records, project):
+    """The statuses about project."""
+    return [s for s in of(records, "status") if s.get("scope") == project]
 
 
 class DescribeTest(unittest.TestCase):
@@ -158,7 +165,7 @@ class MappingTest(unittest.TestCase):
     def test_severity_min_filters_and_narrows_the_run(self):
         config = prowler.Config({"severity_min": "high"})
         self.assertEqual(config.severities, ["high", "critical"])
-        findings, counts = prowler.summarize(self.records, config, ALICE, ALPHA)
+        findings, counts = prowler.summarize(self.records, config, ALICE, ALPHA, UNKNOWN)
         self.assertEqual(sorted(f["severity"] for f in findings), ["critical", "high"])
         self.assertEqual(counts["below_min"], 3)
         self.assertEqual(prowler.Config({"severity_min": "info"}).severities, prowler.PROWLER_SEVERITIES)
@@ -251,16 +258,9 @@ class InventoryTest(unittest.TestCase):
         for account in (ALICE, BOB):
             self.assertNotIn(token(account), proc.stdout + proc.stderr)
         self.assertNotIn("ya29.", proc.stdout + proc.stderr)
-        with open(os.path.join(self.fake.dir, "calls.log")) as f:
-            calls = f.read()
+        calls = self.fake.calls()
         self.assertNotIn("application-default", calls)
         self.assertNotIn("config set", calls)
-
-    def test_ids_are_stable_across_runs(self):
-        _, first = self.fake.run()
-        _, second = self.fake.run()
-        key = lambda rs: sorted((f["account"], f["resource"]["type"], f["resource"]["id"]) for f in of(rs, "finding"))
-        self.assertEqual(key(first), key(second))
 
     def test_include_overlaps_reports_what_gcp_also_reports(self):
         _, records = self.fake.run({"include_overlaps": True})
@@ -284,15 +284,15 @@ class InventoryTest(unittest.TestCase):
         carol = [s for s in of(records, "status") if s["account"] == "carol@example.com"][0]
         self.assertIn("gcloud auth login carol@example.com", carol["detail"])
 
-    def test_skip_projects_are_declared_uninspected(self):
-        _, records = self.fake.run({"skip_projects": [GAMMA]})
-        self.assertEqual(sorted(a[3] for a, _ in self.fake.prowler_runs()), [ALPHA, BETA])
-        self.assertIn({"type": "scope", "scope": GAMMA, "inspected": False, "reason": "expected: in connectors.prowler.config.skip_projects"}, records)
-
-    def test_skip_projects_accept_patterns(self):
-        _, records = self.fake.run({"skip_projects": ["demo-proj-g*"]})
-        self.assertEqual(sorted(a[3] for a, _ in self.fake.prowler_runs()), [ALPHA, BETA])
-        self.assertIn({"type": "scope", "scope": GAMMA, "inspected": False, "reason": "expected: in connectors.prowler.config.skip_projects"}, records)
+    def test_skip_projects_take_ids_or_patterns_and_are_declared_uninspected(self):
+        for skip in (GAMMA, "demo-proj-g*"):
+            with self.subTest(skip=skip):
+                self.fake.close()
+                self.fake = Fake()
+                _, records = self.fake.run({"skip_projects": [skip]})
+                self.assertEqual(sorted(a[3] for a, _ in self.fake.prowler_runs()), [ALPHA, BETA])
+                self.assertIn({"type": "scope", "scope": GAMMA, "inspected": False,
+                               "reason": "expected: in connectors.prowler.config.skip_projects"}, records)
 
     def test_expired_login_is_reauth_for_that_account_only(self):
         self.fake.flag("notoken", BOB)
@@ -306,7 +306,7 @@ class InventoryTest(unittest.TestCase):
     def test_denied_project_falls_back_to_the_next_account(self):
         self.fake.flag("deny", BETA, ALICE)
         _, records = self.fake.run()
-        beta = [s for s in of(records, "status") if s.get("scope") == BETA]
+        beta = on(records, BETA)
         self.assertEqual([(s["account"], s["state"]) for s in beta], [(ALICE, "ok")])
         self.assertIn("read as " + BOB, beta[0]["detail"])
         ssh = [f for f in of(records, "finding") if f["scope"] == BETA][0]
@@ -316,7 +316,7 @@ class InventoryTest(unittest.TestCase):
         self.fake.flag("deny", BETA, ALICE)
         self.fake.flag("deny", BETA, BOB)
         _, records = self.fake.run()
-        beta = [s for s in of(records, "status") if s.get("scope") == BETA]
+        beta = on(records, BETA)
         self.assertEqual([(s["account"], s["state"]) for s in beta], [(ALICE, "noscope")])
         self.assertIn(ALICE, beta[0]["detail"])
         self.assertIn(BOB, beta[0]["detail"])
@@ -326,10 +326,10 @@ class InventoryTest(unittest.TestCase):
     def test_timeout_is_an_error_on_that_project(self):
         self.fake.flag("slow", ALPHA)
         _, records = self.fake.run({"timeout": 1})
-        alpha = [s for s in of(records, "status") if s.get("scope") == ALPHA]
+        alpha = on(records, ALPHA)
         self.assertEqual([s["state"] for s in alpha], ["error"])
         self.assertIn("within 1 s", alpha[0]["detail"])
-        self.assertEqual([s["state"] for s in of(records, "status") if s.get("scope") == BETA], ["ok"])
+        self.assertEqual([s["state"] for s in on(records, BETA)], ["ok"])
 
     def test_sigterm_stops_prowler_and_removes_its_output(self):
         """segurata ends a cancelled plugin with SIGTERM to its process group. Prowler runs in a
@@ -354,7 +354,7 @@ class InventoryTest(unittest.TestCase):
         while True:
             try:
                 os.killpg(pgid, 0)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):  # macOS answers EPERM for a killed group not yet reaped
                 break
             if time.monotonic() > deadline:
                 os.killpg(pgid, signal.SIGKILL)
@@ -365,14 +365,14 @@ class InventoryTest(unittest.TestCase):
     def test_crash_is_an_error_with_prowlers_reason(self):
         self.fake.flag("crash", GAMMA)
         _, records = self.fake.run()
-        gamma = [s for s in of(records, "status") if s.get("scope") == GAMMA][0]
+        gamma = on(records, GAMMA)[0]
         self.assertEqual((gamma["account"], gamma["state"]), (BOB, "error"))
         self.assertIn("boom while loading checks", gamma["detail"])
 
     def test_unreadable_api_state_leaves_the_project_uninspected(self):
         self.fake.flag("unknown", ALPHA)
         _, records = self.fake.run()
-        alpha = [s for s in of(records, "status") if s.get("scope") == ALPHA][0]
+        alpha = on(records, ALPHA)[0]
         self.assertEqual(alpha["state"], "noscope")
         self.assertIn("HTTP 403) on compute,", alpha["detail"])
         self.assertIn("roles/serviceusage.serviceUsageViewer", alpha["detail"])
@@ -381,7 +381,7 @@ class InventoryTest(unittest.TestCase):
     def test_refused_project_calls_leave_it_uninspected_but_organization_calls_do_not(self):
         self.fake.flag("refused", BETA)
         _, records = self.fake.run()
-        beta = [s for s in of(records, "status") if s.get("scope") == BETA][0]
+        beta = on(records, BETA)[0]
         self.assertEqual(beta["state"], "noscope")
         self.assertIn("HTTP 403) on storage,", beta["detail"])
         self.assertNotIn("essentialcontacts", beta["detail"])
@@ -390,34 +390,31 @@ class InventoryTest(unittest.TestCase):
         # Google refuses a project without billing with a 403, though nothing can run there.
         self.fake.flag("nobilling", BETA)
         _, records = self.fake.run()
-        beta = [s for s in of(records, "status") if s.get("scope") == BETA][0]
+        beta = on(records, BETA)[0]
         self.assertEqual(beta["state"], "ok")
         self.assertIn("billing is disabled (nothing can run there): appengine, container", beta["detail"])
         self.fake.flag("refused", BETA)  # a refusal for any other reason still leaves it uninspected
         _, records = self.fake.run()
-        beta = [s for s in of(records, "status") if s.get("scope") == BETA][0]
+        beta = on(records, BETA)[0]
         self.assertEqual(beta["state"], "noscope")
         self.assertIn("HTTP 403) on storage,", beta["detail"])
         self.assertNotIn("appengine", beta["detail"].split("so those checks")[0])
 
     def test_missing_prowler_or_gcloud_is_unsupported_everywhere(self):
-        empty = tempfile.mkdtemp()
-        try:
-            os.symlink(os.path.join(FAKEBIN, "gcloud"), os.path.join(empty, "gcloud"))
-            _, records = self.fake.run(env_extra={"PATH": empty + os.pathsep + "/usr/bin:/bin"})
-        finally:
-            shutil.rmtree(empty)
-        self.assertEqual([(s["account"], s["scope"], s["state"]) for s in of(records, "status")], [("gcp", "*", "unsupported")])
-        self.assertIn("pipx install", of(records, "status")[0]["detail"])
+        only_gcloud = os.path.join(self.fake.dir, "bin")
+        os.makedirs(only_gcloud)
+        os.symlink(os.path.join(FAKEBIN, "gcloud"), os.path.join(only_gcloud, "gcloud"))
+        cases = (({}, only_gcloud, "pipx install"),
+                 ({"gcloud_path": "/nonexistent/gcloud"}, FAKEBIN, "gcloud not found"))
+        for config, path, hint in cases:
+            with self.subTest(hint=hint):
+                _, records = self.fake.run(config, path=path)
+                self.assertEqual([(s["account"], s["scope"], s["state"]) for s in of(records, "status")], [("gcp", "*", "unsupported")])
+                self.assertIn(hint, of(records, "status")[0]["detail"])
 
-    def test_prowler_path_from_config(self):
-        bin_dir = tempfile.mkdtemp()
-        try:
-            os.symlink(os.path.join(FAKEBIN, "gcloud"), os.path.join(bin_dir, "gcloud"))
-            _, records = self.fake.run({"prowler_path": os.path.join(FAKEBIN, "prowler")},
-                                       env_extra={"PATH": bin_dir + os.pathsep + "/usr/bin:/bin"})
-        finally:
-            shutil.rmtree(bin_dir)
+    def test_binaries_from_config(self):
+        _, records = self.fake.run({"prowler_path": os.path.join(FAKEBIN, "prowler"),
+                                    "gcloud_path": os.path.join(FAKEBIN, "gcloud")}, path=self.fake.dir)
         self.assertTrue(of(records, "finding"))
 
     def test_parallel_runs_give_the_same_result(self):
@@ -437,7 +434,7 @@ class InventoryTest(unittest.TestCase):
 
 
 def profile(cls="unknown", in_org=None, **over):
-    p = dict(prowler.UNKNOWN_PROFILE, **over)
+    p = dict(UNKNOWN, **over)
     p.update({"class": cls, "in_organization": in_org})
     return p
 
@@ -507,7 +504,6 @@ class RelevanceTest(unittest.TestCase):
         self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), kind="exposure"), ("medium", ""),
                          "a hygiene check whose categories say internet-exposed is protected")
         self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), kind="credential"), ("medium", ""))
-        self.assertFalse(prowler.HYGIENE_CHECKS & prowler.PROTECTED_CHECKS)
 
     def test_toggle_and_overrides(self):
         self.assertEqual(self.weigh(self.LOG, "medium", profile("empty"), relevance=False), ("medium", ""))
@@ -554,7 +550,7 @@ class RelevanceInventoryTest(unittest.TestCase):
     def run_delta(self, config=None):
         _, records = self.fake.run(dict({"projects": [DELTA]}, **(config or {})))
         findings = {f["evidence"]["check_id"]: f for f in of(records, "finding")}
-        status = [s for s in of(records, "status") if s.get("scope") == DELTA][0]
+        status = on(records, DELTA)[0]
         return findings, status
 
     def test_empty_project_keeps_exposures_and_quiets_hygiene(self):
@@ -618,12 +614,8 @@ class RelevanceInventoryTest(unittest.TestCase):
         self.assertEqual(findings["logging_sink_created"]["evidence"]["profile"]["unread"], ["sql_instances"])
         self.assertIn("not read: sql_instances", status["detail"])
 
-    def test_throttled_read_is_retried_once_and_failures_are_logged_with_the_reason(self):
+    def test_failed_profile_reads_are_logged_with_the_reason(self):
         self.fake.profile(DELTA, services=DEFAULTS)
-        self.fake.flag("profile", DELTA, "flaky-billing")
-        findings, _ = self.run_delta()
-        self.assertEqual(findings["logging_sink_created"]["evidence"]["profile"]["unread"], [])
-        self.assertEqual(self.fake.calls().count("billing projects describe " + DELTA), 2)
         os.remove(os.path.join(self.fake.dir, "profile", DELTA, "billing.json"))
         _, records = self.fake.run({"projects": [DELTA]})
         logs = [r["msg"] for r in of(records, "log")]
@@ -643,6 +635,36 @@ class RelevanceInventoryTest(unittest.TestCase):
         self.assertEqual(findings["logging_sink_created"]["account"], ALICE)
         self.assertIn("services list --enabled --project=%s --account=%s" % (DELTA, BOB), self.fake.calls())
         self.assertNotIn("services list --enabled --project=%s --account=%s" % (DELTA, ALICE), self.fake.calls())
+
+
+class RetryTest(unittest.TestCase):
+    def read(self, *answers):
+        gcloud = prowler.Gcloud("/nonexistent/gcloud")
+        calls, answers = [], list(answers)
+        gcloud.run = lambda *args: (calls.append(args), answers.pop(0))[1]
+        with mock.patch.object(prowler.time, "sleep") as sleep:
+            try:
+                return gcloud.billing_enabled(ALICE, DELTA), calls, sleep
+            except RuntimeError as e:
+                return e, calls, sleep
+
+    def test_throttled_read_is_retried_once(self):
+        throttled = (1, "", "ERROR: (gcloud.billing) RESOURCE_EXHAUSTED: Quota exceeded (429)")
+        result, calls, sleep = self.read(throttled, (0, '{"billingEnabled": true}', ""))
+        self.assertIs(result, True)
+        self.assertEqual(calls, [("billing", "projects", "describe", DELTA, "--account=" + ALICE, "--format=json")] * 2)
+        sleep.assert_called_once_with(prowler.RETRY_DELAY)
+        result, calls, _ = self.read(throttled, throttled)
+        self.assertIn("RESOURCE_EXHAUSTED", str(result))
+        self.assertEqual(len(calls), 2)
+
+    def test_other_failures_are_not_retried(self):
+        result, calls, sleep = self.read((1, "", "ERROR: (gcloud.billing) PERMISSION_DENIED"))
+        self.assertIn("PERMISSION_DENIED", str(result))
+        self.assertEqual(len(calls), 1)
+        sleep.assert_not_called()
+        result, _, _ = self.read((1, "", ""))
+        self.assertEqual(str(result), "gcloud billing projects describe failed")
 
 
 class ScrubTest(unittest.TestCase):
