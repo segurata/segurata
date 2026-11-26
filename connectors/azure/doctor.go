@@ -7,7 +7,6 @@ import (
 	"github.com/segurata/segurata/internal/finding"
 )
 
-// Doctor runs `az account show` through the inventory's read-only allowlist.
 func (c *Connector) Doctor(ctx context.Context, _ connector.Request) []connector.Check {
 	var current account
 	err := c.call(ctx, &current, "account", "show")

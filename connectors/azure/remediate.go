@@ -10,22 +10,19 @@ import (
 	"github.com/segurata/segurata/internal/textfmt"
 )
 
-// ActionDeleteExpiredSecrets deletes client secrets of app registrations that have already
-// expired. One plan covers every such finding of a tenant.
+// ActionDeleteExpiredSecrets deletes expired client secrets; one plan covers a tenant.
 const ActionDeleteExpiredSecrets = "azure.app-secret.delete-expired"
 
 func deleteStep(appID, keyID string) connector.Step {
 	return connector.Step{Argv: []string{"az", "ad", "app", "credential", "delete", "--id", appID, "--key-id", keyID, "--only-show-errors"}}
 }
 
-// expired is one client secret that has expired, as read now.
 type expired struct {
 	app  app
 	cred passwordCredential
 }
 
-// secretsState is what a plan is built from: the tenant az is signed in to and, of the secrets
-// the findings name, those still registered and expired now.
+// secretsState holds, of the secrets the findings name, those still registered and expired now.
 type secretsState struct {
 	tenant  string
 	expired []expired
@@ -101,7 +98,6 @@ func (st secretsState) plan() (connector.Plan, error) {
 	return p, nil
 }
 
-// allowlist is a delete for every secret of these apps that is expired in the read, nothing else.
 func (st secretsState) allowlist() connector.Allowlist {
 	allow := connector.Allowlist{}
 	for _, e := range st.expired {
@@ -118,8 +114,6 @@ func (c *Connector) Apply(ctx context.Context, f finding.Finding, p connector.Pl
 	return c.ApplyGroup(ctx, []finding.Finding{f}, p, io)
 }
 
-// PlanGroup reads the tenant's app registrations now and plans a delete for each secret of the
-// group that is still registered and expired.
 func (c *Connector) PlanGroup(ctx context.Context, fs []finding.Finding) (connector.Plan, error) {
 	st, err := c.readSecrets(ctx, fs)
 	if err != nil {
