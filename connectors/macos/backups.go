@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/segurata/segurata/connectors/internal/posture"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/textfmt"
 )
@@ -55,21 +56,21 @@ func (c *Connector) destinationInfo(ctx context.Context) (map[string]any, error)
 
 // backupChecks: without the preferences file a destination's encryption is unknown, not reported.
 func (c *Connector) backupChecks(ctx context.Context) []check {
-	none := check{id: "backup-none", sev: finding.SevHigh, blast: finding.BlastDevice,
-		title: "No Time Machine backup is configured",
-		rem:   manual("Set up an encrypted backup disk in " + backupSettings + " > Add Backup Disk, with Encrypt Backup on. Keep a second, offsite copy too (3-2-1).")}
+	none := check{ID: "backup-none", Sev: finding.SevHigh, Blast: finding.BlastDevice,
+		Title: "No Time Machine backup is configured",
+		Rem:   posture.Manual("Set up an encrypted backup disk in " + backupSettings + " > Add Backup Disk, with Encrypt Backup on. Keep a second, offsite copy too (3-2-1).")}
 	info, err := c.destinationInfo(ctx)
 	if err != nil {
-		none.skip = err.Error()
+		none.Skip = err.Error()
 		return []check{none}
 	}
 	prefs, prefsErr := c.timeMachinePrefs(ctx)
 	dests := joinDestinations(info, prefs)
 	if len(dests) == 0 {
-		none.detail = "tmutil destinationinfo lists no destination"
+		none.Detail = "tmutil destinationinfo lists no destination"
 		return []check{none}
 	}
-	none.ok, none.detail = true, fmt.Sprintf("%d Time Machine destinations", len(dests))
+	none.OK, none.Detail = true, fmt.Sprintf("%d Time Machine destinations", len(dests))
 	checks := []check{none}
 	for _, d := range dests {
 		checks = append(checks, encryptionCheck(d, prefsErr))
@@ -137,22 +138,22 @@ func latestSnapshot(p map[string]any) time.Time {
 }
 
 func encryptionCheck(d tmDestination, prefsErr error) check {
-	ch := check{id: "backup-unencrypted:" + d.id, resource: "backup_destination", name: d.name, sev: finding.SevHigh,
-		evidence: map[string]any{"destination": d.name, "kind": d.kind},
-		title:    fmt.Sprintf("Time Machine destination %q is not encrypted: anyone holding the disk reads your files despite FileVault", d.name),
-		rem: manual("Encryption cannot be added to an existing backup since macOS 13: in " + backupSettings +
+	ch := check{ID: "backup-unencrypted:" + d.id, Resource: "backup_destination", Name: d.name, Sev: finding.SevHigh,
+		Evidence: map[string]any{"destination": d.name, "kind": d.kind},
+		Title:    fmt.Sprintf("Time Machine destination %q is not encrypted: anyone holding the disk reads your files despite FileVault", d.name),
+		Rem: posture.Manual("Encryption cannot be added to an existing backup since macOS 13: in " + backupSettings +
 			", remove the destination, erase the disk, add it again with Set Up Disk > Encrypt Backup on, and keep or wipe the old backups.")}
 	switch {
 	case d.encrypted == nil:
-		ch.ok, ch.detail = true, fmt.Sprintf("%s (%s): encryption unknown, the Time Machine preferences do not say", d.name, d.kind)
+		ch.OK, ch.Detail = true, fmt.Sprintf("%s (%s): encryption unknown, the Time Machine preferences do not say", d.name, d.kind)
 		if prefsErr != nil {
-			ch.detail += fmt.Sprintf(" (%v)", prefsErr)
+			ch.Detail += fmt.Sprintf(" (%v)", prefsErr)
 		}
 	case *d.encrypted:
-		ch.ok, ch.detail = true, fmt.Sprintf("%s (%s) is encrypted", d.name, d.kind)
+		ch.OK, ch.Detail = true, fmt.Sprintf("%s (%s) is encrypted", d.name, d.kind)
 	default:
-		ch.detail = fmt.Sprintf("%s (%s): LastKnownEncryptionState is NotEncrypted", d.name, d.kind)
-		ch.evidence["encrypted"] = false
+		ch.Detail = fmt.Sprintf("%s (%s): LastKnownEncryptionState is NotEncrypted", d.name, d.kind)
+		ch.Evidence["encrypted"] = false
 	}
 	return ch
 }
@@ -163,8 +164,8 @@ var backupStamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}-\d{6})`)
 // destination unmounted, from the preferences.
 func (c *Connector) backupAgeCheck(ctx context.Context, dests []tmDestination) check {
 	now := c.Now()
-	ch := check{id: "backup-age", sev: finding.SevMedium,
-		rem: manual("Connect the backup disk and choose Back Up Now in " + backupSettings + "; leave it connected, or on the network, so backups run on their own.")}
+	ch := check{ID: "backup-age", Sev: finding.SevMedium,
+		Rem: posture.Manual("Connect the backup disk and choose Back Up Now in " + backupSettings + "; leave it connected, or on the network, so backups run on their own.")}
 	var last time.Time
 	out, _ := c.text(ctx, tmLatest...)
 	if m := backupStamp.FindStringSubmatch(out); m != nil {
@@ -182,17 +183,17 @@ func (c *Connector) backupAgeCheck(ctx context.Context, dests []tmDestination) c
 	slices.Sort(names)
 	where := strings.Join(names, ", ")
 	if last.IsZero() {
-		ch.sev = finding.SevHigh
-		ch.title = "Time Machine is set up but has never completed a backup"
-		ch.detail = fmt.Sprintf("no backup found on %s (tmutil latestbackup: %s)", where, orQ(firstLine(out)))
-		ch.evidence = map[string]any{"destinations": names}
+		ch.Sev = finding.SevHigh
+		ch.Title = "Time Machine is set up but has never completed a backup"
+		ch.Detail = fmt.Sprintf("no backup found on %s (tmutil latestbackup: %s)", where, orQ(firstLine(out)))
+		ch.Evidence = map[string]any{"destinations": names}
 		return ch
 	}
 	age := now.Sub(last)
 	days := int(age.Hours() / 24)
-	ch.detail = fmt.Sprintf("latest backup %s (%d days ago) on %s", last.Format("2006-01-02 15:04"), days, where)
-	ch.evidence = map[string]any{"latest_backup": last.Format(time.RFC3339), "age_days": days, "destinations": names}
-	ch.ok = age <= maxBackupAge
-	ch.title = fmt.Sprintf("The latest Time Machine backup is %d days old", days)
+	ch.Detail = fmt.Sprintf("latest backup %s (%d days ago) on %s", last.Format("2006-01-02 15:04"), days, where)
+	ch.Evidence = map[string]any{"latest_backup": last.Format(time.RFC3339), "age_days": days, "destinations": names}
+	ch.OK = age <= maxBackupAge
+	ch.Title = fmt.Sprintf("The latest Time Machine backup is %d days old", days)
 	return ch
 }

@@ -70,38 +70,38 @@ func shareChecks(shares map[string]sharePoint) []check {
 func shareCheck(sp sharePoint) check {
 	exists := pathExists(sp.Path)
 	guest := sp.Guest == 1
-	ch := check{id: "smb-share:" + sp.Name, resource: "share_point", name: sp.Name,
-		evidence: map[string]any{"name": sp.Name, "path": sp.Path, "path_exists": exists,
+	ch := check{ID: "smb-share:" + sp.Name, Resource: "share_point", Name: sp.Name,
+		Evidence: map[string]any{"name": sp.Name, "path": sp.Path, "path_exists": exists,
 			"guest": guest, "read_only": sp.ReadOnly == 1, "smb_shared": sp.Shared == 1}}
 	remove := finding.Remediation{Action: actionShareRemove,
 		Summary: "Remove the share point record with `segurata remediate <id> --apply`, or in System Settings > General > Sharing > File Sharing (i)."}
 	switch {
 	case sp.Shared != 1:
-		ch.sev, ch.rem = finding.SevInfo, remove
-		ch.detail = fmt.Sprintf("share point %q for %s exists but is not shared over SMB", sp.Name, sp.Path)
-		ch.title = fmt.Sprintf("Share point %q (%s) is recorded but not shared over SMB", sp.Name, sp.Path)
+		ch.Sev, ch.Rem = finding.SevInfo, remove
+		ch.Detail = fmt.Sprintf("share point %q for %s exists but is not shared over SMB", sp.Name, sp.Path)
+		ch.Title = fmt.Sprintf("Share point %q (%s) is recorded but not shared over SMB", sp.Name, sp.Path)
 	case !exists:
-		ch.sev, ch.rem = finding.SevHigh, remove
-		ch.detail = fmt.Sprintf("share point %q points at %s, which does not exist (a record left behind, for example by Migration Assistant)", sp.Name, sp.Path)
+		ch.Sev, ch.Rem = finding.SevHigh, remove
+		ch.Detail = fmt.Sprintf("share point %q points at %s, which does not exist (a record left behind, for example by Migration Assistant)", sp.Name, sp.Path)
 		if u := deletedAccount(sp.Path); u != "" {
-			ch.detail = fmt.Sprintf("share point %q points at %s, which does not exist: the account %q was deleted and its File Sharing record stayed", sp.Name, sp.Path, u)
-			ch.evidence["deleted_account"] = u
+			ch.Detail = fmt.Sprintf("share point %q points at %s, which does not exist: the account %q was deleted and its File Sharing record stayed", sp.Name, sp.Path, u)
+			ch.Evidence["deleted_account"] = u
 		}
-		ch.title = fmt.Sprintf("Orphaned File Sharing record %q: it shares %s, which no longer exists", sp.Name, sp.Path)
+		ch.Title = fmt.Sprintf("Orphaned File Sharing record %q: it shares %s, which no longer exists", sp.Name, sp.Path)
 		if guest {
-			ch.title += ", with guest access"
+			ch.Title += ", with guest access"
 		}
 	case guest:
-		ch.id = "smb-share-guest:" + sp.Name
-		ch.sev = finding.SevHigh
-		ch.detail = fmt.Sprintf("%s is shared over SMB as %q with guest access", sp.Path, sp.Name)
-		ch.title = fmt.Sprintf("Shared folder %q (%s) allows guests: anyone on the network can open it without a password", sp.Name, sp.Path)
-		ch.rem = finding.Remediation{Action: actionShareGuestOff,
+		ch.ID = "smb-share-guest:" + sp.Name
+		ch.Sev = finding.SevHigh
+		ch.Detail = fmt.Sprintf("%s is shared over SMB as %q with guest access", sp.Path, sp.Name)
+		ch.Title = fmt.Sprintf("Shared folder %q (%s) allows guests: anyone on the network can open it without a password", sp.Name, sp.Path)
+		ch.Rem = finding.Remediation{Action: actionShareGuestOff,
 			Summary: "Turn off guest access with `segurata remediate <id> --apply`, or in System Settings > General > Sharing > File Sharing (i) > the folder > Guest: No Access. To stop sharing the folder altogether, remove it in that same panel."}
 	default:
-		ch.sev, ch.rem = finding.SevMedium, remove
-		ch.detail = fmt.Sprintf("%s is shared over SMB as %q", sp.Path, sp.Name)
-		ch.title = fmt.Sprintf("Folder %s is shared over SMB as %q", sp.Path, sp.Name)
+		ch.Sev, ch.Rem = finding.SevMedium, remove
+		ch.Detail = fmt.Sprintf("%s is shared over SMB as %q", sp.Path, sp.Name)
+		ch.Title = fmt.Sprintf("Folder %s is shared over SMB as %q", sp.Path, sp.Name)
 	}
 	return ch
 }

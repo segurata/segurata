@@ -48,30 +48,30 @@ func homeReadable(mode fs.FileMode) bool { return mode.Perm()&0o066 != 0 }
 
 // homeCheck: every macOS user is in staff, so group read is as open as world read.
 func (c *Connector) homeCheck(ctx context.Context) check {
-	ch := check{id: "home-private", sev: finding.SevMedium,
-		title: "Your home folder can be read by other accounts on this Mac",
-		rem: finding.Remediation{Action: actionHomePrivate,
+	ch := check{ID: "home-private", Sev: finding.SevMedium,
+		Title: "Your home folder can be read by other accounts on this Mac",
+		Rem: finding.Remediation{Action: actionHomePrivate,
 			Summary: "Make it private with `segurata remediate <id> --apply` (chmod 700, no sudo), or in Finder > Get Info > Sharing & Permissions."}}
 	home, err := c.homeDir()
 	if err != nil {
-		ch.skip = err.Error()
+		ch.Skip = err.Error()
 		return ch
 	}
 	fi, err := os.Stat(home)
 	if err != nil {
-		ch.skip = err.Error()
+		ch.Skip = err.Error()
 		return ch
 	}
 	mode := fi.Mode().Perm()
 	acl := c.homeACL(ctx, home)
-	ch.evidence = map[string]any{"path": home, "mode": fmt.Sprintf("%o", mode), "acl": len(acl) > 0, "acl_entries": acl}
+	ch.Evidence = map[string]any{"path": home, "mode": fmt.Sprintf("%o", mode), "acl": len(acl) > 0, "acl_entries": acl}
 	switch {
 	case homeReadable(mode):
-		ch.detail = fmt.Sprintf("%s is mode %o: other accounts (a guest, a repair technician's account) can list it and read whatever inside is not private", home, mode)
+		ch.Detail = fmt.Sprintf("%s is mode %o: other accounts (a guest, a repair technician's account) can list it and read whatever inside is not private", home, mode)
 	case mode&0o011 != 0:
-		ch.ok, ch.detail = true, fmt.Sprintf("%s is mode %o: others can pass through it to paths they know, but cannot list or read it (CIS accepts 711)", home, mode)
+		ch.OK, ch.Detail = true, fmt.Sprintf("%s is mode %o: others can pass through it to paths they know, but cannot list or read it (CIS accepts 711)", home, mode)
 	default:
-		ch.ok, ch.detail = true, fmt.Sprintf("%s is mode %o", home, mode)
+		ch.OK, ch.Detail = true, fmt.Sprintf("%s is mode %o", home, mode)
 	}
 	return ch
 }

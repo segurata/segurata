@@ -183,14 +183,14 @@ func TestScreenIdleCheck(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ch := screenIdleCheck(tc.saver, tc.display)
-			if ch.ok != tc.ok || (ch.skip != "") != tc.skip || (!tc.ok && !tc.skip && ch.sev != tc.sev) {
-				t.Fatalf("ok=%v skip=%q sev=%s title=%q", ch.ok, ch.skip, ch.sev, ch.title)
+			if ch.OK != tc.ok || (ch.Skip != "") != tc.skip || (!tc.ok && !tc.skip && ch.Sev != tc.sev) {
+				t.Fatalf("ok=%v skip=%q sev=%s title=%q", ch.OK, ch.Skip, ch.Sev, ch.Title)
 			}
-			if tc.skip && ch.skipState != finding.StateError {
-				t.Errorf("a failed read is an error, not unsupported: %q", ch.skipState)
+			if tc.skip && ch.SkipState != finding.StateError {
+				t.Errorf("a failed read is an error, not unsupported: %q", ch.SkipState)
 			}
-			if tc.detail != "" && !strings.Contains(ch.detail, tc.detail) {
-				t.Errorf("detail %q", ch.detail)
+			if tc.detail != "" && !strings.Contains(ch.Detail, tc.detail) {
+				t.Errorf("detail %q", ch.Detail)
 			}
 		})
 	}

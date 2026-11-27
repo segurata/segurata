@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/segurata/segurata/connectors/internal/posture"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -137,19 +138,19 @@ func agentCheck(name string, t agentTrace) check {
 	if t.account != "" {
 		parts = append(parts, "service account "+t.account)
 	}
-	ch := check{id: "endpoint-agent:" + name, resource: "endpoint_agent", name: name, blast: finding.BlastLeftovers,
-		detail: strings.Join(parts, "; "),
-		evidence: map[string]any{"vendor": name, "apps": t.apps, "launchd": t.launchd, "folders": t.dirs,
+	ch := check{ID: "endpoint-agent:" + name, Resource: "endpoint_agent", Name: name, Blast: finding.BlastLeftovers,
+		Detail: strings.Join(parts, "; "),
+		Evidence: map[string]any{"vendor": name, "apps": t.apps, "launchd": t.launchd, "folders": t.dirs,
 			"running": len(t.procs) > 0, "service_account": t.account}}
 	if t.active() {
-		ch.sev = finding.SevInfo
-		ch.title = fmt.Sprintf("Endpoint agent %s is installed", name)
-		ch.rem = manual("Context: keep it if you or your organisation chose it, and keep it up to date; if nobody remembers installing it, uninstall it with its own uninstaller.")
+		ch.Sev = finding.SevInfo
+		ch.Title = fmt.Sprintf("Endpoint agent %s is installed", name)
+		ch.Rem = posture.Manual("Context: keep it if you or your organisation chose it, and keep it up to date; if nobody remembers installing it, uninstall it with its own uninstaller.")
 		return ch
 	}
-	ch.sev = finding.SevLow
-	ch.title = fmt.Sprintf("Leftovers of endpoint agent %s: no app installed and nothing running", name)
-	ch.rem = manual("Run the vendor's uninstaller or removal tool to clean up what is left (" + strings.Join(parts, "; ") +
+	ch.Sev = finding.SevLow
+	ch.Title = fmt.Sprintf("Leftovers of endpoint agent %s: no app installed and nothing running", name)
+	ch.Rem = posture.Manual("Run the vendor's uninstaller or removal tool to clean up what is left (" + strings.Join(parts, "; ") +
 		"). A leftover service account or launch item from an agent nobody manages is attack surface with no protection behind it.")
 	return ch
 }

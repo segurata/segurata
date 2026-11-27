@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
+	"github.com/segurata/segurata/connectors/internal/posture"
 	"github.com/segurata/segurata/internal/connector"
 	"github.com/segurata/segurata/internal/finding"
 	"github.com/segurata/segurata/internal/proc"
@@ -200,111 +200,34 @@ func (c *Connector) Inventory(ctx context.Context, _ connector.Request, emit con
 	if host == "" {
 		host, _ = os.Hostname()
 	}
-	r := &reporter{host: host, emit: emit}
+	r := &reporter{Host: host, Emit: emit, Setting: "macos_setting"}
 
 	// softwareupdate -l can take minutes: start it first and report it last.
 	pending := make(chan check, 1)
 	go func() { pending <- c.pendingUpdates(ctx) }()
 
-	r.reportAll(c.systemChecks(ctx))
-	r.report(c.homeCheck(ctx))
+	r.ReportAll(c.systemChecks(ctx))
+	r.Report(c.homeCheck(ctx))
 	if users, err := c.localUsers(ctx); err != nil {
-		r.report(check{id: "local-accounts", skip: "dscl could not list local users: " + err.Error()})
+		r.Report(check{ID: "local-accounts", Skip: "dscl could not list local users: " + err.Error()})
 	} else {
-		r.reportAll(inArea("local-accounts", c.accountChecks(ctx, users)))
-		r.reportAll(inArea("local-accounts", c.orphanedFiles(users)))
-		r.reportAll(inArea("local-accounts", c.endpointAgents(ctx, users)))
+		r.ReportAll(posture.InArea("local-accounts", c.accountChecks(ctx, users)))
+		r.ReportAll(posture.InArea("local-accounts", c.orphanedFiles(users)))
+		r.ReportAll(posture.InArea("local-accounts", c.endpointAgents(ctx, users)))
 	}
-	r.reportAll(c.backupChecks(ctx))
+	r.ReportAll(c.backupChecks(ctx))
 	items := c.backgroundItems(ctx, r)
 	c.listeningPorts(ctx, r, items)
-	r.reportAll(items.checks)
-	r.report(c.braveDebugging(ctx))
-	r.report(<-pending)
+	r.ReportAll(items.checks)
+	r.Report(c.braveDebugging(ctx))
+	r.Report(<-pending)
 
 	// A check that could not run leaves only its own area uninspected.
-	emit.Status(finding.Status{Account: host, State: finding.StateOK})
-	for _, ch := range r.skipped {
-		state := ch.skipState
-		if state == "" {
-			state = finding.StateUnsupported
-		}
-		emit.Status(finding.Status{Account: host, Scope: ch.scope(), State: state, Detail: ch.id + ": " + ch.skip})
-	}
+	r.Finish()
 	return nil
 }
 
-// check is one posture check's outcome. A passing check is logged, not emitted: a finding's
-// disappearance is how remediate confirms a fix.
-type check struct {
-	id        string
-	area      string // shared scope of checks one failure skips together; defaults to id
-	resource  string // "macos_setting" when empty
-	name      string
-	ok        bool
-	skip      string        // why the check could not run
-	skipState finding.State // "" is unsupported; error when the tool failed
-	sev       finding.Severity
-	blast     finding.Blast
-	title     string
-	detail    string
-	evidence  map[string]any
-	rem       finding.Remediation
-}
-
-type reporter struct {
-	host    string
-	emit    connector.Emitter
-	skipped []check
-}
-
-func (ch check) scope() string {
-	if ch.area != "" {
-		return "check:" + ch.area
-	}
-	return "check:" + ch.id
-}
-
-func inArea(area string, chs []check) []check {
-	for i := range chs {
-		chs[i].area = area
-	}
-	return chs
-}
-
-func (r *reporter) reportAll(chs []check) {
-	for _, ch := range chs {
-		r.report(ch)
-	}
-}
-
-func (r *reporter) report(ch check) {
-	switch {
-	case ch.skip != "":
-		r.skipped = append(r.skipped, ch)
-		return
-	case ch.ok:
-		r.emit.Log(fmt.Sprintf("OK %s: %s", ch.id, ch.detail))
-		return
-	}
-	ev := map[string]any{"check": ch.id, "detail": ch.detail}
-	maps.Copy(ev, ch.evidence)
-	typ, name := ch.resource, ch.name
-	if typ == "" {
-		typ = "macos_setting"
-	}
-	if name == "" {
-		name = ch.id
-	}
-	r.emit.Finding(finding.Finding{
-		Account:     r.host,
-		Scope:       ch.scope(),
-		Resource:    finding.Resource{Type: typ, ID: ch.id, Name: name},
-		Kind:        finding.KindSetting,
-		Severity:    ch.sev,
-		Blast:       ch.blast,
-		Title:       ch.title,
-		Evidence:    ev,
-		Remediation: ch.rem,
-	})
-}
+type (
+	check    = posture.Check
+	reporter = posture.Reporter
+)

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/segurata/segurata/connectors/internal/posture"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -89,7 +90,7 @@ func (c *Connector) accountChecks(ctx context.Context, users []localUser) []chec
 		}
 	}
 	if len(others) == 0 {
-		return []check{{id: "local-accounts", ok: true, detail: "no human account besides yours"}}
+		return []check{{ID: "local-accounts", OK: true, Detail: "no human account besides yours"}}
 	}
 	run := guard(c.Run, extra...)
 	var out []check
@@ -136,10 +137,10 @@ func (ll lastLogin) String() string {
 }
 
 func accountCheck(u localUser, admin, homeExists bool, ll lastLogin) check {
-	ch := check{id: "account:" + u.name, resource: "local_account", name: u.name,
-		evidence: map[string]any{"user": u.name, "uid": u.uid, "admin": admin, "home": u.home,
+	ch := check{ID: "account:" + u.name, Resource: "local_account", Name: u.name,
+		Evidence: map[string]any{"user": u.name, "uid": u.uid, "admin": admin, "home": u.home,
 			"home_exists": homeExists, "last_login": ll.when, "logins_recorded_since": ll.since},
-		rem: manual("If this account was for a repair technician or another temporary use, delete it in System Settings > Users & Groups (and its home folder with it). " +
+		Rem: posture.Manual("If this account was for a repair technician or another temporary use, delete it in System Settings > Users & Groups (and its home folder with it). " +
 			"For the next repair, create a standard (not administrator) account and delete it afterwards, or let the technician use the Guest User with File Sharing off.")}
 	kind := "Local account"
 	if admin {
@@ -154,17 +155,17 @@ func accountCheck(u localUser, admin, homeExists bool, ll lastLogin) check {
 	}
 	switch {
 	case admin:
-		ch.sev = finding.SevHigh
+		ch.Sev = finding.SevHigh
 	case len(notes) > 0:
-		ch.sev = finding.SevLow
+		ch.Sev = finding.SevLow
 	default:
-		ch.sev = finding.SevMedium
+		ch.Sev = finding.SevMedium
 	}
 	if len(notes) == 0 {
 		notes = append(notes, ll.String())
 	}
-	ch.title = fmt.Sprintf("%s %q exists besides yours (%s)", kind, u.name, strings.Join(notes, ", "))
-	ch.detail = fmt.Sprintf("%s (UID %d, home %s): %s; admin=%t", u.name, u.uid, orQ(u.home), strings.Join(notes, ", "), admin)
+	ch.Title = fmt.Sprintf("%s %q exists besides yours (%s)", kind, u.name, strings.Join(notes, ", "))
+	ch.Detail = fmt.Sprintf("%s (UID %d, home %s): %s; admin=%t", u.name, u.uid, orQ(u.home), strings.Join(notes, ", "), admin)
 	return ch
 }
 
@@ -210,9 +211,9 @@ func (c *Connector) orphanedFiles(users []localUser) []check {
 }
 
 func orphanCheck(root ownerRoot, byUID map[uint32][]string) check {
-	ch := check{id: "unknown-owner:" + root.dir, resource: "orphaned_files", name: root.dir}
+	ch := check{ID: "unknown-owner:" + root.dir, Resource: "orphaned_files", Name: root.dir}
 	if len(byUID) == 0 {
-		ch.ok, ch.detail = true, root.dir+": every item belongs to an existing account"
+		ch.OK, ch.Detail = true, root.dir+": every item belongs to an existing account"
 		return ch
 	}
 	var uids []string
@@ -224,18 +225,18 @@ func orphanCheck(root ownerRoot, byUID map[uint32][]string) check {
 	slices.Sort(paths)
 	n := len(paths)
 	listed := paths[:min(n, maxListed)]
-	ch.evidence = map[string]any{"folder": root.dir, "uids": uids, "count": n, "paths": listed}
+	ch.Evidence = map[string]any{"folder": root.dir, "uids": uids, "count": n, "paths": listed}
 	owners := "UID " + strings.Join(uids, ", ")
-	ch.detail = fmt.Sprintf("%d items in %s belong to %s, which no account on this Mac has: %s", n, root.dir, owners, strings.Join(listed, ", "))
+	ch.Detail = fmt.Sprintf("%d items in %s belong to %s, which no account on this Mac has: %s", n, root.dir, owners, strings.Join(listed, ", "))
 	if root.autostart {
-		ch.sev = finding.SevHigh
-		ch.title = fmt.Sprintf("%d launch items in %s belong to %s, which no account on this Mac has, and start automatically", n, root.dir, owners)
-		ch.rem = manual("Check what each one runs (`plutil -p <path>`). If you do not recognise it, unload it with `sudo launchctl bootout system <path>` and delete the file.")
+		ch.Sev = finding.SevHigh
+		ch.Title = fmt.Sprintf("%d launch items in %s belong to %s, which no account on this Mac has, and start automatically", n, root.dir, owners)
+		ch.Rem = posture.Manual("Check what each one runs (`plutil -p <path>`). If you do not recognise it, unload it with `sudo launchctl bootout system <path>` and delete the file.")
 		return ch
 	}
-	ch.sev = finding.SevLow
-	ch.title = fmt.Sprintf("%d items in %s belong to %s, which no account on this Mac has (left by a deleted account)", n, root.dir, owners)
-	ch.rem = manual("Review them: delete what you do not need, or take ownership of what you keep with `sudo chown -R <you> <path>`. Other accounts may have been able to read them.")
+	ch.Sev = finding.SevLow
+	ch.Title = fmt.Sprintf("%d items in %s belong to %s, which no account on this Mac has (left by a deleted account)", n, root.dir, owners)
+	ch.Rem = posture.Manual("Review them: delete what you do not need, or take ownership of what you keep with `sudo chown -R <you> <path>`. Other accounts may have been able to read them.")
 	return ch
 }
 

@@ -171,15 +171,15 @@ func TestOrphanListIsCapped(t *testing.T) {
 		byUID[900] = append(byUID[900], fmt.Sprintf("/Users/Shared/f%02d", i))
 	}
 	ch := orphanCheck(ownerRoots[0], byUID)
-	if ch.evidence["count"] != maxListed+5 || len(ch.evidence["paths"].([]string)) != maxListed {
-		t.Errorf("%v", ch.evidence)
+	if ch.Evidence["count"] != maxListed+5 || len(ch.Evidence["paths"].([]string)) != maxListed {
+		t.Errorf("%v", ch.Evidence)
 	}
 }
 
 func TestOrphanedShareNamesTheDeletedAccount(t *testing.T) {
 	ch := shareCheck(sharePoint{Name: quotedName, Path: "/Users/segurata-test-deleted/Public", Shared: 1, Guest: 1})
-	if ch.evidence["deleted_account"] != "segurata-test-deleted" || !strings.Contains(ch.detail, "was deleted") {
-		t.Errorf("%q %v", ch.detail, ch.evidence)
+	if ch.Evidence["deleted_account"] != "segurata-test-deleted" || !strings.Contains(ch.Detail, "was deleted") {
+		t.Errorf("%q %v", ch.Detail, ch.Evidence)
 	}
 	if deletedAccount("/Users/Shared/x") != "" || deletedAccount("/Volumes/x") != "" {
 		t.Error("named a deleted account for a path outside a home folder")

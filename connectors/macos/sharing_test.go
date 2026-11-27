@@ -78,11 +78,11 @@ func TestShareChecksGradeEachSharePoint(t *testing.T) {
 	}
 	for _, c := range cases {
 		ch := shareCheck(c.sp)
-		if ch.id != c.id || ch.resource != "share_point" || ch.sev != c.sev || ch.rem.Action != c.action || !strings.Contains(ch.title, c.title) {
-			t.Errorf("%s: id %q sev %s action %q title %q", c.sp.Name, ch.id, ch.sev, ch.rem.Action, ch.title)
+		if ch.ID != c.id || ch.Resource != "share_point" || ch.Sev != c.sev || ch.Rem.Action != c.action || !strings.Contains(ch.Title, c.title) {
+			t.Errorf("%s: id %q sev %s action %q title %q", c.sp.Name, ch.ID, ch.Sev, ch.Rem.Action, ch.Title)
 		}
 		for _, k := range []string{"name", "path", "path_exists", "guest", "read_only"} {
-			if _, ok := ch.evidence[k]; !ok {
+			if _, ok := ch.Evidence[k]; !ok {
 				t.Errorf("%s: evidence lacks %s", c.sp.Name, k)
 			}
 		}

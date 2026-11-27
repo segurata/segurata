@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/segurata/segurata/connectors/internal/posture"
 	"github.com/segurata/segurata/internal/finding"
 )
 
@@ -137,26 +138,26 @@ func leftoverCheck(j launchJob, bundleIDs func() []string) (check, bool) {
 	if j.privileged {
 		kind = "privileged helper"
 	}
-	ch := check{id: "leftover:" + j.label, resource: "background_item", name: j.label, sev: finding.SevLow,
-		evidence: map[string]any{"label": j.label, "plist": j.plist, "program": j.program, "privileged": j.privileged}}
+	ch := check{ID: "leftover:" + j.label, Resource: "background_item", Name: j.label, Sev: finding.SevLow,
+		Evidence: map[string]any{"label": j.label, "plist": j.plist, "program": j.program, "privileged": j.privileged}}
 	unload := fmt.Sprintf("`launchctl bootout gui/$(id -u) %s`", j.plist)
 	if j.privileged {
 		unload = fmt.Sprintf("`sudo launchctl bootout system %s`", j.plist)
 	}
 	switch {
 	case !pathExists(j.onDisk):
-		ch.title = fmt.Sprintf("Leftover %s %s: its program is missing", kind, j.label)
-		ch.detail = fmt.Sprintf("%s starts %s, which does not exist", j.plist, j.program)
-		ch.evidence["program_exists"] = false
+		ch.Title = fmt.Sprintf("Leftover %s %s: its program is missing", kind, j.label)
+		ch.Detail = fmt.Sprintf("%s starts %s, which does not exist", j.plist, j.program)
+		ch.Evidence["program_exists"] = false
 	case j.privileged && strings.HasPrefix(j.program, helperTools+"/") &&
 		!slices.ContainsFunc(bundleIDs(), func(id string) bool { return vendorDomain(id) == vendorDomain(j.label) }):
-		ch.title = fmt.Sprintf("Leftover privileged helper %s: no app from %s is installed", j.label, vendorDomain(j.label))
-		ch.detail = fmt.Sprintf("%s starts %s as root, and no installed app's bundle id starts with %s", j.plist, j.program, vendorDomain(j.label))
-		ch.evidence["program_exists"] = true
+		ch.Title = fmt.Sprintf("Leftover privileged helper %s: no app from %s is installed", j.label, vendorDomain(j.label))
+		ch.Detail = fmt.Sprintf("%s starts %s as root, and no installed app's bundle id starts with %s", j.plist, j.program, vendorDomain(j.label))
+		ch.Evidence["program_exists"] = true
 	default:
 		return check{}, false
 	}
-	ch.rem = manual(fmt.Sprintf("If you no longer use the app that installed it, unload it with %s and delete %s and %s.", unload, j.plist, j.program))
+	ch.Rem = posture.Manual(fmt.Sprintf("If you no longer use the app that installed it, unload it with %s and delete %s and %s.", unload, j.plist, j.program))
 	return ch, true
 }
 
@@ -191,11 +192,11 @@ func (b *bgItems) absorb(l listener) bool {
 		return false
 	}
 	ch := &b.checks[i]
-	if ch.evidence == nil {
-		ch.evidence = map[string]any{}
+	if ch.Evidence == nil {
+		ch.Evidence = map[string]any{}
 	}
-	ports, _ := ch.evidence["listening_ports"].([]string)
-	ch.evidence["listening_ports"] = append(ports, l.port)
-	ch.detail += fmt.Sprintf("; %s listens on TCP %s from the network", l.proc, l.port)
+	ports, _ := ch.Evidence["listening_ports"].([]string)
+	ch.Evidence["listening_ports"] = append(ports, l.port)
+	ch.Detail += fmt.Sprintf("; %s listens on TCP %s from the network", l.proc, l.port)
 	return true
 }

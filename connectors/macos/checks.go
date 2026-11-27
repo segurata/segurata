@@ -11,58 +11,57 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/segurata/segurata/connectors/internal/posture"
 	"github.com/segurata/segurata/internal/finding"
 )
-
-func manual(summary string) finding.Remediation { return finding.Remediation{Summary: summary} }
 
 func (c *Connector) systemChecks(ctx context.Context) []check {
 	var out []check
 
 	s, _ := c.text(ctx, "/usr/bin/fdesetup", "status")
 	s = firstLine(s)
-	out = append(out, check{id: "filevault", ok: strings.Contains(s, "is On"), detail: s, sev: finding.SevHigh,
-		title: "FileVault disk encryption is off",
-		rem:   manual("Turn on FileVault in System Settings > Privacy & Security > FileVault, and keep the recovery key somewhere safe.")})
+	out = append(out, check{ID: "filevault", OK: strings.Contains(s, "is On"), Detail: s, Sev: finding.SevHigh,
+		Title: "FileVault disk encryption is off",
+		Rem:   posture.Manual("Turn on FileVault in System Settings > Privacy & Security > FileVault, and keep the recovery key somewhere safe.")})
 
 	s, _ = c.text(ctx, "/usr/bin/csrutil", "status")
-	out = append(out, check{id: "sip", ok: strings.Contains(s, "enabled"), detail: s, sev: finding.SevHigh,
-		title: "System Integrity Protection is disabled",
-		rem:   manual("Start up in macOS Recovery, open Terminal and run `csrutil enable`, then restart.")})
+	out = append(out, check{ID: "sip", OK: strings.Contains(s, "enabled"), Detail: s, Sev: finding.SevHigh,
+		Title: "System Integrity Protection is disabled",
+		Rem:   posture.Manual("Start up in macOS Recovery, open Terminal and run `csrutil enable`, then restart.")})
 
 	s, _ = c.text(ctx, "/usr/sbin/spctl", "--status")
-	out = append(out, check{id: "gatekeeper", ok: strings.Contains(s, "assessments enabled"), detail: s, sev: finding.SevHigh,
-		title: "Gatekeeper is disabled: apps from anywhere run without a check",
-		rem:   manual("In System Settings > Privacy & Security > Security, allow applications from the App Store and identified developers.")})
+	out = append(out, check{ID: "gatekeeper", OK: strings.Contains(s, "assessments enabled"), Detail: s, Sev: finding.SevHigh,
+		Title: "Gatekeeper is disabled: apps from anywhere run without a check",
+		Rem:   posture.Manual("In System Settings > Privacy & Security > Security, allow applications from the App Store and identified developers.")})
 
 	s, _ = c.text(ctx, socketfilterfw, "--getglobalstate")
-	out = append(out, check{id: "firewall", ok: strings.Contains(s, "enabled"), detail: s, sev: finding.SevMedium,
-		title: "The macOS application firewall is off",
-		rem: finding.Remediation{Action: actionFirewallEnable,
+	out = append(out, check{ID: "firewall", OK: strings.Contains(s, "enabled"), Detail: s, Sev: finding.SevMedium,
+		Title: "The macOS application firewall is off",
+		Rem: finding.Remediation{Action: actionFirewallEnable,
 			Summary: "Turn on the firewall (System Settings > Network > Firewall), or run `segurata remediate <id> --apply`."}})
 
 	s, _ = c.text(ctx, socketfilterfw, "--getstealthmode")
-	out = append(out, check{id: "firewall-stealth", ok: strings.Contains(s, " on") || strings.Contains(s, "enabled"), detail: s, sev: finding.SevLow,
-		title: "Firewall stealth mode is off: the Mac answers probes and pings",
-		rem: finding.Remediation{Action: actionFirewallStealth,
+	out = append(out, check{ID: "firewall-stealth", OK: strings.Contains(s, " on") || strings.Contains(s, "enabled"), Detail: s, Sev: finding.SevLow,
+		Title: "Firewall stealth mode is off: the Mac answers probes and pings",
+		Rem: finding.Remediation{Action: actionFirewallStealth,
 			Summary: "Turn on stealth mode (System Settings > Network > Firewall > Options), or run `segurata remediate <id> --apply`."}})
 
-	updates := manual("Turn on every automatic update option in System Settings > General > Software Update > Automatic Updates.")
+	updates := posture.Manual("Turn on every automatic update option in System Settings > General > Software Update > Automatic Updates.")
 	for _, k := range updateKeys {
 		v := c.pref(ctx, defaultsBin, "read", softwareUpdatePrefs, k)
-		out = append(out, check{id: "update-" + k, ok: v != "0", detail: orUnset(v), sev: finding.SevMedium,
-			title: fmt.Sprintf("Automatic update setting %s is off", k), rem: updates})
+		out = append(out, check{ID: "update-" + k, OK: v != "0", Detail: orUnset(v), Sev: finding.SevMedium,
+			Title: fmt.Sprintf("Automatic update setting %s is off", k), Rem: updates})
 	}
 	v := c.pref(ctx, defaultsBin, "read", commercePrefs, "AutoUpdate")
-	out = append(out, check{id: "update-appstore-apps", ok: v != "0", detail: orUnset(v), sev: finding.SevLow,
-		title: "App Store apps do not update automatically",
-		rem:   manual("Turn on App Store > Settings > Automatic Updates.")})
+	out = append(out, check{ID: "update-appstore-apps", OK: v != "0", Detail: orUnset(v), Sev: finding.SevLow,
+		Title: "App Store apps do not update automatically",
+		Rem:   posture.Manual("Turn on App Store > Settings > Automatic Updates.")})
 
 	s, _ = c.text(ctx, "/usr/sbin/sysadminctl", "-screenLock", "status")
 	s = screenLockText(s)
-	out = append(out, check{id: "screen-lock", ok: screenLockOK(s), detail: s, sev: finding.SevMedium,
-		title: "The screen does not lock right away when it sleeps",
-		rem:   manual("In System Settings > Lock Screen, set \"Require password after screen saver begins or display is turned off\" to Immediately.")})
+	out = append(out, check{ID: "screen-lock", OK: screenLockOK(s), Detail: s, Sev: finding.SevMedium,
+		Title: "The screen does not lock right away when it sleeps",
+		Rem:   posture.Manual("In System Settings > Lock Screen, set \"Require password after screen saver begins or display is turned off\" to Immediately.")})
 
 	saver := c.readSetting(ctx, defaultsBin, "-currentHost", "read", "com.apple.screensaver", "idleTime")
 	if !saver.set && saver.err == "" {
@@ -79,27 +78,27 @@ func (c *Connector) systemChecks(ctx context.Context) []check {
 	out = append(out, screenIdleCheck(saver, display))
 
 	user := c.pref(ctx, defaultsBin, "read", loginWindowPrefs, "autoLoginUser")
-	out = append(out, check{id: "auto-login", ok: user == "", detail: "automatic login as " + user, sev: finding.SevHigh,
-		title: "The Mac logs in automatically, without a password",
-		rem:   manual("Set System Settings > Users & Groups > Automatically log in as: Off.")})
+	out = append(out, check{ID: "auto-login", OK: user == "", Detail: "automatic login as " + user, Sev: finding.SevHigh,
+		Title: "The Mac logs in automatically, without a password",
+		Rem:   posture.Manual("Set System Settings > Users & Groups > Automatically log in as: Off.")})
 	if user == "" {
-		out[len(out)-1].detail = "off"
+		out[len(out)-1].Detail = "off"
 	}
 
 	g := c.pref(ctx, defaultsBin, "read", loginWindowPrefs, "GuestEnabled")
 	if g == "" {
 		g = "0"
 	}
-	out = append(out, check{id: "guest-account", ok: g == "0", detail: "GuestEnabled=" + g, sev: finding.SevMedium,
-		title: "The guest account is enabled",
-		rem:   manual("Turn off System Settings > Users & Groups > Guest User > Allow guests to log in to this computer.")})
+	out = append(out, check{ID: "guest-account", OK: g == "0", Detail: "GuestEnabled=" + g, Sev: finding.SevMedium,
+		Title: "The guest account is enabled",
+		Rem:   posture.Manual("Turn off System Settings > Users & Groups > Guest User > Allow guests to log in to this computer.")})
 
 	s, _ = c.text(ctx, "/usr/sbin/systemsetup", "-getremotelogin")
-	rl := check{id: "remote-login", ok: strings.Contains(s, "Off"), detail: s, sev: finding.SevMedium,
-		title: "Remote Login (SSH) is on",
-		rem:   manual("Turn off System Settings > General > Sharing > Remote Login unless you use SSH into this Mac.")}
+	rl := check{ID: "remote-login", OK: strings.Contains(s, "Off"), Detail: s, Sev: finding.SevMedium,
+		Title: "Remote Login (SSH) is on",
+		Rem:   posture.Manual("Turn off System Settings > General > Sharing > Remote Login unless you use SSH into this Mac.")}
 	if strings.Contains(s, "administrator") {
-		rl.skip = "systemsetup needs admin; the listening ports check covers SSH"
+		rl.Skip = "systemsetup needs admin; the listening ports check covers SSH"
 	}
 	return append(out, rl)
 }
@@ -143,13 +142,13 @@ const maxIdleLock = 10 * 60
 
 // screenIdleCheck: saver idleTime is in seconds, displaysleep in minutes; 0 is never for both.
 func screenIdleCheck(saver, display setting) check {
-	ch := check{id: "screensaver", sev: finding.SevLow,
-		rem: manual("In System Settings > Lock Screen, set \"Start Screen Saver when inactive\" or \"Turn display off when inactive\" to 10 minutes or less.")}
+	ch := check{ID: "screensaver", Sev: finding.SevLow,
+		Rem: posture.Manual("In System Settings > Lock Screen, set \"Start Screen Saver when inactive\" or \"Turn display off when inactive\" to 10 minutes or less.")}
 	saverSecs, saverOK := seconds(saver, 1)
 	displaySecs, displayOK := seconds(display, 60)
-	ch.detail = fmt.Sprintf("screen saver %s, display off %s", describeIdle(saver, saverSecs, "idleTime"), describeIdle(display, displaySecs, "displaysleep"))
+	ch.Detail = fmt.Sprintf("screen saver %s, display off %s", describeIdle(saver, saverSecs, "idleTime"), describeIdle(display, displaySecs, "displaysleep"))
 	if !saverOK && !displayOK {
-		ch.skip, ch.skipState = "could not read the idle timing: "+ch.detail, finding.StateError
+		ch.Skip, ch.SkipState = "could not read the idle timing: "+ch.Detail, finding.StateError
 		return ch
 	}
 	effective := 0
@@ -158,17 +157,17 @@ func screenIdleCheck(saver, display setting) check {
 			effective = v
 		}
 	}
-	ch.evidence = map[string]any{"effective_seconds": effective, "max_seconds": maxIdleLock}
+	ch.Evidence = map[string]any{"effective_seconds": effective, "max_seconds": maxIdleLock}
 	switch {
 	case effective == 0 && saverOK && displayOK:
-		ch.sev = finding.SevMedium
-		ch.title = "The screen never locks on its own: screen saver and display sleep are both off"
+		ch.Sev = finding.SevMedium
+		ch.Title = "The screen never locks on its own: screen saver and display sleep are both off"
 	case effective == 0:
-		ch.skip, ch.skipState = "could not judge the idle timing: "+ch.detail, finding.StateError
+		ch.Skip, ch.SkipState = "could not judge the idle timing: "+ch.Detail, finding.StateError
 	case effective > maxIdleLock:
-		ch.title = fmt.Sprintf("The screen locks only after %d minutes idle (more than %d)", effective/60, maxIdleLock/60)
+		ch.Title = fmt.Sprintf("The screen locks only after %d minutes idle (more than %d)", effective/60, maxIdleLock/60)
 	default:
-		ch.ok = true
+		ch.OK = true
 	}
 	return ch
 }
@@ -234,10 +233,10 @@ var updateLabel = regexp.MustCompile(`(?m)^\s*\* Label: (.+)$`)
 func (c *Connector) pendingUpdates(ctx context.Context) check {
 	ver, _ := c.text(ctx, "/usr/bin/sw_vers", "-productVersion")
 	out, err := c.read(ctx, softwareUpdate, "-l")
-	ch := check{id: "updates-pending", sev: finding.SevMedium, title: "macOS has updates waiting to be installed",
-		rem: manual("Install them in System Settings > General > Software Update.")}
+	ch := check{ID: "updates-pending", Sev: finding.SevMedium, Title: "macOS has updates waiting to be installed",
+		Rem: posture.Manual("Install them in System Settings > General > Software Update.")}
 	if errors.Is(err, context.DeadlineExceeded) {
-		ch.skip = "softwareupdate -l did not answer within 120 s"
+		ch.Skip = "softwareupdate -l did not answer within 120 s"
 		return ch
 	}
 	var labels []string
@@ -245,11 +244,11 @@ func (c *Connector) pendingUpdates(ctx context.Context) check {
 		labels = append(labels, strings.TrimSpace(m[1]))
 	}
 	if len(labels) == 0 {
-		ch.ok, ch.detail = true, ver+", no pending updates"
+		ch.OK, ch.Detail = true, ver+", no pending updates"
 		return ch
 	}
-	ch.detail = ver + ", pending: " + strings.Join(labels, ",")
-	ch.evidence = map[string]any{"macos_version": ver, "pending": labels}
+	ch.Detail = ver + ", pending: " + strings.Join(labels, ",")
+	ch.Evidence = map[string]any{"macos_version": ver, "pending": labels}
 	return ch
 }
 
@@ -278,18 +277,18 @@ func (c *Connector) listeningPorts(ctx context.Context, r *reporter, items *bgIt
 	ps, _ := c.text(ctx, psBin, "-axo", "pid=,comm=")
 	ls := parseListeners(ns, parseProcs(ps))
 	if len(ls) == 0 {
-		r.report(check{id: "listen", ok: true, detail: "no TCP port listening outside loopback"})
+		r.Report(check{ID: "listen", OK: true, Detail: "no TCP port listening outside loopback"})
 		return
 	}
 	for _, l := range ls {
 		ch := listenerCheck(l)
-		if ch.sev == finding.SevInfo && items.absorb(l) {
+		if ch.Sev == finding.SevInfo && items.absorb(l) {
 			continue
 		}
 		if l.port == "445" {
 			c.smbChecks(ctx, r, &ch)
 		}
-		r.report(ch)
+		r.Report(ch)
 	}
 }
 
@@ -297,43 +296,43 @@ func (c *Connector) listeningPorts(ctx context.Context, r *reporter, items *bgIt
 func (c *Connector) smbChecks(ctx context.Context, r *reporter, port *check) {
 	shares, err := c.sharePoints(ctx)
 	if err != nil {
-		r.report(check{id: "smb-shares", area: "smb-shares", skip: err.Error()})
+		r.Report(check{ID: "smb-shares", Area: "smb-shares", Skip: err.Error()})
 		return
 	}
 	if len(shares) == 0 {
-		port.title += ", with no shared folders"
-		port.detail += "; no share points"
-		port.rem = manual("File Sharing is on but shares nothing: turn it off in System Settings > General > Sharing > File Sharing.")
+		port.Title += ", with no shared folders"
+		port.Detail += "; no share points"
+		port.Rem = posture.Manual("File Sharing is on but shares nothing: turn it off in System Settings > General > Sharing > File Sharing.")
 		return
 	}
-	port.evidence["share_points"] = slices.Sorted(maps.Keys(shares))
-	r.reportAll(inArea("smb-shares", shareChecks(shares)))
+	port.Evidence["share_points"] = slices.Sorted(maps.Keys(shares))
+	r.ReportAll(posture.InArea("smb-shares", shareChecks(shares)))
 }
 
 func listenerCheck(l listener) check {
 	where := fmt.Sprintf("%s (%s)", strings.Join(l.addrs, ", "), l.proc)
-	ch := check{id: "listen-" + l.port, resource: "listening_port", name: "TCP " + l.port,
-		evidence: map[string]any{"port": l.port, "addresses": l.addrs, "process": l.proc}}
+	ch := check{ID: "listen-" + l.port, Resource: "listening_port", Name: "TCP " + l.port,
+		Evidence: map[string]any{"port": l.port, "addresses": l.addrs, "process": l.proc}}
 	known, isKnown := knownPorts[l.port]
 	switch {
 	case isKnown && known.label == "AirPlay Receiver":
-		ch.sev, ch.detail = finding.SevMedium, where+" AirPlay Receiver, reachable from the network"
-		ch.title = fmt.Sprintf("AirPlay Receiver listens on port %s for any device on the network", l.port)
+		ch.Sev, ch.Detail = finding.SevMedium, where+" AirPlay Receiver, reachable from the network"
+		ch.Title = fmt.Sprintf("AirPlay Receiver listens on port %s for any device on the network", l.port)
 		// Not automatable: on macOS 15.6 writing com.apple.controlcenter AirplayRecieverEnabled and
 		// restarting ControlCenter leaves ports 5000 and 7000 open (tried 2026-11-23).
-		ch.rem = manual("Turn off System Settings > General > AirDrop & Handoff > AirPlay Receiver.")
+		ch.Rem = posture.Manual("Turn off System Settings > General > AirDrop & Handoff > AirPlay Receiver.")
 	case isKnown:
-		ch.sev, ch.detail = finding.SevMedium, where+" "+known.label+", reachable from the network"
-		ch.title = fmt.Sprintf("%s listens on port %s for any device on the network", known.label, l.port)
-		ch.rem = manual(known.fix)
+		ch.Sev, ch.Detail = finding.SevMedium, where+" "+known.label+", reachable from the network"
+		ch.Title = fmt.Sprintf("%s listens on port %s for any device on the network", known.label, l.port)
+		ch.Rem = posture.Manual(known.fix)
 	case l.proc == "sshd" || l.proc == "launchd":
-		ch.sev, ch.detail = finding.SevMedium, where+" system service, reachable from the network"
-		ch.title = fmt.Sprintf("A system service (%s) listens on port %s for any device on the network", l.proc, l.port)
-		ch.rem = manual("Find the sharing service behind it in System Settings > General > Sharing and turn it off if you do not use it.")
+		ch.Sev, ch.Detail = finding.SevMedium, where+" system service, reachable from the network"
+		ch.Title = fmt.Sprintf("A system service (%s) listens on port %s for any device on the network", l.proc, l.port)
+		ch.Rem = posture.Manual("Find the sharing service behind it in System Settings > General > Sharing and turn it off if you do not use it.")
 	default:
-		ch.sev, ch.detail = finding.SevInfo, where+" reachable from the local network"
-		ch.title = fmt.Sprintf("%s listens on port %s for other devices on the network", l.proc, l.port)
-		ch.rem = manual("If you do not need " + l.proc + " reachable from other devices, turn off its network feature; with the firewall on, macOS asks before it accepts connections.")
+		ch.Sev, ch.Detail = finding.SevInfo, where+" reachable from the local network"
+		ch.Title = fmt.Sprintf("%s listens on port %s for other devices on the network", l.proc, l.port)
+		ch.Rem = posture.Manual("If you do not need " + l.proc + " reachable from other devices, turn off its network feature; with the firewall on, macOS asks before it accepts connections.")
 	}
 	return ch
 }
@@ -447,14 +446,14 @@ func (c *Connector) backgroundItems(ctx context.Context, r *reporter) *bgItems {
 	out, err := c.read(ctx, sfltoolBin, "dumpbtm")
 	btm := parseBTM(string(out))
 	if err != nil || len(btm) == 0 {
-		skip := check{id: "btm", area: "btm", skip: "sfltool dumpbtm returned nothing (it may need sudo here); listed launchd plists and launchctl jobs instead"}
+		skip := check{ID: "btm", Area: "btm", Skip: "sfltool dumpbtm returned nothing (it may need sudo here); listed launchd plists and launchctl jobs instead"}
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			skip.skip, skip.skipState = fmt.Sprintf("sfltool dumpbtm timed out after %s; listed launchd plists and launchctl jobs instead", slowTimeout), finding.StateError
+			skip.Skip, skip.SkipState = fmt.Sprintf("sfltool dumpbtm timed out after %s; listed launchd plists and launchctl jobs instead", slowTimeout), finding.StateError
 		case err != nil:
-			skip.skip, skip.skipState = fmt.Sprintf("sfltool dumpbtm failed (%v); listed launchd plists and launchctl jobs instead", err), finding.StateError
+			skip.Skip, skip.SkipState = fmt.Sprintf("sfltool dumpbtm failed (%v); listed launchd plists and launchctl jobs instead", err), finding.StateError
 		}
-		r.report(skip)
+		r.Report(skip)
 		c.launchItems(ctx, items, jobs, leftover)
 		return items
 	}
@@ -462,15 +461,15 @@ func (c *Connector) backgroundItems(ctx context.Context, r *reporter) *bgItems {
 		if leftover[it.label()] {
 			continue
 		}
-		ch := check{id: "btm:" + it.ident, area: "btm", resource: "background_item", name: it.name,
-			detail:   fmt.Sprintf("%s [%s] %s %s (Team %s)", it.name, it.typ, it.ident, it.exe, it.team),
-			evidence: map[string]any{"type": it.typ, "identifier": it.ident, "executable": it.exe, "team_id": it.team},
-			rem:      manual("Check you recognise it. Turn it off in System Settings > General > Login Items & Extensions, or uninstall the app that installed it."),
-			sev:      finding.SevInfo, title: fmt.Sprintf("Background item %s (%s) runs at login", it.name, it.typ)}
+		ch := check{ID: "btm:" + it.ident, Area: "btm", Resource: "background_item", Name: it.name,
+			Detail:   fmt.Sprintf("%s [%s] %s %s (Team %s)", it.name, it.typ, it.ident, it.exe, it.team),
+			Evidence: map[string]any{"type": it.typ, "identifier": it.ident, "executable": it.exe, "team_id": it.team},
+			Rem:      posture.Manual("Check you recognise it. Turn it off in System Settings > General > Login Items & Extensions, or uninstall the app that installed it."),
+			Sev:      finding.SevInfo, Title: fmt.Sprintf("Background item %s (%s) runs at login", it.name, it.typ)}
 		if it.team == "" && !strings.HasPrefix(it.exe, "/opt/homebrew/") {
-			ch.sev = finding.SevLow
-			ch.detail = fmt.Sprintf("%s [%s] %s %s (no developer signature: check you recognise it)", it.name, it.typ, it.ident, it.exe)
-			ch.title = fmt.Sprintf("Background item %s (%s) runs at login without a developer signature", it.name, it.typ)
+			ch.Sev = finding.SevLow
+			ch.Detail = fmt.Sprintf("%s [%s] %s %s (no developer signature: check you recognise it)", it.name, it.typ, it.ident, it.exe)
+			ch.Title = fmt.Sprintf("Background item %s (%s) runs at login without a developer signature", it.name, it.typ)
 		}
 		items.add(ch, it.paths()...)
 	}
@@ -538,9 +537,9 @@ func (c *Connector) launchItems(ctx context.Context, items *bgItems, jobs []laun
 		if j.program != "" {
 			detail += " starts " + j.program
 		}
-		items.add(check{id: "launch-item:" + j.label, area: "btm", resource: "background_item", name: j.label, sev: finding.SevInfo,
-			detail: detail, evidence: map[string]any{"label": j.label, "plist": j.plist, "program": j.program},
-			title: "Launch item " + j.label, rem: manual("Check you recognise it.")}, j.program)
+		items.add(check{ID: "launch-item:" + j.label, Area: "btm", Resource: "background_item", Name: j.label, Sev: finding.SevInfo,
+			Detail: detail, Evidence: map[string]any{"label": j.label, "plist": j.plist, "program": j.program},
+			Title: "Launch item " + j.label, Rem: posture.Manual("Check you recognise it.")}, j.program)
 	}
 	out, _ := c.text(ctx, "/bin/launchctl", "list")
 	for i, l := range strings.Split(out, "\n") {
@@ -553,7 +552,7 @@ func (c *Connector) launchItems(ctx context.Context, items *bgItems, jobs []laun
 			continue
 		}
 		seen[label] = true
-		items.add(check{id: "launchctl:" + label, area: "btm", resource: "background_item", name: label, sev: finding.SevInfo, detail: label,
-			title: "launchd job " + label, rem: manual("Check you recognise it.")})
+		items.add(check{ID: "launchctl:" + label, Area: "btm", Resource: "background_item", Name: label, Sev: finding.SevInfo, Detail: label,
+			Title: "launchd job " + label, Rem: posture.Manual("Check you recognise it.")})
 	}
 }
