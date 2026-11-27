@@ -1,6 +1,7 @@
 package windows
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -46,7 +47,7 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 		case absent(f):
 			checks = append(checks, connector.Check{Level: connector.OK, What: s.what, Detail: "not on this edition of Windows"})
 		case s.sec == "bde" && !p.elevated():
-			checks = append(checks, connector.Check{Level: connector.OK, What: s.what, Detail: "administrators only; the shell property answers for a standard user"})
+			checks = append(checks, shellAnswers(p))
 		default:
 			why, _, _ := p.unread(s.sec, s.elevated)
 			fix := "the checks that read it are skipped until it answers"
@@ -62,4 +63,19 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 		checks = append(checks, connector.Check{Level: connector.OK, What: "registry", Detail: "the screen saver settings are readable"})
 	}
 	return checks
+}
+
+// shellAnswers says whether the shell property, a standard user's only BitLocker source, gave a
+// value segurata trusts for every fixed drive (Windows Server 2025 gives a standard user 0).
+func shellAnswers(p probe) connector.Check {
+	ch := connector.Check{Level: connector.OK, What: "BitLocker (Win32_EncryptableVolume)", Detail: "administrators only; the shell property answers for every fixed drive"}
+	for _, v := range p.all("vol") {
+		if s := v.get("shell"); s != "1" && s != "2" {
+			ch.Level = connector.Warn
+			ch.Detail = fmt.Sprintf("administrators only, and the shell property gives no trusted answer for %s (System.Volume.BitLockerProtection=%s): its encryption is not inspected", v.get("letter"), cmp.Or(s, "?"))
+			ch.Fix = "run `manage-bde -status` in an elevated PowerShell to see it; segurata never elevates"
+			break
+		}
+	}
+	return ch
 }

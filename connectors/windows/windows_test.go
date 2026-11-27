@@ -445,7 +445,7 @@ func TestDoctorSaysWhatAStandardUserCannotRead(t *testing.T) {
 		}
 	}
 	for what, lvl := range map[string]connector.Level{
-		"BitLocker (Win32_EncryptableVolume)":          connector.OK,
+		"BitLocker (Win32_EncryptableVolume)":          connector.Warn,
 		"Microsoft Defender (MSFT_MpComputerStatus)":   connector.Warn,
 		"SMB1Protocol feature (Win32_OptionalFeature)": connector.Warn,
 		"listening ports (MSFT_NetTCPConnection)":      connector.Warn,
