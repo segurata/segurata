@@ -1,6 +1,6 @@
 // Package rotation is `segurata rotations`: the guided flow over the tracker's rotate items, one
-// per secret fingerprint (list, next, show, replace). sync, done, snooze, ignore and reopen are
-// track's own verbs, run on secrets only (tracker.CLI.Rotations). The items, their risk model and
+// per secret fingerprint (list, next, show, replace). sync, done, snooze, ignore, reopen and owner
+// are track's own verbs, run on secrets only (tracker.CLI.Rotations). The items, their risk model and
 // the reopen rules live in internal/tracker. See docs/architecture.md, "Rotation ledger".
 package rotation
 
@@ -47,9 +47,11 @@ const usage = `usage: segurata rotations <command>
   snooze  <id> --until YYYY-MM-DD [--note text]
   ignore  <id> --reason text
   reopen  <id> [--note text]
+  owner   <id> mine|not-mine --reason text   whose it is, set by you: wins over attribution everywhere
+  owner   <id> unknown                       back to the automatic attribution
   done, snooze, ignore and reopen take --path <prefix> instead of an id: every item (open, or
   closed for reopen) whose locations all lie under that path, e.g. a test log full of fixtures.
-  sync, done, snooze, ignore and reopen are segurata track's, on secrets only.`
+  sync, done, snooze, ignore, reopen and owner are segurata track's, on secrets only.`
 
 func (c CLI) Run(args []string) int {
 	if len(args) == 0 {
@@ -201,8 +203,14 @@ func printAttribution(w io.Writer, a *attribution.Result) {
 		fmt.Fprintln(w, "\nowner:       not attributed yet (run segurata rotations sync)")
 		return
 	}
-	fmt.Fprintf(w, "\nowner:       %s (%s confidence)\n", a.Owner, a.Confidence)
-	for _, r := range a.Reasons {
+	reasons := a.Reasons
+	if ov := a.Facts.Override; ov != nil {
+		fmt.Fprintf(w, "\nowner:       %s (set by you: %s)\n", a.Owner, ov.Reason)
+		reasons = reasons[1:] // "set by you: …"
+	} else {
+		fmt.Fprintf(w, "\nowner:       %s (%s confidence)\n", a.Owner, a.Confidence)
+	}
+	for _, r := range reasons {
 		fmt.Fprintf(w, "  - %s\n", r)
 	}
 	f := a.Facts
@@ -210,7 +218,8 @@ func printAttribution(w io.Writer, a *attribution.Result) {
 		k string
 		v []string
 	}{{"AWS accounts", f.AWSAccounts}, {"GCP projects", f.GCPProjects}, {"Slack workspaces", f.SlackTeams}, {"GitHub accounts", f.GitHubLogins},
-		{"commit authors", f.AuthorEmails}, {"repository owners", f.RepoOwners}} {
+		{"SSH keys", f.SSHKeys}, {"commit authors", f.AuthorEmails}, {"repository owners", f.RepoOwners}, {"repositories without a GitHub owner", f.UnownedRepos},
+		{"your config files", f.OwnConfig}} {
 		if len(kv.v) > 0 {
 			fmt.Fprintf(w, "  %s: %s\n", kv.k, strings.Join(kv.v, ", "))
 		}

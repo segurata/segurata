@@ -414,12 +414,12 @@ reached the model provider).
   so they take no lock for that; they record their outcome (rotated, a failed attempt, the
   redaction notes) with `tracker.Update`, which loads the tracker fresh under the lock. The
   SHA-256 check above still refuses a lost update from an edit made outside segurata.
-- `schema_version` 7 is the current format. A format change adds an upgrade step from version n
+- `schema_version` 8 is the current format. A format change adds an upgrade step from version n
   to n+1 on the raw JSON, applied in order when loading; a newer file than the binary knows is
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
   `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
   status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
-  the top-level `runs` (see "Coverage"); 5 added a location's `gone`; 6 added a secret's `liveness`, the history action `dead` and attribution facts' `github_logins`. 7 added a run's `unreadable`. An older file holds none of them, so it loads as it is and is saved as the current version (the
+  the top-level `runs` (see "Coverage"); 5 added a location's `gone`; 6 added a secret's `liveness`, the history action `dead` and attribution facts' `github_logins`. 7 added a run's `unreadable`. 8 added a location's `repo_owner`, the history event and action `owner`, and attribution facts' `ssh_keys`, `repos_without_owner`, `own_config` and `override`. An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### `segurata status`
@@ -1040,8 +1040,8 @@ check (with `skip_git_history: true`, no rg, gitleaks or ssh-keygen pass runs).
 `segurata rotations` turns `local-secrets` findings into a list of secrets to rotate, one item per
 fingerprint. The items are the tracker's rotate items (`internal/tracker/secret.go`: folding,
 priority, reopen rules); `internal/rotation` is the command family on top (list, next, show,
-replace). `rotations sync`, `done`, `snooze`, `ignore` and `reopen` are `track`'s own verbs, run
-on rotate items only (`tracker.CLI.Rotations`): the same code and output, except that ids and
+replace). `rotations sync`, `done`, `snooze`, `ignore`, `reopen` and `owner` are `track`'s own
+verbs, run on rotate items only (`tracker.CLI.Rotations`): the same code and output, except that ids and
 `--path` name secrets only and `sync` refuses to save without a local-secrets run. The risk model it shares with the connector lives in
 `internal/secretrisk`, so a finding's severity and an item's priority never disagree.
 
@@ -1307,6 +1307,7 @@ cannot be decoded.
 | `gcp_project` | an OAuth client id (`<number>-….apps.googleusercontent.com`) | the project number it starts with |
 | `gcp_project` | a Google API key, OAuth client secret or service-account key | the file around it: `project_id`, `project_number`, `GCM_SENDER_ID`, or a client id, when it names one project only. An API key alone names none |
 | `author_email` | a git history finding | the author of the commit gitleaks reports |
+| `ssh_key` | a private key | where the owner holds its public half, read from the key itself (`connectors/internal/sshkey`, so the private key never leaves memory): `file:~/.ssh/<name>.pub`, or `github:<login>` for a key of one of the owner's GitHub users (gh's login and `owned_owners`, organizations left out) listed by `gh api --paginate users/<login>/keys` and cached a week in `~/.cache/segurata/github-ssh-keys.json` (fingerprints only); `unreadable` for an encrypted PEM or a body segurata cannot read. Only the place is kept, never the fingerprint |
 | `aws_account`, `github_login`, `slack_team` | the liveness check | the account the provider says the key signs in as (`secret.liveness.account`): STS `Account`, GitHub `login`, Slack `team_id`; for lookups, the account whose IAM inventory holds a key id (or that `sts get-access-key-info` names) and the GitHub login (or repository owner) that registered a private key's public half. A GitHub login is compared with `owned.github` |
 
 History findings replayed from the incremental cache (see "Incremental git history scan") keep
@@ -1326,26 +1327,68 @@ account. Config `owned` (`aws_accounts`, `gcp_projects` (ids or numbers), `slack
 `segurata accounts owned` prints them all, each with its source.
 
 **Verdict.** Every sync folds the claims of each sighting into the item's
-`secret.attribution.facts` (kept, like locations, when a later scan no longer sees them), adds the
-GitHub owner of each repository a location lies in (its `origin` remote in `.git/config`, worktrees
-followed to the main repository), and recomputes `secret.attribution` before the decisions' rules
-run:
+`secret.attribution.facts` (kept, like locations, when a later scan no longer sees them), rebuilds
+from the locations what they say, and recomputes `secret.attribution` before the decisions' rules
+run. From the locations (`tracker.reattribute`):
 
-- `mine` (confidence high) when a claim names one of the owner's accounts, projects or workspaces;
-  medium when another claim names someone else's (a file holding two accounts);
-- `not-mine` (medium) when the claims name only accounts that are none of the owner's known ones,
-  and at least one of the owner's of each kind named is known;
-- `unknown` (low) otherwise: no claim, or a claim of a kind where none of the owner's accounts is
-  known ("run its connector or set owned.aws_accounts").
+- `repo_owners`: the GitHub owner of each repository the secret is committed in (a tracked file or
+  git history; its `origin` remote in `.git/config`, worktrees followed to the main repository),
+  kept on the location as `repo_owner` so a clone deleted since still counts. History a fork
+  inherited from its upstream (`fork-upstream`) and a third-party copy marked `reused` say nothing.
+- `repos_without_owner`: committed copies whose repository has no GitHub remote.
+- `own_config`: working files of the owner's own configuration. A file counts when it is not
+  tracked, lies in no git repository (a `.git` above it), is a dot file or sits in a dot folder of
+  the home (`~/.zshrc`, `~/.npmrc`, `~/.config/<tool>/…`, `~/.mcp/…`, `~/.codex/auth.json`), a
+  PowerShell profile or the Windows user environment (`HKCU\Environment\NAME`), and is in none of
+  the package stores and copies under the dot folders (`packageStores`: `~/.cache`, `~/.npm`,
+  `~/.nvm`, `~/.cargo/registry`, `~/.m2/repository`, `~/.vscode`, `~/.claude/file-history`…),
+  `site-packages`, nor a test, example, documentation or vendored folder (`secretrisk.RoleOf`). A
+  `.env` in a cloned repository, a document in `~/Documents`, a transcript, a shell history or a log
+  is not.
 
-A verdict of mine also restores full impact to copies in third-party repositories and inherited
-fork history (see "What counts against the owner").
+The owned accounts are the tracker's `owned`, config `owned`, the GitHub owners of every
+local-secrets instance's `owned_owners` (`config.OwnedAccounts`) and the git email; a scan's
+`Known` gets the same (`tracker.ConfigOwned`). Evidence comes in two tiers: the accounts and keys a
+secret names (strong), and the repositories, authors and config files of its copies (weak). An
+account named outranks a copy: someone else's AWS key the owner committed, or keeps in
+`~/.aws/credentials`, stays someone else's and is never tried against its provider.
+
+| Verdict | Confidence | When | Reason |
+|---|---|---|---|
+| `mine` | high | a claim names one of the owner's accounts, projects or workspaces, or a private key's public half is the owner's | "AWS account … is yours", "the public key of this private key is on your GitHub account …", "the public key of this private key matches ~/.ssh/….pub" |
+| `mine` | medium | as above, and another claim or a committed copy names someone else's | the same, plus the other's reason |
+| `not-mine` | medium | no strong `mine`; the claims name only accounts that are none of the owner's known ones, and at least one of the owner's of each kind named is known | "AWS account … is none of your N known (owned.aws_accounts)" |
+| `mine` | medium | no strong evidence; committed in one of the owner's repositories, committed by the owner, or kept in the owner's own config | "committed in a repository you own (…)", "committed by you (…)", "kept in your own config file ~/…", "kept in your own user environment HKCU\Environment\…" |
+| `not-mine` | medium | no strong evidence, no weak `mine`; committed only in repositories whose owners are none of `owned.github` (not empty), and nothing unknown | "committed in a repository of …, none of your N GitHub accounts or organizations (owned.github)" |
+| `unknown` | low | otherwise: no claim; a kind with none of the owner's known ("run its connector or set owned.aws_accounts"); a repository without a GitHub remote ("committed to a git repository with no GitHub remote, so whose it is is unknown (…)") | |
+
+A commit by someone else ("hint: committed by someone else (…)") is never evidence of not-mine:
+people commit other people's keys, and the owner commits third-party sample keys. A private key
+whose public half is found nowhere is no evidence either ("hint: the public key of this private
+key could not be read …" when it could not be read). Transcripts, shell histories and logs say
+nothing about whose a secret is.
+
+A verdict of mine from an account named, a private key's public half or the owner's word also
+restores full impact to copies in third-party repositories and inherited fork history (see "What
+counts against the owner"); one from a repository, an author or a config file does not (the scan
+already marks reused a value one of the owner's own files holds).
 
 Not-mine is a comparison with the accounts known, not proof: an old AWS account the owner still
 holds but no profile reaches reads as someone else's until it is listed in `owned.aws_accounts`.
-Commit authorship ("committed by you (me@x.com)", "committed by someone else") and repository
-ownership ("in a repository of instructure, none of your GitHub accounts or organizations") are
-listed as hints and never change the verdict.
+
+**The owner's word.** `segurata rotations owner <id> mine|not-mine --reason text` sets the verdict
+by hand (`facts.override`, history event and action `owner`, detail "mine: <reason>"); `owner <id>
+unknown` clears it (detail "back to the automatic attribution: <owner> (<confidence>)"). It wins
+over the automatic verdict everywhere: confidence high, first reason "set by you: <reason>", then
+"without it: <owner> (<confidence>)" and the automatic reasons; decision rules narrowed to owners
+see it at once (the command applies them as a sync would), and a scan's `Known` carries it, so a
+secret set not-mine is never sent to a provider by the liveness check and one set mine may be.
+`rotations show` prints "owner: mine (set by you: <reason>)".
+
+**Re-attribution.** The facts and locations are stored, so a sync recomputes every verdict with
+today's rules and accounts, no new scan needed: `segurata rotations sync` (or `track sync`) over
+the latest local-secrets run. Only the `ssh_key` claim needs the key's value, so it appears at the
+next `segurata inventory local-secrets`.
 
 `rotations show` prints the verdict, its reasons and the facts; `rotations list --owner
 mine|not-mine|unknown` filters by it and shows an OWNER column; `rotations sync` counts open

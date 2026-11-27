@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/cliflag"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/connector"
@@ -49,7 +48,7 @@ func remediateCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	accepted, err := lent(attribution.Owned{})
+	accepted, err := lent(config.Config{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -100,7 +99,7 @@ func remediateCmd(args []string) int {
 		if err != nil {
 			return nil, err
 		}
-		l, err := lent(cfg.Owned)
+		l, err := lent(cfg)
 		if err != nil {
 			return nil, err
 		}

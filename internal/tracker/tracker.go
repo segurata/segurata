@@ -18,7 +18,7 @@ import (
 
 // schemaVersion is bumped whenever tracker.json gains a field, even one an older file simply
 // lacks: the bump keeps an older binary from loading a file with values it does not know.
-const schemaVersion = 7
+const schemaVersion = 8
 
 // Kind says what sort of action an item asks for.
 type Kind string
@@ -74,6 +74,7 @@ const (
 	EvPriority     = "priority"
 	EvReclassified = "reclassified"
 	EvMerged       = "merged"
+	EvOwner        = "owner"
 )
 
 // Event is one line of an item's history.

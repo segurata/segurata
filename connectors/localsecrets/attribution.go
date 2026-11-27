@@ -25,6 +25,9 @@ func (s *scan) attribute(abs string, ev *secretrisk.Evidence, value string) {
 			}
 		}
 	}
+	if ev.Type == privateKeyType || ev.Type == "ssh-key" {
+		c.SSHKey = s.sshKeyClaim(value)
+	}
 	ev.Claims = c
 }
 

@@ -322,7 +322,7 @@ func (c CLI) owned(out string) int {
 		name  string
 		owned attribution.Owned
 	}
-	sources := []source{{"config", cfg.Owned}}
+	sources := []source{{"config", cfg.OwnedAccounts()}}
 	if t.Owned != nil {
 		sources = append(sources, source{"tracker", *t.Owned})
 	}

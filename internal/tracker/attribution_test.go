@@ -70,15 +70,15 @@ func TestSyncAttributesSecrets(t *testing.T) {
 	}{
 		{"1111", attribution.Mine, "AWS account " + ownAWS + " is yours"},
 		{"2222", attribution.NotMine, "AWS account " + foreignAWS + " is none of your 1 known"},
-		{"3333", attribution.Unknown, "names no account"},
+		{"3333", attribution.Unknown, "committed to a git repository with no GitHub remote"},
 	} {
 		a := mustRotate(t, tr, c.id).Secret.Attribution
 		if a == nil || a.Owner != c.owner || !strings.Contains(strings.Join(a.Reasons, "; "), c.reason) {
 			t.Errorf("%s: %+v, want %s with %q", c.id, a, c.owner, c.reason)
 		}
 	}
-	if r := mustRotate(t, tr, "1111").Secret.Attribution.Reasons; !slices.Contains(r, "hint: committed by you (me@x.com)") {
-		t.Errorf("authorship hint missing: %q", r)
+	if r := mustRotate(t, tr, "1111").Secret.Attribution.Reasons; !slices.Contains(r, "committed by you (me@x.com)") {
+		t.Errorf("authorship missing: %q", r)
 	}
 	counts := tr.ownerCounts(func(*Item) bool { return true })
 	if counts[attribution.Mine] != 1 || counts[attribution.NotMine] != 1 || counts[attribution.Unknown] != 1 {
@@ -174,13 +174,16 @@ func TestParseEffectWithOwners(t *testing.T) {
 
 func TestConfiguredSyncReadsOwned(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"owned": {"aws_accounts": ["123456789012"], "emails": ["old@x.com"]}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"owned": {"aws_accounts": ["123456789012"], "emails": ["old@x.com"], "github": ["me"]},
+		"connectors": {"local-secrets": {"config": {"owned_owners": ["acme-labs"]}}, "local-secrets:work": {"config": {"owned_owners": ["work-org", "ME"]}},
+		"github": {"config": {"owned_owners": ["not-read"]}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	defer func(f func() string) { ownerEmail = f }(ownerEmail)
 	ownerEmail = func() string { return "git@x.com" }
 	opt, err := ConfiguredSync(path, SyncOptions{OutDir: "out"})
-	if err != nil || opt.OutDir != "out" || !slices.Equal(opt.Owned.AWSAccounts, []string{"123456789012"}) || !slices.Equal(opt.Owned.Emails, []string{"git@x.com", "old@x.com"}) {
+	if err != nil || opt.OutDir != "out" || !slices.Equal(opt.Owned.AWSAccounts, []string{"123456789012"}) || !slices.Equal(opt.Owned.Emails, []string{"git@x.com", "old@x.com"}) ||
+		!slices.Equal(opt.Owned.GitHub, []string{"acme-labs", "me", "work-org"}) {
 		t.Errorf("%+v %v", opt, err)
 	}
 }
@@ -266,5 +269,162 @@ func TestKnownLendsAttributionToAScan(t *testing.T) {
 		if got := k.Of(fp, nil); got != want {
 			t.Errorf("%s: %s, want %s", fp, got, want)
 		}
+	}
+}
+
+// repoAttributionFixture is a home in t.TempDir with the owner's repository, a third-party clone,
+// the owner's fork, a repository without a remote and a few dot files, and a local-secrets run of
+// one secret in each, the noise included.
+func repoAttributionFixture(t *testing.T) (*Tracker, string, string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	gitRepo := func(dir, origin string) {
+		t.Helper()
+		cfg := "[core]\n\tbare = false\n"
+		if origin != "" {
+			cfg += "[remote \"origin\"]\n\turl = " + origin + "\n"
+		}
+		if err := os.MkdirAll(filepath.Join(home, dir, ".git"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, dir, ".git", "config"), []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitRepo("src/mine", "git@github.com:Acme-Labs/app.git")
+	gitRepo("src/theirs", "https://github.com/instructure/canvas.git")
+	gitRepo("src/fork", "git@github.com:acme-labs/canvas.git")
+	gitRepo("work/local", "")
+	gitRepo("Downloads/clone", "https://github.com/instructure/demo.git")
+	gitRepo(".oh-my-zsh", "https://github.com/ohmyzsh/ohmyzsh.git")
+
+	out := t.TempDir()
+	secret := func(fp string, ev secretrisk.Evidence) finding.Finding {
+		ev.Fingerprint, ev.Type, ev.Redacted, ev.Bucket = fp, "stripe-live", "sk_live_…"+fp[:4], "b"
+		f := fnd(secretrisk.ConnectorName, "", "local", "secret", ev.Source+":"+ev.Path+"#"+fp, "Stripe key", finding.SevCritical, "Stripe key in "+ev.Path, t0)
+		raw, _ := json.Marshal(ev)
+		_ = json.Unmarshal(raw, &f.Evidence)
+		return f
+	}
+	committed := func(repo, origin, author string) secretrisk.Evidence {
+		return secretrisk.Evidence{Source: "gitleaks", Kind: "repo", Tracked: true, Remote: true, Repo: "~/" + repo, Path: "~/" + repo + "/config/app.yml",
+			Origin: origin, Claims: attribution.Claims{AuthorEmail: author}}
+	}
+	working := func(path, kind string) secretrisk.Evidence {
+		return secretrisk.Evidence{Source: "scan", Kind: kind, Mode: "600", Path: path}
+	}
+	writeRun(t, out, t0, "local-secrets.jsonl",
+		secret("a1a1a1a1a1a1a1a1", committed("src/mine", secretrisk.OriginOwned, "")),
+		secret("b2b2b2b2b2b2b2b2", committed("src/theirs", "", "them@y.com")),
+		secret("c3c3c3c3c3c3c3c3", committed("src/fork", secretrisk.OriginForkUpstream, "")),
+		secret("d4d4d4d4d4d4d4d4", working("~/.zshrc", "config")),
+		secret("d4d4d4d4d4d4d4d4", working("~/.claude/projects/p/s.jsonl", "transcript")),
+		secret("e5e5e5e5e5e5e5e5", working("~/Downloads/clone/.env", "config")),
+		secret("f6f6f6f6f6f6f6f6", working("~/.claude/projects/p/s.jsonl", "transcript")),
+		secret("f6f6f6f6f6f6f6f6", working("~/.zsh_history", "history")),
+		secret("a7a7a7a7a7a7a7a7", working("~/.nvm/versions/node/v22/lib/node_modules/pkg/index.js", "config")),
+		secret("a8a8a8a8a8a8a8a8", working("~/.oh-my-zsh/plugins/aws/aws.plugin.zsh", "config")),
+		secret("a9a9a9a9a9a9a9a9", committed("src/theirs", "", "")),
+		secret("a9a9a9a9a9a9a9a9", committed("work/local", "", "")),
+		secret("b1b1b1b1b1b1b1b1", committed("src/theirs", secretrisk.OriginThirdParty, "me@x.com")),
+		secret("b3b3b3b3b3b3b3b3", working("~/.config/tool/credentials.json", "config")),
+		secret("b4b4b4b4b4b4b4b4", working("~/Documents/notes.txt", "config")),
+		okStatus(secretrisk.ConnectorName, "local"))
+	tr := New(t0)
+	opt := SyncOptions{OutDir: out, IncludeNoise: true, Owned: attribution.Owned{GitHub: []string{"acme-labs", "octocat"}, Emails: []string{"me@x.com"}}}
+	if _, err := tr.Sync(opt, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	return tr, out, home
+}
+
+func TestSyncAttributesByRepositoryAuthorAndOwnConfig(t *testing.T) {
+	tr, _, _ := repoAttributionFixture(t)
+	for _, c := range []struct {
+		id, why string
+		owner   attribution.Owner
+		conf    string
+		reason  string
+	}{
+		{"a1a1", "the owner's repository", attribution.Mine, attribution.Medium, "committed in a repository you own (Acme-Labs)"},
+		{"b2b2", "a third-party repository, someone else's commit", attribution.NotMine, attribution.Medium,
+			"committed in a repository of instructure, none of your 2 GitHub accounts or organizations (owned.github)"},
+		{"c3c3", "history the owner's fork inherited", attribution.Unknown, attribution.Low, "names no account"},
+		{"d4d4", "the owner's .zshrc, and a transcript", attribution.Mine, attribution.Medium, "kept in your own config file ~/.zshrc"},
+		{"e5e5", "a .env in a cloned third-party repository", attribution.Unknown, attribution.Low, "names no account"},
+		{"f6f6", "trails only", attribution.Unknown, attribution.Low, "names no account"},
+		{"a7a7", "a package store", attribution.Unknown, attribution.Low, "names no account"},
+		{"a8a8", "a git clone in a dot folder", attribution.Unknown, attribution.Low, "names no account"},
+		{"a9a9", "third-party and no-remote repositories", attribution.Unknown, attribution.Low, "no GitHub remote, so whose it is is unknown (~/work/local)"},
+		{"b1b1", "the owner's commit to a third-party repository", attribution.Mine, attribution.Medium, "committed by you (me@x.com)"},
+		{"b3b3", "a tool's config folder", attribution.Mine, attribution.Medium, "kept in your own config file ~/.config/tool/credentials.json"},
+		{"b4b4", "a document, not config", attribution.Unknown, attribution.Low, "names no account"},
+	} {
+		a := mustRotate(t, tr, c.id).Secret.Attribution
+		if a == nil || a.Owner != c.owner || a.Confidence != c.conf || !slices.Contains(a.Reasons, c.reason) && !strings.Contains(strings.Join(a.Reasons, "; "), c.reason) {
+			t.Errorf("%s (%s): %+v, want %s %s with %q", c.id, c.why, a, c.owner, c.conf, c.reason)
+		}
+	}
+	// Mine by authorship is not enough to undo the third-party discount: that copy stays noise.
+	if it := mustRotate(t, tr, "b1b1"); it.Secret.Impact != secretrisk.Noise.String() || it.Secret.Locations[0].Reused {
+		t.Errorf("an author's commit to someone else's repository counted in full: %s %+v", it.Secret.Impact, it.Secret.Locations)
+	}
+	if it := mustRotate(t, tr, "a1a1"); it.Secret.Locations[0].RepoOwner != "Acme-Labs" {
+		t.Errorf("repository owner not kept on the location: %+v", it.Secret.Locations[0])
+	}
+}
+
+// The repository owner is kept on the location: a clone deleted since still says whose it is.
+func TestRepoOwnerOutlivesTheClone(t *testing.T) {
+	tr, out, home := repoAttributionFixture(t)
+	if err := os.RemoveAll(filepath.Join(home, "src", "mine")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Sync(SyncOptions{OutDir: out, IncludeNoise: true, Owned: attribution.Owned{GitHub: []string{"acme-labs"}}}, t0.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if a := mustRotate(t, tr, "a1a1").Secret.Attribution; a.Owner != attribution.Mine {
+		t.Errorf("after the clone went: %+v", a)
+	}
+}
+
+func TestSetOwnerWinsAndClears(t *testing.T) {
+	tr, _, _ := repoAttributionFixture(t)
+	it := mustRotate(t, tr, "b2b2")
+	extra := attribution.Owned{GitHub: []string{"acme-labs"}}
+	if err := tr.setOwner(it, t0.Add(2*time.Hour), attribution.Mine, " ", extra); err == nil {
+		t.Error("mine without a reason")
+	}
+	if err := tr.setOwner(it, t0.Add(2*time.Hour), "theirs", "x", extra); err == nil {
+		t.Error("a bad owner")
+	}
+	if err := tr.setOwner(it, t0.Add(2*time.Hour), attribution.Mine, "my test account's key", extra); err != nil {
+		t.Fatal(err)
+	}
+	a := it.Secret.Attribution
+	if it.Owner() != attribution.Mine || a.Confidence != attribution.High || a.Reasons[0] != "set by you: my test account's key" {
+		t.Errorf("override: %+v", a)
+	}
+	if e := it.History[len(it.History)-1]; e.Event != EvOwner || e.Action != actOwner || e.Detail != "mine: my test account's key" {
+		t.Errorf("history %+v", e)
+	}
+	if got := tr.Known(extra).Of(it.Fingerprint, nil); got != attribution.Mine {
+		t.Errorf("Known: %s", got)
+	}
+	// A sync keeps it.
+	tr.attribute(tr.ownedAll(extra))
+	if it.Owner() != attribution.Mine {
+		t.Errorf("a sync dropped the override: %s", it.Owner())
+	}
+	if err := tr.setOwner(it, t0.Add(3*time.Hour), attribution.Unknown, "", extra); err != nil {
+		t.Fatal(err)
+	}
+	if it.Owner() != attribution.NotMine || it.Secret.Attribution.Facts.Override != nil {
+		t.Errorf("cleared: %+v", it.Secret.Attribution)
+	}
+	if e := it.History[len(it.History)-1]; e.Detail != "back to the automatic attribution: not-mine (medium confidence)" {
+		t.Errorf("history %+v", e)
 	}
 }

@@ -2,6 +2,19 @@
 
 Each release's section here is its release notes on GitHub, which keeps line breaks as written: one line per paragraph or bullet. Versions follow [semver](https://semver.org/); until 1.0 a minor version may change the CLI, the config or the connector protocol.
 
+## [Unreleased]
+
+### Attribution
+
+- A secret committed in one of your repositories (its GitHub remote's owner is among your GitHub accounts and organizations) is attributed mine; one committed only in other people's repositories is attributed not-mine. History a fork inherited from its upstream does not count.
+- A commit authored by one of your emails makes a secret mine (medium confidence); a commit by someone else stays a hint, never evidence of not-mine.
+- A secret kept in your own config, a dot file or dot folder of your home outside any git repository and package store (`~/.zshrc`, `~/.npmrc`, `~/.config/<tool>/…`), is attributed mine.
+- A private key whose public half is one of your `~/.ssh/*.pub` files or a key of one of your GitHub users (`gh api users/<login>/keys`, cached a week) is attributed mine.
+- An account a secret names outranks the repository, author or file of a copy: someone else's AWS key you committed stays not-mine and is never sent to its provider.
+- `segurata rotations owner <id> mine|not-mine --reason text` sets a secret's owner by hand, recorded in its history and shown by `rotations show`; it wins everywhere attribution is used, including the liveness check. `owner <id> unknown` clears it.
+- `owned_owners` in the local-secrets config now counts as your GitHub accounts for attribution too.
+- `segurata rotations sync` recomputes every owner from what the tracker already holds, without a new scan. The tracker file moves to `schema_version` 8, which older binaries refuse.
+
 ## [0.1.0]
 
 The first public release.

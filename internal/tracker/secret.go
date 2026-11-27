@@ -24,19 +24,21 @@ const historyOnly = "old value still in history/transcripts; harmless after revo
 
 // Location is one place the secret was found.
 type Location struct {
-	Path     string    `json:"path"`
-	Line     int       `json:"line,omitempty"`
-	Bucket   string    `json:"bucket"`
-	Tracked  bool      `json:"tracked"`
-	Mode     string    `json:"mode,omitempty"`
-	Source   string    `json:"source"` // scan | gitleaks | name | ssh
-	Kind     string    `json:"kind"`   // config | repo | transcript | history | log
-	Remote   bool      `json:"remote,omitempty"`
-	Repo     string    `json:"repo,omitempty"`   // git history: the repository
-	Date     string    `json:"date,omitempty"`   // git history: first commit seen, YYYY-MM-DD
-	Origin   string    `json:"origin,omitempty"` // whose repository (secretrisk.Origin*)
-	Reused   bool      `json:"reused,omitempty"` // a third-party copy of a value the owner also holds
-	LastSeen time.Time `json:"last_seen"`
+	Path    string `json:"path"`
+	Line    int    `json:"line,omitempty"`
+	Bucket  string `json:"bucket"`
+	Tracked bool   `json:"tracked"`
+	Mode    string `json:"mode,omitempty"`
+	Source  string `json:"source"` // scan | gitleaks | name | ssh
+	Kind    string `json:"kind"`   // config | repo | transcript | history | log
+	Remote  bool   `json:"remote,omitempty"`
+	Repo    string `json:"repo,omitempty"`   // git history: the repository
+	Date    string `json:"date,omitempty"`   // git history: first commit seen, YYYY-MM-DD
+	Origin  string `json:"origin,omitempty"` // whose repository (secretrisk.Origin*)
+	Reused  bool   `json:"reused,omitempty"` // a third-party copy of a value the owner also holds
+	// RepoOwner is the GitHub owner of the repository a committed copy is in, read at a sync.
+	RepoOwner string    `json:"repo_owner,omitempty"`
+	LastSeen  time.Time `json:"last_seen"`
 	// Gone marks a working file a finished run read without the secret: kept for the record, left
 	// out of current. Records of the past are never gone.
 	Gone bool `json:"gone,omitempty"`
@@ -238,8 +240,10 @@ func foldPairs(byFP map[string]*Item, now time.Time) int {
 	return merged
 }
 
-// mineAfterAll marks Reused the copies in someone else's repository of a secret attributed mine:
-// it is the owner's secret leaked there, never noise for where it sits.
+// mineAfterAll marks Reused the copies in someone else's repository of a secret attributed mine by
+// an account it names or by the owner's word: it is the owner's secret leaked there, never noise
+// for where it sits. Who committed it, or where its other copies sit, does not count: the scan
+// already marks reused a value one of the owner's own files holds.
 func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 	var facts attribution.Facts
 	if it != nil && it.Secret != nil && it.Secret.Attribution != nil {
@@ -253,7 +257,7 @@ func mineAfterAll(it *Item, g []Sighting, owned attribution.Owned) {
 		}
 		upstream = upstream || secretrisk.NotOwners(s.Evidence.Origin, s.Evidence.Reused)
 	}
-	if !upstream || attribution.Attribute(facts, owned).Owner != attribution.Mine {
+	if !upstream || attribution.Attribute(facts.Accounts(), owned).Owner != attribution.Mine {
 		return
 	}
 	for i := range g {
@@ -488,6 +492,7 @@ func (it *Item) merge(ev secretrisk.Evidence, seen time.Time) {
 	loc := locationOf(ev, seen)
 	for i := range s.Locations {
 		if s.Locations[i].key() == loc.key() {
+			loc.RepoOwner = s.Locations[i].RepoOwner
 			s.Locations[i] = loc
 			return
 		}

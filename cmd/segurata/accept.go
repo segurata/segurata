@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/accept"
-	"github.com/segurata/segurata/internal/attribution"
 	"github.com/segurata/segurata/internal/config"
 	"github.com/segurata/segurata/internal/run"
 	"github.com/segurata/segurata/internal/tracker"
@@ -44,11 +43,12 @@ func browserConnector(name string) bool {
 	return false
 }
 
-// lent is what the tracker lends a run: its acceptances, and whose each secret is.
-func lent(owned attribution.Owned) (run.Lent, error) {
+// lent is what the tracker lends a run: its acceptances, and whose each secret is, with what cfg
+// says the owner holds.
+func lent(cfg config.Config) (run.Lent, error) {
 	t, err := tracker.LoadOrNew(tracker.Paths{}, time.Now())
 	if err != nil {
 		return run.Lent{}, err
 	}
-	return run.Lent{Annotate: t.Annotator(time.Now), Known: t.Known(owned)}, nil
+	return run.Lent{Annotate: t.Annotator(time.Now), Known: t.Known(tracker.ConfigOwned(cfg))}, nil
 }

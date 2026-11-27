@@ -52,6 +52,22 @@ and lockfiles, notebook outputs, expired STS keys and credentials for localhost 
 third-party repository is in fact yours (an organization you left, a client's), add its owner to
 `owned_owners` in the connector config.
 
+Each secret also gets an owner, `mine`, `not-mine` or `unknown`, worked out offline from the
+accounts it names, the repositories it is committed in, who committed it and whether one of your
+own config files (`~/.zshrc`, `~/.config/<tool>/…`) keeps it
+([attribution](architecture.md#attribution)). `segurata rotations show <id>` prints it with its
+reasons and `segurata rotations list --owner mine` filters by it. When you know better, say so:
+
+```bash
+segurata rotations owner <id> not-mine --reason "a client's staging key"
+segurata rotations owner <id> mine --reason "my old test account"
+segurata rotations owner <id> unknown     # back to the automatic owner
+```
+
+Your word wins everywhere the owner is used, including the liveness check: a secret set not-mine
+is never sent to its provider. `segurata rotations sync` recomputes every owner from what the
+tracker already knows, without a new scan.
+
 If the finding is a false positive (test fixture, sample key), add the gitleaks `Fingerprint`
 (`commit:file:rule:line`, printed by `gitleaks git` in that repo) to `.gitleaksignore`, and mark the
 item with `segurata rotations ignore <id> --reason …`.

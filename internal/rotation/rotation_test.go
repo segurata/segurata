@@ -196,3 +196,62 @@ func TestBulkByPath(t *testing.T) {
 		t.Errorf("empty selection: %d %q", code, e)
 	}
 }
+
+// Whose a secret is, end to end: a key in the owner's ~/.zshrc is theirs; set not-mine by hand it
+// says so in show and history and stays so across a sync; unknown goes back to the automatic
+// verdict.
+func TestOwnerOverrideFromTheCLI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir := t.TempDir()
+	out := filepath.Join(dir, "out")
+	writeFindings(t, filepath.Join(out, "2026-11-23", "local-secrets.jsonl"),
+		ev("aaaaaaaaaaaaaaaa", "stripe-live", "~/.zshrc", "scan", "config", "600", false, false),
+		ev("bbbbbbbbbbbbbbbb", "sentry-dsn", "~/.claude/projects/p/s.jsonl", "scan", "transcript", "600", false, false))
+	state := filepath.Join(dir, "state", "tracker.json")
+	run := func(args ...string) (string, string, int) {
+		var o, e bytes.Buffer
+		code := CLI{Out: &o, Err: &e, Paths: tracker.Paths{Tracker: state}, Now: func() time.Time { return t0 }}.Run(args)
+		return o.String(), e.String(), code
+	}
+	if o, e, code := run("sync", "--out", out); code != 0 || !strings.Contains(o, "Open by owner: mine 1, not-mine 0, unknown 1") {
+		t.Fatalf("sync: %d %q %q", code, o, e)
+	}
+	if o, _, _ := run("show", "aaaaaaaa"); !strings.Contains(o, "owner:       mine (medium confidence)\n  - kept in your own config file ~/.zshrc") {
+		t.Errorf("show:\n%s", o)
+	}
+	if _, e, code := run("owner", "aaaaaaaa", "not-mine"); code != 1 || !strings.Contains(e, "owner needs --reason") {
+		t.Errorf("no reason: %d %q", code, e)
+	}
+	if _, _, code := run("owner", "aaaaaaaa", "theirs", "--reason", "x"); code != 1 {
+		t.Error("a bad owner was accepted")
+	}
+	o, e, code := run("owner", "aaaaaaaa", "not-mine", "--reason", "a colleague's test key")
+	if code != 0 || !strings.Contains(o, "owner not-mine") {
+		t.Fatalf("owner: %d %q %q", code, o, e)
+	}
+	for i := 0; i < 2; i++ { // the second time after a sync
+		o, _, _ = run("show", "aaaaaaaa")
+		if !strings.Contains(o, "owner:       not-mine (set by you: a colleague's test key)\n  - without it: mine (medium confidence)\n  - kept in your own config file ~/.zshrc") ||
+			!strings.Contains(o, "owner  not-mine: a colleague's test key") {
+			t.Errorf("show after owner (%d):\n%s", i, o)
+		}
+		if o, _, _ := run("list", "--owner", "not-mine"); !strings.Contains(o, "aaaaaaaa") || !strings.Contains(o, "1 items") {
+			t.Errorf("list --owner not-mine:\n%s", o)
+		}
+		if o, e, code := run("sync", "--out", out); code != 0 || !strings.Contains(o, "Open by owner: mine 0, not-mine 1, unknown 1") {
+			t.Fatalf("sync: %d %q %q", code, o, e)
+		}
+	}
+	if o, e, code := run("owner", "aaaaaaaa", "unknown"); code != 0 || !strings.Contains(o, "owner mine") {
+		t.Fatalf("clear: %d %q %q", code, o, e)
+	}
+	o, _, _ = run("show", "aaaaaaaa")
+	if !strings.Contains(o, "owner:       mine (medium confidence)") || !strings.Contains(o, "back to the automatic attribution: mine (medium confidence)") {
+		t.Errorf("show after clearing:\n%s", o)
+	}
+	if _, e, _ := run(); !strings.Contains(e, "owner   <id> mine|not-mine --reason text") {
+		t.Errorf("usage: %q", e)
+	}
+}

@@ -325,10 +325,11 @@ segurata rotations done <id> --note "rolled in the dashboard"
 segurata rotations snooze <id> --until 2027-01-15
 segurata rotations ignore <id> --reason "test fixture"
 segurata rotations reopen <id>
+segurata rotations owner <id> not-mine --reason "a client's key"   # whose it is, set by you (unknown clears it)
 segurata rotations ignore --path ~/src/app/log/test.log --reason "test fixtures"   # every item found only there
 ```
 
-`rotations sync`, `done`, `snooze`, `ignore` and `reopen` are `track`'s verbs on secrets only.
+`rotations sync`, `done`, `snooze`, `ignore`, `reopen` and `owner` are `track`'s verbs on secrets only.
 Plaintext replacement requires a file owned by your account, outside the Git index and private
 under POSIX permissions. The command checks the entire plan again before updating the Keychain
 or writing files. See the [rotation instructions](secrets.md#shell-variables-from-the-keychain).

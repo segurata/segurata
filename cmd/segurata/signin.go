@@ -27,7 +27,7 @@ func signinCmd(args []string) int {
 			return signin.CDP{Client: c}, func() { c.Close() }, nil
 		},
 		Inventory: func(ctx context.Context, cfg config.Config, targets []run.Target, out string) ([]*run.Result, error) {
-			l, err := lent(cfg.Owned)
+			l, err := lent(cfg)
 			if err != nil {
 				return nil, err
 			}

@@ -18,6 +18,9 @@ func RepoOwner(path string) (string, bool) {
 	return githubOwner(originURL(cfg))
 }
 
+// InRepository reports whether path lies in a git repository: a .git above it.
+func InRepository(path string) bool { return gitConfig(path) != "" }
+
 // gitConfig is the config file of the nearest .git above path: a directory or a worktree's
 // "gitdir:" file.
 func gitConfig(path string) string {

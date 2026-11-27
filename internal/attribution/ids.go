@@ -124,12 +124,13 @@ func only(collect func(add func(string))) string {
 // Or fills the claims c lacks from o.
 func (c Claims) Or(o Claims) Claims {
 	return Claims{AWSAccount: cmp.Or(c.AWSAccount, o.AWSAccount), SlackTeam: cmp.Or(c.SlackTeam, o.SlackTeam),
-		GCPProject: cmp.Or(c.GCPProject, o.GCPProject), GitHubLogin: cmp.Or(c.GitHubLogin, o.GitHubLogin), AuthorEmail: cmp.Or(c.AuthorEmail, o.AuthorEmail)}
+		GCPProject: cmp.Or(c.GCPProject, o.GCPProject), GitHubLogin: cmp.Or(c.GitHubLogin, o.GitHubLogin), AuthorEmail: cmp.Or(c.AuthorEmail, o.AuthorEmail),
+		SSHKey: cmp.Or(c.SSHKey, o.SSHKey)}
 }
 
 // NamesAccount reports whether a claim can make a verdict, unlike the commit author.
 func (c Claims) NamesAccount() bool {
-	return c.AWSAccount != "" || c.SlackTeam != "" || c.GCPProject != "" || c.GitHubLogin != ""
+	return c.AWSAccount != "" || c.SlackTeam != "" || c.GCPProject != "" || c.GitHubLogin != "" || (c.SSHKey != "" && c.SSHKey != SSHKeyUnreadable)
 }
 
 // FromAccount reads the claims of a liveness Account, "<provider>:<id>"; providers attribution

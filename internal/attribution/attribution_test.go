@@ -97,8 +97,30 @@ func TestAttribute(t *testing.T) {
 		{"other workspace", Facts{SlackTeams: []string{"T9"}}, owned, NotMine, Medium, "Slack workspace T9"},
 		{"no AWS account known", Facts{AWSAccounts: []string{"999999999999"}}, Owned{}, Unknown, Low, "none of yours is known"},
 		{"foreign AWS but project kind unknown", Facts{AWSAccounts: []string{"999999999999"}, SlackTeams: []string{"T9"}}, Owned{AWSAccounts: owned.AWSAccounts}, Unknown, Low, "none of yours is known"},
-		{"authorship is a hint", Facts{AuthorEmails: []string{"ME@x.com"}, RepoOwners: []string{"acme"}}, owned, Unknown, Low, "hint: committed by you"},
-		{"third-party repository is a hint", Facts{AuthorEmails: []string{"them@y.com"}, RepoOwners: []string{"instructure"}}, owned, Unknown, Low, "hint: in a repository of instructure"},
+		{"committed by the owner", Facts{AuthorEmails: []string{"ME@x.com"}}, owned, Mine, Medium, "committed by you (ME@x.com)"},
+		{"committed by someone else is a hint only", Facts{AuthorEmails: []string{"them@y.com"}}, owned, Unknown, Low, "hint: committed by someone else (them@y.com)"},
+		{"repository of the owner", Facts{RepoOwners: []string{"Acme-Labs"}}, owned, Mine, Medium, "committed in a repository you own (Acme-Labs)"},
+		{"repository of someone else", Facts{AuthorEmails: []string{"them@y.com"}, RepoOwners: []string{"instructure"}}, owned, NotMine, Medium,
+			"committed in a repository of instructure, none of your 2 GitHub accounts or organizations (owned.github)"},
+		{"no GitHub account known", Facts{RepoOwners: []string{"instructure"}}, Owned{AWSAccounts: owned.AWSAccounts}, Unknown, Low, "committed in a repository of instructure: none of your GitHub accounts"},
+		{"owner's and someone else's repository", Facts{RepoOwners: []string{"instructure", "octocat"}}, owned, Mine, Medium, "committed in a repository you own (octocat)"},
+		{"someone else's repository, committed by the owner", Facts{AuthorEmails: []string{"me@x.com"}, RepoOwners: []string{"instructure"}}, owned, Mine, Medium, "committed by you"},
+		{"someone else's repository and one without a GitHub remote", Facts{RepoOwners: []string{"instructure"}, UnownedRepos: []string{"~/work/local"}}, owned, Unknown, Low,
+			"committed to a git repository with no GitHub remote, so whose it is is unknown (~/work/local)"},
+		{"foreign AWS account in the owner's repository", Facts{AWSAccounts: []string{"999999999999"}, RepoOwners: []string{"octocat"}}, owned, NotMine, Medium, "AWS account 999999999999 is none"},
+		{"foreign AWS account in the owner's config file", Facts{AWSAccounts: []string{"999999999999"}, OwnConfig: []string{"~/.aws/credentials"}}, owned, NotMine, Medium, "kept in your own config file"},
+		{"owner's AWS account in someone else's repository", Facts{AWSAccounts: []string{"012345678901"}, RepoOwners: []string{"instructure"}}, owned, Mine, Medium, "AWS account 012345678901 is yours"},
+		{"unknown AWS account kind, own config file", Facts{AWSAccounts: []string{"999999999999"}, OwnConfig: []string{"~/.zshrc"}}, Owned{}, Mine, Medium, "none of yours is known"},
+		{"owner's account and owner's repository", Facts{AWSAccounts: []string{"012345678901"}, RepoOwners: []string{"octocat"}}, owned, Mine, High, "committed in a repository you own"},
+		{"own config file", Facts{OwnConfig: []string{"~/.zshrc"}}, Owned{}, Mine, Medium, "kept in your own config file ~/.zshrc"},
+		{"own user environment", Facts{OwnConfig: []string{`HKCU\Environment\API_KEY`}}, Owned{}, Mine, Medium, `kept in your own user environment HKCU\Environment\API_KEY`},
+		{"own config beats a foreign repository", Facts{OwnConfig: []string{"~/.npmrc"}, RepoOwners: []string{"instructure"}}, owned, Mine, Medium, "kept in your own config file ~/.npmrc"},
+		{"nothing at all: a transcript copy", Facts{}, owned, Unknown, Low, "names no account"},
+		{"private key on the owner's GitHub account", Facts{SSHKeys: []string{"github:OctoCat"}}, owned, Mine, High, "the public key of this private key is on your GitHub account OctoCat"},
+		{"private key matching the owner's public key file", Facts{SSHKeys: []string{"file:~/.ssh/id_ed25519.pub"}}, Owned{}, Mine, High, "matches ~/.ssh/id_ed25519.pub"},
+		{"private key on a GitHub account no longer known", Facts{SSHKeys: []string{"github:mallory"}}, owned, Unknown, Low, "on GitHub account mallory, none of your known ones"},
+		{"private key whose public half cannot be read", Facts{SSHKeys: []string{SSHKeyUnreadable}}, owned, Unknown, Low, "hint: the public key of this private key could not be read"},
+		{"unmatched private key in someone else's repository", Facts{RepoOwners: []string{"instructure"}}, owned, NotMine, Medium, "committed in a repository of instructure"},
 		{"token of the owner's GitHub login", Facts{GitHubLogins: []string{"OctoCat"}}, owned, Mine, High, "GitHub account OctoCat is yours"},
 		{"token of another GitHub login", Facts{GitHubLogins: []string{"mallory"}}, owned, NotMine, Medium, "GitHub account mallory is none"},
 	}
@@ -107,6 +129,40 @@ func TestAttribute(t *testing.T) {
 		if r.Owner != c.owner || r.Confidence != c.conf || !slices.ContainsFunc(r.Reasons, func(s string) bool { return strings.Contains(s, c.reason) }) {
 			t.Errorf("%s: %s %s %q, want %s %s with %q", c.name, r.Owner, r.Confidence, r.Reasons, c.owner, c.conf, c.reason)
 		}
+	}
+}
+
+func TestOverride(t *testing.T) {
+	owned := Owned{AWSAccounts: []string{"012345678901"}, GitHub: []string{"octocat"}}
+	mineFacts := Facts{AWSAccounts: []string{"012345678901"}}
+	f := mineFacts.Clone()
+	f.Override = &Override{Owner: NotMine, Reason: "a client's account"}
+	r := Attribute(f, owned)
+	if r.Owner != NotMine || r.Confidence != High || r.Reasons[0] != "set by you: a client's account" ||
+		!slices.Contains(r.Reasons, "without it: mine (high confidence)") || !slices.Contains(r.Reasons, "AWS account 012345678901 is yours") {
+		t.Errorf("override not-mine: %+v", r)
+	}
+	f = Facts{Override: &Override{Owner: Mine, Reason: "my old key"}, RepoOwners: []string{"instructure"}}
+	if r := Attribute(f, owned); r.Owner != Mine || r.Confidence != High {
+		t.Errorf("override mine over a foreign repository: %+v", r)
+	}
+	k := &Known{Owned: owned, Facts: map[string]Facts{"fp": f}}
+	if got := k.Of("fp", []Claims{{AWSAccount: "999999999999"}}); got != Mine {
+		t.Errorf("Known.Of ignores the override: %s", got)
+	}
+	k.Facts["fp"] = Facts{Override: &Override{Owner: NotMine, Reason: "not mine"}}
+	if got := k.Of("fp", []Claims{{AWSAccount: "012345678901"}}); got != NotMine {
+		t.Errorf("Known.Of: a not-mine override must win over this scan's claims: %s", got)
+	}
+	cl := f.Clone()
+	cl.Override.Reason = "changed"
+	if f.Override.Reason != "my old key" {
+		t.Error("Clone shares the override")
+	}
+	acc := Facts{AWSAccounts: []string{"1"}, SSHKeys: []string{"github:x"}, RepoOwners: []string{"r"}, UnownedRepos: []string{"u"}, AuthorEmails: []string{"e"},
+		OwnConfig: []string{"~/.zshrc"}, Override: &Override{Owner: Mine, Reason: "r"}}.Accounts()
+	if len(acc.RepoOwners)+len(acc.UnownedRepos)+len(acc.AuthorEmails)+len(acc.OwnConfig) != 0 || len(acc.AWSAccounts) != 1 || len(acc.SSHKeys) != 1 || acc.Override == nil {
+		t.Errorf("Accounts keeps only what names an account, and the override: %+v", acc)
 	}
 }
 
@@ -154,6 +210,9 @@ func TestRepoOwner(t *testing.T) {
 			t.Errorf("%s: %q %v", c.path, got, ok)
 		}
 	}
+	if !InRepository(filepath.Join(root, "wt", "deep", "f")) || !InRepository(filepath.Join(main, "x")) || InRepository(filepath.Join(root, "nowhere", "f")) {
+		t.Error("InRepository")
+	}
 	for url, want := range map[string]string{"https://github.com/o/r": "o", "ssh://git@github.com:22/o-x/r": "o-x", "https://tok@github.com/O/r.git": "O"} {
 		if got, _ := githubOwner(url); got != want {
 			t.Errorf("%s: %q", url, got)
@@ -200,6 +259,17 @@ func TestFromAccount(t *testing.T) {
 		if got := FromAccount(account); got != want {
 			t.Errorf("%q: %+v, want %+v", account, got, want)
 		}
+	}
+	if !(Claims{SSHKey: "github:x"}).NamesAccount() || (Claims{SSHKey: SSHKeyUnreadable}).NamesAccount() {
+		t.Error("a private key on a GitHub account names one; an unreadable one does not")
+	}
+	if got := (Claims{}).Or(Claims{SSHKey: "file:~/.ssh/a.pub"}); got.SSHKey != "file:~/.ssh/a.pub" {
+		t.Errorf("Or drops the SSH key: %+v", got)
+	}
+	f0 := Facts{}
+	f0.Add(Claims{SSHKey: "github:x"})
+	if !slices.Equal(f0.SSHKeys, []string{"github:x"}) {
+		t.Errorf("Add: %+v", f0)
 	}
 	if !(Claims{GitHubLogin: "x"}).NamesAccount() {
 		t.Error("a GitHub login names an account")

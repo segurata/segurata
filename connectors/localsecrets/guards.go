@@ -131,12 +131,16 @@ var gitHeadCheck = cli.CheckFunc(func(args []string) error {
 
 var commitPath = regexp.MustCompile(`\A[0-9a-f]{7,40}:[^\x00]+\z`)
 
-// ghCheck allows a repository's visibility and the GETs of the user and their organizations.
+var ghUserKeysPath = regexp.MustCompile(`^users/[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/keys$`)
+
+// ghCheck allows a repository's visibility and the GETs of the user, their organizations and a
+// user's public SSH keys.
 var ghCheck = cli.CheckFunc(func(args []string) error {
 	switch {
 	case len(args) == 5 && args[0] == "repo" && args[1] == "view" && githubSlugRe.MatchString(args[2]) && args[3] == "--json" && args[4] == "visibility":
 	case len(args) == 2 && args[0] == "api" && args[1] == "user":
 	case slices.Equal(args, ghOrgsArgs):
+	case len(args) == 3 && args[0] == "api" && args[1] == "--paginate" && ghUserKeysPath.MatchString(args[2]):
 	default:
 		return refuse(args)
 	}

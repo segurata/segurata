@@ -35,6 +35,7 @@ const (
 	actDecide      = "decide"
 	actReanswer    = "reanswer"
 	actPrioritize  = "prioritize"
+	actOwner       = "owner"  // the owner set whose a secret is, or cleared it
 	actRaised      = "raised" // a sync raised the computed priority to P1 or P0
 	actHistory     = "history-only"
 	actRedacted    = "redacted"

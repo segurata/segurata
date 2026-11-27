@@ -64,7 +64,7 @@ type CLI struct {
 var (
 	trackVerbs = []string{"list", "show", "add", "sync", "start", "done", "note", "decide", "snooze", "ignore", "reopen", "prioritize", "expect"}
 	// RotationVerbs are the track verbs `segurata rotations` runs as its own.
-	RotationVerbs = []string{"sync", "done", "snooze", "ignore", "reopen"}
+	RotationVerbs = []string{"sync", "done", "snooze", "ignore", "reopen", "owner"}
 	pathVerbs     = []string{"done", "snooze", "ignore", "reopen"}
 )
 
@@ -395,7 +395,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	fs := cliflag.New(c.name()+" "+cmd, c.Err)
 	note := fs.String("note", "", "free text kept in the history")
 	until := fs.String("until", "", "snooze: date the item comes back, YYYY-MM-DD")
-	reason := fs.String("reason", "", "ignore, prioritize: why")
+	reason := fs.String("reason", "", "ignore, prioritize, owner: why")
 	answer := fs.String("answer", "", "decide: the answer")
 	var ignoreScopes, acceptScopes multi
 	fs.Var(&ignoreScopes, "ignore-scope", "decide: ignore every item in this scope, now and at every sync (repeat for each)")
@@ -410,7 +410,7 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	pos, err := cliflag.Parse(fs, args)
 	want := 1 // note takes the id and any number of words
 	switch {
-	case cmd == "prioritize":
+	case cmd == "prioritize" || cmd == "owner":
 		want = 2
 	case *under != "":
 		want = 0
@@ -466,6 +466,8 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 			if p, err = parsePriority(pos[1]); err == nil {
 				err = it.prioritize(now, p, *reason)
 			}
+		case "owner":
+			err = c.setOwner(t, it, now, pos[1], *reason)
 		}
 		if err != nil {
 			return c.fail(err) // nothing saved: a bad flag fails before the first item changes
@@ -476,7 +478,11 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 	}
 	for _, it := range items {
 		if s := it.Secret; s != nil {
-			fmt.Fprintf(c.Out, "%s %s/%s %s: %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted), it.RotationStatus())
+			status := it.RotationStatus()
+			if cmd == "owner" {
+				status = fmt.Sprintf("owner %s, %s", it.Owner(), status)
+			}
+			fmt.Fprintf(c.Out, "%s %s/%s %s: %s\n", s.ID, s.Service, s.Type, textfmt.OrDash(s.Redacted), status)
 		} else {
 			fmt.Fprintf(c.Out, "%s %s · %s: %s\n", it.ID, textfmt.OrDash(string(it.EffectivePriority())), it.Title, it.Status)
 		}
@@ -485,6 +491,21 @@ func (c CLI) change(t *Tracker, path, cmd string, args []string, now time.Time) 
 		fmt.Fprintf(c.Out, "%d items\n", len(items))
 	}
 	return 0
+}
+
+// setOwner sets the owner's verdict on one secret, then applies the decisions' rules as a sync
+// would, so a rule narrowed to owners closes or reopens it now.
+func (c CLI) setOwner(t *Tracker, it *Item, now time.Time, owner, reason string) error {
+	o := attribution.Owner(strings.ToLower(strings.TrimSpace(owner)))
+	opt, err := ConfiguredSync(c.Config, SyncOptions{})
+	if err != nil {
+		return err
+	}
+	if err := t.setOwner(it, now, o, reason, opt.Owned); err != nil {
+		return err
+	}
+	t.applyRules(now)
+	return nil
 }
 
 // itemsUnder returns the active (or, with closed, the closed) items that lie entirely under prefix;

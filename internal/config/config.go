@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
+	"github.com/segurata/segurata/internal/cfgkey"
+	"github.com/segurata/segurata/internal/secretrisk"
 	"github.com/segurata/segurata/internal/statefile"
 )
 
@@ -102,6 +104,19 @@ func Load(path string) (Config, error) {
 		cfg.CDPURL = env
 	}
 	return cfg, nil
+}
+
+// OwnedAccounts is config `owned` plus the GitHub owners every local-secrets instance names in
+// owned_owners, which judge whose a repository is at scan time and so must at attribution too.
+// A malformed owned_owners adds nothing: local-secrets reports it when it runs.
+func (c Config) OwnedAccounts() attribution.Owned {
+	var gh []string
+	for _, in := range c.Instances(secretrisk.ConnectorName) {
+		if names, err := cfgkey.Strings(in.Config, secretrisk.ConnectorName, "owned_owners"); err == nil {
+			gh = append(gh, names...)
+		}
+	}
+	return c.Owned.Merge(attribution.Owned{GitHub: gh})
 }
 
 // RunTimeout is the instance's timeout, 0 for none; Load validated it.

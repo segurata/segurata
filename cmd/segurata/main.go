@@ -129,7 +129,7 @@ func inventory(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	l, err := lent(cfg.Owned)
+	l, err := lent(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tracker:", err)
 		return 1

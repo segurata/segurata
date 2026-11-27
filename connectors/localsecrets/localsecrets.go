@@ -276,11 +276,12 @@ type scan struct {
 
 	held heldValues
 
-	git   gitCache
-	own   ownership
-	nb    notebooks
-	stats historyStats
-	dumps dumpState
+	git    gitCache
+	own    ownership
+	sshOwn sshOwnerKeys
+	nb     notebooks
+	stats  historyStats
+	dumps  dumpState
 
 	repoOnce sync.Once
 	repoList []string
