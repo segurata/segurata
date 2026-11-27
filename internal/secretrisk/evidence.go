@@ -52,8 +52,11 @@ type Evidence struct {
 	Reused bool `json:"reused,omitempty"`
 	// Sample marks a value that reads like test data ("test", "fake", "1234"); it makes the copy
 	// noise only in a test, example or documentation path.
-	Sample   bool      `json:"sample,omitempty"`
-	Liveness *Liveness `json:"liveness,omitempty"`
+	Sample bool `json:"sample,omitempty"`
+	// IgnoredTmp marks an untracked file git ignores under its repository's tmp/ (or .tmp/) folder,
+	// where test runs and tools write what they generate.
+	IgnoredTmp bool      `json:"ignored_tmp,omitempty"`
+	Liveness   *Liveness `json:"liveness,omitempty"`
 	// Pair is the fingerprint of the other half of an AWS key pair, set by the liveness check even
 	// for pairs it may not send: a run with liveness off leaves it empty.
 	Pair string `json:"pair,omitempty"`

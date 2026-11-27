@@ -621,6 +621,44 @@ func TestTrackedInARealWorktree(t *testing.T) {
 	}
 }
 
+// An untracked file under a repository's tmp/ folder is marked IgnoredTmp only when git ignores it;
+// a tracked one, or one outside tmp/, never is.
+func TestIgnoredTmp(t *testing.T) {
+	r := newHistoryRepo(t)
+	r.writeFile(".gitignore", []byte("/tmp/cache/\n/build/\n"))
+	r.writeFile("tmp/kept.pem", []byte("x\n"))
+	r.git("add", ".gitignore", "tmp/kept.pem")
+	r.git("commit", "-q", "-m", "init")
+	for _, f := range []string{"tmp/cache/a/client-key.pem", "tmp/loose.pem", "build/server.key"} {
+		r.writeFile(f, []byte("x\n"))
+	}
+	c := &Connector{Git: cli.Exec{Path: "git", Timeout: time.Minute}, Now: time.Now}
+	s := newScan(context.Background(), c, r.home, settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute},
+		fingerprint.FromBytes(make([]byte, 32)), &recorder{})
+	for f, want := range map[string]bool{"tmp/cache/a/client-key.pem": true, "tmp/loose.pem": false, "tmp/kept.pem": false, "build/server.key": false} {
+		if got := s.ignoredTmp(filepath.Join(r.dir, filepath.FromSlash(f))); got != want {
+			t.Errorf("%s: %v, want %v", f, got, want)
+		}
+	}
+	if got := s.ignoredTmp(filepath.Join(r.home, "tmp", "x.pem")); got {
+		t.Error("a file outside any repository")
+	}
+}
+
+// Test material is noise, never a rotation, and its finding says why.
+func TestTestMaterialFindingIsNoise(t *testing.T) {
+	for path, why := range map[string]string{
+		"~/src/app/tmp/SigningTest/leaf.key": "test key generated under tmp/ by a test run",
+		"~/src/app/log/test.log":             "printed in a test log",
+		"~/google-cloud-sdk/platform/gsutil/third_party/requests/tests/certs/server.key": "test data of a vendored third-party library",
+	} {
+		f := toFinding(secretrisk.Evidence{Source: "scan", Kind: "config", Type: "private-key", Redacted: "PEM", Path: path, Mode: "600", Fix: "docs/secrets.md#private-key"})
+		if !isNoise(f) || !strings.Contains(f.Remediation.Summary, "Test material ("+why+")") {
+			t.Errorf("%s: %s %q", path, f.Severity, f.Remediation.Summary)
+		}
+	}
+}
+
 func TestWorktreeRemoteIsReadFromTheCommonDir(t *testing.T) {
 	dir := t.TempDir()
 	main := filepath.Join(dir, "main", ".git")

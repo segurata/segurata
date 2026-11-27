@@ -91,11 +91,11 @@ func SeverityOf(p Priority) finding.Severity {
 	return finding.SevInfo
 }
 
-// ImpactOf is the type's impact adjusted by the copy: noise when it is not a usable secret or not
-// the owner's, by host for URL credentials, one level lower in test, example, documentation and
-// vendored paths.
+// ImpactOf is the type's impact adjusted by the copy: noise when it is not a usable secret, not
+// the owner's or test material (TestMaterial), by host for URL credentials, one level lower in
+// test, example, documentation and vendored paths.
 func ImpactOf(e Evidence) Impact {
-	if e.Public || e.Encrypted || dumpNoise(e) || NotOwners(e.Origin, e.Reused) {
+	if e.Public || e.Encrypted || dumpNoise(e) || NotOwners(e.Origin, e.Reused) || TestMaterial(e) != "" {
 		return Noise
 	}
 	i := TypeFor(e.Type, e.Redacted).Impact

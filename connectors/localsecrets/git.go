@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ type gitCache struct {
 	roots  map[string]string          // dir -> repository root ("" when none)
 	files  map[string]map[string]bool // root -> tracked absolute paths
 	remote map[string]bool
+	tmp    map[string][]string // root -> what git ignores among the untracked under tmp/ and .tmp/
 }
 
 // rootOf is the closest folder holding .git, from dir up to the home folder.
@@ -75,6 +77,36 @@ func (s *scan) trackedFile(abs string) (tracked, remote bool) {
 		return false, false
 	}
 	return true, s.hasRemoteLocked(root)
+}
+
+// ignoredTmp says whether abs is an untracked file git ignores under its repository's tmp/ or
+// .tmp/ folder, where test runs and tools write what they generate (secretrisk.TestMaterial). A
+// repository git cannot list ignores nothing: the copy keeps its impact.
+func (s *scan) ignoredTmp(abs string) bool {
+	s.git.mu.Lock()
+	defer s.git.mu.Unlock()
+	root := s.rootOf(filepath.Dir(abs))
+	if root == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, abs)
+	if top, _, _ := strings.Cut(filepath.ToSlash(rel), "/"); err != nil || top != "tmp" && top != ".tmp" {
+		return false
+	}
+	if s.git.tmp == nil {
+		s.git.tmp = map[string][]string{}
+	}
+	ignored, ok := s.git.tmp[root]
+	if !ok {
+		out, err := guardGit(s.c.Git).Run(s.ctx, gitDirArg(root), "--work-tree="+root, "ls-files", "-z", "--others", "--ignored",
+			"--exclude-standard", "--directory", "--full-name", "--", ":(top)tmp/", ":(top).tmp/")
+		if err == nil {
+			ignored = strings.FieldsFunc(string(out), func(r rune) bool { return r == 0 })
+		}
+		s.git.tmp[root] = ignored
+	}
+	rel = filepath.ToSlash(rel)
+	return slices.ContainsFunc(ignored, func(p string) bool { return p == rel || strings.HasSuffix(p, "/") && strings.HasPrefix(rel, p) })
 }
 
 func (s *scan) lsFiles(root string) (map[string]bool, error) {

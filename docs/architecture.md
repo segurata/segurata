@@ -1156,6 +1156,20 @@ every run without a new scan.
   reads like test data (`sample`: "test", "fake", "demo", "1234", "abcd", a run of four equal
   characters). The sample flag needs the value, so git history cached before it existed is judged
   by path alone until its repository is scanned in full again.
+- Test material (`secretrisk.TestMaterial`, any file, in a repository or not) is noise, never a
+  rotation, and its finding's remediation and the item's reclassification name the reason. Three
+  kinds: a file a test run generated under a `tmp/` or `.tmp/` folder, where the folder after it
+  has a test's name (`Test` or `Spec` in it, or `test` or `spec` starting a word:
+  `tmp/Acme.Billing.CertificateProviderTest/…/leaf.key`, `tmp/test-1/…`; not
+  `tmp/latest/`), "test key generated under tmp/ by a test run"; an untracked file git ignores
+  under its repository's `tmp/` or `.tmp/` (`ignored_tmp`, from one `git ls-files --others
+  --ignored --exclude-standard --directory` per repository, only for files there), "generated
+  under the repository's git-ignored tmp/ folder"; a test log (`test.log`, `*.test.log`,
+  `log/test*.log`, `logs/test*.log`), "printed in a test log"; and a test folder (the test
+  folders above) below a vendored one (`vendor`, `third_party`, `node_modules`…), such as
+  `google-cloud-sdk/platform/gsutil/third_party/requests/tests/certs/…/server.key`, "test data of
+  a vendored third-party library". The path rules re-judge stored runs at the next `rotations
+  sync`; `ignored_tmp` needs a new local-secrets run.
 - AWS temporary credentials (`ASIA…`) live 36 hours at most: one whose commit date (end of that
   day) or file modification time is older is expired (`public`, note "expired"). Pre-signed URLs
   (`X-Amz-Credential=` or `AWSAccessKeyId=` before the key id) are their own type, low impact, and

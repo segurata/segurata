@@ -196,3 +196,46 @@ func TestExpireTemporaryAWS(t *testing.T) {
 		t.Error("no date, no verdict")
 	}
 }
+
+// Test material is noise wherever it sits, a repository or not: keys a test run left under a
+// project's tmp folder, test logs and the test data of vendored third-party libraries.
+func TestTestMaterialIsNoise(t *testing.T) {
+	const (
+		tmpRun   = "test key generated under tmp/ by a test run"
+		tmpIgn   = "generated under the repository's git-ignored tmp/ folder"
+		testLog  = "printed in a test log"
+		vendored = "test data of a vendored third-party library"
+	)
+	for _, c := range []struct {
+		path, kind string
+		ignoredTmp bool
+		want       string
+	}{
+		{"~/src/acme/tmp/Acme.Billing.CertificateProviderTest/test-123/chain-3/leaf.key", "repo", false, tmpRun},
+		{"~/src/app/.tmp/spec-run-1/client-key.pem", "repo", false, tmpRun},
+		{"~/src/app/tmp/my_test/client-key.pem", "repo", false, tmpRun},
+		{`~\src\app\tmp\SigningTest\leaf.key`, "repo", false, tmpRun},
+		{"~/src/app/tmp/latest/client-key.pem", "repo", false, ""},
+		{"~/src/app/tmp/cache/client-key.pem", "repo", false, ""},
+		{"~/src/app/tmp/cache/client-key.pem", "repo", true, tmpIgn},
+		{"~/src/app/log/test.log", "log", false, testLog},
+		{"~/src/app/log/test_integration.log", "log", false, testLog},
+		{"~/src/app/_build/worker.test.log", "log", false, testLog},
+		{"~/src/app/log/development.log", "log", false, ""},
+		{"~/src/app/log/latest.log", "log", false, ""},
+		{"~/google-cloud-sdk/platform/gsutil/third_party/requests/tests/certs/expired/server/server.key", "config", false, vendored},
+		{"~/src/app/vendor/github.com/x/y/testdata/key.pem", "repo", false, vendored},
+		{"~/src/app/node_modules/pkg/spec/fixtures/id_rsa", "repo", false, vendored},
+		{"~/src/app/test/vendor/key.pem", "repo", false, ""},
+		{"~/google-cloud-sdk/platform/gsutil/third_party/requests/certs/server.key", "config", false, ""},
+		{"~/src/app/config/master.key", "repo", false, ""},
+	} {
+		e := Evidence{Type: "private-key", Redacted: "PEM", Kind: c.kind, Path: c.path, IgnoredTmp: c.ignoredTmp}
+		if got := TestMaterial(e); got != c.want {
+			t.Errorf("TestMaterial(%s) = %q, want %q", c.path, got, c.want)
+		}
+		if got, noise := ImpactOf(e), c.want != ""; (got == Noise) != noise {
+			t.Errorf("ImpactOf(%s) = %s, want noise %v", c.path, got, noise)
+		}
+	}
+}

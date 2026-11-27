@@ -436,7 +436,7 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 	l := &Tracker{NextID: 1}
 	real := []Sighting{
 		sight(ev("aaaaaaaaaaaaaaaa", "anthropic", "~/.zshrc", "scan", "config", "644", false, false)),
-		sight(ev("bbbbbbbbbbbbbbbb", "anthropic", "~/src/log/test.log", "scan", "log", "644", false, false)),
+		sight(ev("bbbbbbbbbbbbbbbb", "anthropic", "~/src/log/development.log", "scan", "log", "644", false, false)),
 	}
 	l.SyncSecrets(real, t0, false, attribution.Owned{})
 	open, _ := l.FindRotate("aaaa")
@@ -446,7 +446,7 @@ func TestASecretNowNoiseIsReclassified(t *testing.T) {
 	}
 	noise := []Sighting{
 		sight(ev("aaaaaaaaaaaaaaaa", "assignment", "~/.zshrc", "scan", "config", "644", false, false)),
-		sight(ev("bbbbbbbbbbbbbbbb", "assignment", "~/src/log/test.log", "scan", "log", "644", false, false)),
+		sight(ev("bbbbbbbbbbbbbbbb", "assignment", "~/src/log/development.log", "scan", "log", "644", false, false)),
 	}
 	rep := l.SyncSecrets(noise, t0.Add(time.Hour), false, attribution.Owned{})
 	if rep.Reclassified != 2 || rep.Skipped != 0 || rep.Secrets != 0 {

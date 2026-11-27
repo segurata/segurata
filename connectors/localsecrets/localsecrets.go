@@ -456,6 +456,7 @@ func (s *scan) prepare(abs string, ev secretrisk.Evidence, value string) (secret
 		ev.Mode, ev.FileMode = modeOf(abs, s.home)
 		if !strings.Contains(slashed(abs), "/.git/") {
 			ev.Tracked, ev.Remote = s.trackedFile(abs)
+			ev.IgnoredTmp = !ev.Tracked && s.ignoredTmp(abs)
 		}
 		if ev.Tracked {
 			ev.Origin = s.originOf(s.repoRoot(abs)).origin
@@ -622,7 +623,9 @@ func hardeningGroup(path string) string {
 }
 
 func remediation(p secretrisk.Priority, spot secretrisk.Spot, ev secretrisk.Evidence) string {
-	switch {
+	switch why := secretrisk.TestMaterial(ev); {
+	case p == "" && why != "":
+		return fmt.Sprintf("Test material (%s), not a secret anyone uses. If it is one, see %s.", why, ev.Fix)
 	case p == "":
 		return fmt.Sprintf("Probably not a usable secret (generic match, public, expired or encrypted). If it is one, see %s.", ev.Fix)
 	case spot.Level == secretrisk.Remote:

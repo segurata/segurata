@@ -510,3 +510,29 @@ func TestSetOwnerWinsAndClears(t *testing.T) {
 		t.Errorf("history %+v", e)
 	}
 }
+
+// An item whose every sighting turns out to be test material is reclassified, and its history says
+// why; segurata never ranks it for rotation.
+func TestTestMaterialIsReclassified(t *testing.T) {
+	out := t.TempDir()
+	ev := secretrisk.Evidence{Fingerprint: "f1f1f1f1f1f1f1f1", Type: "private-key", Redacted: "PEM", Bucket: "b", Source: "scan", Kind: "repo", Mode: "600",
+		Path: "~/src/acme/tmp/Acme.Billing.CertificateProviderTest/test-1/chain-3/leaf.key"}
+	f := fnd(secretrisk.ConnectorName, "", "local", "secret", "scan:"+ev.Path+"#"+ev.Fingerprint, "Private key", finding.SevInfo, "Private key in "+ev.Path, t0)
+	raw, _ := json.Marshal(ev)
+	_ = json.Unmarshal(raw, &f.Evidence)
+	writeRun(t, out, t0, "local-secrets.jsonl", f, okStatus(secretrisk.ConnectorName, "local"))
+	tr := New(t0)
+	if _, err := tr.Sync(SyncOptions{OutDir: out, IncludeNoise: true}, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	it := mustRotate(t, tr, "f1f1")
+	if it.Priority != "" || it.Secret.Impact != secretrisk.Noise.String() {
+		t.Fatalf("ranked: %s %s", it.Priority, it.Secret.Impact)
+	}
+	if _, err := tr.Sync(SyncOptions{OutDir: out}, t0.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if e := it.History[len(it.History)-1]; it.Status != Reclassified || e.Detail != "every current sighting is noise (private-key: test key generated under tmp/ by a test run)" {
+		t.Errorf("%s %+v", it.Status, e)
+	}
+}

@@ -180,7 +180,11 @@ func (t *Tracker) SyncSecrets(sightings []Sighting, now time.Time, includeNoise 
 		}
 		switch {
 		case noise:
-			if it.reclassify(now, best.Evidence.Type) {
+			typ := best.Evidence.Type
+			if why := secretrisk.TestMaterial(best.Evidence); why != "" {
+				typ += ": " + why
+			}
+			if it.reclassify(now, typ) {
 				rep.Reclassified++
 			}
 		case it.Status == Reclassified:

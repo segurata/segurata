@@ -16,6 +16,10 @@ Each release's section here is its release notes on GitHub, which keeps line bre
 - `owned_owners` in the local-secrets config now counts as your GitHub accounts for attribution too.
 - `segurata rotations sync` recomputes every owner from what the tracker already holds, without a new scan. The tracker file moves to `schema_version` 8, which older binaries refuse.
 
+### Rotation ranking
+
+- Test material is noise, never a rotation: files a test run generated under a project's `tmp/` (a test-named folder after `tmp/`, or an untracked file git ignores there), test logs (`test.log`, `*.test.log`, `log/test*.log`) and the test data of vendored third-party libraries (a `test`, `tests`, `testdata` or `spec` folder below `vendor/`, `third_party/` or `node_modules/`). The finding and the item's history say which. `segurata rotations sync` re-ranks what is already tracked; the git-ignored `tmp/` case needs a new `segurata inventory local-secrets`.
+
 ## [0.1.0]
 
 The first public release.

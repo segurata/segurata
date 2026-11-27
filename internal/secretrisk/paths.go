@@ -2,6 +2,7 @@ package secretrisk
 
 import (
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -100,4 +101,47 @@ func contains(s string, subs []string) bool {
 		}
 	}
 	return false
+}
+
+// testName reads a folder or file name as a test's: "Test" or "Spec" in it, or "test" or "spec"
+// starting a word ("test-123", "my_test", not "latest").
+var testName = regexp.MustCompile(`Test|Spec|(?:^|[^A-Za-z])(?:test|spec)`)
+
+// TestMaterial is why a copy is test material that no one uses as a secret, wherever it sits; ""
+// when it is not:
+//   - a file a test run generated under a tmp/ or .tmp/ folder: the folder after it has a test's
+//     name, or git ignores the untracked file under its repository's tmp/ (IgnoredTmp);
+//   - a test log: test.log, *.test.log, or test*.log in a log/ or logs/ folder;
+//   - test data of a library vendored anywhere: a test folder below vendor/, third_party/,
+//     node_modules/ and the like.
+func TestMaterial(e Evidence) string {
+	parts := strings.FieldsFunc(e.Path, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(parts) == 0 {
+		return ""
+	}
+	base := strings.ToLower(parts[len(parts)-1])
+	vendored := false
+	for i, p := range parts[:len(parts)-1] {
+		d := strings.ToLower(p)
+		switch {
+		case (d == "tmp" || d == ".tmp") && testName.MatchString(parts[i+1]):
+			return "test key generated under tmp/ by a test run"
+		case vendorDirs[d]:
+			vendored = true
+		case vendored && testDirs[d]:
+			return "test data of a vendored third-party library"
+		}
+	}
+	dir := ""
+	if len(parts) > 1 {
+		dir = strings.ToLower(parts[len(parts)-2])
+	}
+	switch {
+	case e.IgnoredTmp:
+		return "generated under the repository's git-ignored tmp/ folder"
+	case base == "test.log", strings.HasSuffix(base, ".test.log"),
+		(dir == "log" || dir == "logs") && strings.HasPrefix(base, "test") && strings.HasSuffix(base, ".log"):
+		return "printed in a test log"
+	}
+	return ""
 }
