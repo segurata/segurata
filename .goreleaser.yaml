@@ -79,6 +79,26 @@ homebrew_casks:
       and then run:
         xattr -d com.apple.quarantine "$(brew --prefix)/bin/segurata"
 
+# A Scoop manifest for Windows, in segurata/scoop-bucket: `scoop install segurata`, then
+# `scoop update segurata`. Scoop checks each archive's SHA-256 against it.
+scoops:
+  - name: segurata
+    homepage: https://github.com/segurata/segurata
+    description: Security audits for the accounts and computers you manage
+    license: Apache-2.0
+    directory: bucket
+    repository:
+      owner: segurata
+      name: scoop-bucket
+      branch: main
+      # A write deploy key of the bucket alone, held by the release environment.
+      git:
+        url: git@github.com:segurata/scoop-bucket.git
+        private_key: '{{ envOrDefault "SCOOP_BUCKET_DEPLOY_KEY" "" }}'
+    # No deploy key, no bucket update; the rest of the release goes ahead.
+    skip_upload: '{{ if isEnvSet "SCOOP_BUCKET_DEPLOY_KEY" }}auto{{ else }}true{{ end }}'
+    commit_msg_template: "segurata {{ .Tag }}"
+
 changelog:
   sort: asc
   filters:

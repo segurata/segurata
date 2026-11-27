@@ -18,8 +18,10 @@ With Go 1.26 or later:
 go install github.com/segurata/segurata/cmd/segurata@latest
 ```
 
-See the [installation guide](docs/releasing.md#installing) for source builds, release archives
-for macOS, Linux and Windows, and signature verification.
+Or with Homebrew on macOS and Linux (`brew install --cask segurata/tap/segurata`) or Scoop on
+Windows (`scoop bucket add segurata https://github.com/segurata/scoop-bucket`, then
+`scoop install segurata`). See the [installation guide](docs/releasing.md#installing) for source
+builds, release archives for macOS, Linux and Windows, and signature verification.
 
 ## Quickstart
 

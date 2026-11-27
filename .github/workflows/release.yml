@@ -75,8 +75,9 @@ jobs:
           args: release --clean --release-notes=${{ runner.temp }}/notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional. Without the deploy key the Homebrew cask is built but not pushed.
+          # Optional. Without a deploy key the Homebrew cask or the Scoop manifest is built but not pushed.
           HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          SCOOP_BUCKET_DEPLOY_KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
 
   # Checks the published signature the way docs/releasing.md tells users to.
   verify:

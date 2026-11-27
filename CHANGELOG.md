@@ -2,6 +2,12 @@
 
 Each release's section here is its release notes on GitHub, which keeps line breaks as written: one line per paragraph or bullet. Versions follow [semver](https://semver.org/); until 1.0 a minor version may change the CLI, the config or the connector protocol.
 
+## [Unreleased]
+
+### Distribution
+
+- Windows installs and updates with Scoop: `scoop bucket add segurata https://github.com/segurata/scoop-bucket`, `scoop install segurata`, then `scoop update segurata`. Each release writes the manifest to `segurata/scoop-bucket`.
+
 ## [0.3.0]
 
 Windows gets device posture of its own: the new `windows` connector checks disk encryption, firewall, antivirus, updates, screen lock, accounts and remote access as the signed-in user, without elevating.

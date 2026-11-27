@@ -49,6 +49,8 @@ To check the GoReleaser config locally: `goreleaser check`, and `goreleaser rele
 | `release` environment | Settings > Environments | Deployment rule: tags matching `v*` only, so no branch workflow can read its secret |
 | `HOMEBREW_TAP_DEPLOY_KEY` | Secret of the `release` environment | Pushing the cask: the private half of an ed25519 deploy key with write access, added to `segurata/homebrew-tap` only (the organization must allow deploy keys). Without it the release still publishes, with the tap step skipped |
 | `homebrew-tap` repository | GitHub | Public, default branch `main` |
+| `SCOOP_BUCKET_DEPLOY_KEY` | Secret of the `release` environment | Pushing the Scoop manifest: the private half of an ed25519 deploy key with write access, added to `segurata/scoop-bucket` only. Without it the release still publishes, with the bucket step skipped |
+| `scoop-bucket` repository | GitHub | Public, default branch `main`; the manifest goes in `bucket/` |
 
 The workflow uses no other secret. The default `GITHUB_TOKEN` creates the release; `id-token:
 write` exists only in the release job, for the signature.
@@ -115,6 +117,18 @@ binary is not notarized by Apple; if macOS refuses to run it, verify the release
 remove the quarantine attribute (`xattr -d com.apple.quarantine "$(brew --prefix)/bin/segurata"`),
 as the cask's caveat says.
 
+### Scoop (Windows)
+
+```powershell
+scoop bucket add segurata https://github.com/segurata/scoop-bucket
+scoop install segurata
+segurata version
+```
+
+Later releases: `scoop update segurata`. Scoop checks each archive against the SHA-256 in the
+manifest, which every release writes to `segurata/scoop-bucket`; the cosign signature (above) is
+what proves the archive's origin.
+
 ### go install
 
 ```bash
@@ -148,7 +162,8 @@ $path = [Environment]::GetEnvironmentVariable("Path", "User")
 
 A new terminal then finds `segurata`. The binary has no Authenticode signature, so SmartScreen may
 warn the first time it runs; the cosign signature over `checksums.txt` is what proves its origin.
-There is no winget or Scoop manifest.
+Scoop does this for you and updates it later (see [Scoop](#scoop-windows)); there is no winget
+manifest.
 
 ## Project website
 
