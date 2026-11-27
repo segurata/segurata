@@ -99,10 +99,10 @@ func printNext(w io.Writer, it *tracker.Item, queue []*tracker.Item) {
 	tw.Flush()
 
 	fmt.Fprintln(w, "\nRotate it")
-	if s.RotateURL != "" {
-		fmt.Fprintf(w, "  at %s\n", s.RotateURL)
+	if where := s.RotateWhere(); s.RotateURL == "" && where == "in the provider's console" {
+		fmt.Fprintln(w, "  "+where+" (no account-independent page is known for this type)")
 	} else {
-		fmt.Fprintln(w, "  in the provider's console (no account-independent page is known for this type)")
+		fmt.Fprintln(w, "  "+where)
 	}
 	if g, ok := secretrisk.GuideFor(s.Type); ok {
 		for i, step := range g.Steps {

@@ -2,6 +2,12 @@
 
 Each release's section here is its release notes on GitHub, which keeps line breaks as written: one line per paragraph or bullet. Versions follow [semver](https://semver.org/); until 1.0 a minor version may change the CLI, the config or the connector protocol.
 
+## [Unreleased]
+
+### Fixes
+
+- A credential no provider is known for, such as an internal service's bearer token, is no longer to be rotated "in the provider's console": the next step says to rotate it in the service that accepts it, which segurata cannot name.
+
 ## [0.2.0]
 
 Secrets are attributed to their owner from where they live and who committed them, and Google Cloud gets its first remediations: API keys restricted to the APIs they use, daily caps on pay-per-use APIs, and budgets with alerts.

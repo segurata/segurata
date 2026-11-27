@@ -596,3 +596,26 @@ func TestUsedInShrinksWhenAWorkingFileNoLongerHoldsTheSecret(t *testing.T) {
 		}
 	}
 }
+
+// A credential no provider is known for, such as an internal service's bearer token, is rotated
+// where it is accepted; a known provider without a rotation page, in its console.
+func TestRotateWhereNamesNoProviderWhereNoneIsKnown(t *testing.T) {
+	for _, c := range []struct {
+		s    Secret
+		want string
+	}{
+		{Secret{Service: "stripe", RotateURL: "https://dashboard.stripe.com/apikeys"}, "at https://dashboard.stripe.com/apikeys"},
+		{Secret{Service: "sendgrid"}, "in the provider's console"},
+		{Secret{Service: "unknown"}, "in the service that accepts it (segurata cannot tell which: see what uses it where it was found)"},
+		{Secret{}, "in the service that accepts it (segurata cannot tell which: see what uses it where it was found)"},
+	} {
+		if got := c.s.RotateWhere(); got != c.want {
+			t.Errorf("%+v: %q", c.s, got)
+		}
+	}
+	it := &Item{Secret: &Secret{ID: "70d908b3", Service: "unknown", Type: "curl-auth-header", Redacted: "…(12)"}}
+	it.secretTitleAndNext()
+	if !strings.HasPrefix(it.Next.Action, "Rotate it in the service that accepts it") || strings.Contains(it.Next.Action, "provider") {
+		t.Errorf("next %q", it.Next.Action)
+	}
+}

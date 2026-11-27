@@ -672,13 +672,22 @@ func (it *Item) usedIn() []string {
 	return out
 }
 
+// RotateWhere says where the secret is rotated: its rotation page, its provider's console, or, for a
+// credential no provider is known for (a bearer token of an internal service), whatever accepts it.
+func (s *Secret) RotateWhere() string {
+	switch {
+	case s.RotateURL != "":
+		return "at " + s.RotateURL
+	case s.Service == "" || s.Service == "unknown":
+		return "in the service that accepts it (segurata cannot tell which: see what uses it where it was found)"
+	}
+	return "in the provider's console"
+}
+
 func (it *Item) secretTitleAndNext() {
 	s := it.Secret
 	it.Title = it.secretTitle()
-	where := "in the provider's console"
-	if s.RotateURL != "" {
-		where = "at " + s.RotateURL
-	}
+	where := s.RotateWhere()
 	n := &Next{Who: You, URL: s.RotateURL, Command: "segurata rotations done " + s.ID}
 	_, single := secretrisk.ParseHint(s.Redacted)
 	switch {
