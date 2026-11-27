@@ -2,7 +2,9 @@
 
 Each release's section here is its release notes on GitHub, which keeps line breaks as written: one line per paragraph or bullet. Versions follow [semver](https://semver.org/); until 1.0 a minor version may change the CLI, the config or the connector protocol.
 
-## [Unreleased]
+## [0.3.0]
+
+Windows gets device posture of its own: the new `windows` connector checks disk encryption, firewall, antivirus, updates, screen lock, accounts and remote access as the signed-in user, without elevating.
 
 ### Windows
 
@@ -14,7 +16,7 @@ Each release's section here is its release notes on GitHub, which keeps line bre
 
 ### Fixes
 
-- With no connector named, `inventory`, `schedule` and the coverage line in `status` leave out the connectors for another system: `macos` on Windows and Linux, `windows` on macOS and Linux. Named, such a connector still runs and says it is not supported here.
+- With no connector named, `inventory`, `schedule`, `signin`, `doctor` and the coverage line in `status` leave out the connectors for another system: `macos` on Windows and Linux, `windows` on macOS and Linux. Named, such a connector still runs and says it is not supported here.
 - A credential no provider is known for, such as an internal service's bearer token, is no longer to be rotated "in the provider's console": the next step says to rotate it in the service that accepts it, which segurata cannot name.
 - The tracker lists a theme added by a new version in briefing order in a tracker saved by an older one, instead of last.
 
@@ -76,5 +78,6 @@ Sixteen built-in connectors, each read-only on the systems it inspects:
 - macOS, Linux and Windows on amd64 and arm64. CI runs the tests on macOS (arm64), Linux (amd64) and Windows (amd64), on Windows both as an administrator and as a standard user; each release builds all six targets.
 - Release archives signed with Sigstore (keyless, by this repository's release workflow) with an SPDX SBOM per archive; a Homebrew cask in `segurata/tap`; `go install` with Go 1.26 or later.
 
+[0.3.0]: https://github.com/segurata/segurata/releases/tag/v0.3.0
 [0.2.0]: https://github.com/segurata/segurata/releases/tag/v0.2.0
 [0.1.0]: https://github.com/segurata/segurata/releases/tag/v0.1.0
