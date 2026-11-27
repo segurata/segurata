@@ -820,3 +820,24 @@ func TestStatusSummaryLeavesExpectedSkipsOutOfIncomplete(t *testing.T) {
 		}
 	}
 }
+
+// With no selector, a connector for another system is left out, so it is neither run nor listed
+// as never run; named, it still runs, to say it is not supported here.
+func TestTargetsLeaveOutOtherSystemsUnlessNamed(t *testing.T) {
+	conns := []connector.Connector{
+		&fake{desc: connector.Description{Name: "mac", Needs: []string{"os:darwin"}}},
+		&fake{desc: connector.Description{Name: "desktop", Needs: []string{"os:darwin|linux|windows", "cdp"}}},
+		&fake{desc: connector.Description{Name: "cloud", Needs: []string{"cli:x"}}},
+	}
+	var names []string
+	ts, err := TargetsOn("windows", config.Config{}, conns, nil)
+	for _, tg := range ts {
+		names = append(names, tg.Label())
+	}
+	if err != nil || strings.Join(names, ",") != "desktop,cloud" {
+		t.Fatalf("targets %v, %v", names, err)
+	}
+	if ts, err := TargetsOn("windows", config.Config{}, conns, []string{"mac"}); err != nil || len(ts) != 1 || ts[0].Label() != "mac" {
+		t.Fatalf("named: %v, %v", ts, err)
+	}
+}

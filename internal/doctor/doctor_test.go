@@ -72,10 +72,11 @@ func newFixture(t *testing.T, cfg string) *fixture {
 		GOOS:       "darwin",
 		Connectors: []connector.Connector{
 			plain{connector.Description{Name: "api", Needs: []string{"secret:API_KEY"}}},
-			plain{connector.Description{Name: "browser", Needs: []string{"cdp", "os:linux"}}},
+			plain{connector.Description{Name: "browser", Needs: []string{"cdp", "os:darwin|linux"}}},
 			plain{connector.Description{Name: "plugin", Needs: []string{"cli:jq", "cli:yq (optional)", "cli:zz"}}},
 			selfChecking{plain{connector.Description{Name: "cloud", Needs: []string{"cli:cloudctl", "secret:CLOUD_TOKEN"}}},
 				[]connector.Check{{Level: connector.OK, What: "cloudctl", Detail: "signed in"}}, &fx.got},
+			plain{connector.Description{Name: "elsewhere", Needs: []string{"os:windows"}}},
 		},
 		Request: run.NewRequest,
 		CDPVersion: func(context.Context, string) (cdp.Version, error) {
@@ -145,7 +146,6 @@ func TestDoctorReportsEveryArea(t *testing.T) {
 		"OK    api         secret API_KEY: env:DOCTOR_TEST_KEY resolves",
 		"FAIL  api:broken  secret API_KEY: environment variable DOCTOR_TEST_MISSING is not set",
 		"fix: check connectors.api:broken.secrets.API_KEY and use a working env:, keychain: or op:// reference",
-		"WARN  browser     platform: runs on linux only; it reports unsupported on darwin",
 		"OK    plugin      jq: /usr/bin/jq",
 		"WARN  plugin      yq: not found in PATH",
 		"FAIL  plugin      zz: not found in PATH",
@@ -291,4 +291,15 @@ func TestKeychainFixSuggestsAReferenceThatResolvesHere(t *testing.T) {
 		!strings.Contains(elsewhere, "op://") || strings.Contains(elsewhere, `"keychain:`) {
 		t.Errorf("without one: %q", elsewhere)
 	}
+}
+
+// A connector for another system stays out of a full doctor; named, it says it does not run here.
+func TestDoctorLeavesOutOtherSystemsUnlessNamed(t *testing.T) {
+	fx := newFixture(t, "")
+	if out, _ := fx.run(t); strings.Contains(out, "elsewhere") {
+		t.Errorf("full doctor lists it:\n%s", out)
+	}
+	fx = newFixture(t, "")
+	out, _ := fx.run(t, "elsewhere")
+	wantLines(t, out, "WARN  elsewhere  platform: runs on windows only; it reports unsupported on darwin")
 }

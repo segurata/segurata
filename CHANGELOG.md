@@ -14,6 +14,7 @@ Each release's section here is its release notes on GitHub, which keeps line bre
 
 ### Fixes
 
+- With no connector named, `inventory`, `schedule` and the coverage line in `status` leave out the connectors for another system: `macos` on Windows and Linux, `windows` on macOS and Linux. Named, such a connector still runs and says it is not supported here.
 - A credential no provider is known for, such as an internal service's bearer token, is no longer to be rotated "in the provider's console": the next step says to rotate it in the service that accepts it, which segurata cannot name.
 - The tracker lists a theme added by a new version in briefing order in a tracker saved by an older one, instead of last.
 

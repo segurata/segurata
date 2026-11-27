@@ -65,7 +65,7 @@ func (e Env) Run(ctx context.Context, selectors []string) int {
 	cfg, checks, ok := e.config()
 	add("config", checks...)
 	if ok {
-		targets, err := run.Targets(cfg, e.Connectors, selectors)
+		targets, err := run.TargetsOn(e.GOOS, cfg, e.Connectors, selectors)
 		if err != nil {
 			fmt.Fprintln(e.Out, err)
 			return 2

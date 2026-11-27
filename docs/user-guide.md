@@ -342,7 +342,7 @@ segurata schedule uninstall --apply
 A launchd user agent (`~/Library/LaunchAgents/com.segurata.inventory.plist`) runs an inventory
 every day (or `--every`), writes `~/.segurata/last-report.md`, and posts a macOS
 notification when its tracker sync opens a P0 or P1 item, new or reopened. By default
-it runs every connector; `--connectors macos,local-secrets,hibp` picks them. The browser connectors
+it runs every connector that runs on this system; `--connectors macos,local-secrets,hibp` picks them. The browser connectors
 (`google-personal`, `connected-apps`) run only when Brave answers at `cdp_url`, in hidden pages that
 never take focus; when it does not, or another browser holds the port, they are recorded as not
 inspected ("browser not reachable over CDP"), nothing they found is closed, and no other browser is

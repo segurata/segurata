@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/segurata/segurata/internal/attribution"
@@ -48,6 +49,17 @@ func (d Description) RunTimeout() time.Duration {
 
 // NeedsCDP reports whether the connector drives the browser over the Chrome DevTools Protocol.
 func (d Description) NeedsCDP() bool { return slices.Contains(d.Needs, "cdp") }
+
+// RunsOn reports whether the connector can run on goos: an "os:a|b" need names the systems it
+// supports; a connector without one runs anywhere.
+func (d Description) RunsOn(goos string) bool {
+	for _, n := range d.Needs {
+		if systems, ok := strings.CutPrefix(n, "os:"); ok && !slices.Contains(strings.Split(systems, "|"), goos) {
+			return false
+		}
+	}
+	return true
+}
 
 // Request is what the core hands a connector on `inventory`. Secrets arrive already resolved.
 type Request struct {

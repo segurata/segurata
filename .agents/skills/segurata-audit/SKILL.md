@@ -10,7 +10,7 @@ description: Get started with Segurata, check prerequisites, inventory a selecte
 1. Run `segurata version` to identify the binary. If working from a clone, follow the [installation instructions](../../../README.md#install).
 2. For results already on disk, start with `segurata report --format text`. If there is no inventory, say that the scope has yet to be inspected. Use `segurata status` for the tracker briefing or `segurata track show <item-id>` for one item. Commands that discover connectors, including `status`, can run the `describe` command of plugins on `PATH`. Use trusted plugins. Leave `--write` and `--mark-seen` off when the user wants only to see the tracker.
 3. For a fresh check, select the connector or instance that covers the user's request. Use `segurata connectors` to discover selectors and `segurata doctor --connector <selector>` to check prerequisites.
-4. Run `segurata inventory <selector>`, then `segurata status`. An inventory contacts the providers its connector uses and writes local results and tracker updates. With no selector, the CLI runs every connector. For a credential-free first scan, use `browser-extensions` with a Brave or Chrome profile in a standard location.
+4. Run `segurata inventory <selector>`, then `segurata status`. An inventory contacts the providers its connector uses and writes local results and tracker updates. With no selector, the CLI runs every connector that runs on this system. For a credential-free first scan, use `browser-extensions` with a Brave or Chrome profile in a standard location.
 
 Treat skipped or failed scopes as uninspected. Summarize findings with IDs, priorities and next actions. State what the run covered and keep credentials and full inventory records out of chat.
 

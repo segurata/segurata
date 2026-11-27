@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"sync"
@@ -49,9 +50,18 @@ func (t Target) Timeout() time.Duration {
 
 func (t Target) Label() string { return finding.Label(t.Connector.Describe().Name, t.Instance.Label) }
 
-// Targets expands connectors into their configured instances, picked once each by selectors
-// "name" (every instance) or "name:label"; no selectors means everything.
+// hostOS is the system connectors' "os:" needs are matched against.
+var hostOS = runtime.GOOS
+
+// Targets is TargetsOn this system.
 func Targets(cfg config.Config, conns []connector.Connector, selectors []string) ([]Target, error) {
+	return TargetsOn(hostOS, cfg, conns, selectors)
+}
+
+// TargetsOn expands connectors into their configured instances, picked once each by selectors
+// "name" (every instance) or "name:label". No selectors means every connector that runs on goos: one for another system (macos on Windows) is neither run nor shown as never run; asked
+// for by name, it runs and says it is not supported here.
+func TargetsOn(goos string, cfg config.Config, conns []connector.Connector, selectors []string) ([]Target, error) {
 	var all []Target
 	for _, c := range conns {
 		for _, in := range cfg.Instances(c.Describe().Name) {
@@ -59,7 +69,7 @@ func Targets(cfg config.Config, conns []connector.Connector, selectors []string)
 		}
 	}
 	if len(selectors) == 0 {
-		return all, nil
+		return slices.DeleteFunc(all, func(t Target) bool { return !t.Connector.Describe().RunsOn(goos) }), nil
 	}
 	var out []Target
 	picked := map[string]bool{}

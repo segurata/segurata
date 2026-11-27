@@ -30,7 +30,7 @@ type command struct {
 
 var commands = []command{
 	{"connectors", "", "list built-in and external connectors", connectorsCmd},
-	{"inventory", "[name|name:label ...] [--min-severity=low] [--out=out] [--verbose]", "run connectors (all when none given)", inventory},
+	{"inventory", "[name|name:label ...] [--min-severity=low] [--out=out] [--verbose]", "run connectors (when none is given, every one that runs on this system)", inventory},
 	{"status", "[--theme t] [--kind k] [--priority P0,P1] [--format text|md|html] [--write]", "the briefing",
 		func(args []string) int { return trackerCLI().Status(args) }},
 	{"track", "list|show|start|done|note|decide|snooze|ignore|reopen|prioritize|expect|add|sync", "tracker items",
