@@ -25,7 +25,7 @@ type recordingExec struct {
 }
 
 func (r *recordingExec) Run(_ context.Context, s connector.Step, io connector.IO) error {
-	r.ran = append(r.ran, s.String())
+	r.ran = append(r.ran, line(s))
 	_, _ = io.Out.Write([]byte(r.stdout))
 	return nil
 }
@@ -53,12 +53,16 @@ func jsonFixture(t *testing.T, name string, into any) error {
 	return json.Unmarshal([]byte(fixture(t, name)), into)
 }
 
+// line is a step's argv joined by spaces: what it runs, the same on every platform, where
+// Step.String quotes for the platform's shell.
+func line(s connector.Step) string { return strings.Join(s.Argv, " ") }
+
 func steps(p connector.Plan) (cmds, undo []string) {
 	for _, s := range p.Commands {
-		cmds = append(cmds, s.String())
+		cmds = append(cmds, line(s))
 	}
 	for _, s := range p.Undo {
-		undo = append(undo, s.String())
+		undo = append(undo, line(s))
 	}
 	return cmds, undo
 }
@@ -398,9 +402,9 @@ func TestCreateBudgetPlansTheFourThresholdsAndPrintsTheExactUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmds, undo := steps(p)
-	want := []string{"gcloud billing budgets create --billing-account=" + emptyAccount + " '--display-name=segurata: all projects' --budget-amount=50.5 " +
+	want := []string{"gcloud billing budgets create --billing-account=" + emptyAccount + " --display-name=segurata: all projects --budget-amount=50.5 " +
 		"--threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 --threshold-rule=percent=1.0,basis=forecasted-spend " +
-		"--account=owner@example.com --billing-project=demo-quota '--format=value(name)'"}
+		"--account=owner@example.com --billing-project=demo-quota --format=value(name)"}
 	wantUndo := []string{"gcloud billing budgets delete billingAccounts/" + emptyAccount + "/budgets/NEW_BUDGET_ID --account=owner@example.com --billing-project=demo-quota"}
 	if !reflect.DeepEqual(cmds, want) || !reflect.DeepEqual(undo, wantUndo) {
 		t.Fatalf("plan\n got %v\n undo %v\nwant %v\n undo %v", cmds, undo, want, wantUndo)
@@ -415,14 +419,15 @@ func TestCreateBudgetPlansTheFourThresholdsAndPrintsTheExactUndo(t *testing.T) {
 	if err := r.Apply(context.Background(), f, p, io); err != nil || !reflect.DeepEqual(ex.ran, want) {
 		t.Fatalf("apply: %v ran %v", err, ex.ran)
 	}
-	if !strings.Contains(out.String(), "Undo: gcloud billing budgets delete billingAccounts/"+emptyAccount+"/budgets/7a1b2c3d --account=owner@example.com --billing-project=demo-quota\n") {
+	undoLine := connector.Step{Argv: []string{"gcloud", "billing", "budgets", "delete", "billingAccounts/" + emptyAccount + "/budgets/7a1b2c3d", "--account=owner@example.com", "--billing-project=demo-quota"}}
+	if !strings.Contains(out.String(), "Undo: "+undoLine.String()+"\n") {
 		t.Errorf("apply output lacks the exact undo:\n%s", out.String())
 	}
 
 	// The default amount covers a billing account the config does not name.
 	c2, _ := testConnector(t, t.TempDir(), map[string][]outcome{list: {{}}}, nil)
 	cfg["budget_amount"] = 25.0
-	if p, err := remediatorFor(t, c2, f, cfg).Plan(context.Background(), f); err != nil || !strings.Contains(p.Commands[0].String(), "--budget-amount=25 ") {
+	if p, err := remediatorFor(t, c2, f, cfg).Plan(context.Background(), f); err != nil || !strings.Contains(line(p.Commands[0]), "--budget-amount=25 ") {
 		t.Errorf("default amount: %v %v", p.Commands, err)
 	}
 }
