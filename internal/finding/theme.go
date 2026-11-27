@@ -11,6 +11,7 @@ type Theme struct {
 // The shared themes, which a connector names by id alone.
 var (
 	ThemeMac               = Theme{"mac", "This Mac", "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."}
+	ThemeWindows           = Theme{"windows", "This PC", "Windows posture: disk encryption, firewall, antivirus, updates, screen lock, accounts, remote access, ports."}
 	ThemeBrowserExtensions = Theme{"browser-extensions", "Browser extensions", "Extensions that can read or drive your pages, one item per extension."}
 	ThemeGitHub            = Theme{"github-orgs", "GitHub", "Organizations and repositories you administer: 2FA, default permissions, Actions, secret scanning."}
 	ThemeConnectedApps     = Theme{"connected-apps", "Connected apps", "Third-party apps with access to GitHub, X, Slack, Notion, Facebook and other accounts."}
@@ -22,7 +23,7 @@ var (
 var ThemeOther = Theme{"other", "Other", "Findings of connectors without a theme of their own, and items added by hand."}
 
 // Themes are in briefing order.
-var Themes = []Theme{ThemeMac, ThemeBrowserExtensions, ThemeGitHub, ThemeConnectedApps, ThemeGoogle, ThemeCloud, ThemeAISpend}
+var Themes = []Theme{ThemeMac, ThemeWindows, ThemeBrowserExtensions, ThemeGitHub, ThemeConnectedApps, ThemeGoogle, ThemeCloud, ThemeAISpend}
 
 // ThemeFor resolves a declaration: a shared theme by id (ThemeOther for none), else the declaration
 // titled by its id when it gives no title.

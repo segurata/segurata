@@ -65,7 +65,7 @@ type Blast string
 const (
 	BlastLogin        Blast = "login"            // the account is the login of money and cloud accounts
 	BlastOrgAccess    Blast = "org-access"       // one stolen password opens every repository of an org
-	BlastDevice       Blast = "device"           // a lost, stolen or encrypted Mac takes every file
+	BlastDevice       Blast = "device"           // a lost, stolen or encrypted computer takes every file
 	BlastMailAndFiles Blast = "mail-and-files"   // apps that can read or change an account's mail and files
 	BlastBrowser      Blast = "browser"          // any local program can drive the browser's sessions
 	BlastPersonalData Blast = "personal-data"    // other people's data, with breach duties

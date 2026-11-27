@@ -21,6 +21,11 @@
       "description": "macOS posture: backups, updates, sharing, ports, login items, endpoint agents."
     },
     {
+      "id": "windows",
+      "title": "This PC",
+      "description": "Windows posture: disk encryption, firewall, antivirus, updates, screen lock, accounts, remote access, ports."
+    },
+    {
       "id": "browser-extensions",
       "title": "Browser extensions",
       "description": "Extensions that can read or drive your pages, one item per extension."

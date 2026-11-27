@@ -80,10 +80,16 @@ func (t *Tracker) seed(now time.Time) {
 			t.Themes[i] = def
 		}
 	}
+	// A theme this version adds goes after the one that precedes it in briefing order, so a tracker
+	// saved by an older version lists it where a new tracker would.
+	at := 0
 	for _, th := range themes {
-		if !have[th.ID] {
-			t.Themes = append(t.Themes, th)
+		if have[th.ID] {
+			at = slices.IndexFunc(t.Themes, func(d Theme) bool { return d.ID == th.ID }) + 1
+			continue
 		}
+		t.Themes = slices.Insert(t.Themes, at, th)
+		at++
 	}
 	for _, d := range seedDecisions {
 		if t.itemByKey("decide:"+d.slug) == nil {
