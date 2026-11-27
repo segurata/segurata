@@ -281,8 +281,10 @@ A budget *alerts* when it has a threshold and at least one channel or action.
 Resource ids are `<container id>/<budget id>` for budget findings, the container id joined to the
 sorted budget ids for duplicates, and the container id for enforcement, so they are stable across
 runs. Evidence holds the budget as mapped (amount, thresholds, scope, channels, actions) and the
-risks counted. Remediations are manual and point to the provider's budget console, or for
-enforcement to the provider's guide on capping spend.
+risks counted. Remediations point to the provider's budget console, or for enforcement to the
+provider's guide on capping spend. On Google Cloud the missing budget and the missing thresholds can
+also be fixed with `segurata remediate` (`gcp.budget.create`, `gcp.budget.alerts`,
+[gcp-connector.md](gcp-connector.md#remediation)).
 
 Not judged: whether the code behind an action really stops spend (segurata sees the topic, the
 action or the action group, not what it does), and recipients the provider does not return (AWS

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ func TestDoctorReportsExpiredAccounts(t *testing.T) {
 		"projects list " + owner + " --limit=1": {{stdout: "projects_owner.json"}},
 		"projects list " + work + " --limit=1":  {{stderr: "reauth.txt"}},
 		"auth print-access-token " + owner:      {{stdout: "access_token.txt"}},
+		"billing accounts list " + owner:        {{stdout: "billing_accounts_owner.json"}},
 	}, nil)
 	var asked []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,9 +50,16 @@ func TestDoctorReportsExpiredAccounts(t *testing.T) {
 		!strings.Contains(perms.Detail, "apikeys.keys.update (roles/serviceusage.apiKeysAdmin, for gcp.apikey.restrict)") {
 		t.Errorf("permissions: %+v", perms)
 	}
-	want := "POST /v3/projects/demo-shop:testIamPermissions Bearer " + accessToken + " demo-shop " + strings.Join(permissionNames(projectPermissions), ",")
-	if len(asked) != 1 || asked[0] != want {
-		t.Errorf("testIamPermissions requests %q, want %q", asked, want)
+	want := []string{
+		"POST /v3/projects/demo-shop:testIamPermissions Bearer " + accessToken + " demo-shop " + strings.Join(permissionNames(projectPermissions), ","),
+		"POST /v1/billingAccounts/000000-AAAAAA-111111:testIamPermissions Bearer " + accessToken + " demo-shop " + strings.Join(permissionNames(billingPermissions), ","),
+	}
+	if !slices.Equal(asked, want) {
+		t.Errorf("testIamPermissions requests\n%q\nwant\n%q", asked, want)
+	}
+	if b := got["permissions of owner@example.com on billing account 000000-AAAAAA-111111"]; b.Level != connector.Warn ||
+		!strings.Contains(b.Detail, "billing.budgets.create (roles/billing.costsManager, for gcp.budget.create)") {
+		t.Errorf("billing permissions: %+v", b)
 	}
 	for _, ch := range checks {
 		if strings.Contains(ch.Detail+ch.Fix, accessToken) {

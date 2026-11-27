@@ -39,6 +39,10 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 		return r.restrictPlan(ctx, g, f)
 	case ActionCapQuota:
 		return r.capPlan(ctx, g, cfg, f)
+	case ActionCreateBudget:
+		return r.budgetCreatePlan(ctx, g, cfg, f)
+	case ActionBudgetAlerts:
+		return r.budgetAlertsPlan(ctx, g, f)
 	}
 	return connector.Plan{}, fmt.Errorf("gcp has no remediation %q", f.Remediation.Action)
 }
@@ -49,7 +53,11 @@ func (r *remediator) Apply(ctx context.Context, f finding.Finding, p connector.P
 	if err != nil {
 		return err
 	}
-	return connector.Allowlist{fresh.Action: fresh.Commands}.Run(ctx, p, r.c.exec, io)
+	allow := connector.Allowlist{fresh.Action: fresh.Commands}
+	if p.Action == ActionCreateBudget {
+		return r.applyBudgetCreate(ctx, allow, p, io)
+	}
+	return allow.Run(ctx, p, r.c.exec, io)
 }
 
 func (g *gcloud) step(args ...string) connector.Step {

@@ -61,7 +61,8 @@ type settings struct {
 	skipProjects   []string
 	billingProject string
 	gcloudPath     string
-	quotaCaps      map[string]int64 // service -> requests per day, for gcp.quota.cap
+	quotaCaps      map[string]int64   // service -> requests per day, for gcp.quota.cap
+	budgetAmounts  map[string]float64 // billing account id or "default" -> amount, for gcp.budget.create
 }
 
 func parseSettings(m map[string]any) (settings, error) {
@@ -82,7 +83,10 @@ func parseSettings(m map[string]any) (settings, error) {
 	if s.gcloudPath, err = cfgkey.String(m, "gcp", "gcloud_path"); err != nil {
 		return s, err
 	}
-	s.quotaCaps, err = positiveNumbers[int64](m, "quota_caps")
+	if s.quotaCaps, err = positiveNumbers[int64](m, "quota_caps"); err != nil {
+		return s, err
+	}
+	s.budgetAmounts, err = positiveNumbers[float64](m, "budget_amount")
 	return s, err
 }
 
@@ -163,7 +167,7 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 	}
 
 	targets, usable := c.plan(ctx, g, accounts, cfg, emit)
-	bill := &billing{g: g, billingProject: cfg.billingProject, accounts: map[string]*billingState{}, ids: map[string]string{}}
+	bill := &billing{g: g, accounts: map[string]*billingState{}, ids: map[string]string{}}
 	for _, t := range targets {
 		if t.number != "" {
 			bill.ids[t.number] = t.project
@@ -418,11 +422,10 @@ func (c *Connector) keyUsage(ctx context.Context, g *gcloud, account string, t t
 func usageScope(project string) string { return "usage:" + project }
 
 type billing struct {
-	g              *gcloud
-	billingProject string
-	mu             sync.Mutex
-	accounts       map[string]*billingState
-	ids            map[string]string // project number to id
+	g        *gcloud
+	mu       sync.Mutex
+	accounts map[string]*billingState
+	ids      map[string]string // project number to id
 }
 
 type billingState struct {
@@ -471,12 +474,8 @@ func (b *billing) judge(ctx context.Context, emit connector.Emitter) {
 		if len(st.linked) == 0 && (st.open == nil || !*st.open) {
 			continue // closed and paying for nothing we can see: it cannot spend
 		}
-		args := []string{"billing", "budgets", "list", "--billing-account=" + id, "--account=" + st.account}
-		if b.billingProject != "" {
-			args = append(args, "--billing-project="+b.billingProject)
-		}
-		var budgets []gcpBudget
-		if err := b.g.json(ctx, &budgets, args...); err != nil {
+		budgets, err := b.g.budgets(ctx, id, st.account)
+		if err != nil {
 			state, why := classify(err)
 			emit.Status(finding.Status{Account: st.account, Scope: billingScope(id), State: state,
 				Detail: fmt.Sprintf("billing account %s: cannot read budgets, so spend alerts are unknown for %s: %s", id, projectList(st.linked), why)})

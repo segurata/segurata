@@ -77,7 +77,11 @@ var projectPermissions = []permission{
 }
 
 // billingPermissions are tested on the first open billing account each account lists.
-var billingPermissions []permission
+var billingPermissions = []permission{
+	{"billing.budgets.create", "roles/billing.costsManager", ActionCreateBudget},
+	{"billing.budgets.update", "roles/billing.costsManager", ActionBudgetAlerts},
+	{"billing.budgets.delete", "roles/billing.costsManager", "undoing " + ActionCreateBudget},
+}
 
 const (
 	cloudResourceManager = "cloudresourcemanager.googleapis.com"
@@ -85,9 +89,6 @@ const (
 )
 
 func (g *gcloud) billingPermissionChecks(ctx context.Context, account, userProject string) []connector.Check {
-	if len(billingPermissions) == 0 {
-		return nil
-	}
 	var list []billingAccount
 	if err := g.json(ctx, &list, "billing", "accounts", "list", "--account="+account); err != nil {
 		_, why := classify(err)

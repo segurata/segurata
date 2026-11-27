@@ -350,7 +350,10 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 	if v := rec.byTitle(t, "vision.googleapis.com"); v.Remediation.Action != "" || !strings.Contains(v.Remediation.Summary, "per-day quotas only") {
 		t.Errorf("a per-minute quota is advice only: %+v", v.Remediation)
 	}
-	if b := rec.byTitle(t, "no budget with alerts covers it"); b.Kind != finding.KindSpend {
+	if b := rec.byTitle(t, "has no forecasted threshold"); b.Remediation.Action != ActionBudgetAlerts || b.Evidence["currency"] != "EUR" {
+		t.Errorf("thresholds finding: %+v %v", b.Remediation, b.Evidence)
+	}
+	if b := rec.byTitle(t, "no budget with alerts covers it"); b.Kind != finding.KindSpend || b.Remediation.Action != "" {
 		t.Errorf("budget finding kind %s", b.Kind)
 	}
 
@@ -459,7 +462,7 @@ func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := rec.byTitle(t, "Billing account 000000-BBBBBB-222222 has no budget with alerts")
-	if f.Severity != finding.SevHigh || f.Kind != finding.KindSpend {
+	if f.Severity != finding.SevHigh || f.Kind != finding.KindSpend || f.Remediation.Action != ActionCreateBudget {
 		t.Errorf("budgetless billing account: %+v", f)
 	}
 	if got := f.Evidence["units"]; len(got.([]string)) != 1 || got.([]string)[0] != "demo-blog" {

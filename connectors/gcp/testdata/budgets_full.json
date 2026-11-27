@@ -1,0 +1,6 @@
+[
+  {"name": "billingAccounts/000000-AAAAAA-111111/budgets/b-1", "displayName": "Blog only",
+   "amount": {"specifiedAmount": {"currencyCode": "EUR", "units": "20"}},
+   "budgetFilter": {"projects": ["projects/100000000002"]},
+   "thresholdRules": [{"thresholdPercent": 0.5}, {"thresholdPercent": 1}, {"thresholdPercent": 1, "spendBasis": "FORECASTED_SPEND"}]}
+]

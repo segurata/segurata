@@ -415,7 +415,11 @@ func billingFindings(account, billingID, currency string, budgets []gcpBudget, l
 			fs[i].Evidence = map[string]any{}
 		}
 		fs[i].Evidence["billing_account"] = billingID
+		if currency != "" {
+			fs[i].Evidence["currency"] = currency
+		}
 	}
+	budgetActions(fs, c.NoBudget)
 	return fs
 }
 

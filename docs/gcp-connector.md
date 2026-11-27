@@ -22,7 +22,8 @@ Optional, in `~/.config/segurata/config.json`:
   "skip_projects": ["someone-elses-project"],
   "billing_project": "my-quota-project",
   "gcloud_path": "/path/to/gcloud",
-  "quota_caps": {"geocoding-backend.googleapis.com": 4000}
+  "quota_caps": {"geocoding-backend.googleapis.com": 4000},
+  "budget_amount": {"default": 50, "000000-AAAAAA-111111": 200}
 }}}}
 ```
 
@@ -35,8 +36,9 @@ empty `skip_projects` skips nothing.
 | `accounts` | every account in `gcloud auth list` except service accounts (`*.iam.gserviceaccount.com`) | Accounts to inspect with; a service account listed here is used |
 | `projects` | every active project each account can list | Restrict to these projects |
 | `skip_projects` | none | Projects never inspected, for example ones you can see but do not own |
-| `billing_project` | gcloud's own quota project | Passed as `--billing-project` to `billing budgets list`, for when the Budget API rejects the configured quota project (`USER_PROJECT_DENIED`), and as `X-Goog-User-Project` on the REST reads (else the project read) |
+| `billing_project` | gcloud's own quota project | Passed as `--billing-project` to every `billing budgets` command, for when the Budget API rejects the configured quota project (`USER_PROJECT_DENIED`), and as `X-Goog-User-Project` on the REST reads (else the project read) |
 | `quota_caps` | none | Requests per day `gcp.quota.cap` sets for each API (service name to a whole number); an API not named here is never capped |
+| `budget_amount` | none | Monthly amount, in the billing account's currency, of the budget `gcp.budget.create` creates: a map of billing account id to amount with an optional `default`, or one number for every account; without it the plan is refused |
 | `gcloud_path` | `PATH`, then the standard install folders: `~/google-cloud-sdk/bin/gcloud`, `/usr/lib/google-cloud-sdk/bin/gcloud`, `/opt/homebrew/share/google-cloud-sdk/bin/gcloud`, `/usr/local/share/google-cloud-sdk/bin/gcloud` | CLI path |
 
 When the SDK lives elsewhere and only an interactive shell's rc file puts it on `PATH`, segurata
@@ -166,9 +168,28 @@ is mapped to the shared model:
 - Risks per project: API keys with no API or application restriction (the high API key findings)
   and enabled user-managed service account keys found in the same run.
 
-Remediations point to `https://console.cloud.google.com/billing/<id>/budgets`. Google creates a
-budget on its own when Maps Platform is set up, which is how identical copies of one budget appear;
-the duplicate rule names them.
+Remediations point to `https://console.cloud.google.com/billing/<id>/budgets`; a billing account
+without a budget with alerts offers `gcp.budget.create`, and a budget without a threshold at 100% of
+actual or of forecasted spend offers `gcp.budget.alerts`. Google creates a budget on its own when
+Maps Platform is set up, which is how identical copies of one budget appear; the duplicate rule
+names them.
+
+### Budgets alert, they do not stop spend
+
+A budget sends email (and Pub/Sub or Monitoring notifications when wired) as spend crosses its
+thresholds; spending goes on. Google's [budgets page](https://cloud.google.com/billing/docs/how-to/budgets)
+puts it as "the budget doesn't automatically set a hard cap on spending", and every plan that
+creates or edits one says so. A budget spend cap, for the services Google offers one on, is read as
+an action by the enforcement rule. Beyond that, two things stop spend:
+
+- A request cap on each pay-per-use API ([request caps](#request-caps-of-pay-per-use-apis),
+  `gcp.quota.cap`): the API refuses requests over the cap for the rest of the day.
+- A budget that publishes its notifications to a Pub/Sub topic, wired to code that removes billing
+  from the project when the budget is exceeded, as Google's
+  [Disable billing usage with notifications](https://cloud.google.com/billing/docs/how-to/disable-billing-with-notifications)
+  guide builds with a Cloud Run function. Removing billing shuts down every service of the project
+  and some resources may not come back, so try it on a test project first. segurata reports whether a
+  budget has a topic (the enforcement rule) but never deploys the function.
 
 ### Local credentials
 
@@ -227,6 +248,8 @@ allowlist (`connector.Allowlist`, exact argument lists): nothing else can run.
 | Action | Finding | What it runs | Undo |
 |---|---|---|---|
 | `gcp.apikey.restrict` | API key without API restriction that called some API in 30 days | `gcloud services api-keys update <key id> --location=<location> --project=P --api-target=service=<svc>` for each service it called, `--account=A` | In the console (see below) |
+| `gcp.budget.create` | Billing account without a budget with alerts | `gcloud billing budgets create --billing-account=ID --display-name="segurata: all projects" --budget-amount=<budget_amount> --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 --threshold-rule=percent=1.0,basis=forecasted-spend --account=A [--billing-project=Q] --format=value(name)` | `gcloud billing budgets delete billingAccounts/ID/budgets/<new id> --account=A`, printed with the id once the budget exists |
+| `gcp.budget.alerts` | Budget without a threshold at 100% of actual spend, or of forecasted spend | `gcloud billing budgets update billingAccounts/ID/budgets/B --add-threshold-rule=percent=0.9` (when no actual threshold reaches 90%) `--add-threshold-rule=percent=1.0` (when none reaches 100%) `--add-threshold-rule=percent=1.0,basis=forecasted-spend` (when none is forecasted) `--account=A` | `gcloud billing budgets update billingAccounts/ID/budgets/B --clear-threshold-rules --add-threshold-rule=…` with the budget's thresholds before |
 | `gcp.quota.cap` | Pay-per-use API without a per-day request cap | Per uncapped per-day request quota: `gcloud quotas preferences create --service=S --quota-id=Q --preferred-value=<quota_caps[S]> --project=P --preference-id=segurata-<quota id> --allow-high-percentage-quota-decrease --account=A`, or `gcloud quotas preferences update <id> …` with the same flags when the project already has a preference for it | `gcloud quotas preferences update <id> --service=S --quota-id=Q --preferred-value=<the limit before> --project=P --account=A` |
 
 `gcp.apikey.restrict`:
@@ -255,11 +278,30 @@ allowlist (`connector.Allowlist`, exact argument lists): nothing else can run.
 - Cloud Quotas cannot delete a quota preference, so the undo sets it back to the limit it had,
   which Google treats as an increase: it may ask for `--email` and take time to approve.
 
+`gcp.budget.create` and `gcp.budget.alerts`:
+
+- The amount comes from `budget_amount` only; without it the plan is refused and names the key.
+  `--budget-amount` carries no currency, so Google uses the billing account's.
+- The budget covers every project on the account (no `--filter-projects`), monthly (the API's
+  default period), and alerts the billing account's administrators and users (the default
+  recipients).
+- `gcp.budget.create` is refused when a budget with alerts exists by the time it is planned. The id
+  of a budget is Google's, so the undo shown before applying holds `NEW_BUDGET_ID`, and the apply
+  prints the exact `delete` from the name `--format=value(name)` returns.
+- `gcp.budget.alerts` adds rules to the existing ones (gcloud reads the budget's rules and appends);
+  amount, scope and recipients stay. The undo clears the rules and puts back the ones read before.
+- Percentages are 1.0-based (`1.0` is 100%) in both commands. The `update` reference says
+  `--add-threshold-rule`'s percent is an "Integer between 0 and 100", but gcloud passes it unchanged
+  into `thresholdPercent`, which the Budget API documents as 1.0-based (checked in the SDK's
+  `surface/billing/budgets/update.yaml` and `command_lib/billingbudgets/hooks.py`, gcloud 594): a
+  value of 100 would mean 10000%.
+
 ### Permissions
 
 The usage and quota reads and the remediations need these, and `segurata doctor` asks
 `testIamPermissions` (a POST that changes nothing) which of them each account holds on the first
-project it lists, and warns about the missing ones with the predefined role that grants each:
+project it lists, and the budget ones on the first open billing account, and warns about the missing
+ones with the predefined role that grants each:
 
 | Permission | Role | For |
 |---|---|---|
@@ -268,6 +310,9 @@ project it lists, and warns about the missing ones with the predefined role that
 | `cloudquotas.quotas.get` | `roles/cloudquotas.viewer` | Reading request quotas and preferences |
 | `apikeys.keys.update` | `roles/serviceusage.apiKeysAdmin` | `gcp.apikey.restrict` |
 | `cloudquotas.quotas.update` | `roles/cloudquotas.admin` | `gcp.quota.cap` |
+| `billing.budgets.create` | `roles/billing.costsManager` | `gcp.budget.create` |
+| `billing.budgets.update` | `roles/billing.costsManager` | `gcp.budget.alerts` |
+| `billing.budgets.delete` | `roles/billing.costsManager` | Undoing `gcp.budget.create` |
 
 ## Safety
 
@@ -325,6 +370,10 @@ Intelligence activity analysis, a separate API.
 - `gcloud billing accounts list`: <https://cloud.google.com/sdk/gcloud/reference/billing/accounts/list>
 - `gcloud billing projects describe`: <https://cloud.google.com/sdk/gcloud/reference/billing/projects/describe>
 - `gcloud billing budgets list`: <https://cloud.google.com/sdk/gcloud/reference/billing/budgets/list>
+- `gcloud billing budgets create` (`--threshold-rule`, `--budget-amount` currency): <https://docs.cloud.google.com/sdk/gcloud/reference/billing/budgets/create>
+- `gcloud billing budgets update` (`--add-threshold-rule`, `--clear-threshold-rules`): <https://docs.cloud.google.com/sdk/gcloud/reference/billing/budgets/update>
+- `gcloud billing budgets delete`: <https://docs.cloud.google.com/sdk/gcloud/reference/billing/budgets/delete>
+- `billingAccounts.testIamPermissions`: <https://docs.cloud.google.com/billing/docs/reference/rest/v1/billingAccounts/testIamPermissions>
 - Budget resource (`amount`, `thresholdRules[].spendBasis`, `notificationsRule`, `budgetFilter`, `spendCap`): <https://cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets>
 - Disable billing usage with notifications: <https://cloud.google.com/billing/docs/how-to/disable-billing-with-notifications>
 - Budgets and alerts: <https://cloud.google.com/billing/docs/how-to/budgets>

@@ -365,3 +365,138 @@ func TestUnreadableQuotasAreAStatusOfTheirOwnScope(t *testing.T) {
 	}
 	rec.AssertNoSecret(t, accessToken)
 }
+
+const (
+	emptyAccount = "000000-BBBBBB-222222"
+	mainAccount  = "000000-AAAAAA-111111"
+)
+
+func budgetFinding(t *testing.T, billingID string, budgets []gcpBudget, title string) finding.Finding {
+	t.Helper()
+	for _, f := range billingFindings("owner@example.com", billingID, "EUR", budgets, []linkedProject{{id: "demo-blog", number: "100000000002"}}, map[string]string{"100000000002": "demo-blog"}) {
+		if strings.Contains(f.Title, title) {
+			f.Connector = connectorName
+			f.Fill(time.Now())
+			return f
+		}
+	}
+	t.Fatalf("no finding %q", title)
+	return finding.Finding{}
+}
+
+func TestCreateBudgetPlansTheFourThresholdsAndPrintsTheExactUndo(t *testing.T) {
+	list := "billing budgets list --billing-account=" + emptyAccount + " " + owner + " --billing-project=demo-quota"
+	c, _ := testConnector(t, t.TempDir(), map[string][]outcome{list: {{}}}, nil)
+	f := budgetFinding(t, emptyAccount, nil, "has no budget with alerts")
+	if f.Remediation.Action != ActionCreateBudget || !strings.Contains(f.Remediation.Summary, `budget_amount."`+emptyAccount+`"`) {
+		t.Fatalf("no-budget finding: %+v", f.Remediation)
+	}
+	cfg := map[string]any{"billing_project": "demo-quota", "budget_amount": map[string]any{"default": 10.0, emptyAccount: 50.5}}
+	r := remediatorFor(t, c, f, cfg)
+	p, err := r.Plan(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds, undo := steps(p)
+	want := []string{"gcloud billing budgets create --billing-account=" + emptyAccount + " '--display-name=segurata: all projects' --budget-amount=50.5 " +
+		"--threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 --threshold-rule=percent=1.0,basis=forecasted-spend " +
+		"--account=owner@example.com --billing-project=demo-quota '--format=value(name)'"}
+	wantUndo := []string{"gcloud billing budgets delete billingAccounts/" + emptyAccount + "/budgets/NEW_BUDGET_ID --account=owner@example.com --billing-project=demo-quota"}
+	if !reflect.DeepEqual(cmds, want) || !reflect.DeepEqual(undo, wantUndo) {
+		t.Fatalf("plan\n got %v\n undo %v\nwant %v\n undo %v", cmds, undo, want, wantUndo)
+	}
+	if !strings.Contains(p.Summary, "50.5 EUR (the billing account's currency) a month") || !strings.Contains(strings.Join(p.SideEffects, " "), "does not stop spending") {
+		t.Errorf("summary %q effects %v", p.Summary, p.SideEffects)
+	}
+
+	ex := &recordingExec{stdout: "billingAccounts/" + emptyAccount + "/budgets/7a1b2c3d\n"}
+	c.exec = ex
+	io, out := quietIO()
+	if err := r.Apply(context.Background(), f, p, io); err != nil || !reflect.DeepEqual(ex.ran, want) {
+		t.Fatalf("apply: %v ran %v", err, ex.ran)
+	}
+	if !strings.Contains(out.String(), "Undo: gcloud billing budgets delete billingAccounts/"+emptyAccount+"/budgets/7a1b2c3d --account=owner@example.com --billing-project=demo-quota\n") {
+		t.Errorf("apply output lacks the exact undo:\n%s", out.String())
+	}
+
+	// The default amount covers a billing account the config does not name.
+	c2, _ := testConnector(t, t.TempDir(), map[string][]outcome{list: {{}}}, nil)
+	cfg["budget_amount"] = 25.0
+	if p, err := remediatorFor(t, c2, f, cfg).Plan(context.Background(), f); err != nil || !strings.Contains(p.Commands[0].String(), "--budget-amount=25 ") {
+		t.Errorf("default amount: %v %v", p.Commands, err)
+	}
+}
+
+func TestCreateBudgetRefusals(t *testing.T) {
+	f := budgetFinding(t, emptyAccount, nil, "has no budget with alerts")
+	list := "billing budgets list --billing-account=" + emptyAccount + " " + owner
+	for _, tc := range []struct {
+		name, budgets string
+		cfg           map[string]any
+		want          string
+	}{
+		{"no amount", "", nil, `set connectors.gcp.config.budget_amount."` + emptyAccount + `" (or budget_amount.default)`},
+		{"amount for another account", "", map[string]any{"budget_amount": map[string]any{mainAccount: 5.0}}, "never guesses an amount"},
+		{"a budget appeared", "budgets_main.json", map[string]any{"budget_amount": 5.0}, `now has budget "Blog only" with alerts`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := testConnector(t, t.TempDir(), map[string][]outcome{list: {{stdout: tc.budgets}}}, nil)
+			_, err := remediatorFor(t, c, f, tc.cfg).Plan(context.Background(), f)
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.want)) {
+				t.Fatalf("want refusal %q, got %v", tc.want, err)
+			}
+		})
+	}
+	if _, err := parseSettings(map[string]any{"budget_amount": map[string]any{"default": -3.0}}); err == nil || !strings.Contains(err.Error(), `"budget_amount" must map names to an amount above 0`) {
+		t.Errorf("negative budget amount: %v", err)
+	}
+}
+
+func TestBudgetAlertsAddsTheMissingThresholdsAndRestoresTheOldOnes(t *testing.T) {
+	var budgets []gcpBudget
+	if err := jsonFixture(t, "budgets_main.json", &budgets); err != nil {
+		t.Fatal(err)
+	}
+	f := budgetFinding(t, mainAccount, budgets, "'Blog only' (20 EUR/month, demo-blog) has no forecasted threshold")
+	if f.Remediation.Action != ActionBudgetAlerts {
+		t.Fatalf("thresholds finding: %+v", f.Remediation)
+	}
+	list := "billing budgets list --billing-account=" + mainAccount + " " + owner
+	c, _ := testConnector(t, t.TempDir(), map[string][]outcome{list: {{stdout: "budgets_main.json"}}}, nil)
+	r := remediatorFor(t, c, f, nil)
+	p, err := r.Plan(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds, undo := steps(p)
+	name := "billingAccounts/" + mainAccount + "/budgets/b-1"
+	want := []string{"gcloud billing budgets update " + name + " --add-threshold-rule=percent=1.0,basis=forecasted-spend --account=owner@example.com"}
+	wantUndo := []string{"gcloud billing budgets update " + name + " --clear-threshold-rules --add-threshold-rule=percent=0.5 --add-threshold-rule=percent=1.0 --account=owner@example.com"}
+	if !reflect.DeepEqual(cmds, want) || !reflect.DeepEqual(undo, wantUndo) {
+		t.Fatalf("plan\n got %v\n undo %v\nwant %v\n undo %v", cmds, undo, want, wantUndo)
+	}
+	ex := &recordingExec{}
+	c.exec = ex
+	io, _ := quietIO()
+	if err := r.Apply(context.Background(), f, p, io); err != nil || !reflect.DeepEqual(ex.ran, want) {
+		t.Fatalf("apply: %v ran %v", err, ex.ran)
+	}
+
+	// A budget with 50% only gets 90% and 100% of actual spend and 100% forecasted.
+	budgets[0].ThresholdRules = budgets[0].ThresholdRules[:1]
+	low := budgetFinding(t, mainAccount, budgets, "add 90%")
+	g := &gcloud{path: "gcloud", run: &fakeRunner{t: t, plays: map[string][]outcome{list: {{stdout: "budgets_low.json"}}}}}
+	lp, err := (&remediator{c: c}).budgetAlertsPlan(context.Background(), g, low)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := steps(lp); len(got) != 1 || !strings.Contains(got[0], "--add-threshold-rule=percent=0.9 --add-threshold-rule=percent=1.0 --add-threshold-rule=percent=1.0,basis=forecasted-spend ") {
+		t.Errorf("50%% only: %v", got)
+	}
+
+	// Once the thresholds are there, nothing is left to add.
+	c3, _ := testConnector(t, t.TempDir(), map[string][]outcome{list: {{stdout: "budgets_full.json"}}}, nil)
+	if _, err := remediatorFor(t, c3, f, nil).Plan(context.Background(), f); err == nil || !strings.Contains(err.Error(), "nothing to do") {
+		t.Errorf("a budget with both thresholds: %v", err)
+	}
+}
