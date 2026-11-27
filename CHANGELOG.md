@@ -4,9 +4,18 @@ Each release's section here is its release notes on GitHub, which keeps line bre
 
 ## [Unreleased]
 
+### Windows
+
+- New built-in connector `windows`, the Windows counterpart of `macos`, which brings the built-in connectors to seventeen. It runs as the signed-in user and never elevates: one Windows PowerShell process from System32 that loads no module, plus read-only registry reads.
+- Checks: BitLocker on each fixed drive, Microsoft Defender Firewall per profile, Microsoft Defender or another antivirus registered in Windows Security Center, Windows Update (service, policy, last installation, pending restart), screen lock, other local administrators, Guest, accounts allowed an empty password, automatic sign-in, User Account Control, Remote Desktop and Network Level Authentication, SMBv1, shared folders, TCP ports reachable from the network, Secure Boot and browser debugging ports (Brave, Chrome, Edge).
+- What a standard user cannot read (BitLocker through WMI, the shell's BitLocker answer on Windows Server, share permissions) is reported as not inspected, with the command to run from an elevated PowerShell, never as clean.
+- Every finding names the Settings page or the elevated command that fixes it. `windows.screen-lock.set` fixes the screen lock in the user's own registry hive, with an undo; machine-wide changes stay with the owner.
+- `segurata doctor --connector windows` runs the probe and says which sources a standard user is refused.
+
 ### Fixes
 
 - A credential no provider is known for, such as an internal service's bearer token, is no longer to be rotated "in the provider's console": the next step says to rotate it in the service that accepts it, which segurata cannot name.
+- The tracker lists a theme added by a new version in briefing order in a tracker saved by an older one, instead of last.
 
 ## [0.2.0]
 

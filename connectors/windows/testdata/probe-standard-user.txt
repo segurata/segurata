@@ -1,0 +1,20 @@
+self	sid=S-1-5-21-1111-2222-3333-1001	elevated=False
+os	caption=Microsoft Windows 11 Home	version=10.0.26100	type=1
+vol	letter=C:	system=True	shell=
+err	sec=bde	denied=True	code=AccessDenied	msg=Access denied 
+fwcur	types=2
+fw	profile=1	enabled=True	inbound=0
+fw	profile=2	enabled=True	inbound=0
+fw	profile=4	enabled=True	inbound=0
+err	sec=mp	denied=True	code=AccessDenied	msg=Access denied 
+wu	installed=2026-11-20T08:00:00	searched=2026-11-26T08:00:00
+reboot	required=False
+user	name=Administrator	sid=S-1-5-21-1111-2222-3333-500	disabled=True	pwreq=True
+user	name=Guest	sid=S-1-5-21-1111-2222-3333-501	disabled=True	pwreq=False
+user	name=DefaultAccount	sid=S-1-5-21-1111-2222-3333-503	disabled=True	pwreq=False
+user	name=José	sid=S-1-5-21-1111-2222-3333-1001	disabled=False	pwreq=True
+admin	path=WinNT://DESKTOP-TEST/José	class=User	sid=S-1-5-21-1111-2222-3333-1001
+share	name=Fotos	path=C:\Fotos	type=0
+shareacl	name=Fotos	code=2
+err	sec=feature	denied=True	code=AccessDenied	msg=Access denied 
+err	sec=tcp	denied=False	code=0x80041010	msg=Invalid class 

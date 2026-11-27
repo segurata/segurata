@@ -1,0 +1,29 @@
+self	sid=S-1-5-21-1111-2222-3333-1001	elevated=False
+os	caption=Microsoft Windows 11 Pro	version=10.0.26100	type=1
+vol	letter=C:	system=True	shell=1
+vol	letter=D:	system=False	shell=1
+err	sec=bde	denied=True	code=AccessDenied	msg=Access denied 
+fwcur	types=2
+fw	profile=1	enabled=True	inbound=0
+fw	profile=2	enabled=True	inbound=0
+fw	profile=4	enabled=True	inbound=0
+mp	service=True	av=True	rtp=True	sigage=0	tamper=True	mode=Normal
+av	name=Windows Defender	state=397568
+wu	installed=2026-11-20T08:00:00	searched=2026-11-26T08:00:00
+reboot	required=False
+tcp	addr=0.0.0.0	port=135	pid=1000	proc=svchost
+tcp	addr=::	port=135	pid=1000	proc=svchost
+tcp	addr=192.168.1.20	port=139	pid=4	proc=System
+tcp	addr=0.0.0.0	port=445	pid=4	proc=System
+tcp	addr=0.0.0.0	port=49664	pid=700	proc=lsass
+tcp	addr=127.0.0.1	port=5037	pid=4242	proc=adb
+user	name=Administrator	sid=S-1-5-21-1111-2222-3333-500	disabled=True	pwreq=True
+user	name=Guest	sid=S-1-5-21-1111-2222-3333-501	disabled=True	pwreq=False
+user	name=DefaultAccount	sid=S-1-5-21-1111-2222-3333-503	disabled=True	pwreq=False
+user	name=José	sid=S-1-5-21-1111-2222-3333-1001	disabled=False	pwreq=True
+admin	path=WinNT://DESKTOP-TEST/Administrator	class=User	sid=S-1-5-21-1111-2222-3333-500
+admin	path=WinNT://DESKTOP-TEST/José	class=User	sid=S-1-5-21-1111-2222-3333-1001
+share	name=ADMIN$	path=C:\Windows	type=2147483648
+share	name=C$	path=C:\	type=2147483648
+share	name=IPC$	path=	type=2147483651
+feature	name=SMB1Protocol	state=2

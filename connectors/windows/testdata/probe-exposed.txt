@@ -1,0 +1,35 @@
+self	sid=S-1-5-21-1111-2222-3333-1001	elevated=True
+os	caption=Microsoft Windows 10 Home	version=10.0.19045	type=1
+vol	letter=C:	system=True	shell=2
+vol	letter=D:	system=False	shell=2
+bde	letter=C:	protection=0
+fwcur	types=4
+fw	profile=1	enabled=False	inbound=0
+fw	profile=2	enabled=True	inbound=1
+fw	profile=4	enabled=False	inbound=0
+mp	service=True	av=True	rtp=False	sigage=40	tamper=False	mode=Normal
+av	name=Windows Defender	state=393472
+wu	installed=2026-09-01T10:00:00Z	searched=2026-11-26T08:00:00Z
+reboot	required=True
+tcp	addr=0.0.0.0	port=22	pid=3000	proc=sshd
+tcp	addr=0.0.0.0	port=135	pid=1000	proc=svchost
+tcp	addr=0.0.0.0	port=3389	pid=1100	proc=svchost
+tcp	addr=0.0.0.0	port=5985	pid=4	proc=System
+tcp	addr=0.0.0.0	port=8080	pid=5000	proc=node
+tcp	addr=127.0.0.1	port=9222	pid=6000	proc=brave
+browser	name=brave.exe	pid=6000	cmd="C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" --remote-debugging-port=9222
+user	name=Administrator	sid=S-1-5-21-1111-2222-3333-500	disabled=True	pwreq=True
+user	name=Guest	sid=S-1-5-21-1111-2222-3333-501	disabled=False	pwreq=False
+user	name=DefaultAccount	sid=S-1-5-21-1111-2222-3333-503	disabled=True	pwreq=False
+user	name=José	sid=S-1-5-21-1111-2222-3333-1001	disabled=False	pwreq=True
+user	name=tecnico	sid=S-1-5-21-1111-2222-3333-1002	disabled=False	pwreq=False
+admin	path=WinNT://DESKTOP-TEST/Administrator	class=User	sid=S-1-5-21-1111-2222-3333-500
+admin	path=WinNT://DESKTOP-TEST/José	class=User	sid=S-1-5-21-1111-2222-3333-1001
+admin	path=WinNT://DESKTOP-TEST/tecnico	class=User	sid=S-1-5-21-1111-2222-3333-1002
+admin	path=WinNT://CONTOSO/Domain Admins	class=Group	sid=S-1-5-21-9-9-9-512
+share	name=ADMIN$	path=C:\Windows	type=2147483648
+share	name=Fotos	path=C:\Users\José\Pictures	type=0
+shareace	name=Fotos	sid=S-1-1-0	mask=1179817	type=0
+share	name=Trabajo	path=D:\Trabajo	type=0
+shareace	name=Trabajo	sid=S-1-5-21-1111-2222-3333-1001	mask=2032127	type=0
+feature	name=SMB1Protocol	state=1

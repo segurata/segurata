@@ -138,6 +138,10 @@ jobs:
           # This hosted runner is a disposable VM. The native test clears its clipboard.
           SEGURATA_TEST_DISPOSABLE_CLIPBOARD: "1"
         run: go test ./...
+      # The windows connector's live tests, verbose: the log shows what each check found here.
+      - name: windows connector on this runner
+        if: runner.os == 'Windows'
+        run: go test -count=1 -v -run 'TestLiveInventory|TestScreenLockRoundTripOnTheRealRegistry' ./connectors/windows/
 
   # The windows-latest runner account is the built-in Administrator, elevated. This job runs the
   # same tests as a local standard user created for it: not in Administrators, so its token is

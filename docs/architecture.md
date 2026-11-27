@@ -81,7 +81,7 @@ the instance (never the value; see "Correlation"). The lists are capped (50 insp
 account in parts, otherwise its account (`finding.ScopeOf`). Examples: `repo:<owner>/<name>` and
 `repo:<owner>`, `user:<login>` and `org:<org>` (github), `history:<repo>`, `dumps:<repo>` and `files` (local-secrets), the project
 id and `billing:<id>` (gcp), the service name (connected-apps), `profile <name>` (aws),
-`check:<id>` (macos). A path a scan could not read is skipped as `<scope>:<path>`
+`check:<id>` (macos, windows). A path a scan could not read is skipped as `<scope>:<path>`
 (`finding.PathScope`; local-secrets skips `files:~/Library/Mail` when ripgrep is denied it, as
 macOS denies it under every home) with the reason `expected: unreadable`
 (`finding.UnreadableReason`): it holds every finding and location at that path or inside it,
@@ -190,7 +190,7 @@ truth, and every change goes through the CLI.
     `priority`, `reclassified` or `merged`; `action` keeps the precise verb (`done`, `auto-done`, `auto-reopen`,
     `snooze-expired`, `acceptance-expired`, `history-only`, `redacted`, `next`, …).
 - **Theme**: `{id, title, description}`, seeded in every tracker: `rotations`, `data-dumps`,
-  `transcripts`, the shared connector themes (`mac`, `browser-extensions`, `github-orgs`,
+  `transcripts`, the shared connector themes (`mac`, `windows`, `browser-extensions`, `github-orgs`,
   `connected-apps`, `google`, `cloud`, `ai-spend`, from `finding.Themes`), `coverage`, `setup`,
   `decisions`, `other`. Each connector declares its theme in `describe`, a shared one or its own,
   which the first run that declares it adds (see connectors.md, "Theme and grouping"); the run's
@@ -793,6 +793,7 @@ connector or instance (the config and state are always checked).
 | `cloudflare` | `GET /user/tokens/verify` (status and expiry), then one page of tokens, accounts and zones and the first zone's SSL setting and DNSSEC, each failure naming the permission group to add |
 | `connected-apps` | `gh auth status --json hosts` (JSON, never the token; the one gh command added to its allowlist); scopes the key lists need (`admin:public_key`, `admin:ssh_signing_key`, `admin:gpg_key`, from `ghKeyEndpoints`) |
 | `macos` | `dscl` lists the local users; `tmutil destinationinfo -X` and the Time Machine preferences are readable (a warning with the Full Disk Access fix otherwise) |
+| `windows` | The inventory's PowerShell probe runs (a failure, such as a constrained language policy, fails with the fix); each probe section answers, or a warning names the elevated command that reads it; the screen saver settings are readable |
 | `local-secrets` | rg, gitleaks (optional; not needed with `skip_git_history`), git and ssh-keygen on `PATH`; `rg --version` and `gitleaks version` (added to the gitleaks guard) |
 
 - State: the fingerprint key exists (a warning before the first `local-secrets` run), is a valid
@@ -882,10 +883,11 @@ records (part of the finding id). On the command line, `name` selects every inst
 | `supabase` | Management API | Projects, service keys, spend cap |
 | `cloudflare` | API, read-only user token | User API tokens (no expiry, idle, edit without an IP filter, edit on all zones or accounts), Global API Key reminder, account 2FA enforcement, members without 2FA, super administrators, per zone SSL mode, Always Use HTTPS, minimum TLS and DNSSEC. One instance per login |
 | `macos` | macOS tools, read-only and without sudo | FileVault, SIP, Gatekeeper, firewall and stealth mode, update settings and pending updates, screen lock, automatic login, guest account, home folder readable by other accounts, local accounts other than yours (admin, home folder, last login), items owned by deleted accounts' UIDs in shared folders and launchd folders, Time Machine (no destination, unencrypted destination, latest backup age), endpoint agents and their leftovers, TCP ports reachable from the network, SMB share points (guest access, orphaned records), login and background items, Brave's remote debugging port. Remediates the firewall, stealth mode, share points (remove a record, turn guest access off) and the home folder mode |
+| `windows` | Registry reads and one Windows PowerShell probe (no cmdlet, no module), read-only and never elevated | BitLocker per fixed drive, Defender Firewall per profile (on, default inbound action), Defender or another registered antivirus, Windows Update (service, policy, last installation, pending restart), screen lock, local administrators other than you, Guest, accounts allowed an empty password, automatic sign-in, UAC, Remote Desktop and Network Level Authentication, SMBv1, shared folders and their permissions, TCP ports reachable from the network, Secure Boot, browser debugging ports (Brave, Chrome, Edge). What a standard user cannot read is reported not inspected with the elevated command. Remediates the screen lock (user scope, `HKCU`) |
 | `workspace` | Admin SDK, token from a per-tenant gcloud config | One instance per tenant: accounts without 2SV enrolled or enforced, admins (super admins used day to day), suspended or inactive accounts, third-party apps with OAuth grants ranked by scope and users, token authorizations and revocations over 30 days |
 | `browser-extensions` | Brave and Chrome profile files, read-only, no network | Every extension in every profile: capabilities, source, install and update dates, category hint, and a `remove`/`review`/`keep` verdict with reasons (docs/inventory.md, "Browser extensions"). Not automatable; each finding links the extension's page in the browser. Web Store lookups (pulled extensions, new owners) are a future enhancement |
 
-`browser-extensions` is its own connector rather than part of `macos`: it reads browser data, not
+`browser-extensions` is its own connector rather than part of `macos` or `windows`: it reads browser data, not
 OS settings, the same files exist on Linux, and the triage compares extensions across all profiles
 of a browser at once (duplicates, one finding per extension).
 
@@ -1759,7 +1761,16 @@ counts as trusted only as the owner or editor of a folder above a file, never fo
 | Notifications | macOS Notification Center; the log on Linux | the log | "Scheduled runs" |
 | Open-file check before `redact` | `lsof` | Restart Manager | "Redaction" |
 
-The `macos` connector runs on macOS only.
+The `macos` connector runs on macOS only and `windows` on Windows only; each reports `unsupported`
+elsewhere. Both share `connectors/internal/posture`: a failing check is one setting finding, a
+passing one a log line, and a check that could not run a status for its own scope. `windows`
+reads registry values with `RegQueryValueEx` and read access only, and everything else from one
+Windows PowerShell run from System32 with `-NoProfile -NonInteractive`: its script calls no
+cmdlet, so module autoloading stays off and nothing loads from `PSModulePath`, and `proc` sets
+`NoDefaultCurrentDirectoryInExePath` for it as for every child. A source a standard user is refused
+is reported as not inspected with the command to run from an elevated PowerShell; segurata never
+elevates, and its one Windows remediation writes the user's own `HKCU` values with `reg.exe`
+from System32. Sources and the standard-user behaviour of each check: [inventory.md](inventory.md#windows-posture-windows).
 
 ## Why Go, and why so few dependencies
 

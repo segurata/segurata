@@ -13,6 +13,7 @@ For services without a connector, see [manual review](manual-review.md). The
 - [Cloud and AI providers](#cloud-and-ai-providers)
 - [Plaintext secrets on disk](#plaintext-secrets-on-disk-local-secrets)
 - [macOS and Brave posture](#macos-and-brave-posture-macos)
+- [Windows posture](#windows-posture-windows)
 - [Browser extensions](#browser-extensions-browser-extensions)
 
 ## Google: linked apps (`google-personal`)
@@ -522,6 +523,55 @@ flagging those without a developer signature), and whether Brave runs with
   `low` leftover of an uninstall.
 - Every command it runs is on an exact allowlist in `connectors/macos`. Takes about half a minute
   because of `softwareupdate` and `sfltool`.
+
+## Windows posture (`windows`)
+
+```bash
+segurata inventory windows
+segurata inventory --verbose windows   # also logs the checks that pass
+```
+
+The Windows counterpart of `macos`, for a PC a person signs in to. It runs as the user who starts
+it and never elevates. One Windows PowerShell process from System32 (`powershell.exe -NoProfile
+-NonInteractive -Command <probe>`) reads what the registry alone does not hold; the probe calls no
+cmdlet, so it loads no module from `PSModulePath`, only .NET, WMI and in-box COM objects, and its
+exact command line is the connector's whole allowlist. Registry values are read in-process with
+read access only (`RegQueryValueEx`). A check whose source refuses a standard user is an
+`unsupported` status for its scope whose detail is `needs admin: run <command> in an elevated
+PowerShell to see it`, never a clean result; `segurata doctor --connector windows` lists the same.
+Any other failure is an `error` status. Off Windows the connector reports `unsupported`.
+
+| Check | Source | Standard user | Finding |
+|---|---|---|---|
+| Disk encryption, per fixed drive | [`Win32_EncryptableVolume`](https://learn.microsoft.com/en-us/windows/win32/secprov/win32-encryptablevolume) `ProtectionStatus` ([values](https://learn.microsoft.com/en-us/windows/win32/secprov/getprotectionstatus-win32-encryptablevolume)) when it answers; otherwise the shell property `System.Volume.BitLockerProtection` through `Shell.Application` | `Win32_EncryptableVolume` and [`manage-bde -status`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-status) need an administrator. The shell property answers, but Microsoft does not document it: only 1 (on) and 2 (off), what Explorer shows, are trusted, and any other answer is not inspected, with `manage-bde -status C:` | System drive off `high`, other fixed drive `medium` |
+| Microsoft Defender Firewall, per profile | [`INetFwPolicy2`](https://learn.microsoft.com/en-us/windows/win32/api/netfw/nn-netfw-inetfwpolicy2) (`HNetCfg.FwPolicy2`): `FirewallEnabled`, `DefaultInboundAction`, `CurrentProfileTypes` for [Domain, Private, Public](https://learn.microsoft.com/en-us/windows/win32/api/icftypes/ne-icftypes-net_fw_profile_type2) | Yes | Off `high`; Domain off while not on a domain network `low`; off while Windows Security Center lists another firewall `info`. Inbound allowed by default `medium` |
+| Antivirus | [`MSFT_MpComputerStatus`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/defender/msft-mpcomputerstatus), what [`Get-MpComputerStatus`](https://learn.microsoft.com/en-us/powershell/module/defender/get-mpcomputerstatus) reads: real-time protection, running mode, signature age, Tamper Protection. Other products from `root\SecurityCenter2` `AntiVirusProduct` (client editions only) | Yes on a standard Windows 11 install; a refusal is not inspected, with `Get-MpComputerStatus` | Defender off and no other antivirus listed `high`. Another product listed `info`: its `productState` is undocumented (the documented route is the [WSC API](https://learn.microsoft.com/en-us/windows/win32/api/iwscapi/nn-iwscapi-iwscproductlist)), so segurata lists it and does not judge it. Definitions older than 7 days `medium`; Tamper Protection off `low` |
+| Updates | `HKLM\SYSTEM\CurrentControlSet\Services\wuauserv` `Start` (4 is disabled); `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU` `NoAutoUpdate` ([policy](https://learn.microsoft.com/en-us/windows/deployment/update/waas-wu-settings)); [`IAutomaticUpdatesResults`](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-iautomaticupdatesresults) `LastInstallationSuccessDate`; [`ISystemInformation.RebootRequired`](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-isysteminformation-get_rebootrequired) | Yes | Service disabled, policy off, no installation in 30 days, or a restart pending: `medium`. No installation date at all is not inspected |
+| Screen lock | `HKCU\Control Panel\Desktop` `ScreenSaveActive`, `ScreenSaverIsSecure`, `ScreenSaveTimeOut`, `SCRNSAVE.EXE`, overridden by the same values under `HKCU\Software\Policies\Microsoft\Windows\Control Panel\Desktop` ([policies](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-controlpaneldisplay)); the machine [inactivity limit](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/interactive-logon-machine-inactivity-limit) `InactivityTimeoutSecs`; dynamic lock (`EnableGoodbye`) as evidence only | Yes | Never locks `medium`, locks after more than `screen_lock_seconds` (default 600) `low` |
+| Local accounts | [`Win32_UserAccount`](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-useraccount) (local, enabled), the members of Administrators (`S-1-5-32-544`, by SID, so a localised name does not matter) through [ADSI](https://learn.microsoft.com/en-us/windows/win32/adsi/winnt-adspath) | Yes | Another enabled local administrator `high`; Guest enabled `medium`; `PasswordRequired` false `medium`; a domain or Entra account or group among the administrators `info` |
+| Automatic sign-in | `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon` `AutoAdminLogon`, `DefaultUserName`, and whether [`DefaultPassword`](https://learn.microsoft.com/en-us/troubleshoot/windows-server/user-profiles-and-logon/turn-on-automatic-logon) exists: its size is queried, its data never read | Yes | `high` |
+| User Account Control | `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System` [`EnableLUA`, `ConsentPromptBehaviorAdmin`](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/settings-and-configuration) | Yes | Off, or elevation without a prompt: `high` |
+| Remote Desktop | `HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server` [`fDenyTSConnections`](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-terminalservices-localsessionmanager-fdenytsconnections), `...\WinStations\RDP-Tcp` [`UserAuthentication`](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-terminalservices-rdp-winstationextensions-userauthentication), both overridden by `HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services` | Yes | On `medium`; on without Network Level Authentication `high` |
+| SMBv1 | [`Win32_OptionalFeature`](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-optionalfeature) `SMB1Protocol` and `LanmanServer\Parameters` `SMB1` ([detection](https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/detect-enable-and-disable-smbv1-v2-v3)) | Usually; a refusal is not inspected, with `Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol` | `high` |
+| Shared folders | [`Win32_Share`](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-share) disk shares without a trailing `$`; their permissions from [`Win32_LogicalShareSecuritySetting.GetSecurityDescriptor`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/secrcw32prov/getsecuritydescriptor-method-in-class-win32-logicalsharesecuritysetting) | The list yes; the permissions need an administrator, and a share whose permissions are unreadable is a finding plus a `share-access` scope not inspected, with `Get-SmbShareAccess -Name <share>` | Shared `medium`; open to Everyone, Anonymous or Guests `high` |
+| Listening TCP ports | `MSFT_NetTCPConnection` (`root\StandardCimv2`, state Listen), what [`Get-NetTCPConnection`](https://learn.microsoft.com/en-us/powershell/module/nettcpip/get-nettcpconnection) reads, with the owning process from `System.Diagnostics.Process` | Yes | Outside loopback: SSH, FTP, Telnet, VNC, WinRM `medium`; Windows' own services (RPC, SMB, discovery: `System`, `svchost`, `lsass`, `wininit`, `services`, `spoolsv`) one `info` finding; any other program `info`. Remote Desktop's port is the Remote Desktop check |
+| Secure Boot | `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State` `UEFISecureBootEnabled`, as Microsoft's [Secure Boot inventory script](https://support.microsoft.com/topic/d02971d2-d4b5-42c9-b58a-8527f0ffa30b) reads it ([`Confirm-SecureBootUEFI`](https://learn.microsoft.com/en-us/powershell/module/secureboot/confirm-securebootuefi) needs an administrator) | Yes | Off `medium`; no state (legacy BIOS) not inspected |
+| Browser debugging port | [`Win32_Process`](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-process) command lines of `brave.exe`, `chrome.exe` and `msedge.exe` (a standard user reads only their own, which is whose browser it is) | Yes | `high`, blast `browser`, as on macOS |
+
+- Every finding names the Settings page and, for a machine-wide fix, the exact command for an
+  elevated PowerShell. segurata applies none of them: firewall, BitLocker, UAC, Remote Desktop and
+  SMBv1 change the whole machine and need an administrator.
+- The screen lock is the one remediation, `windows.screen-lock.set` (user guide, "Remediation"):
+  it sets the user's own values under `HKCU\Control Panel\Desktop` with `reg.exe` from System32,
+  only those that keep the screen from locking within `screen_lock_seconds`, and picks the blank
+  screen saver (`scrnsave.scr`) when none is set, since Windows starts no screen saver without a
+  valid file. The undo puts each value back as it was, type included, or deletes one that was not
+  set. It is refused when a policy sets any of the values, which would override the user's own.
+  Windows reads these values when the user signs in, so they take effect at the next sign-in.
+- `connectors.windows.config.screen_lock_seconds` is the longest idle time the screen may stay
+  unlocked and what the remediation sets; a value that is not a whole number above 0 stops the run.
+- What the CI runner, a Windows Server VM, shows as an administrator and as a standard user is
+  logged by `TestLiveInventory` in both Windows jobs.
 
 ## Browser extensions (`browser-extensions`)
 

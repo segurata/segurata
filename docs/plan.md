@@ -47,6 +47,7 @@ Legend: **P0** today, **P1** this week, **P2** this month. **[S]** a script can 
 ## 5. macOS and Brave
 
 - **P0** Check that FileVault is on, macOS is up to date and the firewall is enabled. An unencrypted stolen laptop exposes everything. 10 min. [S] **CLI**: `fdesetup status`, `softwareupdate -l`, `socketfilterfw --getglobalstate`, `spctl --status`, `csrutil status`.
+- **P0** On a Windows PC: BitLocker or Device encryption on, Windows up to date, Microsoft Defender Firewall and real-time protection on, User Account Control on. 10 min. [S] `segurata inventory windows`.
 - **P0** Review Brave extensions at `brave://extensions` and remove the ones you don't use. Extensions bought by third parties steal session cookies. 10 min. [S] **Local file**: `~/Library/Application Support/BraveSoftware/Brave-Browser/*/Preferences` (IDs and permissions).
 - **P1** Review login items and background services. 10 min. [S] `sfltool dumpbtm`.
 - **P1** On the iPhone: Stolen Device Protection and Advanced Data Protection for iCloud. 10 min.

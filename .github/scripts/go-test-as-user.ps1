@@ -1,4 +1,4 @@
-# Runs go test ./... in the job's standard-user process (see the test-windows-standard-user job in
+# Runs go test ./..., then the windows connector's live tests verbosely, in the job's standard-user process (see the test-windows-standard-user job in
 # ci.yml), after checking that its token is a standard user's.
 param(
   [Parameter(Mandatory)] [string] $Sid,
@@ -61,4 +61,8 @@ if ($checks.Values -contains $false) { Write-Error "this process does not run as
 
 go env GOCACHE GOMODCACHE GOTMPDIR
 go test ./...
-exit $LASTEXITCODE
+$code = $LASTEXITCODE
+# The windows connector's live tests again, verbose: the log shows what a standard user's run finds.
+go test -count=1 -v -run 'TestLiveInventory|TestScreenLockRoundTripOnTheRealRegistry' ./connectors/windows/
+if ($code -eq 0) { $code = $LASTEXITCODE }
+exit $code

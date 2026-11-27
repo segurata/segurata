@@ -169,7 +169,7 @@ The tracker turns findings into items, one per thing a person would do, and list
 Both come from the connector.
 
 **Theme.** `describe` declares it (Go: `Description.Theme`). Name a shared theme by its id alone:
-`mac`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`, `ai-spend`
+`mac`, `windows`, `browser-extensions`, `github-orgs`, `connected-apps`, `google`, `cloud`, `ai-spend`
 (`finding.Themes` holds their titles and descriptions and the order the briefing lists them). Or
 declare one of your own, `{"id": "breaches", "title": "Breaches", "description": "…"}`, which
 the tracker adds after its own; the id is lowercase letters, digits and dashes, and the title
