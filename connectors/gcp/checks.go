@@ -108,22 +108,40 @@ func lastSegment(name string) string {
 	return name[strings.LastIndexByte(name, '/')+1:]
 }
 
-// apiKeyFindings never sees a key string: `api-keys list` does not return it.
-func apiKeyFindings(account, project string, keys []apiKey) []finding.Finding {
+func (k apiKey) uid() string {
+	if k.UID != "" {
+		return k.UID
+	}
+	return lastSegment(k.Name)
+}
+
+func (k apiKey) apiTargets() []string {
+	var apis []string
+	if r := k.Restrictions; r != nil {
+		for _, t := range r.APITargets {
+			apis = append(apis, t.Service)
+		}
+	}
+	return apis
+}
+
+func (k apiKey) appRestricted() bool {
+	r := k.Restrictions
+	return r != nil && (r.Browser != nil || r.Server != nil || r.Android != nil || r.IOS != nil)
+}
+
+// apiKeyID is the finding id of a key; the plan finds the key again by it, so the finding never
+// needs to hold the uid.
+func apiKeyID(account, project string, k apiKey) string {
+	return finding.StableID(connectorName, account, "api_key", project+"/"+k.uid())
+}
+
+// apiKeyFindings never sees a key string: `api-keys list` does not return it. usage holds what
+// Cloud Monitoring says each key (by uid) called.
+func apiKeyFindings(account, project string, keys []apiKey, usage map[string]keyUsage) []finding.Finding {
 	var out []finding.Finding
 	for _, k := range keys {
-		uid := k.UID
-		if uid == "" {
-			uid = lastSegment(k.Name)
-		}
-		var apis []string
-		appRestricted := false
-		if r := k.Restrictions; r != nil {
-			for _, t := range r.APITargets {
-				apis = append(apis, t.Service)
-			}
-			appRestricted = r.Browser != nil || r.Server != nil || r.Android != nil || r.IOS != nil
-		}
+		apis, appRestricted := k.apiTargets(), k.appRestricted()
 		var missing []string
 		if len(apis) == 0 {
 			missing = append(missing, "API restrictions")
@@ -135,15 +153,20 @@ func apiKeyFindings(account, project string, keys []apiKey) []finding.Finding {
 		if name == "" {
 			name = "(unnamed)"
 		}
+		u, read := usage[k.uid()]
+		ev := map[string]any{"project": project, "api_targets": apis, "application_restricted": appRestricted}
+		if read && u.known() {
+			ev["used_apis_30d"] = u.apis
+		}
 		f := finding.Finding{
-			ID:        finding.StableID(connectorName, account, "api_key", project+"/"+uid),
+			ID:        apiKeyID(account, project, k),
 			Account:   account,
-			Resource:  finding.Resource{Type: "api_key", ID: finding.Redact(uid), Name: name},
+			Resource:  finding.Resource{Type: "api_key", ID: finding.Redact(k.uid()), Name: name},
 			Kind:      finding.KindCredential,
 			Severity:  finding.SevInfo,
 			Title:     fmt.Sprintf("API key %q in %s is restricted", name, project),
 			CreatedAt: httpx.ParseTime(&k.CreateTime),
-			Evidence:  map[string]any{"project": project, "api_targets": apis, "application_restricted": appRestricted},
+			Evidence:  ev,
 			Remediation: finding.Remediation{
 				Summary: "Nothing to do. Review now and then that the key is still in use.",
 				URL:     consoleURL("apis/credentials", project),
@@ -154,6 +177,14 @@ func apiKeyFindings(account, project string, keys []apiKey) []finding.Finding {
 			f.Title = fmt.Sprintf("API key %q in %s has no %s", name, project, strings.Join(missing, " and no "))
 			f.Remediation.Summary = "Add an API restriction (only the APIs the key calls) and an application restriction " +
 				"(HTTP referrers, IP addresses, Android or iOS apps). If nothing uses the key, delete it."
+		}
+		if read {
+			f.Remediation.Summary = usageLine(u) + " " + f.Remediation.Summary
+		}
+		if len(apis) == 0 && read && len(u.apis) > 0 {
+			f.Remediation.Summary += " segurata remediate restricts the key to the APIs it used; application restrictions " +
+				"cannot be read from usage, so add those in the console."
+			f.Remediation.Action = ActionRestrictKey
 		}
 		out = append(out, f)
 	}

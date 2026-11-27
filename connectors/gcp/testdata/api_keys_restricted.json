@@ -1,0 +1,6 @@
+[
+  {"createTime": "2025-05-01T10:00:00Z", "displayName": "Server geocoding",
+   "name": "projects/100000000001/locations/global/keys/66666666-7777-8888-9999-000000000000",
+   "uid": "66666666-7777-8888-9999-000000000000",
+   "restrictions": {"apiTargets": [{"service": "geocoding-backend.googleapis.com"}]}}
+]

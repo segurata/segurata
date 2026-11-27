@@ -1,6 +1,6 @@
-// Package gcp inventories Google Cloud through the installed gcloud CLI, read-only: API keys,
-// service account keys and broad roles, billing budgets, and Google credentials on this machine.
-// See docs/gcp-connector.md.
+// Package gcp inventories Google Cloud through the installed gcloud CLI, read-only: API keys and
+// their usage, service account keys and broad roles, billing budgets, and Google credentials on
+// this machine. Its remediations write only after a confirmed plan. See docs/gcp-connector.md.
 package gcp
 
 import (
@@ -29,7 +29,9 @@ const parallel = 4
 func init() { connector.Register(New()) }
 
 type Connector struct {
-	runner  cli.Runner // nil: run the real gcloud
+	runner  cli.Runner               // nil: run the real gcloud
+	exec    connector.Executor       // runs a confirmed remediation; nil is connector.System
+	apiBase func(host string) string // nil: https://<host>; tests point Google's REST APIs at a fake
 	getenv  func(string) string
 	home    string
 	now     func() time.Time
@@ -47,7 +49,7 @@ func (c *Connector) Describe() connector.Description {
 		Name:     connectorName,
 		Version:  "0.1.0",
 		Protocol: connector.ProtocolVersion,
-		Summary:  "Google Cloud: API keys, service account keys and roles, billing budgets, local credentials",
+		Summary:  "Google Cloud: API keys and their usage, service account keys and roles, billing budgets, local credentials",
 		Needs:    []string{"cli:gcloud"},
 		Theme:    finding.ThemeCloud,
 	}
@@ -59,6 +61,8 @@ type settings struct {
 	skipProjects   []string
 	billingProject string
 	gcloudPath     string
+	quotaCaps      map[string]int64   // service -> requests per day, for gcp.quota.cap
+	budgetAmounts  map[string]float64 // billing account id or "default" -> amount, for gcp.budget.create
 }
 
 func parseSettings(m map[string]any) (settings, error) {
@@ -132,15 +136,15 @@ func (c *Connector) Inventory(ctx context.Context, req connector.Request, emit c
 }
 
 func (c *Connector) gcloud(cfg settings) (*gcloud, error) {
-	r := c.runner
+	r, path := c.runner, "gcloud"
 	if r == nil {
-		path, err := cli.FindGcloud(cfg.gcloudPath, c.home, connectorName)
-		if err != nil {
+		var err error
+		if path, err = cli.FindGcloud(cfg.gcloudPath, c.home, connectorName); err != nil {
 			return nil, err
 		}
 		r = cli.Exec{Path: path, Timeout: c.timeout, Env: []string{"CLOUDSDK_CORE_DISABLE_PROMPTS=1"}}
 	}
-	return &gcloud{run: r, backoff: c.backoff}, nil
+	return &gcloud{run: r, path: path, backoff: c.backoff, apiBase: c.apiBase, billingProject: cfg.billingProject}, nil
 }
 
 // serviceAccountSuffix marks accounts gcloud activated with activate-service-account: credentials
@@ -262,17 +266,12 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	}
 	// Findings stay on the first account whoever answered, so their ids do not depend on it.
 	run := func(check string, fn func(acct string) error) (string, bool) {
-		var err error
-		for _, a := range t.accounts {
-			if err = fn(a); err == nil {
-				return a, true
-			}
-			if _, why := classify(err); !strings.HasPrefix(why, deniedPrefix) {
-				break
-			}
+		a, err := t.firstAnswer(fn)
+		if err != nil {
+			fail(check, err)
+			return "", false
 		}
-		fail(check, err)
-		return "", false
+		return a, true
 	}
 	emitAll := func(fs []finding.Finding) {
 		for _, f := range fs {
@@ -305,10 +304,11 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 	}
 
 	var keys []apiKey
-	if _, ok := run("api keys", func(a string) error {
+	if a, ok := run("api keys", func(a string) error {
 		return g.json(ctx, &keys, "services", "api-keys", "list", proj, "--account="+a)
 	}); ok {
-		fs := apiKeyFindings(t.accounts[0], t.project, keys)
+		used := c.keyUsage(ctx, g, a, t, keys, emit)
+		fs := apiKeyFindings(t.accounts[0], t.project, keys, used)
 		found = append(found, fs...)
 		emitAll(fs)
 	}
@@ -332,6 +332,45 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		emit.Status(finding.Status{Account: t.accounts[0], Scope: t.project, State: worst, Detail: "project " + t.project + ": " + strings.Join(failed, "; ")})
 	}
 }
+
+// firstAnswer runs fn with each account that lists the project until one is not denied.
+func (t target) firstAnswer(fn func(acct string) error) (string, error) {
+	var err error
+	for _, a := range t.accounts {
+		if err = fn(a); err == nil {
+			return a, nil
+		}
+		if _, why := classify(err); !strings.HasPrefix(why, deniedPrefix) {
+			break
+		}
+	}
+	return "", err
+}
+
+// keyUsage reads what each key called. A failure is a status of its own scope: the key findings
+// stand without it, only the restrict action needs it.
+func (c *Connector) keyUsage(ctx context.Context, g *gcloud, account string, t target, keys []apiKey, emit connector.Emitter) map[string]keyUsage {
+	if len(keys) == 0 {
+		return nil
+	}
+	uids := make([]string, len(keys))
+	for i, k := range keys {
+		uids[i] = k.uid()
+	}
+	used := g.usage(ctx, account, t.project, g.userProject(t.project), uids, c.now())
+	for _, u := range used {
+		if !u.known() {
+			state, why := classify(u.err)
+			emit.Status(finding.Status{Account: t.accounts[0], Scope: usageScope(t.project), State: state,
+				Detail: "project " + t.project + ": API key usage unknown, so keys cannot be restricted to the APIs they use: " + why})
+			break
+		}
+	}
+	return used
+}
+
+// usageScope holds no finding: an unread usage leaves the key findings checked.
+func usageScope(project string) string { return "usage:" + project }
 
 type billing struct {
 	g              *gcloud

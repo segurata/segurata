@@ -20,6 +20,12 @@ Each release's section here is its release notes on GitHub, which keeps line bre
 
 - Test material is noise, never a rotation: files a test run generated under a project's `tmp/` (a test-named folder after `tmp/`, or an untracked file git ignores there), test logs (`test.log`, `*.test.log`, `log/test*.log`) and the test data of vendored third-party libraries (a `test`, `tests`, `testdata` or `spec` folder below `vendor/`, `third_party/` or `node_modules/`). The finding and the item's history say which. `segurata rotations sync` re-ranks what is already tracked; the git-ignored `tmp/` case needs a new `segurata inventory local-secrets`.
 
+### Google Cloud
+
+- Each API key finding says which APIs the key called in the last 30 days, read from Cloud Monitoring (`serviceruntime.googleapis.com/api/request_count` on `consumed_api`, by `credential_id` `apikey:<uid>`), or that it called none and is a candidate for deletion. Reading it needs `monitoring.timeSeries.list` (`roles/monitoring.viewer`); a failure is a status of its own and leaves the key findings checked.
+- `gcp.apikey.restrict` restricts a key without API restriction to the APIs it called: `gcloud services api-keys update <key> --api-target=service=<svc>…`, keeping its application restriction. Refused when the key called nothing or usage cannot be read. gcloud cannot undo it; the plan names the console page that can.
+- `segurata doctor` tests, with `testIamPermissions`, the permissions the gcp remediations need on each account's first project and names the roles that grant the missing ones.
+
 ## [0.1.0]
 
 The first public release.

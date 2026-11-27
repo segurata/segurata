@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -36,10 +38,13 @@ type fakeRunner struct {
 func (f *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if args[len(args)-1] != "--format=json" {
-		f.t.Errorf("gcloud called without --format=json: %v", args)
+	key := strings.Join(args, " ")
+	if token := len(args) > 1 && args[0] == "auth" && args[1] == "print-access-token"; !token {
+		if args[len(args)-1] != "--format=json" {
+			f.t.Errorf("gcloud called without --format=json: %v", args)
+		}
+		key = strings.Join(args[:len(args)-1], " ")
 	}
-	key := strings.Join(args[:len(args)-1], " ")
 	f.calls = append(f.calls, key)
 	queue, ok := f.plays[key]
 	if !ok || len(queue) == 0 {
@@ -128,6 +133,48 @@ func fixtureEnv(home string, env map[string]string) func(string) string {
 	}
 }
 
+// accessToken is what the fake gcloud prints for print-access-token; it must never be emitted.
+const accessToken = "SYNTHETIC-access-token"
+
+// fakeGoogle serves Google's REST APIs by path, to requests carrying the fake token only.
+func fakeGoogle(t *testing.T, c *Connector, routes map[string]httpxtest.Route) *httpxtest.Server {
+	t.Helper()
+	srv := httpxtest.NewServer(t, http.Header{"Authorization": {"Bearer " + accessToken}}, routes)
+	c.apiBase = func(string) string { return srv.URL }
+	return srv
+}
+
+// timeSeriesPath is projects.timeSeries.list of project.
+func timeSeriesPath(project string) string { return "/v3/projects/" + project + "/timeSeries" }
+
+// usageRoute answers each key's credential_id filter with the services it called.
+func usageRoute(t *testing.T, byUID map[string][]string) httpxtest.Route {
+	return func(q url.Values) (int, any) {
+		if q.Get("view") != "HEADERS" || q.Get("interval.startTime") != "2026-10-24T12:00:00Z" || q.Get("interval.endTime") != "2026-11-23T12:00:00Z" {
+			t.Errorf("time series query: %v", q)
+		}
+		for uid, services := range byUID {
+			if q.Get("filter") == usageFilter(uid) {
+				var series []any
+				for _, s := range services {
+					series = append(series, map[string]any{"resource": map[string]any{"type": "consumed_api", "labels": map[string]any{"service": s, "method": "m"}}})
+				}
+				return http.StatusOK, map[string]any{"timeSeries": series}
+			}
+		}
+		t.Errorf("unexpected filter %q", q.Get("filter"))
+		return http.StatusBadRequest, nil
+	}
+}
+
+func shopUsage(t *testing.T) map[string]httpxtest.Route {
+	return map[string]httpxtest.Route{timeSeriesPath("demo-shop"): usageRoute(t, map[string][]string{
+		"11111111-2222-3333-4444-555555555555": {"maps-backend.googleapis.com", "geocoding-backend.googleapis.com", "maps-backend.googleapis.com"},
+		"66666666-7777-8888-9999-000000000000": {"geocoding-backend.googleapis.com"},
+		"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee": nil,
+	})}
+}
+
 func testConnector(t *testing.T, home string, plays map[string][]outcome, env map[string]string) (*Connector, *fakeRunner) {
 	r := &fakeRunner{t: t, plays: plays}
 	return &Connector{
@@ -147,10 +194,11 @@ const (
 func fullScenario() map[string][]outcome {
 	shop, blog := "--project=demo-shop", "--project=demo-blog"
 	return map[string][]outcome{
-		"auth list":                      {{stdout: "auth_list.json"}},
-		"projects list " + owner:         {{stdout: "projects_owner.json"}},
-		"projects list " + work:          {{stderr: "reauth.txt"}},
-		"billing accounts list " + owner: {{stdout: "billing_accounts_owner.json"}},
+		"auth list":                        {{stdout: "auth_list.json"}},
+		"projects list " + owner:           {{stdout: "projects_owner.json"}},
+		"projects list " + work:            {{stderr: "reauth.txt"}},
+		"billing accounts list " + owner:   {{stdout: "billing_accounts_owner.json"}},
+		"auth print-access-token " + owner: {{stdout: "access_token.txt"}},
 
 		"projects get-iam-policy demo-shop " + owner:      {{stdout: "iam_policy_shop.json"}},
 		"iam service-accounts list " + shop + " " + owner: {{stdout: "sa_list_shop.json"}},
@@ -173,6 +221,7 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 	home := fakeHome(t)
 	env := map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": filepath.Join(home, "keys", "sa.json")}
 	c, runner := testConnector(t, home, fullScenario(), env)
+	fakeGoogle(t, c, shopUsage(t))
 	rec := &recorder{}
 	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1}, rec); err != nil {
 		t.Fatal(err)
@@ -221,6 +270,16 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 	if key.Resource.ID != finding.Redact("11111111-2222-3333-4444-555555555555") || key.Resource.Name != "Maps (browser)" {
 		t.Errorf("API key must show display name and redacted uid: %+v", key.Resource)
 	}
+	if !strings.HasPrefix(key.Remediation.Summary, "Used APIs (30 days): geocoding-backend.googleapis.com, maps-backend.googleapis.com. ") ||
+		key.Remediation.Action != ActionRestrictKey || !slices.Equal(key.Evidence["used_apis_30d"].([]string), []string{"geocoding-backend.googleapis.com", "maps-backend.googleapis.com"}) {
+		t.Errorf("unrestricted key with usage: %q %q %v", key.Remediation.Summary, key.Remediation.Action, key.Evidence)
+	}
+	if server := rec.byTitle(t, "Server geocoding"); server.Remediation.Action != "" || !strings.HasPrefix(server.Remediation.Summary, "Used APIs (30 days): geocoding-backend.googleapis.com.") {
+		t.Errorf("a key with API targets is not restricted again: %+v", server.Remediation)
+	}
+	if android := rec.byTitle(t, "Android app"); !strings.Contains(android.Remediation.Summary, "candidate for deletion") || android.Remediation.Action != "" {
+		t.Errorf("an unused key is a deletion candidate: %+v", android.Remediation)
+	}
 	if key.CreatedAt == nil || key.CreatedAt.Format("2006-01-02") != "2026-01-22" {
 		t.Errorf("API key created date: %v", key.CreatedAt)
 	}
@@ -241,7 +300,7 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		t.Errorf("budget finding kind %s", b.Kind)
 	}
 
-	for _, secret := range []string{"SYNTHETIC-NOT-A-KEY", "SYNTHETIC-refresh-token", "SYNTHETIC-client-secret", "11111111-2222-3333-4444-555555555555"} {
+	for _, secret := range []string{"SYNTHETIC-NOT-A-KEY", "SYNTHETIC-refresh-token", "SYNTHETIC-client-secret", "11111111-2222-3333-4444-555555555555", accessToken} {
 		rec.AssertNoSecret(t, secret)
 	}
 
@@ -603,4 +662,37 @@ func TestParseSettingsGcloudPath(t *testing.T) {
 	if err != nil || s.gcloudPath != "/configured/gcloud" {
 		t.Fatalf("gcloud_path: %q %v", s.gcloudPath, err)
 	}
+}
+
+// Usage that cannot be read is a status of its own scope: the key findings stay checked, and
+// without usage no key offers the restrict action.
+func TestUnreadableUsageLeavesKeyFindingsChecked(t *testing.T) {
+	c, _ := testConnector(t, fakeHome(t), fullScenario(), nil)
+	fakeGoogle(t, c, map[string]httpxtest.Route{
+		timeSeriesPath("demo-shop"): httpxtest.Fail(http.StatusForbidden, "Permission monitoring.timeSeries.list denied (or the resource may not exist)."),
+	})
+	rec := &recorder{}
+	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1}, rec); err != nil {
+		t.Fatal(err)
+	}
+	key := rec.byTitle(t, "Maps (browser)")
+	if key.Remediation.Action != "" || !strings.HasPrefix(key.Remediation.Summary, "Used APIs (30 days) unknown: Cloud Monitoring could not be read") {
+		t.Errorf("key without usage: %+v", key.Remediation)
+	}
+	var tally finding.Tally
+	var usage []finding.Status
+	for _, s := range rec.Statuses {
+		tally.Status(s)
+		if s.Scope == usageScope("demo-shop") {
+			usage = append(usage, s)
+		}
+	}
+	if len(usage) != 1 || !strings.Contains(usage[0].Detail, "API key usage unknown") || usage[0].State != finding.StateError {
+		t.Fatalf("usage statuses: %+v", usage)
+	}
+	end := tally.End(connectorName, "", time.Now(), time.Now(), nil)
+	if why, unchecked := finding.CoverageOf(&end).UncheckedFinding(key); unchecked {
+		t.Errorf("key finding unchecked because usage failed: %s", why)
+	}
+	rec.AssertNoSecret(t, accessToken)
 }

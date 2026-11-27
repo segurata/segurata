@@ -237,12 +237,13 @@ your terminal too and is refused without one, `--yes` or not. Design:
 | `github.secret-scanning.enable` | Per GitHub owner: `gh api --method PATCH --silent /repos/<owner>/<repo> -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'` for each public repository you administer where either is off (only the fields that are off). Private repositories are left out: there it needs GitHub Secret Protection, a paid add-on | the same request with `disabled` |
 | `github.workflow-token.read` | Per GitHub owner: `gh api --method PUT --silent /orgs/<org>/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=<as it is>` for the organization first, then `/repos/<owner>/<repo>/actions/permissions/workflow` for each repository whose default is write | the same request with `write` |
 | `connected-apps.gh.drop-scopes` | `gh auth refresh -h github.com -r delete_repo,admin:org[,admin:enterprise]`, the removable scopes gh's token holds now, in your terminal (browser approval) | `gh auth refresh -h github.com -s <the same scopes>` |
+| `gcp.apikey.restrict` | `gcloud services api-keys update <key> --location=<location> --project=<project> --api-target=service=<svc>…`, one `--api-target` per API Cloud Monitoring saw the key call in 30 days; refused when it called none or usage cannot be read | none in gcloud, which refuses a key without API targets: "Don't restrict key" in the console ([gcp-connector.md](gcp-connector.md#remediation)) |
 | `azure.app-secret.delete-expired` | Per tenant: `az ad app credential delete --id <appId> --key-id <keyId> --only-show-errors` for each client secret that is still registered and already expired | none: a deleted secret cannot be restored (it had expired) |
 | `openai.key.delete-unused` | `DELETE /v1/organization/projects/<project>/api_keys/<key>` or `DELETE /v1/organization/admin_api_keys/<key>`, for a key never used or idle for over 90 days, with `OPENAI_ADMIN_WRITE_KEY` | none |
 | `openrouter.key.delete-unused` | `DELETE /api/v1/keys/<hash>`, for an enabled key never used, idle for over 90 days or without recorded use since the end of 2025, with `OPENROUTER_MANAGEMENT_WRITE_KEY` | none |
 
 Every plan is computed from a fresh read (the repository, the token's scopes, the tenant's app
-registrations, the key's last use), not from the finding: what changed since the inventory is left
+registrations, the key's last use or the APIs it called), not from the finding: what changed since the inventory is left
 out and named, and a key back in use, or the key segurata reads with, is refused. The allowlist of
 exact command lines and HTTP routes is built from that same read at apply time.
 

@@ -2,8 +2,10 @@
 
 Built-in connector (`connectors/gcp`) that inventories Google Cloud through the installed `gcloud`
 CLI. It uses no Google SDK and no extra Go module: every call is a read-only `gcloud` command with
-`--format=json`, and `--account`/`--project` are passed on each call so gcloud config is never
-changed.
+`--format=json`, or a GET to a Google REST API with the token `gcloud auth print-access-token`
+prints, and `--account`/`--project` are passed on each call so gcloud config is never changed.
+It writes only through `segurata remediate --apply`, after you confirmed the plan (see
+[Remediation](#remediation)).
 
 ```
 segurata inventory gcp
@@ -70,10 +72,31 @@ are retried twice with backoff. Cloud Billing returns 429 with much more paralle
 | Check | Command | Finding |
 |---|---|---|
 | API keys | `gcloud services api-keys list --project=P` | No API restriction (`restrictions.apiTargets`) or no application restriction (browser, server, Android, iOS): **high**. Restricted keys: info. Shows `displayName`, redacted `uid` and `createTime`. The key string is never fetched. |
+| API key usage | Cloud Monitoring `projects.timeSeries.list`, see below | Each key finding says "Used APIs (30 days): a, b", or that no API was called with the key in 30 days (a candidate for deletion). A key without API restriction that called some API offers `gcp.apikey.restrict`. |
 | Service account keys | `gcloud iam service-accounts list --project=P`, then `gcloud iam service-accounts keys list --iam-account=SA --managed-by=user` | Each user-managed key: **medium**; `validAfterTime` older than 90 days: **high**; disabled key: low. |
 | Broad roles | `gcloud projects get-iam-policy P` | Service account with `roles/owner` or `roles/editor`: **high**. Google service agents (`service-NUMBER@…`, `@gcp-sa-*`, `@cloudservices.gserviceaccount.com`) are skipped; the default Compute Engine and App Engine accounts are not, because Google advises removing Editor from them. |
 | Billing budgets | `gcloud billing accounts list`, `gcloud billing projects describe P`, `gcloud billing budgets list --billing-account=ID` | Judged per billing account (open, or paying for a project seen) with the shared budget rules: docs/connectors.md, "Spend and budgets". See below for how a Budget API budget is read. Budgets that cannot be read become a status naming the projects whose alerts are unknown. |
 | Local credentials (`exposure`) | Reads files only | See below. |
+
+### API key usage
+
+For each key the connector reads 30 days of
+[`serviceruntime.googleapis.com/api/request_count`](https://docs.cloud.google.com/apis/docs/monitoring)
+from Cloud Monitoring (`GET https://monitoring.googleapis.com/v3/projects/P/timeSeries`, `view=HEADERS`,
+so only the series and no data points), filtered on the `consumed_api` resource label
+`credential_id` set to `apikey:` and the key's `uid`, the filter Google's
+[API key management codelab](https://codelabs.developers.google.com/api-key-management) uses, and
+collects the series' `resource.labels.service`. No request count is kept: the finding names the
+services only.
+
+- The token comes from `gcloud auth print-access-token --account=A`, once per account and run. It
+  stays in memory: it is never logged, written or put in an error, and tests check that it appears
+  in no finding, status, plan or check.
+- Requests carry `X-Goog-User-Project` with `billing_project` when set, else the project read:
+  gcloud's own OAuth client has no quota for these APIs, as `gcloud auth print-access-token` warns.
+  The Cloud Monitoring API must be enabled there.
+- A failure (API not enabled, permission denied) is a status scoped `usage:<project>`. The key
+  findings stay checked and say the usage is unknown; without usage no key offers the action.
 
 ### Billing budgets
 
@@ -145,12 +168,56 @@ script. Remediation:
    need your own OAuth client passed with `--client-id-file`. `drive.file` only reaches files the
    app created or the user opened with it; `spreadsheets` reaches every spreadsheet.
 
+## Remediation
+
+```
+segurata remediate <finding-id>            the plan, read from the live state; changes nothing
+segurata remediate <finding-id> --apply    the same plan, confirmed, then applied and checked
+```
+
+Every plan is built from a fresh read with the read-only commands above, never from the finding,
+and runs as the finding's account (`--account=A`). After the confirmation the core plans again and
+refuses a plan that changed since it was shown. The commands a confirmed plan runs are its whole
+allowlist (`connector.Allowlist`, exact argument lists): nothing else can run.
+
+| Action | Finding | What it runs | Undo |
+|---|---|---|---|
+| `gcp.apikey.restrict` | API key without API restriction that called some API in 30 days | `gcloud services api-keys update <key id> --location=<location> --project=P --api-target=service=<svc>` for each service it called, `--account=A` | In the console (see below) |
+
+`gcp.apikey.restrict`:
+
+- Refused when Cloud Monitoring cannot be read, or when the key called nothing in 30 days (nothing
+  to restrict it to; delete the key instead once you are sure nothing uses it), or when the key
+  already has API targets.
+- gcloud sends only the API targets in its update mask, so the key's application restriction
+  (referrers, IP addresses, Android or iOS apps) stays as it is. Those cannot be read from usage:
+  add them by hand. gcloud also checks the key's last 7 days of traffic first
+  (`--check-existing-usage`, on by default) and refuses a change that traffic would break.
+- An API the key last called more than 30 days ago is left out.
+- No gcloud command undoes it: `gcloud services api-keys update` refuses to leave a key without
+  API targets ("API keys must have API target restrictions"), and the current reference documents no
+  `--clear-restrictions`. The plan says so and names the console page where "Don't restrict key"
+  removes the API restriction.
+
+### Permissions
+
+The inventory needs only read roles. The remediations need more, and `segurata doctor` asks
+`testIamPermissions` (a POST that changes nothing) which of them each account holds on the first
+project it lists, and warns about the missing ones with the predefined role that grants each:
+
+| Permission | Role | For |
+|---|---|---|
+| `monitoring.timeSeries.list` | `roles/monitoring.viewer` | Reading API key usage |
+| `apikeys.keys.update` | `roles/serviceusage.apiKeysAdmin` | `gcp.apikey.restrict` |
+
 ## Safety
 
 - An allowlist in `gcloud.go` (a `cli.Allowlist` from `connectors/internal/cli`, shared with `aws`
-  and `azure`) refuses any command outside the nine read-only paths above before it reaches the
-  CLI. `get-key-string`, `keys create`, `config set`, `auth revoke`, any `delete` or
-  `disable` cannot run. A test checks it.
+  and `azure`) refuses any command outside the read-only paths above (and `auth list`,
+  `auth print-access-token`) before it reaches the CLI. `get-key-string`, `keys create`,
+  `config set`, `auth revoke`, any `update`, `create`, `delete` or `disable` cannot run on that
+  path. The remediation writes are not on it: they run only as the exact steps of a confirmed
+  plan, and a test checks that the inventory path refuses each of them.
 - `CLOUDSDK_CORE_DISABLE_PROMPTS=1` on every call, so an expired login becomes a `reauth` status
   instead of a hung prompt.
 - Failures are statuses, never crashes: `reauth` for expired logins, `error` with a short reason
@@ -173,6 +240,14 @@ Intelligence activity analysis, a separate API.
 ## References
 
 - gcloud reference and wide flags (`--account`, `--project`, `--billing-project`, `--format`): <https://cloud.google.com/sdk/gcloud/reference>
+- `gcloud auth print-access-token` (and the `X-Goog-User-Project` note): <https://docs.cloud.google.com/sdk/gcloud/reference/auth/print-access-token>
+- `gcloud services api-keys update` (`--api-target`, `--append`, `--check-existing-usage`): <https://docs.cloud.google.com/sdk/gcloud/reference/services/api-keys/update>
+- API metrics (`api/request_count`): <https://docs.cloud.google.com/apis/docs/monitoring>
+- `consumed_api` resource and its `credential_id` label: <https://docs.cloud.google.com/monitoring/api/resources>
+- Filtering usage on `credential_id="apikey:<uid>"`: <https://codelabs.developers.google.com/api-key-management>
+- `projects.timeSeries.list` (`filter`, `interval`, `view`, `pageToken`): <https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/list>
+- `projects.testIamPermissions`: <https://docs.cloud.google.com/resource-manager/reference/rest/v3/projects/testIamPermissions>
+- Predefined roles and their permissions: <https://docs.cloud.google.com/iam/docs/roles-permissions>
 - `gcloud projects list`: <https://cloud.google.com/sdk/gcloud/reference/projects/list>
 - `gcloud services api-keys list`: <https://cloud.google.com/sdk/gcloud/reference/services/api-keys/list>
 - API Keys resource (`restrictions`, `apiTargets`, `uid`, `keyString`): <https://cloud.google.com/api-keys/docs/reference/rest/v2/projects.locations.keys>
