@@ -419,7 +419,7 @@ reached the model provider).
   refused. 2 added the statuses `reclassified` and `expected`, the top-level `rules` and decision
   `effects`; 3 added the top-level `owned`, a secret's `attribution` and a rule's `owners`; 4 added the
   status `merged` with an item's `merged_into`, a finding ref's `type`, `resource` and `match`, and
-  the top-level `runs` (see "Coverage"); 5 added a location's `gone`; 6 added a secret's `liveness`, the history action `dead` and attribution facts' `github_logins`. 7 added a run's `unreadable`. 8 added a location's `repo_owner`, the history event and action `owner`, and attribution facts' `ssh_keys`, `repos_without_owner`, `own_config` and `override`. An older file holds none of them, so it loads as it is and is saved as the current version (the
+  the top-level `runs` (see "Coverage"); 5 added a location's `gone`; 6 added a secret's `liveness`, the history action `dead` and attribution facts' `github_logins`. 7 added a run's `unreadable`. 8 added a location's `repo_owner`, the history event and action `owner`, and attribution facts' `ssh_keys`, `repos_without_owner`, `own_config`, `own_env_files` and `override`. An older file holds none of them, so it loads as it is and is saved as the current version (the
   older file stays as `tracker.json.bak`).
 
 ### `segurata status`
@@ -1342,9 +1342,16 @@ run. From the locations (`tracker.reattribute`):
   PowerShell profile or the Windows user environment (`HKCU\Environment\NAME`), and is in none of
   the package stores and copies under the dot folders (`packageStores`: `~/.cache`, `~/.npm`,
   `~/.nvm`, `~/.cargo/registry`, `~/.m2/repository`, `~/.vscode`, `~/.claude/file-history`…),
-  `site-packages`, nor a test, example, documentation or vendored folder (`secretrisk.RoleOf`). A
-  `.env` in a cloned repository, a document in `~/Documents`, a transcript, a shell history or a log
+  package folders at any depth (`storeDirs`: `site-packages`, `dist-packages`, `.venv`, `venv`,
+  `.tox`, `.cache`, `.yarn`, `.npm`, `.terraform`…), nor a test, example, documentation or vendored
+  folder (`secretrisk.RoleOf`). A document in `~/Documents`, a transcript, a shell history or a log
   is not.
+- `own_env_files`: `.env` files (`.env` or `.env.<suffix>`, such as `.env.local` or
+  `.env.production`) that git does not track, in a git checkout under the home (a `.git` directory
+  above, or a worktree's `.git` file), with the same exclusions as `own_config`. A clone never
+  creates an untracked file: the owner, or a tool they ran, wrote it. Templates (`.env.example`,
+  `.env.sample`, `.env.template`, `.env.dist`) are examples and do not count; a tracked `.env`
+  follows its repository (`repo_owners`).
 
 The owned accounts are the tracker's `owned`, config `owned`, the GitHub owners of every
 local-secrets instance's `owned_owners` (`config.OwnedAccounts`) and the git email; a scan's
@@ -1358,7 +1365,7 @@ account named outranks a copy: someone else's AWS key the owner committed, or ke
 | `mine` | high | a claim names one of the owner's accounts, projects or workspaces, or a private key's public half is the owner's | "AWS account … is yours", "the public key of this private key is on your GitHub account …", "the public key of this private key matches ~/.ssh/….pub" |
 | `mine` | medium | as above, and another claim or a committed copy names someone else's | the same, plus the other's reason |
 | `not-mine` | medium | no strong `mine`; the claims name only accounts that are none of the owner's known ones, and at least one of the owner's of each kind named is known | "AWS account … is none of your N known (owned.aws_accounts)" |
-| `mine` | medium | no strong evidence; committed in one of the owner's repositories, committed by the owner, or kept in the owner's own config | "committed in a repository you own (…)", "committed by you (…)", "kept in your own config file ~/…", "kept in your own user environment HKCU\Environment\…" |
+| `mine` | medium | no strong evidence; committed in one of the owner's repositories, committed by the owner, kept in the owner's own config, or in an untracked `.env` file of one of the owner's checkouts | "committed in a repository you own (…)", "committed by you (…)", "kept in your own config file ~/…", "kept in your own user environment HKCU\Environment\…", "kept in your own .env file ~/…/.env (not tracked by git)" |
 | `not-mine` | medium | no strong evidence, no weak `mine`; committed only in repositories whose owners are none of `owned.github` (not empty), and nothing unknown | "committed in a repository of …, none of your N GitHub accounts or organizations (owned.github)" |
 | `unknown` | low | otherwise: no claim; a kind with none of the owner's known ("run its connector or set owned.aws_accounts"); a repository without a GitHub remote ("committed to a git repository with no GitHub remote, so whose it is is unknown (…)") | |
 

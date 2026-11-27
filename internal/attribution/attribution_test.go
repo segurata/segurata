@@ -115,6 +115,9 @@ func TestAttribute(t *testing.T) {
 		{"own config file", Facts{OwnConfig: []string{"~/.zshrc"}}, Owned{}, Mine, Medium, "kept in your own config file ~/.zshrc"},
 		{"own user environment", Facts{OwnConfig: []string{`HKCU\Environment\API_KEY`}}, Owned{}, Mine, Medium, `kept in your own user environment HKCU\Environment\API_KEY`},
 		{"own config beats a foreign repository", Facts{OwnConfig: []string{"~/.npmrc"}, RepoOwners: []string{"instructure"}}, owned, Mine, Medium, "kept in your own config file ~/.npmrc"},
+		{"own .env file", Facts{OwnEnvFiles: []string{"~/src/app/.env.local"}}, Owned{}, Mine, Medium, "kept in your own .env file ~/src/app/.env.local (not tracked by git)"},
+		{"own .env file beats a foreign repository", Facts{OwnEnvFiles: []string{"~/src/app/.env"}, RepoOwners: []string{"instructure"}}, owned, Mine, Medium, "kept in your own .env file ~/src/app/.env (not tracked by git)"},
+		{"foreign AWS account in the owner's .env file", Facts{AWSAccounts: []string{"999999999999"}, OwnEnvFiles: []string{"~/src/app/.env"}}, owned, NotMine, Medium, "AWS account 999999999999 is none"},
 		{"nothing at all: a transcript copy", Facts{}, owned, Unknown, Low, "names no account"},
 		{"private key on the owner's GitHub account", Facts{SSHKeys: []string{"github:OctoCat"}}, owned, Mine, High, "the public key of this private key is on your GitHub account OctoCat"},
 		{"private key matching the owner's public key file", Facts{SSHKeys: []string{"file:~/.ssh/id_ed25519.pub"}}, Owned{}, Mine, High, "matches ~/.ssh/id_ed25519.pub"},
@@ -159,9 +162,12 @@ func TestOverride(t *testing.T) {
 	if f.Override.Reason != "my old key" {
 		t.Error("Clone shares the override")
 	}
+	if c := (Facts{OwnConfig: []string{"~/.zshrc"}, OwnEnvFiles: []string{"~/src/app/.env"}}).Clone(); !slices.Equal(c.OwnConfig, []string{"~/.zshrc"}) || !slices.Equal(c.OwnEnvFiles, []string{"~/src/app/.env"}) {
+		t.Errorf("Clone drops the files: %+v", c)
+	}
 	acc := Facts{AWSAccounts: []string{"1"}, SSHKeys: []string{"github:x"}, RepoOwners: []string{"r"}, UnownedRepos: []string{"u"}, AuthorEmails: []string{"e"},
-		OwnConfig: []string{"~/.zshrc"}, Override: &Override{Owner: Mine, Reason: "r"}}.Accounts()
-	if len(acc.RepoOwners)+len(acc.UnownedRepos)+len(acc.AuthorEmails)+len(acc.OwnConfig) != 0 || len(acc.AWSAccounts) != 1 || len(acc.SSHKeys) != 1 || acc.Override == nil {
+		OwnConfig: []string{"~/.zshrc"}, OwnEnvFiles: []string{"~/src/app/.env"}, Override: &Override{Owner: Mine, Reason: "r"}}.Accounts()
+	if len(acc.RepoOwners)+len(acc.UnownedRepos)+len(acc.AuthorEmails)+len(acc.OwnConfig)+len(acc.OwnEnvFiles) != 0 || len(acc.AWSAccounts) != 1 || len(acc.SSHKeys) != 1 || acc.Override == nil {
 		t.Errorf("Accounts keeps only what names an account, and the override: %+v", acc)
 	}
 }

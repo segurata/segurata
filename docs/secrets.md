@@ -54,7 +54,8 @@ third-party repository is in fact yours (an organization you left, a client's), 
 
 Each secret also gets an owner, `mine`, `not-mine` or `unknown`, worked out offline from the
 accounts it names, the repositories it is committed in, who committed it and whether one of your
-own config files (`~/.zshrc`, `~/.config/<tool>/…`) keeps it
+own config files (`~/.zshrc`, `~/.config/<tool>/…`) or a `.env` file git does not track in one of
+your checkouts (`.env.local`, but not a template such as `.env.example`) keeps it
 ([attribution](architecture.md#attribution)). `segurata rotations show <id>` prints it with its
 reasons and `segurata rotations list --owner mine` filters by it. When you know better, say so:
 

@@ -102,8 +102,9 @@ func insert(list *[]string, v string, fold bool) {
 }
 
 // Facts are every claim a secret's sightings made, plus what its locations say: the GitHub owners
-// of the repositories it is committed in, the repositories without one, and the owner's own config
-// files holding it. Override is the owner's own verdict.
+// of the repositories it is committed in, the repositories without one, the owner's own config
+// files holding it and the .env files git does not track in the owner's checkouts. Override is the
+// owner's own verdict.
 type Facts struct {
 	AWSAccounts  []string  `json:"aws_accounts,omitempty"`
 	GCPProjects  []string  `json:"gcp_projects,omitempty"`
@@ -114,6 +115,7 @@ type Facts struct {
 	RepoOwners   []string  `json:"repo_owners,omitempty"`
 	UnownedRepos []string  `json:"repos_without_owner,omitempty"`
 	OwnConfig    []string  `json:"own_config,omitempty"`
+	OwnEnvFiles  []string  `json:"own_env_files,omitempty"`
 	Override     *Override `json:"override,omitempty"`
 }
 
@@ -137,7 +139,7 @@ func (f *Facts) Add(c Claims) {
 func (f Facts) Clone() Facts {
 	c := Facts{AWSAccounts: slices.Clone(f.AWSAccounts), GCPProjects: slices.Clone(f.GCPProjects), SlackTeams: slices.Clone(f.SlackTeams),
 		GitHubLogins: slices.Clone(f.GitHubLogins), SSHKeys: slices.Clone(f.SSHKeys), AuthorEmails: slices.Clone(f.AuthorEmails),
-		RepoOwners: slices.Clone(f.RepoOwners), UnownedRepos: slices.Clone(f.UnownedRepos), OwnConfig: slices.Clone(f.OwnConfig)}
+		RepoOwners: slices.Clone(f.RepoOwners), UnownedRepos: slices.Clone(f.UnownedRepos), OwnConfig: slices.Clone(f.OwnConfig), OwnEnvFiles: slices.Clone(f.OwnEnvFiles)}
 	if f.Override != nil {
 		o := *f.Override
 		c.Override = &o
@@ -149,7 +151,7 @@ func (f Facts) Clone() Facts {
 // owner wherever it sits, unlike the repository, author or file of one copy.
 func (f Facts) Accounts() Facts {
 	c := f.Clone()
-	c.AuthorEmails, c.RepoOwners, c.UnownedRepos, c.OwnConfig = nil, nil, nil, nil
+	c.AuthorEmails, c.RepoOwners, c.UnownedRepos, c.OwnConfig, c.OwnEnvFiles = nil, nil, nil, nil, nil
 	return c
 }
 
@@ -158,6 +160,8 @@ func (f *Facts) AddRepoOwner(owner string) { insert(&f.RepoOwners, strings.TrimS
 func (f *Facts) AddUnownedRepo(repo string) { insert(&f.UnownedRepos, repo, false) }
 
 func (f *Facts) AddOwnConfig(path string) { insert(&f.OwnConfig, path, false) }
+
+func (f *Facts) AddOwnEnvFile(path string) { insert(&f.OwnEnvFiles, path, false) }
 
 type Result struct {
 	Owner      Owner    `json:"owner"`
@@ -179,7 +183,7 @@ type evidence struct{ mine, foreign, blind []string }
 
 // Attribute is the override when the owner set one. Otherwise it is mine when anything ties the
 // secret to the owner: an account it names, a repository of theirs it is committed in, a commit of
-// theirs, a config file of theirs or their key list holding its public half; not-mine when it
+// theirs, a config file or untracked .env file of theirs or their key list holding its public half; not-mine when it
 // names only accounts, or sits committed only in repositories, of kinds the owner holds some of,
 // none of them the owner's; unknown otherwise. An account named outranks a copy's repository,
 // author or file: someone else's AWS key the owner committed stays someone else's, so it is never
@@ -238,6 +242,9 @@ func Attribute(f Facts, o Owned) Result {
 		} else {
 			weak.mine = append(weak.mine, "kept in your own user environment "+p)
 		}
+	}
+	for _, p := range f.OwnEnvFiles {
+		weak.mine = append(weak.mine, "kept in your own .env file "+p+" (not tracked by git)")
 	}
 	r := Result{Facts: f}
 	switch {

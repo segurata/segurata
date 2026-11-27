@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -117,7 +118,8 @@ func (t *Tracker) attribute(owned attribution.Owned) {
 
 // reattribute rebuilds the facts its locations give: the GitHub owner of each repository it is
 // committed in (kept on the location, so a clone deleted since still counts), the repositories
-// without one, and the owner's own config files holding it.
+// without one, the owner's own config files holding it and the .env files git does not track in
+// the owner's checkouts.
 func (it *Item) reattribute(owned attribution.Owned, home string, owners repoOwners) {
 	res := it.attributionResult()
 	f := &res.Facts
@@ -134,6 +136,8 @@ func (it *Item) reattribute(owned attribution.Owned, home string, owners repoOwn
 			}
 		case l.ownConfig(home):
 			f.AddOwnConfig(l.Path)
+		case l.ownEnvFile(home):
+			f.AddOwnEnvFile(l.Path)
 		}
 	}
 	*res = attribution.Attribute(res.Facts, owned)
@@ -163,32 +167,52 @@ var packageStores = []string{".cache/", ".npm/", ".nvm/", ".cargo/registry/", ".
 	".local/pipx/", ".local/share/virtualenvs/", ".local/share/pnpm/", ".terraform.d/plugins/", ".claude/file-history/",
 	".claude/paste-cache/", ".claude/plugins/"}
 
+// storeDirs are folders, at any depth, that hold packages and caches tools fill, not files the
+// owner wrote.
+var storeDirs = []string{"site-packages", "dist-packages", ".venv", "venv", ".tox", ".nox", "__pypackages__", ".cache", ".yarn",
+	".pnpm-store", ".npm", ".terraform"}
+
+// ownFile is the home-relative path of an untracked working file the owner could have written: not
+// a record of the past, and in no package store, test, example, documentation or vendored folder.
+// The path comes lower-cased with forward slashes, and with ok false for anything else.
+func (l Location) ownFile(home string) (rel string, ok bool) {
+	if !l.working() || l.Tracked || l.Origin != "" || home == "" {
+		return "", false
+	}
+	rel, ok = strings.CutPrefix(strings.ReplaceAll(l.Path, `\`, "/"), "~/")
+	lower := strings.ToLower(rel)
+	if !ok || slices.ContainsFunc(packageStores, func(p string) bool { return strings.HasPrefix(lower, p) }) ||
+		slices.ContainsFunc(strings.Split(lower, "/"), func(d string) bool { return slices.Contains(storeDirs, d) }) ||
+		secretrisk.RoleOf(lower) != secretrisk.RoleNone {
+		return "", false
+	}
+	return lower, true
+}
+
 // ownConfig reports whether the location is a working file of the owner's own configuration: a dot
 // file or folder of the home (or a PowerShell profile, or the Windows user environment), outside
-// every git repository, package store, test, example and vendored folder. A cloned repository's
-// .env, a transcript, a shell history or a log is not.
+// every git repository (ownFile says what else). A transcript, a shell history or a log is not.
 func (l Location) ownConfig(home string) bool {
-	if l.Kind != "config" || !l.working() || l.Tracked || l.Origin != "" {
+	if l.Kind != "config" {
 		return false
 	}
 	if strings.HasPrefix(l.Path, secretrisk.UserEnvKey+`\`) {
-		return true
+		return l.working() && !l.Tracked && l.Origin == ""
 	}
-	rel, ok := strings.CutPrefix(strings.ReplaceAll(l.Path, `\`, "/"), "~/")
-	if !ok || home == "" {
-		return false
-	}
-	lower := strings.ToLower(rel)
+	rel, ok := l.ownFile(home)
 	dot := strings.HasPrefix(rel, ".") && !strings.HasPrefix(rel, "./") && !strings.HasPrefix(rel, "../")
-	switch {
-	case !dot && !secretrisk.IsPowerShellProfile(rel):
-		return false
-	case slices.ContainsFunc(packageStores, func(p string) bool { return strings.HasPrefix(lower, p) }),
-		slices.ContainsFunc(strings.Split(lower, "/"), func(d string) bool { return d == "site-packages" || d == "dist-packages" }),
-		secretrisk.RoleOf(lower) != secretrisk.RoleNone:
-		return false
-	}
-	return !attribution.InRepository(homepath.Expand(l.Path, home))
+	return ok && (dot || secretrisk.IsPowerShellProfile(rel)) && !attribution.InRepository(homepath.Expand(l.Path, home))
+}
+
+// ownEnvFile reports whether the location is a .env file (.env or .env.<suffix>) that git does not
+// track, in a git checkout under the home, worktrees included. A clone never creates an untracked
+// file: the owner, or a tool they ran, wrote it. Templates (.env.example, .env.sample,
+// .env.template, .env.dist) are examples, and ownFile excludes them with the other folders it
+// leaves out.
+func (l Location) ownEnvFile(home string) bool {
+	rel, ok := l.ownFile(home)
+	base := path.Base(rel)
+	return ok && (base == ".env" || strings.HasPrefix(base, ".env.")) && attribution.InRepository(homepath.Expand(l.Path, home))
 }
 
 type repoOwners map[string]string

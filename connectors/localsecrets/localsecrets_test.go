@@ -594,6 +594,33 @@ func TestReposFindsNestedRepositoriesAndSkipsDependencies(t *testing.T) {
 	}
 }
 
+// A file in a real git worktree (its .git a file pointing to the main repository) is tracked or not
+// as its index says, and the worktree has the main repository's remote.
+func TestTrackedInARealWorktree(t *testing.T) {
+	r := newHistoryRepo(t)
+	r.commit("app.yml")
+	r.git("remote", "add", "origin", "git@github.com:acme/app.git")
+	wt := filepath.Join(r.home, "src", "repo-wt")
+	r.git("worktree", "add", "-q", wt)
+	if st, err := os.Lstat(filepath.Join(wt, ".git")); err != nil || st.IsDir() {
+		t.Fatalf("not a worktree: %v %v", st, err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".env"), []byte("KEY=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Connector{Git: cli.Exec{Path: "git", Timeout: time.Minute}, Now: time.Now}
+	s := newScan(context.Background(), c, r.home, settings{reposRoot: filepath.Join(r.home, "src"), workers: 1, timeout: time.Minute},
+		fingerprint.FromBytes(make([]byte, 32)), &recorder{})
+	for name, want := range map[string]bool{"app.yml": true, ".env": false} {
+		if tracked, remote := s.trackedFile(filepath.Join(wt, name)); tracked != want || remote != want {
+			t.Errorf("%s: tracked %v remote %v, want %v", name, tracked, remote, want)
+		}
+	}
+	if root := s.repoRoot(filepath.Join(wt, ".env")); root != wt {
+		t.Errorf("repository root %q, want %q", root, wt)
+	}
+}
+
 func TestWorktreeRemoteIsReadFromTheCommonDir(t *testing.T) {
 	dir := t.TempDir()
 	main := filepath.Join(dir, "main", ".git")

@@ -3,6 +3,7 @@ package tracker
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -331,6 +332,16 @@ func repoAttributionFixture(t *testing.T) (*Tracker, string, string) {
 		secret("b1b1b1b1b1b1b1b1", committed("src/theirs", secretrisk.OriginThirdParty, "me@x.com")),
 		secret("b3b3b3b3b3b3b3b3", working("~/.config/tool/credentials.json", "config")),
 		secret("b4b4b4b4b4b4b4b4", working("~/Documents/notes.txt", "config")),
+		secret("c1c1c1c1c1c1c1c1", working("~/src/mine/.env.local", "repo")),
+		secret("c2c2c2c2c2c2c2c2", secretrisk.Evidence{Source: "scan", Kind: "repo", Mode: "600", Path: "~/src/theirs/.env", Tracked: true, Remote: true}),
+		secret("c4c4c4c4c4c4c4c4", working("~/src/mine/.env.example", "repo")),
+		secret("c5c5c5c5c5c5c5c5", working("~/src/mine/node_modules/pkg/.env", "repo")),
+		secret("c6c6c6c6c6c6c6c6", working("~/src/mine/.venv/.env", "repo")),
+		secret("c7c7c7c7c7c7c7c7", working("~/src/mine/test/fixtures/.env", "repo")),
+		secret("c8c8c8c8c8c8c8c8", working("~/src/mine/.envrc", "repo")),
+		secret("c9c9c9c9c9c9c9c9", working("~/Documents/.env", "config")),
+		secret("d1d1d1d1d1d1d1d1", working("~/.env", "config")),
+		secret("d2d2d2d2d2d2d2d2", working("~/src/mine/.claude/projects/p/s.jsonl", "transcript")),
 		okStatus(secretrisk.ConnectorName, "local"))
 	tr := New(t0)
 	opt := SyncOptions{OutDir: out, IncludeNoise: true, Owned: attribution.Owned{GitHub: []string{"acme-labs", "octocat"}, Emails: []string{"me@x.com"}}}
@@ -353,7 +364,8 @@ func TestSyncAttributesByRepositoryAuthorAndOwnConfig(t *testing.T) {
 			"committed in a repository of instructure, none of your 2 GitHub accounts or organizations (owned.github)"},
 		{"c3c3", "history the owner's fork inherited", attribution.Unknown, attribution.Low, "names no account"},
 		{"d4d4", "the owner's .zshrc, and a transcript", attribution.Mine, attribution.Medium, "kept in your own config file ~/.zshrc"},
-		{"e5e5", "a .env in a cloned third-party repository", attribution.Unknown, attribution.Low, "names no account"},
+		{"e5e5", "an untracked .env in a cloned third-party repository: the owner wrote it", attribution.Mine, attribution.Medium,
+			"kept in your own .env file ~/Downloads/clone/.env (not tracked by git)"},
 		{"f6f6", "trails only", attribution.Unknown, attribution.Low, "names no account"},
 		{"a7a7", "a package store", attribution.Unknown, attribution.Low, "names no account"},
 		{"a8a8", "a git clone in a dot folder", attribution.Unknown, attribution.Low, "names no account"},
@@ -361,6 +373,17 @@ func TestSyncAttributesByRepositoryAuthorAndOwnConfig(t *testing.T) {
 		{"b1b1", "the owner's commit to a third-party repository", attribution.Mine, attribution.Medium, "committed by you (me@x.com)"},
 		{"b3b3", "a tool's config folder", attribution.Mine, attribution.Medium, "kept in your own config file ~/.config/tool/credentials.json"},
 		{"b4b4", "a document, not config", attribution.Unknown, attribution.Low, "names no account"},
+		{"c1c1", "an untracked .env.local in the owner's checkout", attribution.Mine, attribution.Medium, "kept in your own .env file ~/src/mine/.env.local (not tracked by git)"},
+		{"c2c2", "a tracked .env follows its repository", attribution.NotMine, attribution.Medium,
+			"committed in a repository of instructure, none of your 2 GitHub accounts or organizations (owned.github)"},
+		{"c4c4", "a template, not the owner's values", attribution.Unknown, attribution.Low, "names no account"},
+		{"c5c5", "a package's .env", attribution.Unknown, attribution.Low, "names no account"},
+		{"c6c6", "a virtualenv's .env", attribution.Unknown, attribution.Low, "names no account"},
+		{"c7c7", "a fixture", attribution.Unknown, attribution.Low, "names no account"},
+		{"c8c8", "not a .env file", attribution.Unknown, attribution.Low, "names no account"},
+		{"c9c9", "a .env in no checkout and no dot folder", attribution.Unknown, attribution.Low, "names no account"},
+		{"d1d1", "the home's own .env is own config", attribution.Mine, attribution.Medium, "kept in your own config file ~/.env"},
+		{"d2d2", "a transcript in a checkout", attribution.Unknown, attribution.Low, "names no account"},
 	} {
 		a := mustRotate(t, tr, c.id).Secret.Attribution
 		if a == nil || a.Owner != c.owner || a.Confidence != c.conf || !slices.Contains(a.Reasons, c.reason) && !strings.Contains(strings.Join(a.Reasons, "; "), c.reason) {
@@ -387,6 +410,65 @@ func TestRepoOwnerOutlivesTheClone(t *testing.T) {
 	}
 	if a := mustRotate(t, tr, "a1a1").Secret.Attribution; a.Owner != attribution.Mine {
 		t.Errorf("after the clone went: %+v", a)
+	}
+}
+
+// A git worktree is a checkout like any other: its .git is a file pointing to the main repository.
+// An untracked .env there is the owner's own, and a tracked file there is committed in the main
+// repository's GitHub owner's repository.
+func TestWorktreeIsACheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	main, wt := filepath.Join(home, "src", "app"), filepath.Join(home, "src", "app-wt")
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", main, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.MkdirAll(main, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(main, "app.yml"), []byte("x: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q")
+	git("remote", "add", "origin", "git@github.com:Acme-Labs/app.git")
+	git("add", "app.yml")
+	git("commit", "-q", "-m", "init")
+	git("worktree", "add", "-q", wt)
+	if st, err := os.Lstat(filepath.Join(wt, ".git")); err != nil || st.IsDir() {
+		t.Fatalf("not a worktree: %v %v", st, err)
+	}
+	out := t.TempDir()
+	secret := func(fp string, ev secretrisk.Evidence) finding.Finding {
+		ev.Fingerprint, ev.Type, ev.Redacted, ev.Bucket, ev.Source, ev.Kind, ev.Mode = fp, "stripe-live", "sk_live_…"+fp[:4], "b", "scan", "repo", "600"
+		f := fnd(secretrisk.ConnectorName, "", "local", "secret", "scan:"+ev.Path+"#"+fp, "Stripe key", finding.SevCritical, "Stripe key in "+ev.Path, t0)
+		raw, _ := json.Marshal(ev)
+		_ = json.Unmarshal(raw, &f.Evidence)
+		return f
+	}
+	writeRun(t, out, t0, "local-secrets.jsonl",
+		secret("e1e1e1e1e1e1e1e1", secretrisk.Evidence{Path: "~/src/app-wt/.env"}),
+		secret("e2e2e2e2e2e2e2e2", secretrisk.Evidence{Path: "~/src/app-wt/app.yml", Tracked: true, Remote: true}),
+		okStatus(secretrisk.ConnectorName, "local"))
+	tr := New(t0)
+	if _, err := tr.Sync(SyncOptions{OutDir: out, IncludeNoise: true, Owned: attribution.Owned{GitHub: []string{"acme-labs"}}}, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for id, reason := range map[string]string{
+		"e1e1": "kept in your own .env file ~/src/app-wt/.env (not tracked by git)",
+		"e2e2": "committed in a repository you own (Acme-Labs)",
+	} {
+		if a := mustRotate(t, tr, id).Secret.Attribution; a.Owner != attribution.Mine || a.Confidence != attribution.Medium || !slices.Contains(a.Reasons, reason) {
+			t.Errorf("%s: %+v, want mine with %q", id, a, reason)
+		}
 	}
 }
 
