@@ -2,7 +2,7 @@
 
 Each release's section here is its release notes on GitHub, which keeps line breaks as written: one line per paragraph or bullet. Versions follow [semver](https://semver.org/); until 1.0 a minor version may change the CLI, the config or the connector protocol.
 
-## [Unreleased]
+## [0.3.1]
 
 ### Distribution
 
@@ -84,6 +84,7 @@ Sixteen built-in connectors, each read-only on the systems it inspects:
 - macOS, Linux and Windows on amd64 and arm64. CI runs the tests on macOS (arm64), Linux (amd64) and Windows (amd64), on Windows both as an administrator and as a standard user; each release builds all six targets.
 - Release archives signed with Sigstore (keyless, by this repository's release workflow) with an SPDX SBOM per archive; a Homebrew cask in `segurata/tap`; `go install` with Go 1.26 or later.
 
+[0.3.1]: https://github.com/segurata/segurata/releases/tag/v0.3.1
 [0.3.0]: https://github.com/segurata/segurata/releases/tag/v0.3.0
 [0.2.0]: https://github.com/segurata/segurata/releases/tag/v0.2.0
 [0.1.0]: https://github.com/segurata/segurata/releases/tag/v0.1.0
