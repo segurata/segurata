@@ -21,7 +21,8 @@ Optional, in `~/.config/segurata/config.json`:
   "projects": ["my-project"],
   "skip_projects": ["someone-elses-project"],
   "billing_project": "my-quota-project",
-  "gcloud_path": "/path/to/gcloud"
+  "gcloud_path": "/path/to/gcloud",
+  "quota_caps": {"geocoding-backend.googleapis.com": 4000}
 }}}}
 ```
 
@@ -34,7 +35,8 @@ empty `skip_projects` skips nothing.
 | `accounts` | every account in `gcloud auth list` except service accounts (`*.iam.gserviceaccount.com`) | Accounts to inspect with; a service account listed here is used |
 | `projects` | every active project each account can list | Restrict to these projects |
 | `skip_projects` | none | Projects never inspected, for example ones you can see but do not own |
-| `billing_project` | gcloud's own quota project | Passed as `--billing-project` to `billing budgets list`, for when the Budget API rejects the configured quota project (`USER_PROJECT_DENIED`) |
+| `billing_project` | gcloud's own quota project | Passed as `--billing-project` to `billing budgets list`, for when the Budget API rejects the configured quota project (`USER_PROJECT_DENIED`), and as `X-Goog-User-Project` on the REST reads (else the project read) |
+| `quota_caps` | none | Requests per day `gcp.quota.cap` sets for each API (service name to a whole number); an API not named here is never capped |
 | `gcloud_path` | `PATH`, then the standard install folders: `~/google-cloud-sdk/bin/gcloud`, `/usr/lib/google-cloud-sdk/bin/gcloud`, `/opt/homebrew/share/google-cloud-sdk/bin/gcloud`, `/usr/local/share/google-cloud-sdk/bin/gcloud` | CLI path |
 
 When the SDK lives elsewhere and only an interactive shell's rc file puts it on `PATH`, segurata
@@ -75,6 +77,7 @@ are retried twice with backoff. Cloud Billing returns 429 with much more paralle
 | API key usage | Cloud Monitoring `projects.timeSeries.list`, see below | Each key finding says "Used APIs (30 days): a, b", or that no API was called with the key in 30 days (a candidate for deletion). A key without API restriction that called some API offers `gcp.apikey.restrict`. |
 | Service account keys | `gcloud iam service-accounts list --project=P`, then `gcloud iam service-accounts keys list --iam-account=SA --managed-by=user` | Each user-managed key: **medium**; `validAfterTime` older than 90 days: **high**; disabled key: low. |
 | Broad roles | `gcloud projects get-iam-policy P` | Service account with `roles/owner` or `roles/editor`: **high**. Google service agents (`service-NUMBER@…`, `@gcp-sa-*`, `@cloudservices.gserviceaccount.com`) are skipped; the default Compute Engine and App Engine accounts are not, because Google advises removing Editor from them. |
+| Request caps | `gcloud services list --enabled --project=P`, then Cloud Quotas, see below | A pay-per-use API whose per-day request quota has no cap of the project's own: **medium**, with `gcp.quota.cap`. Only a per-minute quota: **medium**, advice only. Capped: info. |
 | Billing budgets | `gcloud billing accounts list`, `gcloud billing projects describe P`, `gcloud billing budgets list --billing-account=ID` | Judged per billing account (open, or paying for a project seen) with the shared budget rules: docs/connectors.md, "Spend and budgets". See below for how a Budget API budget is read. Budgets that cannot be read become a status naming the projects whose alerts are unknown. |
 | Local credentials (`exposure`) | Reads files only | See below. |
 
@@ -97,6 +100,47 @@ services only.
   The Cloud Monitoring API must be enabled there.
 - A failure (API not enabled, permission denied) is a status scoped `usage:<project>`. The key
   findings stay checked and say the usage is unknown; without usage no key offers the action.
+
+### Request caps of pay-per-use APIs
+
+A quota is the most an API can bill: Google's Maps Platform
+[cost guide](https://developers.google.com/maps/billing-and-pricing/manage-costs) calls lowering the
+per-day quota the hard cap on usage, and a budget only alerts. The connector reads the caps of the
+enabled APIs in a short list of pay-per-use ones (`costServices` in `quotas.go`):
+
+| API | Service |
+|---|---|
+| Places API (New) | `places.googleapis.com` |
+| Geocoding API | `geocoding-backend.googleapis.com` |
+| Directions API | `directions-backend.googleapis.com` |
+| Maps Static API | `static-maps-backend.googleapis.com` |
+| Maps JavaScript API | `maps-backend.googleapis.com` |
+| Routes API | `routes.googleapis.com` |
+| Gemini API | `generativelanguage.googleapis.com` |
+| Vertex AI | `aiplatform.googleapis.com` |
+| Cloud Translation | `translate.googleapis.com` |
+| Cloud Vision | `vision.googleapis.com` |
+| Speech-to-Text | `speech.googleapis.com` |
+| Text-to-Speech | `texttospeech.googleapis.com` |
+| Document AI | `documentai.googleapis.com` |
+
+The Maps service names are those each API's "Set up in the Cloud console" page enables.
+
+It uses the [Cloud Quotas API](https://docs.cloud.google.com/docs/quotas/api-overview) v1, not
+Service Usage's `consumerQuotaMetrics`: Cloud Quotas is a v1 API with GA `gcloud quotas` commands,
+while Service Usage serves quota limits and overrides only in `v1beta1`.
+
+- `GET https://cloudquotas.googleapis.com/v1/projects/N/locations/global/quotaPreferences`, once per
+  project, and `…/services/S/quotaInfos` per API, every page.
+- A request quota is a `QuotaInfo` that is not `isConcurrent` or `isFixed` and whose `quotaId` or
+  `metric` says `request`; its limit is `dimensionsInfos[].details.value` of the entry without
+  dimensions (`-1` is unlimited). Per-day quotas (`refreshInterval` `day`) are judged; per-minute
+  ones only when the API has none per day.
+- Capped means a dimensionless `QuotaPreference` of the project for that quota with a
+  `preferredValue` other than `-1` and no `traceId`: Google sets a trace id only on increase
+  requests, so a preference that raised the limit is not a cap.
+- A failure is a status scoped `quotas:<project>`, where the quota findings live, so the project's
+  other findings stay checked.
 
 ### Billing budgets
 
@@ -183,6 +227,7 @@ allowlist (`connector.Allowlist`, exact argument lists): nothing else can run.
 | Action | Finding | What it runs | Undo |
 |---|---|---|---|
 | `gcp.apikey.restrict` | API key without API restriction that called some API in 30 days | `gcloud services api-keys update <key id> --location=<location> --project=P --api-target=service=<svc>` for each service it called, `--account=A` | In the console (see below) |
+| `gcp.quota.cap` | Pay-per-use API without a per-day request cap | Per uncapped per-day request quota: `gcloud quotas preferences create --service=S --quota-id=Q --preferred-value=<quota_caps[S]> --project=P --preference-id=segurata-<quota id> --allow-high-percentage-quota-decrease --account=A`, or `gcloud quotas preferences update <id> …` with the same flags when the project already has a preference for it | `gcloud quotas preferences update <id> --service=S --quota-id=Q --preferred-value=<the limit before> --project=P --account=A` |
 
 `gcp.apikey.restrict`:
 
@@ -199,16 +244,30 @@ allowlist (`connector.Allowlist`, exact argument lists): nothing else can run.
   `--clear-restrictions`. The plan says so and names the console page where "Don't restrict key"
   removes the API restriction.
 
+`gcp.quota.cap`:
+
+- The amount comes from `quota_caps` only. Without an entry for the API the plan is refused and
+  names the key to set; segurata never guesses an amount.
+- A quota whose limit is already at or below the cap is left out and named; when none is left the
+  plan is refused.
+- `--allow-high-percentage-quota-decrease` is there because any real cap lowers a default by more
+  than 10%. `--allow-quota-decrease-below-usage` is not: Google refuses a cap below today's usage.
+- Cloud Quotas cannot delete a quota preference, so the undo sets it back to the limit it had,
+  which Google treats as an increase: it may ask for `--email` and take time to approve.
+
 ### Permissions
 
-The inventory needs only read roles. The remediations need more, and `segurata doctor` asks
+The usage and quota reads and the remediations need these, and `segurata doctor` asks
 `testIamPermissions` (a POST that changes nothing) which of them each account holds on the first
 project it lists, and warns about the missing ones with the predefined role that grants each:
 
 | Permission | Role | For |
 |---|---|---|
 | `monitoring.timeSeries.list` | `roles/monitoring.viewer` | Reading API key usage |
+| `serviceusage.services.list` | `roles/serviceusage.serviceUsageViewer` | Listing enabled pay-per-use APIs |
+| `cloudquotas.quotas.get` | `roles/cloudquotas.viewer` | Reading request quotas and preferences |
 | `apikeys.keys.update` | `roles/serviceusage.apiKeysAdmin` | `gcp.apikey.restrict` |
+| `cloudquotas.quotas.update` | `roles/cloudquotas.admin` | `gcp.quota.cap` |
 
 ## Safety
 
@@ -230,10 +289,6 @@ Posture checks beyond the ones above (public buckets, firewall rules, Cloud SQL 
 KMS) come from Prowler through the external connector in
 [plugins/prowler](../plugins/prowler/README.md), which leaves out the checks this connector makes.
 
-Spend-risk APIs without quota caps (item 5 of the plan). It needs `gcloud services list` per
-project plus each API's consumer quota overrides through the Service Usage API, many calls per
-project for a weak signal, so it was left out.
-
 Last use of service account keys is not reported (`last_used_at` stays null): it lives in Policy
 Intelligence activity analysis, a separate API.
 
@@ -247,6 +302,15 @@ Intelligence activity analysis, a separate API.
 - Filtering usage on `credential_id="apikey:<uid>"`: <https://codelabs.developers.google.com/api-key-management>
 - `projects.timeSeries.list` (`filter`, `interval`, `view`, `pageToken`): <https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/list>
 - `projects.testIamPermissions`: <https://docs.cloud.google.com/resource-manager/reference/rest/v3/projects/testIamPermissions>
+- `gcloud services list`: <https://docs.cloud.google.com/sdk/gcloud/reference/services/list>
+- Cloud Quotas API overview (no delete of a `QuotaPreference`, decreases): <https://docs.cloud.google.com/docs/quotas/api-overview>
+- `QuotaInfo` (`refreshInterval`, `dimensionsInfos[].details.value`): <https://docs.cloud.google.com/docs/quotas/reference/rest/v1/projects.locations.services.quotaInfos>
+- `QuotaPreference` (`quotaConfig.preferredValue`, `traceId`): <https://docs.cloud.google.com/docs/quotas/reference/rest/v1/projects.locations.quotaPreferences>
+- `gcloud quotas preferences create`: <https://docs.cloud.google.com/sdk/gcloud/reference/quotas/preferences/create>
+- `gcloud quotas preferences update`: <https://docs.cloud.google.com/sdk/gcloud/reference/quotas/preferences/update>
+- Service Usage `consumerQuotaMetrics` (v1beta1): <https://docs.cloud.google.com/service-usage/docs/reference/rest/v1beta1/services.consumerQuotaMetrics>
+- Maps Platform cost control with quotas: <https://developers.google.com/maps/billing-and-pricing/manage-costs>
+- Maps service names: <https://developers.google.com/maps/documentation/geocoding/cloud-setup>, <https://developers.google.com/maps/documentation/directions/cloud-setup>, <https://developers.google.com/maps/documentation/maps-static/cloud-setup>, <https://developers.google.com/maps/documentation/javascript/cloud-setup>, <https://developers.google.com/maps/documentation/places/web-service/cloud-setup>, <https://developers.google.com/maps/documentation/routes/cloud-setup>
 - Predefined roles and their permissions: <https://docs.cloud.google.com/iam/docs/roles-permissions>
 - `gcloud projects list`: <https://cloud.google.com/sdk/gcloud/reference/projects/list>
 - `gcloud services api-keys list`: <https://cloud.google.com/sdk/gcloud/reference/services/api-keys/list>

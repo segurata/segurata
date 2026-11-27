@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -167,12 +168,51 @@ func usageRoute(t *testing.T, byUID map[string][]string) httpxtest.Route {
 	}
 }
 
+const shopQuotas = "/v1/projects/100000000001/locations/global"
+
+func quotaInfosPath(service string) string {
+	return shopQuotas + "/services/" + service + "/quotaInfos"
+}
+
+// pages answers a list by pageToken: "" is the first page.
+func pages(t *testing.T, byToken map[string]string) httpxtest.Route {
+	return func(q url.Values) (int, any) {
+		name, ok := byToken[q.Get("pageToken")]
+		if !ok {
+			t.Errorf("unexpected page %q", q.Get("pageToken"))
+			return http.StatusBadRequest, nil
+		}
+		var body any
+		_ = json.Unmarshal([]byte(fixture(t, name)), &body)
+		return http.StatusOK, body
+	}
+}
+
+// shopQuotaRoutes are demo-shop's quotas: Geocoding uncapped per day, Maps JavaScript capped,
+// Vision per minute only.
+func shopQuotaRoutes(t *testing.T) map[string]httpxtest.Route {
+	return map[string]httpxtest.Route{
+		shopQuotas + "/quotaPreferences":                   pages(t, map[string]string{"": "quota_preferences_shop.json"}),
+		quotaInfosPath("geocoding-backend.googleapis.com"): pages(t, map[string]string{"": "quota_infos_geocoding.json", "p2": "quota_infos_geocoding_p2.json"}),
+		quotaInfosPath("maps-backend.googleapis.com"):      pages(t, map[string]string{"": "quota_infos_maps.json"}),
+		quotaInfosPath("vision.googleapis.com"):            pages(t, map[string]string{"": "quota_infos_vision.json"}),
+	}
+}
+
 func shopUsage(t *testing.T) map[string]httpxtest.Route {
 	return map[string]httpxtest.Route{timeSeriesPath("demo-shop"): usageRoute(t, map[string][]string{
 		"11111111-2222-3333-4444-555555555555": {"maps-backend.googleapis.com", "geocoding-backend.googleapis.com", "maps-backend.googleapis.com"},
 		"66666666-7777-8888-9999-000000000000": {"geocoding-backend.googleapis.com"},
 		"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee": nil,
 	})}
+}
+
+func merge(routes ...map[string]httpxtest.Route) map[string]httpxtest.Route {
+	out := map[string]httpxtest.Route{}
+	for _, r := range routes {
+		maps.Copy(out, r)
+	}
+	return out
 }
 
 func testConnector(t *testing.T, home string, plays map[string][]outcome, env map[string]string) (*Connector, *fakeRunner) {
@@ -204,12 +244,14 @@ func fullScenario() map[string][]outcome {
 		"iam service-accounts list " + shop + " " + owner: {{stdout: "sa_list_shop.json"}},
 		"iam service-accounts keys list --iam-account=deployer@demo-shop.iam.gserviceaccount.com --managed-by=user " + shop + " " + owner: {{stdout: "sa_keys_deployer.json"}},
 		"iam service-accounts keys list --iam-account=reader@demo-shop.iam.gserviceaccount.com --managed-by=user " + shop + " " + owner:   {{}},
-		"services api-keys list " + shop + " " + owner: {{stdout: "api_keys_shop.json"}},
-		"billing projects describe demo-shop " + owner: {{stdout: "billing_info_shop.json"}},
+		"services api-keys list " + shop + " " + owner:  {{stdout: "api_keys_shop.json"}},
+		"services list --enabled " + shop + " " + owner: {{stdout: "services_shop.json"}},
+		"billing projects describe demo-shop " + owner:  {{stdout: "billing_info_shop.json"}},
 
 		"projects get-iam-policy demo-blog " + owner:      {{}},
 		"iam service-accounts list " + blog + " " + owner: {{}},
 		"services api-keys list " + blog + " " + owner:    {{stderr: "denied_apikeys.txt"}},
+		"services list --enabled " + blog + " " + owner:   {{}},
 		"billing projects describe demo-blog " + owner:    {{stderr: "rate_limited.txt"}, {stdout: "billing_info_blog.json"}},
 
 		"billing budgets list --billing-account=000000-AAAAAA-111111 " + owner: {{stdout: "budgets_main.json"}},
@@ -221,7 +263,7 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 	home := fakeHome(t)
 	env := map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": filepath.Join(home, "keys", "sa.json")}
 	c, runner := testConnector(t, home, fullScenario(), env)
-	fakeGoogle(t, c, shopUsage(t))
+	fakeGoogle(t, c, merge(shopUsage(t), shopQuotaRoutes(t)))
 	rec := &recorder{}
 	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1}, rec); err != nil {
 		t.Fatal(err)
@@ -250,6 +292,10 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		"Budgets on billing account 000000-AAAAAA-111111 only notify: none is wired to a Pub/Sub topic or a spend cap, so nothing stops spend; 2 unrestricted API keys and 2 user-managed service account keys in projects billed here": finding.SevMedium,
 		"Budget 'Blog only' (20 EUR/month, demo-blog) leaves out demo-shop (2 unrestricted API keys and 2 user-managed service account keys)":                                                                                           finding.SevLow,
 		"Project demo-shop is billed to billing account 000000-AAAAAA-111111 but no budget with alerts covers it":                                                                                                                       finding.SevHigh,
+		// request caps of pay-per-use APIs
+		"geocoding-backend.googleapis.com in demo-shop has no per-day request cap below Google's default: RequestsPerDayPerProject unlimited": finding.SevMedium,
+		"maps-backend.googleapis.com in demo-shop has a per-day request cap of its own: MapLoadsRequestsPerDay capped at 2000":                finding.SevInfo,
+		"vision.googleapis.com in demo-shop has no per-minute request cap below Google's default: DefaultRequestsPerMinutePerProject 1800":    finding.SevMedium,
 		// the projects each account sees, for attribution
 		"owner@example.com sees 3 projects": finding.SevInfo,
 	}
@@ -295,6 +341,14 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 		if !strings.Contains(adc.Remediation.Summary+adc.Remediation.URL, s) {
 			t.Errorf("ADC remediation lacks %q", s)
 		}
+	}
+	geo := rec.byTitle(t, "geocoding-backend.googleapis.com in demo-shop")
+	if geo.Remediation.Action != ActionCapQuota || geo.Scope != quotaScope("demo-shop") || geo.Kind != finding.KindSpend ||
+		!strings.Contains(geo.Remediation.Summary, `connectors.gcp.config.quota_caps."geocoding-backend.googleapis.com"`) || geo.Evidence["project_number"] != "100000000001" {
+		t.Errorf("uncapped daily quota: %+v %+v", geo.Remediation, geo.Evidence)
+	}
+	if v := rec.byTitle(t, "vision.googleapis.com"); v.Remediation.Action != "" || !strings.Contains(v.Remediation.Summary, "per-day quotas only") {
+		t.Errorf("a per-minute quota is advice only: %+v", v.Remediation)
 	}
 	if b := rec.byTitle(t, "no budget with alerts covers it"); b.Kind != finding.KindSpend {
 		t.Errorf("budget finding kind %s", b.Kind)
@@ -383,17 +437,19 @@ func TestInventoryEndToEndWithRecordedGcloud(t *testing.T) {
 
 func TestConfiguredAccountsProjectsAndBillingProject(t *testing.T) {
 	plays := map[string][]outcome{
-		"auth list":                                                     {{stdout: "auth_list.json"}},
-		"projects list " + owner:                                        {{stdout: "projects_owner.json"}},
-		"billing accounts list " + owner:                                {{}},
-		"projects get-iam-policy demo-blog " + owner:                    {{}},
-		"iam service-accounts list --project=demo-blog " + owner:        {{}},
-		"services api-keys list --project=demo-blog " + owner:           {{}},
-		"billing projects describe demo-blog " + owner:                  {{stdout: "billing_info_blog.json"}},
-		"projects get-iam-policy unlisted-project " + owner:             {{}},
-		"iam service-accounts list --project=unlisted-project " + owner: {{}},
-		"services api-keys list --project=unlisted-project " + owner:    {{}},
-		"billing projects describe unlisted-project " + owner:           {{}},
+		"auth list":                                                                                              {{stdout: "auth_list.json"}},
+		"projects list " + owner:                                                                                 {{stdout: "projects_owner.json"}},
+		"billing accounts list " + owner:                                                                         {{}},
+		"projects get-iam-policy demo-blog " + owner:                                                             {{}},
+		"iam service-accounts list --project=demo-blog " + owner:                                                 {{}},
+		"services api-keys list --project=demo-blog " + owner:                                                    {{}},
+		"services list --enabled --project=demo-blog " + owner:                                                   {{}},
+		"services list --enabled --project=unlisted-project " + owner:                                            {{}},
+		"billing projects describe demo-blog " + owner:                                                           {{stdout: "billing_info_blog.json"}},
+		"projects get-iam-policy unlisted-project " + owner:                                                      {{}},
+		"iam service-accounts list --project=unlisted-project " + owner:                                          {{}},
+		"services api-keys list --project=unlisted-project " + owner:                                             {{}},
+		"billing projects describe unlisted-project " + owner:                                                    {{}},
 		"billing budgets list --billing-account=000000-BBBBBB-222222 " + owner + " --billing-project=demo-quota": {{}},
 	}
 	c, _ := testConnector(t, t.TempDir(), plays, nil)
@@ -430,6 +486,7 @@ func TestAnotherAccountCoversWhatTheFirstIsDeniedAndSkippedProjectsAreLeftOut(t 
 		"iam service-accounts list " + shop + " " + work:  {{}},
 		"services api-keys list " + shop + " " + owner:    {{stderr: "denied_apikeys.txt"}},
 		"services api-keys list " + shop + " " + work:     {{stderr: "denied_apikeys.txt"}},
+		"services list --enabled " + shop + " " + owner:   {{}},
 		"billing projects describe demo-shop " + owner:    {{}},
 	}
 	c, runner := testConnector(t, t.TempDir(), plays, nil)
@@ -469,6 +526,7 @@ func TestServiceAccountListedInConfigIsUsed(t *testing.T) {
 		"projects get-iam-policy demo-shop " + ci:             {{}},
 		"iam service-accounts list --project=demo-shop " + ci: {{}},
 		"services api-keys list --project=demo-shop " + ci:    {{}},
+		"services list --enabled --project=demo-shop " + ci:   {{}},
 		"billing projects describe demo-shop " + ci:           {{}},
 	}
 	c, _ := testConnector(t, t.TempDir(), plays, nil)
@@ -491,10 +549,19 @@ func TestBadConfigFailsToStart(t *testing.T) {
 	for key, v := range map[string]any{
 		"accounts": []any{}, "projects": []any{}, "skip_projects": []any{""},
 		"billing_project": "", "gcloud_path": 3.0,
+		"quota_caps": map[string]any{"maps-backend.googleapis.com": 1.5},
 	} {
 		if _, err := parseSettings(map[string]any{key: v}); err == nil || !strings.Contains(err.Error(), `gcp config: "`+key+`"`) {
 			t.Errorf("%s %v: %v", key, v, err)
 		}
+	}
+	for _, bad := range []any{3.0, map[string]any{"x": 0.0}, map[string]any{"x": "10"}, []any{1.0}} {
+		if _, err := parseSettings(map[string]any{"quota_caps": bad}); err == nil || !strings.Contains(err.Error(), `"quota_caps" must map names to a whole number above 0`) {
+			t.Errorf("quota_caps %v: %v", bad, err)
+		}
+	}
+	if s, err := parseSettings(map[string]any{"quota_caps": map[string]any{"vision.googleapis.com": 500.0}}); err != nil || s.quotaCaps["vision.googleapis.com"] != 500 {
+		t.Errorf("quota_caps: %+v %v", s.quotaCaps, err)
 	}
 	if s, err := parseSettings(map[string]any{"skip_projects": []any{}, "billing_project": "quota"}); err != nil || s.billingProject != "quota" {
 		t.Errorf("an empty skip list skips nothing: %+v %v", s, err)
@@ -668,9 +735,9 @@ func TestParseSettingsGcloudPath(t *testing.T) {
 // without usage no key offers the restrict action.
 func TestUnreadableUsageLeavesKeyFindingsChecked(t *testing.T) {
 	c, _ := testConnector(t, fakeHome(t), fullScenario(), nil)
-	fakeGoogle(t, c, map[string]httpxtest.Route{
+	fakeGoogle(t, c, merge(shopQuotaRoutes(t), map[string]httpxtest.Route{
 		timeSeriesPath("demo-shop"): httpxtest.Fail(http.StatusForbidden, "Permission monitoring.timeSeries.list denied (or the resource may not exist)."),
-	})
+	}))
 	rec := &recorder{}
 	if err := c.Inventory(context.Background(), connector.Request{Protocol: 1}, rec); err != nil {
 		t.Fatal(err)

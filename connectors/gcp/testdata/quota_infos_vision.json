@@ -1,0 +1,10 @@
+{"quotaInfos": [
+  {"name": "projects/100000000001/locations/global/services/vision.googleapis.com/quotaInfos/DefaultRequestsPerMinutePerProject",
+   "quotaId": "DefaultRequestsPerMinutePerProject", "metric": "vision.googleapis.com/default_requests", "service": "vision.googleapis.com",
+   "refreshInterval": "minute", "containerType": "PROJECT",
+   "dimensionsInfos": [{"dimensions": {}, "details": {"value": "1800"}, "applicableLocations": ["global"]},
+                       {"dimensions": {"region": "us-central1"}, "details": {"value": "600"}, "applicableLocations": ["us-central1"]}]},
+  {"name": "projects/100000000001/locations/global/services/vision.googleapis.com/quotaInfos/ConcurrentRequests",
+   "quotaId": "ConcurrentRequests", "metric": "vision.googleapis.com/concurrent_requests", "refreshInterval": "",
+   "isConcurrent": true, "dimensionsInfos": [{"dimensions": {}, "details": {"value": "10"}}]}
+]}

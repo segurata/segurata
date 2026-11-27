@@ -1,0 +1,8 @@
+{"quotaPreferences": [
+  {"name": "projects/100000000001/locations/global/quotaPreferences/maps-daily-cap", "service": "maps-backend.googleapis.com",
+   "quotaId": "MapLoadsRequestsPerDay", "dimensions": {},
+   "quotaConfig": {"preferredValue": "2000", "grantedValue": "2000", "requestOrigin": "CLOUD_CONSOLE"}},
+  {"name": "projects/100000000001/locations/global/quotaPreferences/geocoding-raise", "service": "geocoding-backend.googleapis.com",
+   "quotaId": "RequestsPerMinutePerProject", "dimensions": {},
+   "quotaConfig": {"preferredValue": "3000", "grantedValue": "3000", "traceId": "abc123", "requestOrigin": "CLOUD_CONSOLE"}}
+]}

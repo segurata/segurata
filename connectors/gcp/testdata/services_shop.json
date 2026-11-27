@@ -1,0 +1,6 @@
+[
+  {"name": "projects/100000000001/services/compute.googleapis.com", "config": {"name": "compute.googleapis.com", "title": "Compute Engine API"}, "state": "ENABLED"},
+  {"name": "projects/100000000001/services/geocoding-backend.googleapis.com", "config": {"name": "geocoding-backend.googleapis.com", "title": "Geocoding API"}, "state": "ENABLED"},
+  {"name": "projects/100000000001/services/maps-backend.googleapis.com", "config": {"name": "maps-backend.googleapis.com", "title": "Maps JavaScript API"}, "state": "ENABLED"},
+  {"name": "projects/100000000001/services/vision.googleapis.com", "config": {"name": "vision.googleapis.com", "title": "Cloud Vision API"}, "state": "ENABLED"}
+]

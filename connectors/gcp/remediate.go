@@ -37,6 +37,8 @@ func (r *remediator) Plan(ctx context.Context, f finding.Finding) (connector.Pla
 	switch f.Remediation.Action {
 	case ActionRestrictKey:
 		return r.restrictPlan(ctx, g, f)
+	case ActionCapQuota:
+		return r.capPlan(ctx, g, cfg, f)
 	}
 	return connector.Plan{}, fmt.Errorf("gcp has no remediation %q", f.Remediation.Action)
 }

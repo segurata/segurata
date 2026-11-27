@@ -1,0 +1,12 @@
+{"quotaInfos": [
+  {"name": "projects/100000000001/locations/global/services/geocoding-backend.googleapis.com/quotaInfos/RequestsPerDayPerProject",
+   "quotaId": "RequestsPerDayPerProject", "metric": "geocoding-backend.googleapis.com/billable_requests", "service": "geocoding-backend.googleapis.com",
+   "isPrecise": true, "refreshInterval": "day", "containerType": "PROJECT", "dimensions": [],
+   "quotaDisplayName": "Requests per day", "isFixed": false, "isConcurrent": false,
+   "dimensionsInfos": [{"dimensions": {}, "details": {"value": "-1"}, "applicableLocations": ["global"]}]},
+  {"name": "projects/100000000001/locations/global/services/geocoding-backend.googleapis.com/quotaInfos/RequestsPerMinutePerProject",
+   "quotaId": "RequestsPerMinutePerProject", "metric": "geocoding-backend.googleapis.com/billable_requests", "service": "geocoding-backend.googleapis.com",
+   "refreshInterval": "minute", "containerType": "PROJECT",
+   "dimensionsInfos": [{"dimensions": {}, "details": {"value": "3000"}, "applicableLocations": ["global"]}]}
+],
+ "nextPageToken": "p2"}

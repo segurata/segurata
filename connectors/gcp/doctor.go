@@ -66,10 +66,14 @@ func (c *Connector) Doctor(ctx context.Context, req connector.Request) []connect
 // predefined role that grants it (cloud.google.com/iam/docs/roles-permissions).
 type permission struct{ name, role, use string }
 
-// projectPermissions are tested on the first project each account lists.
+// projectPermissions are tested on the first project each account lists: the reads behind API key
+// usage and request caps, and the remediations' writes.
 var projectPermissions = []permission{
-	{"monitoring.timeSeries.list", "roles/monitoring.viewer", "read which APIs each API key called"},
+	{"monitoring.timeSeries.list", "roles/monitoring.viewer", "reading which APIs each API key called"},
+	{"serviceusage.services.list", "roles/serviceusage.serviceUsageViewer", "listing enabled pay-per-use APIs"},
+	{"cloudquotas.quotas.get", "roles/cloudquotas.viewer", "reading request quotas"},
 	{"apikeys.keys.update", "roles/serviceusage.apiKeysAdmin", ActionRestrictKey},
+	{"cloudquotas.quotas.update", "roles/cloudquotas.admin", ActionCapQuota},
 }
 
 // billingPermissions are tested on the first open billing account each account lists.
@@ -87,7 +91,7 @@ func (g *gcloud) billingPermissionChecks(ctx context.Context, account, userProje
 	var list []billingAccount
 	if err := g.json(ctx, &list, "billing", "accounts", "list", "--account="+account); err != nil {
 		_, why := classify(err)
-		return []connector.Check{{Level: connector.Warn, What: "remediation permissions of " + account + " on billing accounts", Detail: why,
+		return []connector.Check{{Level: connector.Warn, What: "permissions of " + account + " on billing accounts", Detail: why,
 			Fix: "check with: gcloud billing accounts list --account=" + account}}
 	}
 	for _, ba := range list {
@@ -103,13 +107,13 @@ func (g *gcloud) billingPermissionChecks(ctx context.Context, account, userProje
 // permissionCheck asks testIamPermissions, which Google documents only as POST and which changes
 // nothing, which of perms account holds on the resource.
 func (g *gcloud) permissionCheck(ctx context.Context, account, resource, host, path, userProject string, perms []permission) connector.Check {
-	what := "remediation permissions of " + account + " on " + resource
+	what := "permissions of " + account + " on " + resource
 	names := permissionNames(perms)
 	granted, err := g.testPermissions(ctx, account, host, path, userProject, names)
 	if err != nil {
 		_, why := classify(err)
 		return connector.Check{Level: connector.Warn, What: what, Detail: "cannot test them: " + why,
-			Fix: "segurata remediate needs: " + permissionList(perms)}
+			Fix: "the newer checks and segurata remediate need: " + permissionList(perms)}
 	}
 	var missing []permission
 	for _, p := range perms {
@@ -121,7 +125,7 @@ func (g *gcloud) permissionCheck(ctx context.Context, account, resource, host, p
 		return connector.Check{Level: connector.OK, What: what, Detail: "holds " + strings.Join(names, ", ")}
 	}
 	return connector.Check{Level: connector.Warn, What: what, Detail: "missing " + permissionList(missing),
-		Fix: "grant the roles named above to " + account + ", or leave those remediations to an account that has them; the inventory does not need them"}
+		Fix: "grant the roles named above to " + account + "; without them those checks report a status and those remediations are refused"}
 }
 
 func permissionNames(ps []permission) []string {

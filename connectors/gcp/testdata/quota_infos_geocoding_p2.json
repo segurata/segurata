@@ -1,0 +1,6 @@
+{"quotaInfos": [
+  {"name": "projects/100000000001/locations/global/services/geocoding-backend.googleapis.com/quotaInfos/ElementsPerDayPerProject",
+   "quotaId": "ElementsPerDayPerProject", "metric": "geocoding-backend.googleapis.com/elements", "service": "geocoding-backend.googleapis.com",
+   "refreshInterval": "day", "containerType": "PROJECT",
+   "dimensionsInfos": [{"dimensions": {}, "details": {"value": "-1"}, "applicableLocations": ["global"]}]}
+]}

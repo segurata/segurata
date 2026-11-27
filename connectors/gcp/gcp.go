@@ -61,8 +61,7 @@ type settings struct {
 	skipProjects   []string
 	billingProject string
 	gcloudPath     string
-	quotaCaps      map[string]int64   // service -> requests per day, for gcp.quota.cap
-	budgetAmounts  map[string]float64 // billing account id or "default" -> amount, for gcp.budget.create
+	quotaCaps      map[string]int64 // service -> requests per day, for gcp.quota.cap
 }
 
 func parseSettings(m map[string]any) (settings, error) {
@@ -80,9 +79,53 @@ func parseSettings(m map[string]any) (settings, error) {
 	if s.billingProject, err = cfgkey.String(m, "gcp", "billing_project"); err != nil {
 		return s, err
 	}
-	s.gcloudPath, err = cfgkey.String(m, "gcp", "gcloud_path")
+	if s.gcloudPath, err = cfgkey.String(m, "gcp", "gcloud_path"); err != nil {
+		return s, err
+	}
+	s.quotaCaps, err = positiveNumbers[int64](m, "quota_caps")
 	return s, err
 }
+
+// positiveNumbers reads a map of names to amounts above 0, whole numbers for int64. A bare
+// float64 amount is the default for every name.
+func positiveNumbers[T int64 | float64](m map[string]any, key string) (map[string]T, error) {
+	_, whole := any(T(0)).(int64)
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	kind := "an amount above 0"
+	if whole {
+		kind = "a whole number above 0"
+	}
+	bad := fmt.Errorf("gcp config: %q must map names to %s", key, kind)
+	valid := func(x any) (T, bool) {
+		n, ok := x.(float64)
+		if !ok || n <= 0 || (whole && n != float64(int64(n))) {
+			return 0, false
+		}
+		return T(n), true
+	}
+	if n, ok := valid(v); ok && !whole {
+		return map[string]T{defaultAmount: n}, nil
+	}
+	items, ok := v.(map[string]any)
+	if !ok {
+		return nil, bad
+	}
+	out := make(map[string]T, len(items))
+	for name, x := range items {
+		n, ok := valid(x)
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, bad
+		}
+		out[name] = n
+	}
+	return out, nil
+}
+
+// defaultAmount is the budget_amount entry for billing accounts the config does not name.
+const defaultAmount = "default"
 
 // target is one project and the accounts that list it, in config or `gcloud auth list` order.
 type target struct {
@@ -312,6 +355,8 @@ func (c *Connector) inspect(ctx context.Context, g *gcloud, t target, bill *bill
 		found = append(found, fs...)
 		emitAll(fs)
 	}
+
+	c.quotaInventory(ctx, g, t, emit)
 
 	var info billingInfo
 	if a, ok := run("billing", func(a string) error {

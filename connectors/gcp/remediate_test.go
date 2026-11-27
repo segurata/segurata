@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/segurata/segurata/connectors/internal/cli"
 	"github.com/segurata/segurata/connectors/internal/httpx/httpxtest"
@@ -224,4 +225,143 @@ func TestInventoryRefusesRemediationWrites(t *testing.T) {
 	if err := allow.Check(ActionRestrictKey, connector.Step{Argv: []string{"gcloud", "services", "api-keys", "update", "k", "--api-target=service=b"}}); !errors.Is(err, connector.ErrRefused) {
 		t.Errorf("a step outside the plan ran: %v", err)
 	}
+}
+
+var shopTarget = target{accounts: []string{"owner@example.com"}, project: "demo-shop", number: "100000000001"}
+
+func quotaPlays() map[string][]outcome {
+	return map[string][]outcome{
+		"services list --enabled --project=demo-shop " + owner: {{stdout: "services_shop.json"}},
+		"auth print-access-token " + owner:                     {{stdout: "access_token.txt"}},
+	}
+}
+
+// geocodingQuotaFinding is the inventory's finding for demo-shop's uncapped Geocoding API.
+func geocodingQuotaFinding(t *testing.T, routes map[string]httpxtest.Route) (*Connector, finding.Finding) {
+	t.Helper()
+	c, _ := testConnector(t, t.TempDir(), quotaPlays(), nil)
+	fakeGoogle(t, c, routes)
+	g, err := c.gcloud(settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &recorder{}
+	c.quotaInventory(context.Background(), g, shopTarget, rec)
+	if len(rec.Statuses) > 0 {
+		t.Fatalf("statuses: %+v", rec.Statuses)
+	}
+	f := rec.byTitle(t, "geocoding-backend.googleapis.com in demo-shop")
+	f.Connector = connectorName
+	f.Fill(time.Now())
+	return c, f
+}
+
+var capConfig = map[string]any{"quota_caps": map[string]any{"geocoding-backend.googleapis.com": 4000.0}}
+
+func TestCapQuotaCreatesAPreferenceAndUndoesToTheOldLimit(t *testing.T) {
+	c, f := geocodingQuotaFinding(t, shopQuotaRoutes(t))
+	r := remediatorFor(t, c, f, capConfig)
+	p, err := r.Plan(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds, undo := steps(p)
+	want := []string{"gcloud quotas preferences create --service=geocoding-backend.googleapis.com --quota-id=RequestsPerDayPerProject " +
+		"--preferred-value=4000 --project=demo-shop --preference-id=segurata-requestsperdayperproject --allow-high-percentage-quota-decrease --account=owner@example.com"}
+	wantUndo := []string{"gcloud quotas preferences update segurata-requestsperdayperproject --service=geocoding-backend.googleapis.com " +
+		"--quota-id=RequestsPerDayPerProject --preferred-value=-1 --project=demo-shop --account=owner@example.com"}
+	if !reflect.DeepEqual(cmds, want) || !reflect.DeepEqual(undo, wantUndo) {
+		t.Fatalf("plan\n got %v\n undo %v\nwant %v\n undo %v", cmds, undo, want, wantUndo)
+	}
+	if p.Summary != "Cap geocoding-backend.googleapis.com in demo-shop at 4000 requests per day: RequestsPerDayPerProject (now unlimited)." {
+		t.Errorf("summary %q", p.Summary)
+	}
+	if effects := strings.Join(p.SideEffects, "\n"); !strings.Contains(effects, "cannot delete a quota preference") || !strings.Contains(effects, "midnight Pacific") {
+		t.Errorf("side effects:\n%s", effects)
+	}
+	ex := &recordingExec{}
+	c.exec = ex
+	io, out := quietIO()
+	if err := r.Apply(context.Background(), f, p, io); err != nil || !reflect.DeepEqual(ex.ran, want) {
+		t.Fatalf("apply: %v ran %v", err, ex.ran)
+	}
+	if strings.Contains(out.String()+strings.Join(cmds, " "), accessToken) {
+		t.Error("the access token leaked")
+	}
+
+	// Once Google holds the preference the quota is capped: the fresh finding has no action.
+	capped := quotaLimit{id: "RequestsPerDayPerProject", interval: "day", value: "4000", pref: &quotaPreference{Name: "x/segurata-requestsperdayperproject"}}
+	capped.pref.QuotaConfig.PreferredValue = "4000"
+	fresh := quotaFindings(f.Account, "demo-shop", "100000000001", []serviceQuotas{{service: "geocoding-backend.googleapis.com", daily: true, limits: []quotaLimit{capped}}})[0]
+	fresh.Connector = connectorName
+	fresh.Fill(time.Now())
+	if fresh.ID != f.ID || fresh.Remediation.Action != "" || fresh.Severity != finding.SevInfo {
+		t.Errorf("capped quota: %s %s %+v", fresh.ID, fresh.Severity, fresh.Remediation)
+	}
+}
+
+// An increase the owner asked for earlier is a preference too: the cap updates it, and the undo
+// puts the raised value back.
+func TestCapQuotaUpdatesAnIncreasePreference(t *testing.T) {
+	routes := shopQuotaRoutes(t)
+	routes[shopQuotas+"/quotaPreferences"] = httpxtest.Static(map[string]any{"quotaPreferences": []any{map[string]any{
+		"name": "projects/100000000001/locations/global/quotaPreferences/raise-geocoding", "service": "geocoding-backend.googleapis.com",
+		"quotaId": "RequestsPerDayPerProject", "quotaConfig": map[string]any{"preferredValue": "100000", "traceId": "t-1"}}}})
+	c, f := geocodingQuotaFinding(t, routes)
+	p, err := remediatorFor(t, c, f, capConfig).Plan(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds, undo := steps(p)
+	if want := "gcloud quotas preferences update raise-geocoding --service=geocoding-backend.googleapis.com --quota-id=RequestsPerDayPerProject " +
+		"--preferred-value=4000 --project=demo-shop --allow-high-percentage-quota-decrease --account=owner@example.com"; len(cmds) != 1 || cmds[0] != want {
+		t.Fatalf("commands %v, want %s", cmds, want)
+	}
+	if len(undo) != 1 || !strings.Contains(undo[0], "update raise-geocoding") || !strings.Contains(undo[0], "--preferred-value=100000 ") {
+		t.Fatalf("undo %v", undo)
+	}
+}
+
+func TestCapQuotaRefusals(t *testing.T) {
+	_, f := geocodingQuotaFinding(t, shopQuotaRoutes(t))
+	low := shopQuotaRoutes(t)
+	low[quotaInfosPath("geocoding-backend.googleapis.com")] = httpxtest.Static(map[string]any{"quotaInfos": []any{map[string]any{
+		"quotaId": "RequestsPerDayPerProject", "metric": "geocoding-backend.googleapis.com/billable_requests", "refreshInterval": "day",
+		"dimensionsInfos": []any{map[string]any{"dimensions": map[string]any{}, "details": map[string]any{"value": "1000"}}}}}})
+	cases := []struct {
+		name   string
+		cfg    map[string]any
+		routes map[string]httpxtest.Route
+		want   string
+	}{
+		{"no cap configured", nil, shopQuotaRoutes(t), `set connectors.gcp.config.quota_caps."geocoding-backend.googleapis.com"`},
+		{"cap for another API", map[string]any{"quota_caps": map[string]any{"maps-backend.googleapis.com": 10.0}}, shopQuotaRoutes(t), "segurata never guesses an amount"},
+		{"limit already below", capConfig, low, "already at or below 4000"},
+		{"quotas unreadable", capConfig, map[string]httpxtest.Route{}, "Cloud Quotas in demo-shop"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := testConnector(t, t.TempDir(), quotaPlays(), nil)
+			fakeGoogle(t, c, tc.routes)
+			_, err := remediatorFor(t, c, f, tc.cfg).Plan(context.Background(), f)
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.want)) {
+				t.Fatalf("want refusal %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestUnreadableQuotasAreAStatusOfTheirOwnScope(t *testing.T) {
+	c, _ := testConnector(t, t.TempDir(), quotaPlays(), nil)
+	fakeGoogle(t, c, map[string]httpxtest.Route{
+		shopQuotas + "/quotaPreferences": httpxtest.Fail(http.StatusForbidden, "Cloud Quotas API has not been used in project demo-shop before or it is disabled."),
+	})
+	g, _ := c.gcloud(settings{})
+	rec := &recorder{}
+	c.quotaInventory(context.Background(), g, shopTarget, rec)
+	if len(rec.Findings) != 0 || len(rec.Statuses) != 1 || rec.Statuses[0].Scope != quotaScope("demo-shop") ||
+		!strings.Contains(rec.Statuses[0].Detail, "API not enabled") {
+		t.Fatalf("findings %v statuses %+v", rec.titles(), rec.Statuses)
+	}
+	rec.AssertNoSecret(t, accessToken)
 }

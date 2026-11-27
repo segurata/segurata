@@ -24,6 +24,8 @@ Each release's section here is its release notes on GitHub, which keeps line bre
 
 - Each API key finding says which APIs the key called in the last 30 days, read from Cloud Monitoring (`serviceruntime.googleapis.com/api/request_count` on `consumed_api`, by `credential_id` `apikey:<uid>`), or that it called none and is a candidate for deletion. Reading it needs `monitoring.timeSeries.list` (`roles/monitoring.viewer`); a failure is a status of its own and leaves the key findings checked.
 - `gcp.apikey.restrict` restricts a key without API restriction to the APIs it called: `gcloud services api-keys update <key> --api-target=service=<svc>…`, keeping its application restriction. Refused when the key called nothing or usage cannot be read. gcloud cannot undo it; the plan names the console page that can.
+- Pay-per-use APIs (Maps Platform, Gemini API, Vertex AI, Translation, Vision, Speech-to-Text, Text-to-Speech, Document AI) enabled without a per-day request cap of the project's own are a medium finding, read from the Cloud Quotas API (`quotaInfos`, `quotaPreferences`).
+- `gcp.quota.cap` caps them: `gcloud quotas preferences create` (or `update`) with the requests per day set in the new `quota_caps` config key; the plan is refused without it. The undo sets the old limit back, since a quota preference cannot be deleted.
 - `segurata doctor` tests, with `testIamPermissions`, the permissions the gcp remediations need on each account's first project and names the roles that grant the missing ones.
 
 ## [0.1.0]

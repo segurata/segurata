@@ -42,8 +42,10 @@ func TestDoctorReportsExpiredAccounts(t *testing.T) {
 	if ch := got["gcloud account work@example.org"]; ch.Level != connector.Fail || ch.Fix != "gcloud auth login work@example.org" {
 		t.Errorf("work: %+v", ch)
 	}
-	perms := got["remediation permissions of owner@example.com on project demo-shop"]
-	if perms.Level != connector.Warn || perms.Detail != "missing apikeys.keys.update (roles/serviceusage.apiKeysAdmin, for gcp.apikey.restrict)" {
+	perms := got["permissions of owner@example.com on project demo-shop"]
+	if perms.Level != connector.Warn || strings.Contains(perms.Detail, "monitoring.timeSeries.list") ||
+		!strings.Contains(perms.Detail, "missing serviceusage.services.list (roles/serviceusage.serviceUsageViewer, for listing enabled pay-per-use APIs); ") ||
+		!strings.Contains(perms.Detail, "apikeys.keys.update (roles/serviceusage.apiKeysAdmin, for gcp.apikey.restrict)") {
 		t.Errorf("permissions: %+v", perms)
 	}
 	want := "POST /v3/projects/demo-shop:testIamPermissions Bearer " + accessToken + " demo-shop " + strings.Join(permissionNames(projectPermissions), ",")

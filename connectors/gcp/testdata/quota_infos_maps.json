@@ -1,0 +1,6 @@
+{"quotaInfos": [
+  {"name": "projects/100000000001/locations/global/services/maps-backend.googleapis.com/quotaInfos/MapLoadsRequestsPerDay",
+   "quotaId": "MapLoadsRequestsPerDay", "metric": "maps-backend.googleapis.com/map_load_requests", "service": "maps-backend.googleapis.com",
+   "refreshInterval": "day", "containerType": "PROJECT",
+   "dimensionsInfos": [{"dimensions": {}, "details": {"value": "2000"}, "applicableLocations": ["global"]}]}
+]}
